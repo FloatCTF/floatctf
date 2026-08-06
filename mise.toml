@@ -1,0 +1,72 @@
+[tools]
+node = "26.5.1"
+pnpm = "11.20.0"
+rust = "1.97.1"
+
+[env]
+PROJECT_ROOT = "{{config_root}}"
+
+# 初始化依赖
+[tasks.install]
+description = "安装项目依赖"
+run = [
+    "pnpm install",
+    "cargo fetch",
+]
+
+# 基础设施
+[tasks."infra:up"]
+description = "启动 PostgreSQL、RustFS 和 Nginx"
+run = "./scripts/infra-up.sh"
+
+[tasks."infra:down"]
+description = "停止开发基础设施"
+run = """
+docker compose \
+  -f "$PROJECT_ROOT/infra/compose/compose.dev.yml" \
+  down
+"""
+
+[tasks."infra:logs"]
+description = "查看基础设施日志"
+run = """
+docker compose \
+  -f "$PROJECT_ROOT/infra/compose/compose.dev.yml" \
+  logs -f
+"""
+
+# 后端
+[tasks."dev:api"]
+description = "启动 API 开发服务器"
+dir = "apps/api"
+run = "cargo run"
+
+# 前端
+[tasks."dev:web"]
+description = "启动 Web 开发服务器"
+dir = "apps/web"
+run = "pnpm dev"
+
+# 同时启动 API 和 Web
+[tasks.dev]
+description = "启动完整本地开发环境"
+depends = ["infra:up"]
+run = "./scripts/dev.sh"
+
+# 检查
+[tasks.check]
+description = "检查整个项目"
+run = [
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo test --workspace",
+    "pnpm --filter ./apps/web lint",
+]
+
+# 构建
+[tasks.build]
+description = "构建 API 和 Web"
+run = [
+    "cargo build --workspace --release",
+    "pnpm --filter ./apps/web build",
+]

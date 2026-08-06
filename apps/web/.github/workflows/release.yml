@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "发布 Tag（例如 v1.0.0）"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # 【关键修改】去掉了 defaults.working-directory，让所有命令直接在根目录执行
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # =========================
+      # 1. 安装 pnpm
+      # =========================
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      # =========================
+      # 2. 配置 Node.js 并开启缓存
+      # =========================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # =========================
+      # 3. 安装依赖与构建
+      # =========================
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      # =========================
+      # 4. 打包 dist 目录
+      # =========================
+      - name: Archive frontend
+        run: |
+          cd dist
+          # 【关键修改】因为现在是在根目录执行，所以压缩包直接放在上一层（../）即可
+          tar -czf ../html.tar.gz .
+
+      # =========================
+      # 5. 发布 Release
+      # =========================
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: html.tar.gz

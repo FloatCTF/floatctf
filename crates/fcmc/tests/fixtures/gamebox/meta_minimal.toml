@@ -1,0 +1,8 @@
+name = "test-gamebox-minimal"
+author = "tester@example.com"
+category = "Web"
+description = "Minimal gamebox"
+
+[gamebox]
+username = "ctf"
+image_tag = "test/gamebox:v1"

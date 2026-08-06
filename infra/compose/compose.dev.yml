@@ -1,0 +1,50 @@
+volumes:
+    floatctf-db_data:
+
+services:
+    db:
+        container_name: floatctf-dev-db
+        image: postgres:17
+        ports:
+            - "5432:5432"
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: floatctf_db
+        volumes:
+            - floatctf-db_data:/var/lib/postgresql/data
+            - ${PROJECT_ROOT}/apps/api/src/sql/init:/docker-entrypoint-initdb.d
+        restart: unless-stopped
+
+    nginx:
+        depends_on:
+            - db
+        container_name: floatctf-dev-nginx
+        image: nginx:1.26-bookworm
+        ports:
+            - "7780:80"
+        volumes:
+            - ${PROJECT_ROOT}/app/logs/nginx:/var/log/nginx
+            - ${PROJECT_ROOT}/app/api/challenges:/app/api/challenges:ro
+            - ${PROJECT_ROOT}/app/api/uploads:/app/api/uploads:ro
+            - ${PROJECT_ROOT}/app/api/weapons:/app/api/weapons:ro
+            - ${PROJECT_ROOT}/app/api/images:/app/api/images:ro
+            - ${PROJECT_ROOT}/infra/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        restart: unless-stopped
+
+    rustfs:
+        container_name: floatctf-dev-rustfs
+        image: rustfs/rustfs:latest
+        volumes:
+            - ${PROJECT_ROOT}/app/data:/data
+        ports:
+          - "9000:9000"
+          - "9001:9001"
+        environment:
+            RUSTFS_ADDRESS: ":9000"
+            RUSTFS_SERVER_DOMAINS: example.com
+            RUSTFS_ACCESS_KEY: rustfsadmin
+            RUSTFS_SECRET_KEY: rustfsadmin
+            RUSTFS_CONSOLE_ENABLE: true

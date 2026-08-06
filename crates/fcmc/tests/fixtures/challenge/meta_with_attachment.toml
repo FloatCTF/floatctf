@@ -1,0 +1,10 @@
+name = "test-challenge-attachment"
+author = "tester@example.com"
+category = "Reverse"
+description = "A challenge with attachment"
+
+attachment = "attachment/src.zip"
+
+[flag]
+value = "flag{reverse-flag}"
+env_var = "FLAG"

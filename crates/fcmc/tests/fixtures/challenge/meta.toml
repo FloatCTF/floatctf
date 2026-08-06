@@ -1,0 +1,12 @@
+name = "test-challenge"
+author = "tester@example.com"
+category = "Web"
+description = "A test challenge"
+
+[flag]
+value = "flag{test-flag-12345}"
+env_var = "FLAG"
+
+[docker]
+image_tag = "test/challenge:v1"
+port = "80/tcp"

@@ -1,0 +1,4 @@
+-- Moved: scheduler reliability columns are incremental, not AWD schema.
+-- Canonical: src/sql/update/01-scheduler-retry.sql
+-- Applied by migration m0101 (include_str of that path).
+-- This file intentionally has no DDL (avoids double-apply if awd/*.sql is bulk-run).

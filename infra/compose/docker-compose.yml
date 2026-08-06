@@ -1,0 +1,85 @@
+version: "3.8"
+
+volumes:
+  pgdata:
+
+networks:
+  floatctf-network:
+    driver: bridge
+
+services:
+  floatctf-db:
+    image: postgres:17
+    container_name: floatctf-db
+    restart: always
+    env_file:
+      - ${INSTALLER_DIR}/.env
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+    networks:
+      - floatctf-network
+    volumes:
+      - ${INSTALLER_DIR}/tmp/sql/init:/docker-entrypoint-initdb.d
+      - pgdata:/var/lib/postgresql/data
+
+  floatctf-rustfs:
+    image: rustfs/rustfs:latest
+    container_name: floatctf-rustfs
+    restart: always
+    env_file:
+      - ${INSTALLER_DIR}/.env
+    environment:
+      RUSTFS_ADDRESS: ${RUSTFS_ADDRESS}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      RUSTFS_CONSOLE_ENABLE: true
+      RUSTFS_VOLUMES: ${RUSTFS_VOLUMES}
+      RUSTFS_OBS_LOG_DIRECTORY: ${RUSTFS_OBS_LOG_DIRECTORY}
+    networks:
+      - floatctf-network
+    volumes:
+      - ${INSTALLER_DIR}/data:${RUSTFS_VOLUMES}
+      - ${INSTALLER_DIR}/logs/rustfs:${RUSTFS_OBS_LOG_DIRECTORY}
+
+  floatctf-nginx:
+    image: nginx:1.26-bookworm
+    container_name: floatctf-nginx
+    restart: always
+    env_file:
+      - ${INSTALLER_DIR}/.env
+    ports:
+      - "9980:80"
+      - "9443:443"
+    networks:
+      - floatctf-network
+    volumes:
+      - ${INSTALLER_DIR}:/app
+      - ${INSTALLER_DIR}/logs/nginx:/var/log/nginx
+      - ${INSTALLER_DIR}/nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  floatctf-api:
+    platform: linux/amd64
+    image: alpine:latest
+    container_name: floatctf-api
+    restart: always
+    working_dir: /app
+    networks:
+      - floatctf-network
+    environment:
+      # 核心修复：禁用代理劫持
+      - http_proxy=
+      - https_proxy=
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - all_proxy=
+      - ALL_PROXY=
+      - no_proxy=localhost,127.0.0.1,floatctf-rustfs,floatctf-db,floatctf-nginx,floatctf-api
+      - NO_PROXY=localhost,127.0.0.1,floatctf-rustfs,floatctf-db,floatctf-nginx,floatctf-api
+      # 使用域名连接
+      - RUSTFS_ENDPOINT_URL=http://floatctf-rustfs:9000
+    volumes:
+      - ${INSTALLER_DIR}:/app
+      - ${DOCKER_HOST_PATH}:/var/run/docker.sock
+    entrypoint: ["/app/bin/floatctf"]

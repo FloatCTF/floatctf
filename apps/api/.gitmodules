@@ -1,0 +1,3 @@
+[submodule "fcmc"]
+	path = fcmc
+	url = git@github.com:FloatCTF/fcmc.git

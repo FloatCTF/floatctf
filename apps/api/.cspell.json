@@ -1,0 +1,23 @@
+{
+    "words": [
+        "actix",
+        "chrono",
+        "codegen",
+        "datalink",
+        "dotenv",
+        "dotenvy",
+        "fcmc",
+        "floatctf",
+        "floatctfdb",
+        "jsonwebtoken",
+        "noopener",
+        "noreferrer",
+        "pnet",
+        "serde",
+        "sqlx",
+        "strs",
+        "sysinfo",
+        "thiserror",
+        "writeups"
+    ]
+}

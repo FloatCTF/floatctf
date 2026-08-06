@@ -1,0 +1,24 @@
+name = "test-gamebox-judge"
+author = "tester@example.com"
+category = "Web"
+description = "Gamebox with judge"
+
+[gamebox]
+username = "ctf"
+image_tag = "test/gamebox:v1"
+break_points = 100
+fix_points = 100
+down_points = 200
+first_bonus = 20
+
+[gamebox.resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
+
+[gamebox.judge]
+script_name = "check.py"
+script_content = "print('ok')"
+args_json = '{"target": "{target_ip}"}'
+timeout_secs = 15
+retry_interval_secs = 5

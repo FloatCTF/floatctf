@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/api",
+    "crates/fcmc",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/FloatCTF/floatctf"

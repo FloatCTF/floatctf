@@ -1,0 +1,24 @@
+name = "test-gamebox-hc"
+author = "tester@example.com"
+category = "Web"
+description = "Gamebox with healthcheck"
+
+[gamebox]
+username = "ctf"
+image_tag = "test/gamebox:v1"
+break_points = 100
+fix_points = 100
+down_points = 200
+first_bonus = 20
+
+[gamebox.resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
+
+[gamebox.healthcheck]
+test = ["CMD-SHELL", "pgrep sshd"]
+interval_secs = 30
+timeout_secs = 10
+retries = 3
+start_period_secs = 60

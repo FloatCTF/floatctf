@@ -4,6 +4,8 @@ export type Settings = {
   id: string;
   key: string;
   value: string;
+  /** 解析 {{VAR}} 引用后的值（value 保留原始模板） */
+  resolved_value: string;
   type: SettingValueType;
   description: string;
   protected: boolean;

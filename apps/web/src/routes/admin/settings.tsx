@@ -33,6 +33,13 @@ function RouteComponent() {
     },
 
     {
+      accessorKey: "resolved_value",
+      header: "Resolved",
+      field: "resolved_value",
+      renderCell: (s: Settings) => <MyTruncate value={s.resolved_value} />,
+    },
+
+    {
       accessorKey: "description",
       header: "Description",
       field: "description",

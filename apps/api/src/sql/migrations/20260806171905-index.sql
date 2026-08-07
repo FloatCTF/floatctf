@@ -1,23 +1,23 @@
--- users 表索引
+-- users 表索引：登录/邮箱唯一性查询
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_username" ON "users" ("username");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_email" ON "users" ("email");
 
--- instances 表索引
+-- instances 表索引：按状态/题目/用户过滤实例
 CREATE INDEX IF NOT EXISTS "idx_instances_status" ON "instances" ("status");
 
 CREATE INDEX IF NOT EXISTS "idx_instances_challenge_id" ON "instances" ("challenge_id");
 
 CREATE INDEX IF NOT EXISTS "idx_instances_user_id" ON "instances" ("user_id");
 
--- events 表索引
+-- events 表索引：按类型/时间范围查询赛事
 CREATE INDEX IF NOT EXISTS "idx_events_type" ON "events" ("type");
 
 CREATE INDEX IF NOT EXISTS "idx_events_start_time" ON "events" ("start_time");
 
 CREATE INDEX IF NOT EXISTS "idx_events_end_time" ON "events" ("end_time");
 
--- event_users 表索引
+-- event_users 表索引：按用户/赛事查询参赛关系
 CREATE INDEX IF NOT EXISTS "idx_event_users_user_id" ON "event_users" ("user_id");
 
 CREATE INDEX IF NOT EXISTS "idx_event_users_event_id" ON "event_users" ("event_id");
@@ -35,6 +35,7 @@ CREATE INDEX IF NOT EXISTS "idx_event_team_members_team_id" ON "event_team_membe
 
 CREATE INDEX IF NOT EXISTS "idx_event_team_members_user_id" ON "event_team_members" ("user_id");
 
+-- 赛事实例按用户/队伍聚合查询
 CREATE INDEX "idx_event_user_challenge" ON "event_instances" (
     "event_id",
     "user_id"
@@ -45,29 +46,29 @@ CREATE INDEX "idx_event_team_challenge" ON "event_instances" (
     "team_id"
 );
 
--- 2. 调度器专用的极速轮询索引 (极其重要)
+-- 调度器专用的极速轮询索引（只查 pending 且到期的任务，极其重要）
 CREATE INDEX idx_scheduled_tasks_poll
 ON "scheduled_tasks" ("status", "execute_at")
 WHERE "status" = 'pending';
 
--- 3. 业务组关联索引
+-- 业务组关联索引（一键销毁整组任务）
 CREATE INDEX idx_scheduled_tasks_group ON "scheduled_tasks" ("group_id");
 
--- 3. 索引是关键，否则比赛日志一多，后台查不动
+-- 赛事日志查询索引（按赛事/动作过滤，否则比赛日志一多后台查不动）
 CREATE INDEX idx_event_logs_event_id ON "event_logs" ("event_id");
 CREATE INDEX idx_event_logs_action ON "event_logs" ("action");
 
-
--- 索引：后台管理页面通常按时间倒序查，或按类别/用户查
+-- 系统日志索引：后台管理页通常按时间倒序查，或按类别/用户查
 CREATE INDEX idx_sys_logs_created_at ON "logs" ("created_at" DESC);
 CREATE INDEX idx_sys_logs_category_action ON "logs" ("category", "action");
 CREATE INDEX idx_sys_logs_user_op ON "logs" ("user_id", "superadmin_id");
 -- JSONB 索引：支持搜索 details 里的具体内容
 CREATE INDEX idx_sys_logs_details ON "logs" USING GIN ("details");
 
+-- 赛事日志按来源 IP 查询（防撞库审计）
 CREATE INDEX idx_event_logs_ip_address ON "event_logs" ("ip_address");
 
-
+-- 社区帖子/评论/点赞查询索引
 CREATE INDEX idx_discussions_author ON "discussions"("author_id");
 CREATE INDEX idx_discussions_created ON "discussions"("created_at" DESC);
 CREATE INDEX idx_discussion_comments_discussion ON "discussion_comments"("discussion_id");

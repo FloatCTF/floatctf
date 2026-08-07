@@ -7,6 +7,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 为所有含 updated_at 列的表自动挂载 BEFORE UPDATE 触发器（trg_<表名>_updated_at）
 DO $$
 DECLARE
     t text;

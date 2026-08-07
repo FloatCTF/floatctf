@@ -25,9 +25,9 @@ ALTER TABLE "scheduled_tasks"
 ALTER TABLE "scheduled_tasks"
     ADD COLUMN IF NOT EXISTS "heartbeat_at" TIMESTAMPTZ;
 
-COMMENT ON COLUMN "scheduled_tasks"."attempt_count" IS 'Times this task execution has been attempted';
-COMMENT ON COLUMN "scheduled_tasks"."max_attempts" IS 'Max attempts before permanent failure';
-COMMENT ON COLUMN "scheduled_tasks"."timeout_secs" IS 'Optional per-task execution timeout in seconds';
-COMMENT ON COLUMN "scheduled_tasks"."last_error" IS 'Last failure message for retry diagnostics';
-COMMENT ON COLUMN "scheduled_tasks"."locked_at" IS 'Worker lock time while running';
-COMMENT ON COLUMN "scheduled_tasks"."heartbeat_at" IS 'Last worker heartbeat while running';
+COMMENT ON COLUMN "scheduled_tasks"."attempt_count" IS '已尝试执行次数';
+COMMENT ON COLUMN "scheduled_tasks"."max_attempts" IS '最大重试次数，超过则判定永久失败';
+COMMENT ON COLUMN "scheduled_tasks"."timeout_secs" IS '单次执行超时时间（秒）';
+COMMENT ON COLUMN "scheduled_tasks"."last_error" IS '最近一次失败信息（重试诊断用）';
+COMMENT ON COLUMN "scheduled_tasks"."locked_at" IS '工作进程执行锁时间';
+COMMENT ON COLUMN "scheduled_tasks"."heartbeat_at" IS '工作进程心跳时间（执行期间定期更新）';

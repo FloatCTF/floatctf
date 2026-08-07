@@ -1,3 +1,4 @@
+-- 初始化默认超级管理员账号（sysadmin，argon2id 哈希）
 INSERT INTO
     "super_admin" (
         "id",

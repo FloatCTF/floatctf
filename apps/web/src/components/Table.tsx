@@ -22,6 +22,7 @@ import {
 } from "@primer/react/experimental";
 import {
     type UseQueryResult,
+    keepPreviousData,
     useMutation,
     useQuery,
     useQueryClient,
@@ -141,6 +142,11 @@ export const GenericTable = <T extends object>({
     const { data, isLoading }: UseQueryResult<UniResponse<T[]>> = useQuery({
         queryKey: [subject, page, limit],
         queryFn: () => queryFn({ page, limit, filter }),
+        // 列表数据缓存 30s，重复进入/翻页不重复请求；
+        // 翻页时保留上一页数据占位，避免整表骨架屏闪烁。
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+        placeholderData: keepPreviousData,
     });
     // add actions to columns
     const safeGetRowId = (row: T) => {

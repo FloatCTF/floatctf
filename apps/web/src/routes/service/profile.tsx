@@ -21,6 +21,9 @@ function RouteComponent() {
     const { data, isLoading } = useQuery({
         queryKey: ["profile"],
         queryFn: () => serviceApi.users.getMe(),
+        // 低频数据：个人资料 5 分钟缓存（覆盖全局 30s）；
+        // 更新资料后下方 mutation 会 invalidate 强制刷新。
+        staleTime: 5 * 60_000,
         select: (res) => res.data,
     });
 

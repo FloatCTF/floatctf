@@ -16,6 +16,8 @@ function RouteComponent() {
     } = useQuery({
         queryKey: ["changelog"],
         queryFn: () => adminApi.system.changelog(),
+        // 低频数据：变更日志几乎不变，5 分钟缓存（覆盖全局 30s）
+        staleTime: 5 * 60_000,
         select: (data) => data.data,
     });
 

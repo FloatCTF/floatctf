@@ -28,5 +28,16 @@ export default defineConfig({
         watch: {
             ignored: ["**/routeTree.gen.ts"], // ← 加这 3 行
         },
+        // 启动时预编译常用页面，避免开发时首次点击标签页要等编译。
+        warmup: {
+            clientFiles: [
+                "./src/routes/service/index.tsx",
+                "./src/routes/service/top.tsx",
+                "./src/routes/service/challenges/index.tsx",
+                "./src/routes/admin/index.tsx",
+                "./src/routes/admin/dashboard.tsx",
+                "./src/routes/admin/challenges.tsx",
+            ],
+        },
     },
 });

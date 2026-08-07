@@ -17,7 +17,7 @@ use uuid::Uuid;
 use zip::write::FileOptions;
 
 use crate::{
-    api::{FilterMapping, AppError, prelude::*},
+    api::{AppError, FilterMapping, prelude::*},
     entity::{
         challenges, event_challenge_solves, event_challenges, event_team_members, event_teams,
         event_users, event_writeup, events,

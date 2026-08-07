@@ -7,9 +7,8 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::event::common::api::EventChallengesDto;
 use crate::{
     api::{
-        FilterMapping,
+        FilterMapping, apply_filters,
         dto::DeleteItemsRequest,
-        apply_filters,
         prelude::*,
         sea_orm_utils::{CrossFilterMapping, paginate_query, resolve_cross_filters},
     },

@@ -3,7 +3,6 @@
 pub mod dto;
 pub use dto::ChallengesDto;
 
-
 pub mod admin;
 pub mod player;
 pub mod solves;

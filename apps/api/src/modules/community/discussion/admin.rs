@@ -9,7 +9,7 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::community::discussion::DiscussionsDto;
 use crate::{
     api::{
-        FilterMapping, dto::DeleteItemsRequest, apply_filters, prelude::*,
+        FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
         sea_orm_utils::paginate_query,
     },
     entity::discussions,

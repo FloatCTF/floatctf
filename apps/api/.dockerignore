@@ -1,5 +1,0 @@
-target
-**/target
-.DS_Store
-.git
-.env

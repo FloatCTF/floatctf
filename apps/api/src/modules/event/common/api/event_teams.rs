@@ -6,7 +6,7 @@ use crate::modules::event::common::api::EventTeamMembersDto;
 use crate::modules::event::common::api::EventTeamsDto;
 use crate::{
     api::{
-        FilterMapping, dto::DeleteItemsRequest, apply_filters, prelude::*,
+        FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
         sea_orm_utils::paginate_query,
     },
     entity::{

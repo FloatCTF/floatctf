@@ -3,7 +3,6 @@
 pub mod dto;
 pub use dto::ChallengeWriteupDto;
 
-
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
     entity::{challenge_writeup, challenges, users},

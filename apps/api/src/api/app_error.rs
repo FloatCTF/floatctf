@@ -2,8 +2,8 @@
 //!
 //! `AppError` is the single HTTP error type for all handlers.
 
-use actix_web::{HttpResponse, ResponseError};
 use actix_web::http::StatusCode;
+use actix_web::{HttpResponse, ResponseError};
 use sea_orm::DbErr;
 use thiserror::Error;
 

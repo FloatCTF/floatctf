@@ -4,9 +4,8 @@ use sea_orm::Condition;
 
 use crate::{
     api::{
-        FilterMapping,
+        FilterMapping, apply_filters,
         dto::DeleteItemsRequest,
-        apply_filters,
         prelude::*,
         sea_orm_utils::{CrossFilterMapping, paginate_query, resolve_cross_filters},
     },

@@ -1,6 +1,5 @@
 //! HTTP handlers for common event operations.
 
-
 pub mod dto;
 pub mod event_announcement_dto;
 pub mod event_challenge_dto;

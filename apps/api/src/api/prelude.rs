@@ -1,6 +1,6 @@
 pub use crate::{
     api::{
-        QueryParams, AppError, UniResponse, UniResult,
+        AppError, QueryParams, UniResponse, UniResult,
         extractor::ReqCtx,
         extractor::auth::{SuperAdminJwtGuard, UserJwtGuard},
         util::{none_if_empty, send_email},

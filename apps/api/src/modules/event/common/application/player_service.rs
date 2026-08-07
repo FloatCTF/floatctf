@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    api::{FilterMapping, AppError, prelude::*},
+    api::{AppError, FilterMapping, prelude::*},
     entity::{
         challenges, event_announcements, event_challenge_solves, event_challenges,
         event_team_members, event_teams, event_users, events, instances,
@@ -454,9 +454,7 @@ pub async fn leave_team(
         .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
 
     if team_member.role == EventTeamMemberRole::Captain {
-        return Err(AppError::BadRequest(
-            "Captain can't leave team".to_string(),
-        ));
+        return Err(AppError::BadRequest("Captain can't leave team".to_string()));
     }
 
     team_member.delete(db).await?;

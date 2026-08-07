@@ -3,7 +3,6 @@
 pub mod dto;
 pub use dto::UsersDto;
 
-
 use std::str::FromStr;
 
 use crate::api::dto::map_dto_vec;

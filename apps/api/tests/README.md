@@ -1,4 +1,4 @@
-# floatctf-api 测试说明
+# FloatCTF API 测试说明
 
 ## 现状分层
 
@@ -9,7 +9,7 @@
 | **鉴权契约** | `cargo test --test http_auth_contract` | 运行中的 API |
 | **业务冒烟** | `cargo test --test http_flow` | 运行中的 API + 可选账号 |
 
-一键：`scripts/run_api_tests.sh`
+运行 API 测试：`cargo test -p floatctf`
 
 ## HTTP 测试如何跑
 

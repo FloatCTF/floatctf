@@ -101,10 +101,12 @@ The platform consists of 4 core services:
 - Docker and Docker Compose
 - ~10 GB free disk space
 
-## Quick Install
+## Environment Setup
+
+Use `mise` for repository-level development commands. After installing the pinned Rust, Node.js, and pnpm versions, run:
 
 ```bash
-S=/tmp/ifctf; curl -sL https://github.com/FloatCTF/floatctf/raw/refs/heads/main/install.sh >$S && vim $S && bash $S; rm $S
+mise run install
 ```
 
 ## Getting Started
@@ -118,66 +120,27 @@ cd floatctf
 
 ### 2. Configure Environment Variables
 
-Edit the `.env` configuration file:
+Copy `infra/env/dev.env.example` to an untracked local environment file and adjust it for your machine. Never commit real credentials.
 
-```env
-API_ELF_URL="https://github.com/FloatCTF/floatctf/releases/latest/download/floatctf-linux-amd64-musl"
-SQL_DIST_URL="https://github.com/FloatCTF/floatctf/releases/latest/download/sql.tar.gz"
-HTML_DIST_URL="https://github.com/FloatCTF/floatctf-web/releases/latest/download/download/html.tar.gz"
+Use the variables documented in `infra/env/dev.env.example` for the local environment. Generate local secrets and use addresses appropriate for your machine; do not copy production credentials.
 
-INSTALLER_DIR="./app"
-
-# API CONF
-API_SERVER_IP="floatctf-api"
-API_SERVER_PORT=9090
-API_USER="floatctf_api"
-NODE_IP="127.0.0.1"
-
-# nginx
-NGINX_SERVER_HTTP_PORT=80
-NGINX_SERVER_HTTPS_PORT=443
-NGINX_USER="nginx"
-
-# database
-PG_HOST="floatctf-db"
-PG_PORT=5432
-PG_USER=postgres
-PG_PASSWORD=postgres
-PG_DB=floatctf_db
-
-# rustfs
-RUSTFS_ACCESS_KEY=rustfsadmin
-RUSTFS_SECRET_ACCESS_KEY=rustfsadmin
-RUSTFS_ADDRESS="floatctf-rustfs:9000"
-
-DOCKER_HOST_PATH="/var/run/docker.sock"
-```
-
-### 3. Initialize the Platform
+### 3. Start the Development Environment
 
 ```bash
-chmod +x init.sh
-./init.sh
+mise run infra:up
+mise run dev:api
+mise run dev:web
 ```
 
-The initialization script will:
-
-- Create required directories
-- Generate self-signed SSL certificates
-- Download the API binary, SQL schema, and frontend files
-- Configure environment variable files
-- Set up Nginx configuration
-
-### 4. Start Services
+You can also run `mise run dev` to start the API and Web together. Database migrations are explicit:
 
 ```bash
-docker compose --env-file ./.env --env-file ./app/.env up -d
+mise run db:migrate
 ```
 
-### 5. Access the Platform
+### 4. Access the Platform
 
-- Web UI: `https://localhost:9443`
-- API: `https://localhost:9443/api/`
+Use the Web port configured for your local development environment.
 
 ## Screenshots
 
@@ -288,22 +251,12 @@ floatctf/
 
 ## Common Commands
 
+Manage infrastructure through the repository's mise tasks:
+
 ```bash
-# View logs
-docker compose --env-file ./.env --env-file ./app/.env logs -f
-
-# View specific service logs
-docker compose --env-file ./.env --env-file ./app/.env logs -f floatctf-api
-docker compose --env-file ./.env --env-file ./app/.env logs -f floatctf-nginx
-
-# Restart services
-docker compose --env-file ./.env --env-file ./app/.env restart
-
-# Stop services
-docker compose --env-file ./.env --env-file ./app/.env down
-
-# Rebuild and restart
-docker compose --env-file ./.env --env-file ./app/.env up -d --force-recreate
+mise run infra:up
+mise run infra:logs
+mise run infra:down
 ```
 
 ## Troubleshooting

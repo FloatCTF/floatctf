@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="./float.png" alt="FloatCTF" width="128" />
+  <img src="./docs/images/float.png" alt="FloatCTF" width="128" />
   <br>
   FloatCTF
   <br>
@@ -18,8 +18,6 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 [![TanStack Router](https://img.shields.io/badge/TanStack_Router-FF4154?logo=react-router&logoColor=white)](https://tanstack.com/router)
 [![TanStack Query](https://img.shields.io/badge/TanStack_Query-FF4154?logo=react-query&logoColor=white)](https://tanstack.com/query)
 
-中文 | [English](./README.en-US.md)
-
 ## Star History
 
 <a href="https://www.star-history.com/?repos=FloatCTF%2Ffloatctf&type=date&legend=top-left">
@@ -36,13 +34,12 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [项目仓库](#项目仓库)
 - [架构说明](#架构说明)
 - [环境要求](#环境要求)
-- [脚本快速安装](#脚本快速安装)
+- [环境初始化](#环境初始化)
 - [快速开始](#快速开始)
   - [1. 克隆项目](#1-克隆项目)
-  - [2. 配置环境变量](#2-配置环境变量)
-  - [3. 初始化平台](#3-初始化平台)
-  - [4. 启动服务](#4-启动服务)
-  - [5. 访问平台](#5-访问平台)
+  - [2. 配置服务（TOML）](#2-配置服务toml)
+  - [3. 启动开发环境](#3-启动开发环境)
+  - [4. 访问平台](#4-访问平台)
 - [功能展示](#功能展示)
   - [用户端](#用户端)
   - [管理端](#管理端)
@@ -55,6 +52,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [目录结构](#目录结构)
 - [服务说明](#服务说明)
 - [常用命令](#常用命令)
+- [常用开发命令](#常用开发命令)
 - [故障排查](#故障排查)
 - [许可证](#许可证)
 
@@ -64,13 +62,16 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 
 ## 项目仓库
 
-FloatCTF 采用多仓库架构，各组件独立维护：
+FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一维护：
 
 | 仓库                                                                   | 说明                                      |
 | ---------------------------------------------------------------------- | ----------------------------------------- |
-| **[floatctf](https://github.com/FloatCTF/floatctf)**                   | 主仓库 / 门户页 / Docker 部署（当前仓库） |
-| [floatctf-api](https://github.com/FloatCTF/floatctf-api)               | 后端 API（Rust / Actix Web）              |
-| [floatctf-web](https://github.com/FloatCTF/floatctf-web)               | 前端（React）                             |
+| **[floatctf](https://github.com/FloatCTF/floatctf)**                   | FloatCTF Monorepo（当前仓库）             |
+| `apps/api`                                                             | 后端 API（Rust / Actix Web）              |
+| `apps/web`                                                             | 前端（React）                             |
+| `crates/fcmc`                                                          | 共享容器管理与出题工具                    |
+| `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
+| `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
 | [floatctf-develop](https://github.com/FloatCTF/floatctf-develop)       | 开发环境（DevContainer）                  |
 | [floatctf-installer](https://github.com/FloatCTF/floatctf-installer)   | 主机安装脚本                              |
 | [floatctf-challenges](https://github.com/FloatCTF/floatctf-challenges) | 题目仓库                                  |
@@ -94,17 +95,19 @@ FloatCTF 采用多仓库架构，各组件独立维护：
 | `floatctf-db`     | PostgreSQL 17     | 数据库                 |
 | `floatctf-rustfs` | rustfs/rustfs     | S3 兼容对象存储        |
 | `floatctf-nginx`  | Nginx 1.26        | 反向代理和静态文件服务 |
-| `floatctf-api`    | Alpine + floatctf | 后端 API               |
+| `floatctf-api`    | Alpine + floatctf | 后端 API（开发模式由 `mise run dev:api` 直接运行 Rust 进程，不启动容器） |
 
 ## 环境要求
 
 - Docker 和 Docker Compose
 - 约 10GB 可用磁盘空间
 
-## 脚本快速安装
+## 环境初始化
+
+仓库级开发命令由 `mise` 管理。先安装仓库固定版本的 Rust、Node 和 pnpm，然后执行：
 
 ```bash
-S=/tmp/ifctf; curl -sL https://github.com/FloatCTF/floatctf/raw/refs/heads/main/install.sh >$S && vim $S && bash $S; rm $S
+mise run install
 ```
 
 ## 快速开始
@@ -116,68 +119,34 @@ git clone https://github.com/FloatCTF/floatctf.git
 cd floatctf
 ```
 
-### 2. 配置环境变量
+### 2. 配置服务（TOML）
 
-编辑 `.env` 配置文件：
+API 配置由 TOML 文件提供：`mise` 通过 `FLOATCTF_CONFIG` 自动指向 `apps/api/config/development.toml`。按需修改其中的 `server`、`database`、`rustfs`、`auth` 等段落；敏感值（数据库密码、RustFS 密钥、JWT secret）不得提交到仓库。首次使用请确保该文件存在，缺失时按本机环境创建。
 
-```env
-API_ELF_URL="https://github.com/FloatCTF/floatctf/releases/latest/download/floatctf-linux-amd64-musl"
-SQL_DIST_URL="https://github.com/FloatCTF/floatctf/releases/latest/download/sql.tar.gz"
-HTML_DIST_URL="https://github.com/FloatCTF/floatctf-web/releases/latest/download/html.tar.gz"
+PostgreSQL、RustFS、Nginx 等基础设施的端口与挂载配置见 `infra/compose/compose.dev.yml`。
 
-INSTALLER_DIR="./app"
-
-# API CONF
-API_SERVER_IP="floatctf-api"
-API_SERVER_PORT=9090
-API_USER="floatctf_api"
-NODE_IP="127.0.0.1"
-
-# nginx
-NGINX_SERVER_HTTP_PORT=80
-NGINX_SERVER_HTTPS_PORT=443
-NGINX_USER="nginx"
-
-# database
-PG_HOST="floatctf-db"
-PG_PORT=5432
-PG_USER=postgres
-PG_PASSWORD=postgres
-PG_DB=floatctf_db
-
-# rustfs
-RUSTFS_ACCESS_KEY=rustfsadmin
-RUSTFS_SECRET_ACCESS_KEY=rustfsadmin
-RUSTFS_ADDRESS="floatctf-rustfs:9000"
-
-DOCKER_HOST_PATH="/var/run/docker.sock"
-```
-
-### 3. 初始化平台
+### 3. 启动开发环境
 
 ```bash
-chmod +x init.sh
-./init.sh
+mise run infra:up
+mise run dev:api
+mise run dev:web
 ```
 
-初始化脚本会执行以下操作：
-
-- 创建所需目录
-- 生成 SSL 自签名证书
-- 下载 API 程序、SQL 架构和前端文件
-- 配置环境变量文件
-- 设置 Nginx 配置
-
-### 4. 启动服务
+也可以使用 `mise run dev` 同时启动 API 和 Web。数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
 
 ```bash
-docker compose --env-file ./.env --env-file ./app/.env up -d
+mise run db:migration:new <迁移名称>  # 新建迁移 SQL 模板
+mise run db:migration:merge           # 重新生成合并脚本 merged.sql
+# 将新迁移应用到开发库（迁移文件为幂等 SQL）
+docker compose -f infra/compose/compose.dev.yml exec floatctf-dev-db \
+  psql -U postgres -d floatctf_db -v ON_ERROR_STOP=1 \
+  -f /dev/stdin < apps/api/src/sql/migrations/<新迁移>.sql
 ```
 
-### 5. 访问平台
+### 4. 访问平台
 
-- Web 界面：`https://localhost:9443`
-- API：`https://localhost:9443/api/`
+通过 Nginx 入口访问 http://localhost:7780 （`/` 转发到 Web，`/api/` 转发到 API）。Web 开发服务器也可直接访问 http://localhost:3000 。
 
 ## 功能展示
 
@@ -252,67 +221,76 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 
 ## 目录结构
 
-```
+```text
 floatctf/
-├── docker-compose.yml    # 服务编排配置
-├── init.sh              # 初始化脚本
-├── install.sh           # 一键安装脚本
-├── .env                 # 环境变量配置
-├── README.md
-├── LICENSE
-├── .gitignore
-└── app/
-    ├── .env             # 运行时环境变量
-    ├── bin/             # floatctf API 可执行文件
-    ├── html/            # 前端静态文件
-    ├── data/            # RustFS 数据卷
-    ├── keys/            # SSL 证书
-    ├── logs/            # 应用日志
-    │   ├── api/
-    │   ├── nginx/
-    │   └── rustfs/
-    ├── nginx/conf/      # Nginx 配置
-    ├── tmp/             # 临时文件
-    │   └── sql/         # 数据库架构
-    └── 1.py             # S3 存储桶初始化脚本
+├── apps/
+│   ├── api/             # Rust API（config/ 为 TOML 配置，src/sql/migrations/ 为 SQL 迁移）
+│   └── web/             # React 前端
+├── crates/
+│   ├── fcmc/            # 共享 Rust crate / CLI
+│   ├── awd-flagserver/  # AWD FlagServer 独立服务
+│   └── awd-judgeserver/ # AWD JudgeServer 独立服务
+├── infra/               # Compose 与 Nginx 配置
+├── scripts/             # 仓库级开发与检查脚本
+├── docs/                # 项目文档
+├── app/                 # 运行时数据（日志、上传、题目文件，git 忽略）
+├── Cargo.toml           # Rust workspace
+├── Cargo.lock           # 唯一 Rust lockfile
+├── package.json         # 根 pnpm 入口
+├── pnpm-workspace.yaml  # pnpm workspace
+├── pnpm-lock.yaml       # 唯一前端 lockfile
+└── mise.toml            # 统一任务入口
 ```
 
 ## 服务说明
 
-| 服务              | 镜像              | 端口         | 说明                                                                           |
-| ----------------- | ----------------- | ------------ | ------------------------------------------------------------------------------ |
-| `floatctf-db`     | PostgreSQL 17     | 5432（内部） | 数据库，持久化卷 `pgdata`                                                      |
-| `floatctf-rustfs` | rustfs/rustfs     | 9000（内部） | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups） |
-| `floatctf-nginx`  | Nginx 1.26        | 9980 / 9443  | 反向代理和静态文件服务                                                         |
-| `floatctf-api`    | Alpine + floatctf | —            | 后端 API，连接 PostgreSQL 和 RustFS                                            |
+| 服务              | 镜像              | 端口         | 说明                                                                             |
+| ----------------- | ----------------- | ------------ | -------------------------------------------------------------------------------- |
+| `floatctf-db`     | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
+| `floatctf-rustfs` | rustfs/rustfs     | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
+| `floatctf-nginx`  | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
+| `floatctf-api`    | 本地 cargo 进程   | 9090         | 后端 API（开发模式），连接 PostgreSQL 和 RustFS                                  |
 
 ## 常用命令
 
+基础设施生命周期通过 mise 任务管理：
+
 ```bash
-# 查看日志
-docker compose --env-file ./.env --env-file ./app/.env logs -f
+mise run infra:up
+mise run infra:logs
+mise run infra:down
+```
 
-# 查看指定服务日志
-docker compose --env-file ./.env --env-file ./app/.env logs -f floatctf-api
-docker compose --env-file ./.env --env-file ./app/.env logs -f floatctf-nginx
+数据库迁移与模型生成：
 
-# 重启服务
-docker compose --env-file ./.env --env-file ./app/.env restart
-
-# 停止服务
-docker compose --env-file ./.env --env-file ./app/.env down
-
-# 重建并重启
-docker compose --env-file ./.env --env-file ./app/.env up -d --force-recreate
+```bash
+mise run db:migration:new <名称>  # 新建 SQL 迁移
+mise run db:migration:merge       # 重新生成 merged.sql
+mise run db:gen                   # 从数据库重新生成 SeaORM 实体与 Web 类型
 ```
 
 ## 故障排查
 
-| 问题               | 排查方向                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| API 无法连接数据库 | 检查 `.env` 中 `DATABASE_URL` 配置；确认 PostgreSQL 运行中：`docker compose ps floatctf-db` |
-| RustFS 连接问题    | 检查 `RUSTFS_ADDRESS` 是否与容器主机名匹配；验证 `RUSTFS_ENDPOINT_URL`                      |
-| SSL 证书错误       | 默认为自签名证书；将 `app/keys/fullchain.pem` 和 `app/keys/privkey.pem` 替换为正式证书      |
+| 问题               | 排查方向                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| API 无法连接数据库 | 检查 `apps/api/config/development.toml` 中 `database.url`；确认 PostgreSQL 运行中：`docker compose -f infra/compose/compose.dev.yml ps`             |
+| RustFS 连接问题    | 检查 TOML 中 `rustfs.endpoint_url` 是否与本机映射端口一致；确认容器运行中：`docker compose -f infra/compose/compose.dev.yml ps floatctf-dev-rustfs` |
+| Nginx 返回 502     | 确认 API（9090）与 Web（3000）开发进程已启动；Nginx 通过 `host.docker.internal` 访问宿主机端口                                                   |
+| SSL 证书错误       | 默认为自签名证书；将 `app/keys/fullchain.pem` 和 `app/keys/privkey.pem` 替换为正式证书                                                            |
+
+## 常用开发命令
+
+```bash
+mise run install       # 安装依赖
+mise run dev:web       # 启动前端
+mise run fmt           # Rust 格式检查
+mise run lint          # Rust 与 Web 静态检查
+mise run test          # Rust 与 Web 测试
+mise run check         # 完整检查
+mise run build         # 构建 Rust 与 Web
+```
+
+数据库迁移是显式操作：新建见 `mise run db:migration:new`，合并见 `mise run db:migration:merge`，并将生成的 SQL 手动应用到数据库（见上文「3. 启动开发环境」）。
 
 ## 许可证
 

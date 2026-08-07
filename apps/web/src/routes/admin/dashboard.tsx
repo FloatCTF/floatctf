@@ -3,11 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { adminApi } from "@/api";
+import { systemInformationQueryOptions } from "@/api/queries";
 import { AdminRouteGuard } from "@/routes/admin/route";
 
 export const Route = createFileRoute("/admin/dashboard")({
 	component: RouteComponent,
-	loader: AdminRouteGuard,
+	loader: async ({ context }) => {
+		await AdminRouteGuard();
+		await context.queryClient.ensureQueryData(systemInformationQueryOptions());
+	},
 });
 export type SystemInformation = {
 	name?: string;
@@ -64,8 +68,7 @@ function RouteComponent() {
 		isLoading,
 		isError,
 	} = useQuery({
-		queryKey: ["system_information"],
-		queryFn: adminApi.system.monitor,
+		...systemInformationQueryOptions(),
 		refetchInterval: 1000 * 60,
 	});
 	const data = d?.data;

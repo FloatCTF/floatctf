@@ -15,3 +15,16 @@ code {
 	font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
 		monospace;
 }
+
+/* ── Navigation progress bar (GitHub-style top bar) ─────────────────────── */
+.floatctf-nav-progress {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: var(--accent-fg, #0969da);
+	transform-origin: left center;
+	pointer-events: none;
+	z-index: 1000;
+}

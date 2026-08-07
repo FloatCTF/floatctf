@@ -1,19 +1,32 @@
-use crate::api::dto::map_dto_vec;
+use std::collections::HashMap;
 
 use super::dto::SettingsDto;
 use crate::{
     api::{dto::DeleteItemsRequest, prelude::*},
     entity::{sea_orm_active_enums::SettingValueType, settings},
+    infrastructure::settings::{resolve_setting_value, resolve_value_with_map},
 };
 
 /// GET /api/admin/settings
 #[get("")]
 pub async fn get_settings(_user: SuperAdminJwtGuard, ctx: ReqCtx) -> UniResult<Vec<SettingsDto>> {
-    let settings = settings::Entity::find()
+    let db = ctx.db.get_ref();
+    let rows = settings::Entity::find()
         .order_by_desc(settings::Column::UpdatedAt)
-        .all(ctx.db.get_ref())
+        .all(db)
         .await?;
-    UniResponse::ok(Some(map_dto_vec(settings))).into()
+    let map: HashMap<String, String> = rows
+        .iter()
+        .map(|s| (s.key.clone(), s.value.clone()))
+        .collect();
+    let dtos = rows
+        .into_iter()
+        .map(|s| {
+            let resolved = resolve_value_with_map(&s.value, &map);
+            SettingsDto::from_model(s, resolved)
+        })
+        .collect();
+    UniResponse::ok(Some(dtos)).into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,6 +57,7 @@ pub async fn create_setting(
         ..Default::default()
     };
     let setting = setting.insert(ctx.db.get_ref()).await?;
+    let resolved_value = resolve_setting_value(ctx.db.get_ref(), &setting.value).await;
 
     ctx.log
         .add_log(
@@ -58,7 +72,7 @@ pub async fn create_setting(
         )
         .await;
 
-    UniResponse::ok(Some(setting.into())).into()
+    UniResponse::ok(Some(SettingsDto::from_model(setting, resolved_value))).into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,6 +118,7 @@ pub async fn patch_setting(
         m_setting.protected = Set(p);
     });
     let setting = m_setting.update(ctx.db.get_ref()).await?;
+    let resolved_value = resolve_setting_value(ctx.db.get_ref(), &setting.value).await;
 
     ctx.log
         .add_log(
@@ -118,7 +133,7 @@ pub async fn patch_setting(
         )
         .await;
 
-    UniResponse::ok(Some(setting.into())).into()
+    UniResponse::ok(Some(SettingsDto::from_model(setting, resolved_value))).into()
 }
 
 /// DELETE /api/admin/settings

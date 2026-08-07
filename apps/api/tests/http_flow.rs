@@ -106,6 +106,80 @@ async fn admin_login_and_list_endpoints() {
 }
 
 #[tokio::test]
+async fn settings_return_raw_and_resolved_values() {
+    // 验证 WORK_DIR/{{VAR}} 引用：value 保留原始模板，resolved_value 为解析后的值
+    if !api_reachable().await {
+        return;
+    }
+    let (Some(user), Some(pass)) = (env("FLOATCTF_TEST_ADMIN"), env("FLOATCTF_TEST_ADMIN_PASS"))
+    else {
+        eprintln!("skip flow: set FLOATCTF_TEST_ADMIN + FLOATCTF_TEST_ADMIN_PASS for admin checks");
+        return;
+    };
+    let token = login_admin(&user, &pass)
+        .await
+        .expect("admin login should return JWT");
+
+    let route = Route {
+        method: Method::Get,
+        path: "/api/admin/settings",
+        auth: Auth::SuperAdminRequired,
+        json_body: false,
+    };
+    let resp = call(&route, Some(&token)).await;
+    let (status, code, body) = json_code(resp).await;
+    assert_eq!(status, 200, "http status, body={body}");
+    assert_eq!(code, Some(0), "business code, body={body}");
+
+    let items = body.get("data").and_then(|d| d.as_array());
+    let items = items.expect("settings list should be an array, body={body}");
+    assert!(!items.is_empty(), "settings list should not be empty");
+
+    // 每个条目必须有 resolved_value 字段
+    for s in items {
+        let key = s.get("key").and_then(|k| k.as_str()).unwrap_or("");
+        let raw = s.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let resolved = s.get("resolved_value").and_then(|v| v.as_str());
+        assert!(
+            resolved.is_some(),
+            "{key} missing resolved_value, body={body}"
+        );
+        let resolved = resolved.unwrap();
+        // 含 {{}} 引用的条目：value 保留模板，resolved_value 必须已解析
+        if raw.contains("{{") {
+            assert!(
+                !resolved.contains("{{{{"),
+                "{key} resolved_value still contains template: {resolved}, body={body}"
+            );
+        }
+    }
+
+    // 引用语义抽查：CHALLENGES_DIR = {{WORK_DIR}}/challenges 时
+    // resolved_value 应等于 WORK_DIR 的值 + /challenges（两端都无模板残留）
+    let work_dir = items
+        .iter()
+        .find(|s| s.get("key").and_then(|k| k.as_str()) == Some("WORK_DIR"))
+        .and_then(|s| s.get("resolved_value").and_then(|v| v.as_str()));
+    let challenges = items
+        .iter()
+        .find(|s| s.get("key").and_then(|k| k.as_str()) == Some("CHALLENGES_DIR"));
+    if let (Some(wd), Some(c)) = (work_dir, challenges) {
+        let raw = c.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let resolved = c
+            .get("resolved_value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if raw.contains("{{WORK_DIR}}") {
+            assert_eq!(
+                resolved,
+                format!("{wd}/challenges"),
+                "CHALLENGES_DIR resolution, body={body}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn user_token_cannot_call_admin() {
     if !api_reachable().await {
         return;

@@ -30,7 +30,7 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         scope("system")
             .service(operations::system::get_sys_info)
-            .service(operations::system::get_changelog),
+            .service(operations::system::get_version),
     );
 
     cfg.service(scope("/database").service(operations::database::exec_sql));

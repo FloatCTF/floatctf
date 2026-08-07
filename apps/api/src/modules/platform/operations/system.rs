@@ -226,14 +226,8 @@ pub async fn get_sys_info(_: SuperAdminJwtGuard) -> UniResult<SystemInformation>
     .into()
 }
 
-#[get("/changelog")]
-pub async fn get_changelog(_: SuperAdminJwtGuard, req_ctx: ReqCtx) -> UniResult<String> {
-    let config = req_ctx.config.clone();
-    let changelog = std::fs::read_to_string(&config.paths.changelog_path).unwrap_or_default();
-    let changelog = format!(
-        "floatctf-api: {}\n{}",
-        env!("CARGO_PKG_VERSION"),
-        &changelog
-    );
-    UniResponse::ok(changelog.into()).into()
+/// 返回 API 自身的版本号（CARGO_PKG_VERSION），供管理端 Version 页展示。
+#[get("/version")]
+pub async fn get_version(_: SuperAdminJwtGuard) -> UniResult<String> {
+    UniResponse::ok(Some(env!("CARGO_PKG_VERSION").to_string())).into()
 }

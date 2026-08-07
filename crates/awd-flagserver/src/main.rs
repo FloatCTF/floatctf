@@ -16,7 +16,7 @@
 //! - `REQUEST_TIMEOUT_SECS` — platform request timeout (default 10)
 //! - `RETRY_COUNT` — retry count on platform failure (default 3)
 
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, middleware, web};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;

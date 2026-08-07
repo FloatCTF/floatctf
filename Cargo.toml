@@ -3,9 +3,15 @@ resolver = "3"
 members = [
     "apps/api",
     "crates/fcmc",
+    "crates/awd-flagserver",
+    "crates/awd-judgeserver",
 ]
 
 [workspace.package]
 edition = "2024"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/FloatCTF/floatctf"
+
+[profile.dev]
+opt-level = 0
+debug = true

@@ -55,12 +55,6 @@ struct TaskResult {
     stderr: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CallbackResponse {
-    code: i32,
-    message: String,
-}
-
 // ── App State ──
 
 #[derive(Clone)]

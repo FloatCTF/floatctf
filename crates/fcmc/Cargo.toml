@@ -1,10 +1,10 @@
 [package]
 name = "fcmc"
 version = "0.9.4"
-edition = "2024"
+edition.workspace = true
 description = "A CLI tool to check whether CTF challenge meta.toml configs are valid, and optionally test Docker setup"
-license = "MIT"                                                                                                         # 或 "Apache-2.0" 等
-repository = "https://github.com/FloatCTF/fcmc"                                                                         # 可选但推荐
+license = "MIT"
+repository = "https://github.com/FloatCTF/fcmc"
 readme = "README.md"                                                                                                    # 如果有 README 文件，推荐加上
 
 [dependencies]

@@ -58,8 +58,8 @@ pub async fn run() -> std::io::Result<()> {
         unsafe { std::env::set_var("TZ", &config.logging.timezone) };
     }
 
-    // Initialize logging: logs always live under WORK_DIR/logs.
-    let log_dir = work_dir_abs.join("logs");
+    // Initialize logging: logs always live under WORK_DIR/logs/<service>.
+    let log_dir = work_dir_abs.join("logs").join("api");
     let log_dir = log_dir.to_string_lossy().into_owned();
     init_logging(&log_dir, &config.logging.filter);
 
@@ -228,7 +228,10 @@ fn init_logging(log_dir: &str, filter: &str) {
     use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
     let file_appender = rolling::daily(log_dir, "log");
-    let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+    // 泄漏 guard：non_blocking 的 worker 线程必须存活到进程结束。
+    // 若随函数返回 drop，worker 被关停，文件日志会全部丢失（历史 bug：日志文件 0 字节）。
+    std::mem::forget(guard);
 
     tracing_subscriber::fmt()
         .with_env_filter(

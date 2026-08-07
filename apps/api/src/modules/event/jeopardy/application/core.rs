@@ -53,11 +53,8 @@ pub async fn jeopardy_launch(
 
     let (team_id, max_instances, ref_label) = match subject {
         SolveSubject::User => {
-            let max = ctx
-                .config
-                .as_ref()
-                .and_then(|c| c.challenge.instance_max_per_user.parse::<u64>().ok())
-                .unwrap_or(2);
+            // 每用户可同时启动的实例数：静态默认 2（原 [challenge].instance_max_per_user）
+            let max: u64 = 2;
             (None, max, "JeopardySingle")
         }
         SolveSubject::Team => {

@@ -24,11 +24,8 @@ pub struct AppConfig {
     pub features: FeatureFlags,
     pub realtime: RealtimeConfig,
     pub logging: LoggingConfig,
-    pub challenge: ChallengeConfig,
-    /// IANA timezone (e.g. "Asia/Shanghai"); empty = keep system local time.
-    /// Applied to the process `TZ` env var before the logger initializes,
-    /// so `ChronoLocal` log timestamps honor it.
-    pub timezone: String,
+    /// 主站地址前缀（[application] main_url），作为 MAIN_URL 设置的 seed 默认值
+    pub main_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +33,6 @@ pub struct ServerConfig {
     pub listen_ip: String,
     pub listen_port: u16,
     pub work_dir: String,
-    pub log_dir: String,
 }
 
 #[derive(Debug, Clone)]
@@ -72,8 +68,6 @@ pub struct CorsConfig {
 #[derive(Debug, Clone)]
 pub struct PathConfig {
     pub work_dir: String,
-    pub log_dir: String,
-    pub changelog_path: String,
 }
 
 /// Static AWD process config (not per-event secrets).
@@ -101,18 +95,10 @@ pub struct RealtimeConfig {
 #[derive(Debug, Clone)]
 pub struct LoggingConfig {
     pub filter: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ChallengeConfig {
-    pub event_score_decay: String,
-    pub event_score_min_percent: String,
-    pub instance_max_per_user: String,
-    pub instance_destroy_delay: String,
-    pub http_prefix: String,
-    pub node_ip: String,
-    pub challenges_dir: String,
-    pub main_url: String,
+    /// IANA timezone (e.g. "Asia/Shanghai"); empty = keep system local time.
+    /// Applied to the process `TZ` env var before the logger initializes,
+    /// so `ChronoLocal` log timestamps honor it.
+    pub timezone: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,8 +114,6 @@ struct TomlConfig {
     #[serde(default)]
     cors: CorsToml,
     #[serde(default)]
-    paths: PathsToml,
-    #[serde(default)]
     features: FeaturesToml,
     #[serde(default)]
     awd: AwdToml,
@@ -137,26 +121,18 @@ struct TomlConfig {
     realtime: RealtimeToml,
     #[serde(default)]
     logging: LoggingToml,
-    #[serde(default)]
-    challenge: ChallengeToml,
 }
 
 #[derive(Debug, Deserialize)]
 struct ApplicationToml {
-    #[serde(default = "default_changelog_path")]
-    changelog_path: String,
     #[serde(default = "default_main_url")]
     main_url: String,
-    #[serde(default = "default_timezone")]
-    timezone: String,
 }
 
 impl Default for ApplicationToml {
     fn default() -> Self {
         Self {
-            changelog_path: default_changelog_path(),
             main_url: default_main_url(),
-            timezone: default_timezone(),
         }
     }
 }
@@ -169,8 +145,6 @@ struct ServerToml {
     listen_port: u16,
     #[serde(default = "default_work_dir")]
     work_dir: String,
-    #[serde(default = "default_log_dir")]
-    log_dir: String,
 }
 
 impl Default for ServerToml {
@@ -179,7 +153,6 @@ impl Default for ServerToml {
             listen_ip: default_listen_ip(),
             listen_port: default_listen_port(),
             work_dir: default_work_dir(),
-            log_dir: default_log_dir(),
         }
     }
 }
@@ -218,43 +191,6 @@ impl Default for CorsToml {
     fn default() -> Self {
         Self {
             allowed_origins: default_cors_origins(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct PathsToml {
-    #[serde(default)]
-    changelog_path: Option<String>,
-    #[serde(default)]
-    challenges_dir: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChallengeToml {
-    #[serde(default = "default_score_decay")]
-    event_score_decay: i64,
-    #[serde(default = "default_min_percent")]
-    event_score_min_percent: f64,
-    #[serde(default = "default_instance_max")]
-    instance_max_per_user: i64,
-    #[serde(default = "default_destroy_delay")]
-    instance_destroy_delay: i64,
-    #[serde(default = "default_http_prefix")]
-    http_prefix: String,
-    #[serde(default = "default_node_ip")]
-    node_ip: String,
-}
-
-impl Default for ChallengeToml {
-    fn default() -> Self {
-        Self {
-            event_score_decay: default_score_decay(),
-            event_score_min_percent: default_min_percent(),
-            instance_max_per_user: default_instance_max(),
-            instance_destroy_delay: default_destroy_delay(),
-            http_prefix: default_http_prefix(),
-            node_ip: default_node_ip(),
         }
     }
 }
@@ -302,12 +238,15 @@ struct RealtimeToml {
 struct LoggingToml {
     #[serde(default = "default_log_filter")]
     filter: String,
+    #[serde(default = "default_timezone")]
+    timezone: String,
 }
 
 impl Default for LoggingToml {
     fn default() -> Self {
         Self {
             filter: default_log_filter(),
+            timezone: default_timezone(),
         }
     }
 }
@@ -332,18 +271,11 @@ impl AppConfig {
             required_value("rustfs.secret_access_key", file.rustfs.secret_access_key)?;
         let region = required_value("rustfs.region", file.rustfs.region)?;
 
-        let changelog_path = file
-            .paths
-            .changelog_path
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(file.application.changelog_path);
-
         Ok(Self {
             server: ServerConfig {
                 listen_ip: file.server.listen_ip,
                 listen_port: file.server.listen_port,
                 work_dir: file.server.work_dir.clone(),
-                log_dir: file.server.log_dir.clone(),
             },
             database: DatabaseConfig {
                 url: Secret::new(database_url),
@@ -363,8 +295,6 @@ impl AppConfig {
             },
             paths: PathConfig {
                 work_dir: file.server.work_dir,
-                log_dir: file.server.log_dir,
-                changelog_path,
             },
             awd: AwdStaticConfig {
                 crypto_from_app_secret: file.awd.crypto_from_app_secret,
@@ -382,18 +312,9 @@ impl AppConfig {
             },
             logging: LoggingConfig {
                 filter: file.logging.filter,
+                timezone: file.logging.timezone,
             },
-            challenge: ChallengeConfig {
-                event_score_decay: file.challenge.event_score_decay.to_string(),
-                event_score_min_percent: file.challenge.event_score_min_percent.to_string(),
-                instance_max_per_user: file.challenge.instance_max_per_user.to_string(),
-                instance_destroy_delay: file.challenge.instance_destroy_delay.to_string(),
-                http_prefix: file.challenge.http_prefix,
-                node_ip: file.challenge.node_ip,
-                challenges_dir: path_or_default(file.paths.challenges_dir, "./challenges"),
-                main_url: file.application.main_url,
-            },
-            timezone: file.application.timezone,
+            main_url: file.application.main_url,
         })
     }
 
@@ -402,7 +323,6 @@ impl AppConfig {
         tracing::info!(
             listen = %format!("{}:{}", self.server.listen_ip, self.server.listen_port),
             work_dir = %self.server.work_dir,
-            log_dir = %self.server.log_dir,
             storage_endpoint = %self.storage.endpoint_url,
             storage_region = %self.storage.region,
             cors_origins = ?self.cors.allowed_origins,
@@ -429,12 +349,6 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
-fn path_or_default(value: Option<String>, default: &str) -> String {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| default.to_string())
-}
-
 fn default_true() -> bool {
     true
 }
@@ -447,15 +361,9 @@ fn default_listen_port() -> u16 {
 fn default_work_dir() -> String {
     "./".to_string()
 }
-fn default_log_dir() -> String {
-    "./logs".to_string()
-}
 /// Empty timezone = leave the process local timezone untouched.
 fn default_timezone() -> String {
     String::new()
-}
-fn default_changelog_path() -> String {
-    "./CHANGELOG.md".to_string()
 }
 fn default_main_url() -> String {
     "http://localhost:8080".to_string()
@@ -468,24 +376,6 @@ fn default_flagserver_image() -> String {
 }
 fn default_judgeserver_image() -> String {
     "floatctf/awd-judgeserver:latest".to_string()
-}
-fn default_score_decay() -> i64 {
-    15
-}
-fn default_min_percent() -> f64 {
-    0.45
-}
-fn default_instance_max() -> i64 {
-    2
-}
-fn default_destroy_delay() -> i64 {
-    60
-}
-fn default_http_prefix() -> String {
-    "http://".to_string()
-}
-fn default_node_ip() -> String {
-    "127.0.0.1".to_string()
 }
 
 fn default_cors_origins() -> Vec<String> {

@@ -1,14 +1,11 @@
 # apps/api/config/development.toml
 [application]
-changelog_path = "../../CHANGELOG.md"
-timezone = "Asia/Shanghai"
 main_url = "http://localhost:9090"
 
 [server]
 listen_ip = "0.0.0.0"
 listen_port = 9090
-work_dir = "./"
-log_dir = "./logs"
+work_dir = "../../app"
 
 [auth]
 # Change this value in production. It must be at least 16 characters.
@@ -19,17 +16,10 @@ url = "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db"
 
 [logging]
 filter = "actix_server=info,floatctf=info,fcmc=info"
+timezone = "Asia/Shanghai"
 
-[challenge]
-event_score_decay = 500
-event_score_min_percent = 0.45
-instance_max_per_user = 2
-instance_destroy_delay = 60
-http_prefix = "http://"
-node_ip = "127.0.0.1"
-
-[paths]
-challenges_dir=""
+# 题目默认值已内置为静态 seed（EVENT_SCORE_DECAY=500、INSTANCE_DESTROY_DELAY=60、NODE_IP=127.0.0.1 等），
+# 运行时通过 settings 表动态调整，无需在配置文件中声明。
 
 [rustfs]
 region = "cn-east-1"

@@ -43,19 +43,25 @@ pub async fn run() -> std::io::Result<()> {
         }
     };
 
-    // Set working directory
-    std::env::set_current_dir(&config.server.work_dir)
+    // Set working directory: absolutize relative paths before chdir so later
+    // derived paths (e.g. logs) don't double-apply the relative work_dir.
+    let work_dir_abs = std::env::current_dir()
+        .unwrap_or_default()
+        .join(&config.server.work_dir);
+    std::env::set_current_dir(&work_dir_abs)
         .unwrap_or_else(|e| panic!("failed to set WORK_DIR={}: {}", config.server.work_dir, e));
 
     // Honor the configured timezone for the process-local logger (ChronoLocal).
     // Must run before init_logging so log timestamps use the configured zone.
-    if !config.timezone.is_empty() {
+    if !config.logging.timezone.is_empty() {
         // SAFETY: single-threaded startup; no other thread reads TZ yet.
-        unsafe { std::env::set_var("TZ", &config.timezone) };
+        unsafe { std::env::set_var("TZ", &config.logging.timezone) };
     }
 
-    // Initialize logging
-    init_logging(&config.server.log_dir, &config.logging.filter);
+    // Initialize logging: logs always live under WORK_DIR/logs.
+    let log_dir = work_dir_abs.join("logs");
+    let log_dir = log_dir.to_string_lossy().into_owned();
+    init_logging(&log_dir, &config.logging.filter);
 
     let version = env!("CARGO_PKG_VERSION");
     info!(

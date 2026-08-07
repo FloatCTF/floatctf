@@ -15,19 +15,19 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     let defaults = vec![
         (
             "INSTANCE_DESTROY_DELAY",
-            config.challenge.instance_destroy_delay.clone(),
+            "60".to_string(),
             SettingValueType::Integer,
             "实例销毁延迟时间 (分钟)",
         ),
         (
             "EVENT_SCORE_DECAY",
-            config.challenge.event_score_decay.clone(),
+            "500".to_string(),
             SettingValueType::Integer,
             "比赛题目分数衰减系数",
         ),
         (
             "EVENT_SCORE_MIN_PERCENT",
-            config.challenge.event_score_min_percent.clone(),
+            "0.45".to_string(),
             SettingValueType::Float,
             "比赛题目最低分数为题目的百分比",
         ),
@@ -45,13 +45,13 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
         ),
         (
             "HTTP_PREFIX",
-            config.challenge.http_prefix.clone(),
+            "http://".to_string(),
             SettingValueType::String,
             "HTTP前缀",
         ),
         (
             "NODE_IP",
-            config.challenge.node_ip.clone(),
+            "127.0.0.1".to_string(),
             SettingValueType::String,
             "节点IP",
         ),
@@ -63,7 +63,7 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
         ),
         (
             "MAIN_URL",
-            config.challenge.main_url.clone(),
+            config.main_url.clone(),
             SettingValueType::String,
             "主站地址前缀baseURL",
         ),

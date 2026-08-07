@@ -53,6 +53,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [服务说明](#服务说明)
 - [常用命令](#常用命令)
 - [常用开发命令](#常用开发命令)
+- [AI 开发手册](#ai-开发手册)
 - [故障排查](#故障排查)
 - [许可证](#许可证)
 
@@ -291,6 +292,21 @@ mise run build         # 构建 Rust 与 Web
 ```
 
 数据库迁移是显式操作：新建见 `mise run db:migration:new`，合并见 `mise run db:migration:merge`，并将生成的 SQL 手动应用到数据库（见上文「3. 启动开发环境」）。
+
+## AI 开发手册
+
+仓库为 AI 编码助手（Pi Coding Agent / Claude Code 等）维护了完整开发手册。动手前先读入口文档，再按任务类型选择对应指南：
+
+| 文档 | 用途 |
+| --- | --- |
+| [AI 工作手册（AGENTS.md）](AGENTS.md) | 仓库入口：铁律、常用命令、开发环境速记 |
+| [手册索引与阅读顺序](docs/agents/README.md) | 文档总览与按任务类型选择的阅读路径 |
+| [架构速览](docs/agents/ARCHITECTURE.md) | 模块分层、关键类型、配置体系、数据流 |
+| [开发新功能](docs/agents/ADD-FEATURE.md) | 8 步流程 + 测试清单 |
+| [修 bug](docs/agents/FIX-BUG.md) | 复现/定位/根因/最小修复/回归 |
+| [改数据库](docs/agents/DATABASE.md) | 迁移 → 应用 → 实体/类型再生成 |
+| [前端数据页面](docs/agents/DATA-FETCHING.md) | 缓存分级、keepPreviousData、queryKey 失效 |
+| [测试规范](docs/agents/TESTING.md) | 测试层级、写法、禁忌 |
 
 ## 许可证
 

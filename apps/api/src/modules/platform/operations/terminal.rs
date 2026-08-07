@@ -33,15 +33,16 @@ pub async fn terminal_ws(
     // Upgrade to WebSocket
     let (res, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
 
-    // Check if web terminal is enabled
-    let enable_web_terminal = std::env::var("ENABLE_WEB_TERMINAL")
-        .unwrap_or_else(|_| "0".to_string())
-        .parse::<i32>()
-        .unwrap_or(0);
+    // Check if web terminal is enabled in the static TOML configuration.
+    let config = req
+        .app_data::<actix_web::web::Data<crate::bootstrap::AppState>>()
+        .expect("AppState not found")
+        .config
+        .clone();
 
-    if enable_web_terminal != 1 {
+    if !config.features.enable_web_terminal {
         let _ = session
-            .text("\r\n\x1b[31m[ERROR] Web terminal is disabled. Please set ENABLE_WEB_TERMINAL=1 in .env and restart.\x1b[0m\r\n")
+            .text("\r\n\x1b[31m[ERROR] Web terminal is disabled. Please enable [features].web_terminal in the TOML config and restart.\x1b[0m\r\n")
             .await;
         let _ = session.close(None).await;
         return Ok(res);

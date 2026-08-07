@@ -22,12 +22,7 @@ fn jwt_secret_bytes() -> Vec<u8> {
     if let Some(s) = JWT_SECRET.get() {
         return s.as_bytes().to_vec();
     }
-    // Tests / late callers: fall back to env once (not per-request after configure).
-    let from_env = std::env::var("SECRET").expect("SECRET must be set in .env file!");
-    let secret = Secret::new(from_env);
-    let bytes = secret.as_bytes().to_vec();
-    let _ = JWT_SECRET.set(secret);
-    bytes
+    panic!("JWT secret has not been configured from TOML");
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -96,10 +91,7 @@ mod tests {
 
     #[test]
     fn jwt_roundtrip_user_role() {
-        // SAFETY: tests set SECRET for encode/decode
-        unsafe {
-            std::env::set_var("SECRET", "floatctf-test-secret-for-jwt");
-        }
+        configure_jwt_secret(Secret::new("floatctf-test-secret-for-jwt"));
         let id = Uuid::new_v4();
         let token = gen_jwt_token(id, Role::User, Some(30)).expect("encode");
         let claims = validate_jwt(token).expect("decode");
@@ -109,9 +101,7 @@ mod tests {
 
     #[test]
     fn jwt_roundtrip_super_admin_role() {
-        unsafe {
-            std::env::set_var("SECRET", "floatctf-test-secret-for-jwt");
-        }
+        configure_jwt_secret(Secret::new("floatctf-test-secret-for-jwt"));
         let id = Uuid::new_v4();
         let token = gen_jwt_token(id, Role::SuperAdmin, Some(30)).expect("encode");
         let claims = validate_jwt(token).expect("decode");
@@ -121,9 +111,7 @@ mod tests {
 
     #[test]
     fn jwt_rejects_tampered_token() {
-        unsafe {
-            std::env::set_var("SECRET", "floatctf-test-secret-for-jwt");
-        }
+        configure_jwt_secret(Secret::new("floatctf-test-secret-for-jwt"));
         let id = Uuid::new_v4();
         let mut token = gen_jwt_token(id, Role::User, Some(30)).expect("encode");
         token.push('x');

@@ -1,0 +1,51 @@
+# apps/api/config/development.toml
+[application]
+changelog_path = "../../CHANGELOG.md"
+timezone = "Asia/Shanghai"
+main_url = "http://localhost:9090"
+
+[server]
+listen_ip = "0.0.0.0"
+listen_port = 9090
+work_dir = "./"
+log_dir = "./logs"
+
+[auth]
+# Change this value in production. It must be at least 16 characters.
+jwt_secret = "floatctf-development-secret-change-me"
+
+[database]
+url = "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db"
+
+[logging]
+filter = "actix_server=info,floatctf=info,fcmc=info"
+
+[challenge]
+event_score_decay = 500
+event_score_min_percent = 0.45
+instance_max_per_user = 2
+instance_destroy_delay = 60
+http_prefix = "http://"
+node_ip = "127.0.0.1"
+
+[paths]
+challenges_dir=""
+
+[rustfs]
+region = "cn-east-1"
+endpoint_url = "http://127.0.0.1:9000"
+access_key_id = "rustfsadmin"
+secret_access_key="rustfsadmin"
+
+[features]
+web_terminal = true
+unsafe_sql_admin = true
+
+[awd]
+host_network = false
+flagserver_image = "floatctf/awd-flagserver:latest"
+judgeserver_image = "floatctf/awd-judgeserver:latest"
+
+[realtime]
+# redis_url = "redis://127.0.0.1:6379"
+# redis_channel = "floatctf:realtime"

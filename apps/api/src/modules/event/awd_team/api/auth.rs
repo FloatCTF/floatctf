@@ -107,9 +107,9 @@ impl FromRequest for AwdInternalAuth {
                 .map_err(|e| AuthError::CryptoError(format!("DB error: {}", e)))?
                 .ok_or(AuthError::EventNotFound)?;
 
-            // Initialize crypto (reads SECRET env var)
-            let crypto =
-                AwdCrypto::from_env_secret().map_err(|e| AuthError::CryptoError(e.to_string()))?;
+            // Initialize crypto from the TOML-loaded application secret
+            let crypto = AwdCrypto::from_config_secret()
+                .map_err(|e| AuthError::CryptoError(e.to_string()))?;
 
             // Try flagserver token
             if let (Some(ciphertext), Some(nonce)) = (

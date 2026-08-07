@@ -1,5 +1,7 @@
 //! Request-scoped Jeopardy event context (replaces strategies/event EventContext).
 
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -7,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    core::AppConfig,
     entity::{event_teams, event_users, events, instances, users},
     infrastructure::{WebDb, WebDocker},
 };
@@ -20,6 +23,8 @@ pub struct EventContext {
     pub event: events::Model,
     pub user: users::Model,
     pub team: Option<event_teams::Model>,
+    /// Static process config; set on launch-capable paths (instance limits).
+    pub config: Option<Arc<AppConfig>>,
 }
 
 #[derive(Debug)]
@@ -31,6 +36,7 @@ pub struct EventContextBuilder {
     team: Option<event_teams::Model>,
     /// When true, resolve Team from event_team_members for the user+event.
     resolve_team: bool,
+    config: Option<Arc<AppConfig>>,
 }
 
 impl EventContextBuilder {
@@ -42,6 +48,7 @@ impl EventContextBuilder {
             user: None,
             team: None,
             resolve_team: false,
+            config: None,
         }
     }
 
@@ -73,6 +80,12 @@ impl EventContextBuilder {
     /// Auto-load Team membership for this user in the Event (when present).
     pub fn resolve_team(mut self) -> Self {
         self.resolve_team = true;
+        self
+    }
+
+    /// Attach the static process config (needed for instance limits on launch paths).
+    pub fn config(mut self, config: Arc<AppConfig>) -> Self {
+        self.config = Some(config);
         self
     }
 
@@ -114,6 +127,7 @@ impl EventContextBuilder {
             user,
             event,
             team,
+            config: self.config,
         })
     }
 }

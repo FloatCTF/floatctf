@@ -1,6 +1,6 @@
 //! Platform file download helpers (admin private download + presigned URLs).
 
-use std::{env, time::Duration};
+use std::time::Duration;
 
 use actix_web::{get, web::Query};
 use anyhow::Result;
@@ -77,7 +77,13 @@ pub async fn download(
         )
         .await;
 
-    let rustfs_endpoint_url = env::var("RUSTFS_ENDPOINT_URL").unwrap();
+    let config = ctx
+        .req
+        .app_data::<actix_web::web::Data<crate::bootstrap::AppState>>()
+        .expect("AppState not found")
+        .config
+        .clone();
+    let rustfs_endpoint_url = &config.storage.endpoint_url;
     let final_uri = presigned.uri().replace(
         &format!("{}/floatctf-private", rustfs_endpoint_url),
         "/private",

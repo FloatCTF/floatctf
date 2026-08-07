@@ -227,10 +227,9 @@ pub async fn get_sys_info(_: SuperAdminJwtGuard) -> UniResult<SystemInformation>
 }
 
 #[get("/changelog")]
-pub async fn get_changelog(_: SuperAdminJwtGuard) -> UniResult<String> {
-    let changelog_path =
-        std::env::var("SYSTEM_CHANGELOG_PATH").unwrap_or_else(|_| "./CHANGELOG.md".to_string());
-    let changelog = std::fs::read_to_string(changelog_path).unwrap_or_default();
+pub async fn get_changelog(_: SuperAdminJwtGuard, req_ctx: ReqCtx) -> UniResult<String> {
+    let config = req_ctx.config.clone();
+    let changelog = std::fs::read_to_string(&config.paths.changelog_path).unwrap_or_default();
     let changelog = format!(
         "floatctf-api: {}\n{}",
         env!("CARGO_PKG_VERSION"),

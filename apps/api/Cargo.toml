@@ -1,7 +1,7 @@
 [package]
 name = "floatctf"
 version = "0.3.2"
-edition = "2024"
+edition.workspace = true
 
 [features]
 default = []
@@ -9,7 +9,7 @@ default = []
 realtime-redis = ["dep:redis"]
 
 [dependencies]
-fcmc = { path = "./fcmc" }
+fcmc = { path = "../../crates/fcmc" }
 # Optional: enable with `--features realtime-redis` for multi-node SSE fan-out.
 redis = { version = "0.27", optional = true, default-features = false, features = [
   "tokio-comp",
@@ -35,7 +35,6 @@ rand = "0.8"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
-dotenvy = "0.15"
 futures-util = "0.3.31"
 jsonwebtoken = "9.3.1"
 lettre = { version = "0.11.19", default-features = false, features = [
@@ -77,10 +76,3 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["serde", "v4"] }
-
-[profile.dev]
-opt-level = 0  # 0: 不优化，编译最快（默认）
-debug = true
-# 1: 基础优化，平衡速度
-# 2: 显著优化
-# 3: 最高级别优化（类似 Release）

@@ -218,6 +218,7 @@ pub async fn get_wireguard_config(
             ctx.db.get_ref(),
             awd.crypto.as_ref(),
             awd.network.as_ref(),
+            &ctx.config.awd,
             event_id,
             user.id,
             membership.team_id,

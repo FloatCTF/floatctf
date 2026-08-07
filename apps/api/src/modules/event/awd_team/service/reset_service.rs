@@ -158,7 +158,8 @@ pub async fn execute_reset(
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?
             .ok_or_else(|| AwdError::NotFound("team network not found".into()))?;
-        let crypto = AwdCrypto::from_env_secret().map_err(|e| AwdError::Crypto(e.to_string()))?;
+        let crypto =
+            AwdCrypto::from_config_secret().map_err(|e| AwdError::Crypto(e.to_string()))?;
         let blob = EncryptedBlob {
             ciphertext: team_net.ssh_password_ciphertext,
             nonce: team_net.ssh_password_nonce,

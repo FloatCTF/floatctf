@@ -9,6 +9,7 @@ use sea_orm::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::core::config::AwdStaticConfig;
 use crate::entity::{
     awd_events, awd_gamebox_instances, awd_gamebox_templates, awd_runtime_resources,
     awd_team_networks, event_teams,
@@ -39,6 +40,7 @@ pub async fn deploy_event(
     containers: &dyn AwdContainerRuntime,
     network: &dyn AwdNetworkRuntime,
     crypto: &AwdCrypto,
+    awd_config: &AwdStaticConfig,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let mut awd_event = event_repo::find_by_event_id(db, event_id)
@@ -76,7 +78,7 @@ pub async fn deploy_event(
         "flagserver",
         &awd_event.flagserver_ip,
         &docker_network_name,
-        env_image("AWD_FLAGSERVER_IMAGE", "floatctf/awd-flagserver:latest"),
+        awd_config.flagserver_image.clone(),
         &awd_event.flagserver_token_ciphertext,
         &awd_event.flagserver_token_nonce,
     )
@@ -90,7 +92,7 @@ pub async fn deploy_event(
         "judgeserver",
         &awd_event.judgeserver_ip,
         &docker_network_name,
-        env_image("AWD_JUDGESERVER_IMAGE", "floatctf/awd-judgeserver:latest"),
+        awd_config.judgeserver_image.clone(),
         &awd_event.judgeserver_token_ciphertext,
         &awd_event.judgeserver_token_nonce,
     )
@@ -109,7 +111,7 @@ pub async fn deploy_event(
     .await?;
 
     // ── 6. WireGuard ──
-    ensure_wireguard(db, network, crypto, &awd_event, event_id).await?;
+    ensure_wireguard(db, network, crypto, awd_config, &awd_event, event_id).await?;
 
     // ── 7. Hardening firewall ──
     ensure_hardening_firewall(db, network, &awd_event, event_id).await?;
@@ -121,10 +123,6 @@ pub async fn deploy_event(
 
     info!("[Deploy] Event {} fully deployed", event_id);
     Ok(())
-}
-
-fn env_image(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
 async fn ensure_docker_network(
@@ -453,6 +451,7 @@ async fn ensure_wireguard(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
     crypto: &AwdCrypto,
+    awd_config: &AwdStaticConfig,
     awd_event: &awd_events::Model,
     event_id: Uuid,
 ) -> AwdResult<()> {

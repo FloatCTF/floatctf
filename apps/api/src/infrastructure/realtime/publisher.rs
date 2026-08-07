@@ -361,17 +361,13 @@ impl EventPublisher for HybridEventPublisher {
     }
 }
 
-/// Resolve publisher wiring from environment.
-///
-/// Env:
-/// - `REALTIME_REDIS_URL` — when set (and feature `realtime-redis`), multi-node fan-out
-/// - `REALTIME_REDIS_CHANNEL` — optional, default `floatctf:realtime`
-pub fn build_realtime_from_env(
+/// Resolve publisher wiring from the static TOML configuration.
+pub fn build_realtime(
     capacity: usize,
+    redis_url: Option<&str>,
+    channel: Option<&str>,
 ) -> (Arc<BroadcastEventPublisher>, Arc<dyn EventPublisher>) {
     let hub = Arc::new(BroadcastEventPublisher::new(capacity));
-    let redis_url = std::env::var("REALTIME_REDIS_URL").ok();
-    let channel = std::env::var("REALTIME_REDIS_CHANNEL").ok();
 
     let has_redis = redis_url
         .as_deref()
@@ -466,13 +462,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_realtime_from_env_local_default() {
-        // Ensure env does not force redis in this unit test process.
-        // SAFETY: tests are single-threaded here for this env key.
-        let _guard = ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("REALTIME_REDIS_URL").ok();
-        unsafe { std::env::remove_var("REALTIME_REDIS_URL") };
-        let (hub, publisher) = build_realtime_from_env(16);
+    async fn build_realtime_local_default() {
+        let (hub, publisher) = build_realtime(16, None, None);
         let mut rx = hub.subscribe();
         publisher
             .publish(RealtimeEvent::new(Uuid::nil(), "ping", json!({})))
@@ -480,10 +471,5 @@ mod tests {
             .unwrap();
         let got = rx.recv().await.unwrap();
         assert_eq!(got.event_type, "ping");
-        if let Some(v) = prev {
-            unsafe { std::env::set_var("REALTIME_REDIS_URL", v) };
-        }
     }
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }

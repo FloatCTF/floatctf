@@ -2,59 +2,52 @@
 //!
 //! Process-static env config lives in `crate::core::config::AppConfig`.
 
-use crate::entity::sea_orm_active_enums::SettingValueType;
 use crate::entity::settings;
+use crate::{core::AppConfig, entity::sea_orm_active_enums::SettingValueType};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, DbConn, EntityTrait, QueryFilter, sea_query::OnConflict,
 };
-use std::env;
-
 /// Upsert default rows into the `settings` table (do nothing on conflict).
 ///
-/// Renamed from `init_settings` to make the seed/upsert behaviour explicit.
-pub async fn seed_default_settings(db: &DbConn) {
+/// Values come from the process TOML configuration; settings remain editable
+/// through the database after they have been seeded.
+pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     let defaults = vec![
         (
             "INSTANCE_DESTROY_DELAY",
-            env::var("INSTANCE_DESTROY_DELAY").unwrap_or("60".to_string()),
+            config.challenge.instance_destroy_delay.clone(),
             SettingValueType::Integer,
             "实例销毁延迟时间 (分钟)",
         ),
         (
             "EVENT_SCORE_DECAY",
-            env::var("EVENT_SCORE_DECAY").unwrap_or("15".to_string()),
+            config.challenge.event_score_decay.clone(),
             SettingValueType::Integer,
             "比赛题目分数衰减系数",
         ),
         (
             "EVENT_SCORE_MIN_PERCENT",
-            env::var("EVENT_SCORE_MIN_PERCENT").unwrap_or("0.45".to_string()),
+            config.challenge.event_score_min_percent.clone(),
             SettingValueType::Float,
             "比赛题目最低分数为题目的百分比",
         ),
         (
             "CHALLENGES_DIR",
-            env::var("CHALLENGES_DIR").unwrap_or("./challenges".to_string()),
+            config.challenge.challenges_dir.clone(),
             SettingValueType::String,
             "题目位置",
         ),
         (
             "HTTP_PREFIX",
-            env::var("HTTP_PREFIX").unwrap_or("http://".to_string()),
+            config.challenge.http_prefix.clone(),
             SettingValueType::String,
             "HTTP前缀",
         ),
         (
             "NODE_IP",
-            env::var("NODE_IP").unwrap_or("127.0.0.1".to_string()),
+            config.challenge.node_ip.clone(),
             SettingValueType::String,
             "节点IP",
-        ),
-        (
-            "UPLOAD_DIR",
-            env::var("UPLOAD_DIR").unwrap_or("./uploads".to_string()),
-            SettingValueType::String,
-            "上传目录位置",
         ),
         (
             "FLAG_PREFIX",
@@ -63,20 +56,8 @@ pub async fn seed_default_settings(db: &DbConn) {
             "全局flag前缀",
         ),
         (
-            "WEAPONS_DIR",
-            "./weapons".to_string(),
-            SettingValueType::String,
-            "工具目录",
-        ),
-        (
-            "IMAGE_DIR",
-            "./images".to_string(),
-            SettingValueType::String,
-            "图片目录",
-        ),
-        (
             "MAIN_URL",
-            "http://localhost:8080".to_string(),
+            config.challenge.main_url.clone(),
             SettingValueType::String,
             "主站地址前缀baseURL",
         ),
@@ -117,8 +98,8 @@ pub async fn seed_default_settings(db: &DbConn) {
 
 /// Backward-compatible alias for [`seed_default_settings`].
 #[deprecated(note = "use seed_default_settings")]
-pub async fn init_settings(db: &DbConn) {
-    seed_default_settings(db).await;
+pub async fn init_settings(db: &DbConn, config: &AppConfig) {
+    seed_default_settings(db, config).await;
 }
 
 pub async fn get_setting(db: &DbConn, key: &str) -> Result<String, anyhow::Error> {

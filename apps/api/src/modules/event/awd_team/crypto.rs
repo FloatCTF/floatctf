@@ -3,7 +3,7 @@
 //! # Key hierarchy
 //!
 //! ```text
-//! SECRET (env var)
+//! The application secret from `[auth].jwt_secret` in the TOML config
 //!   └── HKDF-SHA256(info="floatctf-awd-master-v1")
 //!       └── AWD_MASTER_KEY (32 bytes)
 //! ```
@@ -25,9 +25,12 @@ use chacha20poly1305::{
 };
 use hkdf::Hkdf;
 use sha2::Sha256;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
-use crate::modules::event::awd_team::AwdError;
+use crate::{core::secret::Secret, modules::event::awd_team::AwdError};
+
+static AWD_SECRET: OnceLock<Secret> = OnceLock::new();
 
 /// Expected master key length (32 bytes for XChaCha20-Poly1305).
 const MASTER_KEY_LEN: usize = 32;
@@ -83,12 +86,16 @@ pub struct AwdCrypto {
 }
 
 impl AwdCrypto {
-    /// Derive the AWD master key from the application SECRET env var.
-    ///
-    /// Prefer [`Self::from_secret_bytes`] when `AppConfig` already holds the secret.
-    pub fn from_env_secret() -> Result<Self, AwdError> {
-        let secret = std::env::var("SECRET")
-            .map_err(|_| AwdError::Crypto("SECRET environment variable not set".into()))?;
+    /// Install the application secret loaded from TOML during bootstrap.
+    pub fn configure_secret(secret: Secret) {
+        let _ = AWD_SECRET.set(secret);
+    }
+
+    /// Derive the AWD master key from the configured application secret.
+    pub fn from_config_secret() -> Result<Self, AwdError> {
+        let secret = AWD_SECRET
+            .get()
+            .ok_or_else(|| AwdError::Crypto("application secret is not configured".into()))?;
         Self::from_secret_bytes(secret.as_bytes())
     }
 
@@ -364,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn test_from_env_secret_missing() {
+    fn test_config_secret_missing() {
         // Only test with explicit key — env var tests modify global state
         // and interfere with other parallel tests.
-        // from_env_secret() is tested via integration tests.
+        // Configuration is installed by bootstrap in integration tests.
         let key = AwdSecret::new(vec![0x42u8; 32]);
         let crypto = AwdCrypto::new(key);
         let plaintext = b"test";
@@ -377,9 +384,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_env_secret_too_short_key_still_works() {
+    fn test_short_config_key_still_works() {
         // New() accepts any key length but encryption requires exactly 32 bytes.
-        // from_env_secret() always produces 32 bytes via HKDF regardless of input length.
+        // from_secret_bytes() always produces 32 bytes via HKDF regardless of input length.
         let key = AwdSecret::new(vec![0x42u8; 32]);
         let crypto = AwdCrypto::new(key);
         assert!(crypto.encrypt(b"data", b"aad", 1).is_ok());

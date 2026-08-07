@@ -52,7 +52,14 @@ pub async fn jeopardy_launch(
     let event_id = ctx.event.id;
 
     let (team_id, max_instances, ref_label) = match subject {
-        SolveSubject::User => (None, 2u64, "JeopardySingle"),
+        SolveSubject::User => {
+            let max = ctx
+                .config
+                .as_ref()
+                .and_then(|c| c.challenge.instance_max_per_user.parse::<u64>().ok())
+                .unwrap_or(2);
+            (None, max, "JeopardySingle")
+        }
         SolveSubject::Team => {
             let team_member = event_team_members::Entity::find()
                 .filter(

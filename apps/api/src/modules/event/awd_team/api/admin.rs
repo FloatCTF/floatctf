@@ -48,7 +48,7 @@ pub async fn create_awd_event(
     let event_id = event.id;
 
     // Initialize crypto for token encryption
-    let crypto = AwdCrypto::from_env_secret().map_err(|e| AppError::Internal(e.to_string()))?;
+    let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Generate and encrypt event secret
     let event_secret = AwdCrypto::generate_event_secret();
@@ -272,6 +272,7 @@ pub async fn deploy_awd_event(
         awd.containers.as_ref(),
         awd.network.as_ref(),
         awd.crypto.as_ref(),
+        &ctx.config.awd,
         event_id,
     )
     .await
@@ -454,7 +455,7 @@ pub async fn rotate_tokens(
     let event_id = path.into_inner();
 
     // Initialize crypto
-    let crypto = AwdCrypto::from_env_secret().map_err(|e| AppError::Internal(e.to_string()))?;
+    let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Generate new tokens
     let fs_token = AwdCrypto::generate_token();

@@ -48,8 +48,7 @@ pub async fn issue_flag(
 
     // Decrypt event-bound secret (AAD = event_id:event_secret) for deterministic flags.
     use crate::modules::event::awd_team::crypto::AwdCrypto;
-    let crypto =
-        AwdCrypto::from_env_secret().map_err(|e| AppError::Internal(e.to_string()))?;
+    let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
     let secret = crypto
         .decrypt_event_secret(
             event_id,

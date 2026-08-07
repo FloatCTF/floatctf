@@ -31,13 +31,10 @@ pub async fn exec_sql(
     user: SuperAdminJwtGuard,
     ss: Json<SqlStatement>,
 ) -> UniResult<SqlResult> {
-    // Gate: require ENABLE_UNSAFE_SQL_ADMIN=1 environment variable
-    let enabled =
-        std::env::var("ENABLE_UNSAFE_SQL_ADMIN").unwrap_or_else(|_| "0".to_string()) == "1";
-
-    if !enabled {
+    // Gate: require unsafe_sql_admin in the static TOML configuration.
+    if !ctx.config.features.enable_unsafe_sql_admin {
         return Err(AppError::NotFound(
-            "SQL execution is disabled. Set ENABLE_UNSAFE_SQL_ADMIN=1 to enable.".into(),
+            "SQL execution is disabled. Set [features].unsafe_sql_admin = true in the TOML config to enable.".into(),
         ));
     }
 

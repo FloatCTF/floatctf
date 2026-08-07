@@ -1,17 +1,19 @@
 [tools]
 node = "26.5.1"
 pnpm = "11.20.0"
+python = "3"
 rust = "1.97.1"
 
 [env]
 PROJECT_ROOT = "{{config_root}}"
+FLOATCTF_CONFIG = "{{config_root}}/apps/api/config/development.toml"
 
 # 初始化依赖
 [tasks.install]
 description = "安装项目依赖"
 run = [
     "pnpm install",
-    "cargo fetch",
+    "cargo fetch"
 ]
 
 # 基础设施
@@ -26,6 +28,23 @@ docker compose \
   -f "$PROJECT_ROOT/infra/compose/compose.dev.yml" \
   down
 """
+
+[tasks."infra:restart"]
+description = "重启开发基础设施"
+run = [
+  { task = "infra:down" },
+  { task = "infra:up" },
+]
+
+[tasks."infra:reset"]
+description = "重置开发基础设施"
+run = [
+  """docker compose \
+    -f "$PROJECT_ROOT/infra/compose/compose.dev.yml" \
+    down -v""",
+  { task = "infra:up" },
+]
+
 
 [tasks."infra:logs"]
 description = "查看基础设施日志"
@@ -53,20 +72,61 @@ description = "启动完整本地开发环境"
 depends = ["infra:up"]
 run = "./scripts/dev.sh"
 
+# Rust 格式检查
+[tasks.fmt]
+description = "检查 Rust 格式"
+run = "cargo fmt --all -- --check"
+
+# 静态检查
+[tasks.lint]
+description = "执行 Rust 和 Web 静态检查"
+run = [
+    "cargo clippy --workspace --all-targets --all-features",
+    "pnpm --filter @floatctf/web lint",
+]
+
+# 测试
+[tasks.test]
+description = "执行 Rust 和 Web 测试"
+run = [
+    "cargo test --workspace",
+    "pnpm --filter @floatctf/web test",
+]
+
 # 检查
 [tasks.check]
 description = "检查整个项目"
-run = [
-    "cargo fmt --all --check",
-    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
-    "cargo test --workspace",
-    "pnpm --filter ./apps/web lint",
-]
+depends = ["fmt", "lint", "test"]
 
 # 构建
 [tasks.build]
 description = "构建 API 和 Web"
 run = [
     "cargo build --workspace --release",
-    "pnpm --filter ./apps/web build",
+    "pnpm --filter @floatctf/web build",
+]
+
+[tasks."db:migration:new"]
+description = "创建新的数据库 migration"
+run = """
+{{config_root}}/apps/api/src/sql/migrate.sh new "$@"
+"""
+
+[tasks."db:migration:merge"]
+description = "合并数据库 migrations 为 merged.sql"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh make"
+
+[tasks."db:gen:rs"]
+description = "根据数据库 Schema 生成 SeaORM Rust Entity"
+run = "python {{config_root}}/scripts/gen_entities.py"
+
+[tasks."db:gen:ts"]
+description = "根据现有 SeaORM Entity 生成 Web TypeScript 类型"
+run = "python {{config_root}}/scripts/gen_web_types.py"
+
+[tasks."db:gen"]
+description = "生成全部数据库模型代码"
+run = [
+  { task = "db:gen:rs" },
+  { task = "db:gen:ts" },
 ]

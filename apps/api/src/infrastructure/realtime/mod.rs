@@ -1,13 +1,10 @@
 //! Real-time event publishing (WebSocket / SSE / multi-node Redis fan-out).
 //!
-//! Env (see `publisher::build_realtime_from_env`):
-//! - `REALTIME_REDIS_URL` — enable Redis pub/sub multi-node fan-out (requires
-//!   cargo feature `realtime-redis`)
-//! - `REALTIME_REDIS_CHANNEL` — optional channel name (default `floatctf:realtime`)
+//! Redis fan-out is configured through `[realtime]` in the API TOML file.
 
 pub mod publisher;
 
 pub use publisher::{
     BroadcastEventPublisher, EventPublisher, HybridEventPublisher, NoopEventPublisher,
-    RealtimeEvent, RecordingEventPublisher, build_realtime_from_env,
+    RealtimeEvent, RecordingEventPublisher, build_realtime,
 };

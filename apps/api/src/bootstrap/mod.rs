@@ -31,11 +31,11 @@ pub use state::{AppState, AwdDependencies};
 /// This is the single entry point for both the binary and integration tests.
 /// Returns `Err` if initialization fails (database, Docker, or S3 connection).
 pub async fn run() -> std::io::Result<()> {
-    // Load environment variables
-    dotenvy::dotenv().ok();
-
-    // Typed static config — fail fast before touching infrastructure.
-    let config = match AppConfig::from_env() {
+    // Load all process-static settings from TOML — fail fast before touching infrastructure.
+    let config_path = std::env::var_os("FLOATCTF_CONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("config/development.toml"));
+    let config = match AppConfig::from_file(&config_path) {
         Ok(c) => Arc::new(c),
         Err(e) => {
             eprintln!("configuration error: {e}");
@@ -47,8 +47,15 @@ pub async fn run() -> std::io::Result<()> {
     std::env::set_current_dir(&config.server.work_dir)
         .unwrap_or_else(|e| panic!("failed to set WORK_DIR={}: {}", config.server.work_dir, e));
 
+    // Honor the configured timezone for the process-local logger (ChronoLocal).
+    // Must run before init_logging so log timestamps use the configured zone.
+    if !config.timezone.is_empty() {
+        // SAFETY: single-threaded startup; no other thread reads TZ yet.
+        unsafe { std::env::set_var("TZ", &config.timezone) };
+    }
+
     // Initialize logging
-    init_logging(&config.server.log_dir);
+    init_logging(&config.server.log_dir, &config.logging.filter);
 
     let version = env!("CARGO_PKG_VERSION");
     info!(
@@ -57,8 +64,9 @@ pub async fn run() -> std::io::Result<()> {
     );
     config.log_source_summary();
 
-    // JWT secret once for the process lifetime
+    // Secrets are loaded once from TOML for the process lifetime.
     jwt::configure_jwt_secret(config.auth.jwt_secret.clone());
+    AwdCrypto::configure_secret(config.auth.jwt_secret.clone());
 
     // Infrastructure
     let db: WebDb = match database::connect(&config.database).await {
@@ -86,24 +94,26 @@ pub async fn run() -> std::io::Result<()> {
     };
 
     // Dynamic DB settings seed (upsert defaults, never overwrite)
-    seed_default_settings(&db).await;
+    seed_default_settings(&db, &config).await;
     let log_service = LogService::new(db.clone());
     let audit_service = AuditService::new(log_service.clone());
-    // Realtime hub: local broadcast for SSE; optional Redis fan-out when
-    // REALTIME_REDIS_URL is set (feature `realtime-redis`). See infrastructure/realtime.
-    let (broadcast_hub, publisher) = crate::infrastructure::realtime::build_realtime_from_env(256);
+    // Realtime hub: local broadcast with optional Redis fan-out from TOML.
+    let (broadcast_hub, publisher) = crate::infrastructure::realtime::build_realtime(
+        256,
+        config.realtime.redis_url.as_deref(),
+        config.realtime.redis_channel.as_deref(),
+    );
 
     // AWD host network runtime (shared by HTTP + scheduler).
     let awd_network: Arc<
         dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
-    > = match std::env::var("AWD_HOST_NETWORK").as_deref() {
-        Ok("1") | Ok("true") | Ok("TRUE") => {
-            info!("AWD_HOST_NETWORK enabled — using HostNetworkRuntime");
-            Arc::new(
-                crate::modules::event::awd_team::infrastructure::network::HostNetworkRuntime::new(),
-            )
-        }
-        _ => Arc::new(crate::modules::event::awd_team::infrastructure::network::NoopNetworkRuntime),
+    > = if config.awd.host_network {
+        info!("AWD host network enabled — using HostNetworkRuntime");
+        Arc::new(
+            crate::modules::event::awd_team::infrastructure::network::HostNetworkRuntime::new(),
+        )
+    } else {
+        Arc::new(crate::modules::event::awd_team::infrastructure::network::NoopNetworkRuntime)
     };
 
     // Initialize scheduler
@@ -207,7 +217,7 @@ pub use routes::{configure_all_routes, configure_routes};
 
 // ── Private helpers ──
 
-fn init_logging(log_dir: &str) {
+fn init_logging(log_dir: &str, filter: &str) {
     use tracing_appender::rolling;
     use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
@@ -216,7 +226,7 @@ fn init_logging(log_dir: &str) {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env().add_directive("default=info".parse().unwrap()),
+            EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("default=info")),
         )
         .with_writer(std::io::stdout.and(file_writer))
         .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())

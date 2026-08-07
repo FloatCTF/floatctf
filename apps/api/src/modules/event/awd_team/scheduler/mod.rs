@@ -262,7 +262,7 @@ impl TaskHandler for AwdRoundStartHandler {
             .judgeserver_token_nonce
             .clone()
             .ok_or_else(|| anyhow::anyhow!("JudgeServer token nonce is not configured"))?;
-        let crypto = AwdCrypto::from_env_secret()?;
+        let crypto = AwdCrypto::from_config_secret()?;
         let token = crypto.decrypt(
             &EncryptedBlob {
                 ciphertext: token_ciphertext,

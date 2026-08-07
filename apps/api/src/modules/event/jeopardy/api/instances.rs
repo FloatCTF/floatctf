@@ -138,6 +138,7 @@ pub async fn launch_instance(
         .docker(ctx.docker.clone())
         .user(user.clone())
         .event(event)
+        .config(ctx.config.clone())
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;

@@ -58,12 +58,11 @@ pub async fn timeout_pending_tasks(
     round_id: Uuid,
 ) -> Result<u64, sea_orm::DbErr> {
     let result = awd_judge_tasks::Entity::update_many()
-        .col_expr(
-            awd_judge_tasks::Column::Status,
-            sea_orm::sea_query::Expr::value(sea_orm::Value::String(Some(Box::new(
-                "judge_timeout".to_string(),
-            )))),
-        )
+        // `set(ActiveModel)` casts enum values for the `judge_task_status` column.
+        .set(awd_judge_tasks::ActiveModel {
+            status: Set(JudgeTaskStatus::JudgeTimeout),
+            ..Default::default()
+        })
         .filter(awd_judge_tasks::Column::RoundId.eq(round_id))
         .filter(
             awd_judge_tasks::Column::Status

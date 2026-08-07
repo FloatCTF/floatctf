@@ -427,6 +427,14 @@ impl ContainerRuntime for DockerContainerRuntime {
                 info!("container {} already gone", id_or_name);
                 Ok(())
             }
+            // 409 = removal already in progress (e.g. auto_remove fired on stop and
+            // is racing this explicit remove). Same end state as 404: it's going away.
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 409, ..
+            }) => {
+                info!("container {} removal already in progress", id_or_name);
+                Ok(())
+            }
             Err(e) => Err(e.into()),
         }
     }

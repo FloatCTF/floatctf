@@ -261,3 +261,110 @@ async fn all_catalog_get_routes_with_admin_do_not_500() {
     assert!(ok > 20, "checked too few admin GETs: {ok}");
     eprintln!("admin GET smoke (no 500): {ok} routes");
 }
+
+#[tokio::test]
+async fn instance_launch_destroy_roundtrip() {
+    if !api_reachable().await {
+        return;
+    }
+    let (Some(user), Some(pass)) = (env("FLOATCTF_TEST_USER"), env("FLOATCTF_TEST_PASS")) else {
+        return;
+    };
+    let token = match login_user(&user, &pass).await {
+        Some(t) => t,
+        None => return,
+    };
+
+    // Best-effort cleanup: practice mode allows only one live instance per user,
+    // and a previously failed destroy (e.g. the status-enum bug) leaves it running.
+    let list_inst = Route {
+        method: Method::Get,
+        path: "/api/instances",
+        auth: Auth::UserRequired,
+        json_body: false,
+    };
+    if let (_, _, ibody) = json_code(call(&list_inst, Some(&token)).await).await {
+        if let Some(arr) = ibody.get("data").and_then(|d| d.as_array()) {
+            for inst in arr {
+                let id = inst.get("id").and_then(|v| v.as_str());
+                if let Some(id) = id {
+                    let path = Box::leak(format!("/api/instances/{id}").into_boxed_str());
+                    let r = Route {
+                        method: Method::Delete,
+                        path,
+                        auth: Auth::UserRequired,
+                        json_body: false,
+                    };
+                    let _ = call(&r, Some(&token)).await; // best effort
+                }
+            }
+        }
+    }
+
+    let list = Route {
+        method: Method::Get,
+        path: "/api/challenges",
+        auth: Auth::UserRequired,
+        json_body: false,
+    };
+    let (_, code, body) = json_code(call(&list, Some(&token)).await).await;
+    if code != Some(0) {
+        eprintln!("skip instance roundtrip: challenges list code={code:?}");
+        return;
+    }
+    let challenges = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if challenges.is_empty() {
+        eprintln!("skip instance roundtrip: no challenges in DB");
+        return;
+    }
+    let challenge_id = challenges[0]
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(NIL);
+
+    let launch_url = format!("{}/api/instances/launch", base_url());
+    let resp = client()
+        .post(&launch_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "challenge_id": challenge_id }))
+        .send()
+        .await
+        .expect("launch request");
+    let (lstatus, lcode, lbody) = json_code(resp).await;
+    assert_eq!(lstatus, 200, "launch http status, body={lbody}");
+    assert_eq!(lcode, Some(0), "launch business code, body={lbody}");
+    let instance_id = lbody
+        .get("data")
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(NIL);
+    assert_ne!(
+        instance_id, NIL,
+        "launch must return an instance id: {lbody}"
+    );
+
+    // Destroy: regression target — bug returned 400
+    // "column \"status\" is of type instance_status but expression is of type text".
+    let destroy_path = Box::leak(format!("/api/instances/{instance_id}").into_boxed_str());
+    let route = Route {
+        method: Method::Delete,
+        path: destroy_path,
+        auth: Auth::UserRequired,
+        json_body: false,
+    };
+    let resp = call(&route, Some(&token)).await;
+    let (dstatus, dcode, dbody) = json_code(resp).await;
+    assert_eq!(
+        dstatus, 200,
+        "destroy http status should be 200, got {dstatus}: {dbody}"
+    );
+    assert_eq!(
+        dcode,
+        Some(0),
+        "destroy business code should be 0, got {dcode:?}: {dbody}"
+    );
+}

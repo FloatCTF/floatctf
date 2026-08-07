@@ -324,15 +324,14 @@ pub async fn dispatch_batch(
     }
 
     let task_ids = tasks.iter().map(|task| task.id).collect::<Vec<_>>();
+    // `set(ActiveModel)` casts enum values for the `judge_task_status` column;
+    // a raw `col_expr(Expr::value(..))` binds TEXT and Postgres rejects it.
     awd_judge_tasks::Entity::update_many()
-        .col_expr(
-            awd_judge_tasks::Column::Status,
-            sea_orm::sea_query::Expr::value(JudgeTaskStatus::Running),
-        )
-        .col_expr(
-            awd_judge_tasks::Column::StartedAt,
-            sea_orm::sea_query::Expr::value(chrono::Utc::now().fixed_offset()),
-        )
+        .set(awd_judge_tasks::ActiveModel {
+            status: Set(JudgeTaskStatus::Running),
+            started_at: Set(Some(chrono::Utc::now().fixed_offset())),
+            ..Default::default()
+        })
         .filter(awd_judge_tasks::Column::Id.is_in(task_ids))
         .filter(awd_judge_tasks::Column::Status.eq(JudgeTaskStatus::Pending))
         .exec(db)

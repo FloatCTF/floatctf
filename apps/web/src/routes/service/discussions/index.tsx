@@ -5,7 +5,7 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { Discussions } from "@/entity";
+import type { DiscussionWithAuthor } from "@/api/service/discussions";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 
@@ -23,7 +23,7 @@ function RouteComponent() {
 			accessorKey: "author_nickname",
 			header: "Author",
 			field: "author_nickname",
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<div className="flex items-center gap-2">
 					{row.author_avatar ? (
 						<Avatar src={row.author_avatar} size={24} />
@@ -44,7 +44,7 @@ function RouteComponent() {
 			header: "Title",
 			field: "title",
 			sortBy: true,
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<AppLink
 					to="/service/discussions/$id"
 					params={{ id: row.id }}
@@ -59,7 +59,7 @@ function RouteComponent() {
 			header: "Views",
 			field: "view_count",
 			sortBy: true,
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<span className="flex items-center gap-1">
 					<EyeIcon size={14} />
 					{row.view_count}
@@ -71,7 +71,7 @@ function RouteComponent() {
 			header: "Likes",
 			field: "like_count",
 			sortBy: true,
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<span className="flex items-center gap-1">
 					<ThumbsupIcon size={14} />
 					{row.like_count}
@@ -83,7 +83,7 @@ function RouteComponent() {
 			header: "Comments",
 			field: "comment_count",
 			sortBy: true,
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<span className="flex items-center gap-1">
 					<CommentIcon size={14} />
 					{row.comment_count}
@@ -95,7 +95,7 @@ function RouteComponent() {
 			header: "Created At",
 			field: "created_at",
 			sortBy: true,
-			renderCell: (row: Discussions) => (
+			renderCell: (row: DiscussionWithAuthor) => (
 				<span>{DatetimeToShow(row.created_at)}</span>
 			),
 		},

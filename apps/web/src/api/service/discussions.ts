@@ -1,14 +1,24 @@
 import type { DiscussionComments, Discussions } from "@/entity";
 import { type QueryParams, type UniResponse, service_api } from "../axios";
 
+/**
+ * 后端 GET /discussions 与 GET /discussions/{id} 返回的 DTO：
+ * discussions 表字段（serde flatten）+ 作者信息与当前用户点赞状态。
+ */
+export type DiscussionWithAuthor = Discussions & {
+	author_nickname: string;
+	author_avatar?: string;
+	is_liked: boolean;
+};
+
 export const discussionServiceApi = {
     fetch: async (
         params: QueryParams = {},
-    ): Promise<UniResponse<Discussions[]>> => {
+    ): Promise<UniResponse<DiscussionWithAuthor[]>> => {
         const res = await service_api.get("/discussions", { params });
         return res.data;
     },
-    get: async (id: string): Promise<UniResponse<Discussions>> => {
+    get: async (id: string): Promise<UniResponse<DiscussionWithAuthor>> => {
         const res = await service_api.get(`/discussions/${id}`);
         return res.data;
     },

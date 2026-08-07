@@ -4,7 +4,7 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { ChallengeSolves } from "@/entity";
+import type { SolveResult } from "@/api/service/solves";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 
@@ -20,7 +20,7 @@ function RouteComponent() {
 			accessorKey: "nickname",
 			header: "User",
 			field: "nickname",
-			renderCell: (row: ChallengeSolves) => (
+			renderCell: (row: SolveResult) => (
 				<div className="flex items-center gap-2">
 					{row.avatar ? (
 						<Avatar src={row.avatar} size={24} />
@@ -40,7 +40,7 @@ function RouteComponent() {
 			accessorKey: "challenge_id",
 			header: "Challenge ID",
 			field: "challenge_id",
-			renderCell: (row: ChallengeSolves) => (
+			renderCell: (row: SolveResult) => (
 				<AppLink
 					to={"/service/challenges/$id"}
 					params={{ id: row.challenge_id }}
@@ -53,13 +53,13 @@ function RouteComponent() {
 			accessorKey: "event_id",
 			header: "Event ID",
 			field: "event_id",
-			renderCell: (row: ChallengeSolves) => <span>{row.event_id ?? "—"}</span>,
+			renderCell: (row: SolveResult) => <span>{row.event_id ?? "—"}</span>,
 		},
 		{
 			accessorKey: "created_at",
 			header: "Created At",
 			field: "created_at",
-			renderCell: (row: ChallengeSolves) => (
+			renderCell: (row: SolveResult) => (
 				<span>{DatetimeToShow(row.created_at)}</span>
 			),
 		},

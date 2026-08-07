@@ -7,10 +7,10 @@ export type Instances = {
   flag: string;
   content?: string;
   challenge_id?: string;
+  gamebox_id?: string;
   user_id: string;
   identifier: string;
   created_at: string;
   updated_at: string;
   destroy_at: string;
-  gamebox_id?: string;
 };

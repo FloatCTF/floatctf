@@ -1,25 +1,110 @@
+export enum AwdEventStatus {
+  Draft = 'draft',
+  Configuring = 'configuring',
+  Deploying = 'deploying',
+  Deployed = 'deployed',
+  Prechecking = 'prechecking',
+  Verified = 'verified',
+  Running = 'running',
+  Paused = 'paused',
+  NetworkError = 'network_error',
+  StartBlocked = 'start_blocked',
+  Finished = 'finished',
+  Archived = 'archived',
+  DeployFailed = 'deploy_failed',
+  VerificationFailed = 'verification_failed',
+}
+
+export enum AwdPhase {
+  Hardening = 'hardening',
+  Attack = 'attack',
+  Pause = 'pause',
+}
+
+export enum BanStatus {
+  Active = 'active',
+  PendingUnban = 'pending_unban',
+  Unbanned = 'unbanned',
+}
+
 export enum EventTeamMemberRole {
-    Captain = "captain",
-    Member = "member",
+  Captain = 'captain',
+  Member = 'member',
 }
 
 export enum EventType {
-    JeopardyPractice = "jeopardy_practice",
-    JeopardySingle = "jeopardy_single",
-    JeopardyTeam = "jeopardy_team",
-    AwdTeam = "awd_team",
+  JeopardyPractice = 'jeopardy_practice',
+  JeopardySingle = 'jeopardy_single',
+  JeopardyTeam = 'jeopardy_team',
+  AwdTeam = 'awd_team',
+}
+
+export enum GameboxStatus {
+  Pending = 'pending',
+  Creating = 'creating',
+  Running = 'running',
+  Ready = 'ready',
+  Resetting = 'resetting',
+  Missing = 'missing',
+  Orphan = 'orphan',
+  Conflict = 'conflict',
+  StartFailed = 'start_failed',
+  ResetFailed = 'reset_failed',
+  Stopped = 'stopped',
 }
 
 export enum InstanceStatus {
-    Pending = "pending",
-    Running = "running",
-    Completed = "completed",
-    Failed = "failed",
+  Pending = 'pending',
+  Running = 'running',
+  Completed = 'completed',
+  Failed = 'failed',
+}
+
+export enum JudgeTaskStatus {
+  Pending = 'pending',
+  Running = 'running',
+  Up = 'up',
+  Down = 'down',
+  JudgeError = 'judge_error',
+  JudgeTimeout = 'judge_timeout',
+  SkippedResetting = 'skipped_resetting',
+  SkippedBanned = 'skipped_banned',
+}
+
+export enum PrecheckStatus {
+  Pending = 'pending',
+  Running = 'running',
+  Passed = 'passed',
+  Failed = 'failed',
+  Error = 'error',
+}
+
+export enum RoundStatus {
+  Active = 'active',
+  Grace = 'grace',
+  Completed = 'completed',
+  Paused = 'paused',
+}
+
+export enum ScoreEventType {
+  Attack = 'attack',
+  VictimLoss = 'victim_loss',
+  JudgeFix = 'judge_fix',
+  JudgeDown = 'judge_down',
+  FirstBonus = 'first_bonus',
+  ResetPenalty = 'reset_penalty',
+  Adjustment = 'adjustment',
 }
 
 export enum SettingValueType {
-    String = "string",
-    Integer = "integer",
-    Boolean = "boolean",
-    Float = "float",
+  String = 'string',
+  Integer = 'integer',
+  Boolean = 'boolean',
+  Float = 'float',
+}
+
+export enum WgPeerStatus {
+  Active = 'active',
+  Revoked = 'revoked',
+  Rotating = 'rotating',
 }

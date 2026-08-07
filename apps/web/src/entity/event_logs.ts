@@ -5,10 +5,10 @@ export type EventLogs = {
   event_id: string;
   user_id?: string;
   team_id?: string;
+  ip_address?: string;
   type: EventType;
   level: string;
   action: string;
   details: string;
   created_at: string;
-  ip_address?: string;
 };

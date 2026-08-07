@@ -1,9 +1,13 @@
 export type ScheduledTasks = {
   id: string;
   group_id?: string;
+  task_name: string;
+  description?: string;
   task_key: string;
   trigger_type: string;
   status: string;
+  enabled: boolean;
+  protected: boolean;
   cron_expr?: string;
   execute_at?: string;
   expires_at?: string;
@@ -12,8 +16,10 @@ export type ScheduledTasks = {
   last_run_at?: string;
   created_at: string;
   updated_at: string;
-  task_name: string;
-  description?: string;
-  enabled: boolean;
-  protected: boolean;
+  attempt_count: number;
+  max_attempts: number;
+  timeout_secs?: string;
+  last_error?: string;
+  locked_at?: string;
+  heartbeat_at?: string;
 };

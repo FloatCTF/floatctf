@@ -1,0 +1,25 @@
+export type AwdGameboxTemplates = {
+  id: string;
+  event_id: string;
+  challenge_id?: string;
+  name: string;
+  image_ref: string;
+  username: string;
+  meta_json: string;
+  cpu_millis: number;
+  memory_bytes: number;
+  pids_limit: number;
+  healthcheck_override_json?: string;
+  judge_script_name?: string;
+  judge_script_content?: string;
+  judge_args_json?: string;
+  judge_timeout_secs?: string;
+  judge_retry_interval_secs?: string;
+  break_points: number;
+  loss_points: number;
+  fix_points: number;
+  down_points: number;
+  first_bonus: number;
+  created_at: string;
+  updated_at: string;
+};

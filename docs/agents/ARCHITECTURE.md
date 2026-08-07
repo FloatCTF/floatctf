@@ -168,3 +168,4 @@ mise run fmt / lint / test / check / build
 - **实体是生成的**：手改 `entity/` 会被下次 `db:gen` 覆盖；改 Schema 走迁移，改完重新生成。
 - **不要新增环境变量读取**：配置一律从 TOML（`ctx.config`）或 settings 表获取。
 - **entity/代码/DB Schema 三者必须一致**（详见 DATABASE.md 的"三处一致"原则）。
+- **前端导航必须走 TanStack Router**（`Link` 或 `navigate`），禁止裸 `<a href>`：裸 anchor 点击会整页刷新白屏并清空 QueryClient 缓存。SideBar 已有 onClick 拦截实现，新侧栏/导航组件照抄；回归测试见 `apps/web/src/components/SideBar.test.tsx`。

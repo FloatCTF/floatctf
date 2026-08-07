@@ -11,6 +11,7 @@
 | [FIX-BUG.md](./FIX-BUG.md) | bug 复现、定位、根因分析（三处不一致等陷阱）、最小修复、回归 | 修 bug |
 | [DATABASE.md](./DATABASE.md) | Schema 变更流程：迁移 → 合并 → 应用 → 实体/类型再生成 → 验证 | 涉及数据库 |
 | [TESTING.md](./TESTING.md) | 测试层级、写测试规范与禁忌、命令 | 写/跑测试 |
+| [DATA-FETCHING.md](./DATA-FETCHING.md) | 前端数据请求规范：缓存分级、keepPreviousData、queryKey 失效、实时数据 | **新增/修改前端数据页面** |
 
 ## 阅读顺序建议
 
@@ -19,6 +20,7 @@
   └─> ARCHITECTURE.md（5 分钟建立心智模型）
         ├─ 涉及数据库  → DATABASE.md
         ├─ 写测试      → TESTING.md
+        ├─ 前端数据页面 → DATA-FETCHING.md
         ├─ 新功能      → ADD-FEATURE.md
         └─ 修 bug      → FIX-BUG.md
 ```

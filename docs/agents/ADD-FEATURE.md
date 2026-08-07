@@ -84,10 +84,13 @@ state.publisher.publish(RealtimeEvent::new(entity_id, "score.changed", json!({..
 
 ## 步骤 5：前端（apps/web）
 
-1. `src/entity/*.ts` 由 `db:gen` 生成，新表自动有类型；**不要手改**
+> 新增**数据页面**前必读 [DATA-FETCHING.md](./DATA-FETCHING.md)：缓存分级、keepPreviousData、queryKey 失效等硬性规则。
+
+1. `src/entity/*.ts` 由 `db:gen` 生成，新表自动有类型；**不要手改**；改 Schema 后同步页面字段并用 `pnpm exec tsc --noEmit` 校验
 2. 页面组件：参考现有相似页面；数据请求用 TanStack Query（`useQuery`），路由用 TanStack Router
-3. 管理端页面若有 API 权限要求，使用 admin 守卫
-4. 前端类型与后端 DTO 不一致时，以后端为准（必要时同步改 TS 接口）
+3. 数据页面性能基线（详见 DATA-FETCHING.md）：用 useQuery、低频数据覆盖 `staleTime`、列表加 `keepPreviousData`、mutation 成功后 invalidate 对应 key、实时数据用 `refetchInterval`/`useAwdEventStream`
+4. 管理端页面若有 API 权限要求，使用 admin 守卫
+5. 前端类型与后端 DTO 不一致时，以后端为准（必要时同步改 TS 接口）
 
 ## 步骤 6：测试（必做）
 
@@ -128,5 +131,6 @@ mise run dev:api                   # 起服务，curl 验证新端点
 - [ ] 敏感值走 `Secret`，日志无明文
 - [ ] 路由已注册且前缀正确（/api 玩家侧 vs /api/admin 管理侧）
 - [ ] 新配置项有默认值与文档（development.toml 示例）
+- [ ] 前端数据页面遵循 DATA-FETCHING.md（useQuery + staleTime 分级 + keepPreviousData + invalidate）
 - [ ] 注释齐全：SQL 中文 COMMENT、Rust doc comment
 - [ ] fmt + check + 相关测试全绿

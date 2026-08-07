@@ -23,7 +23,7 @@
 2. **实体是生成的**：手改 `apps/api/src/entity/` 会被覆盖。Schema 变更必须：`mise run db:migration:new` → 写幂等 SQL + 中文 COMMENT → `db:migration:merge` → 应用到开发库 → `mise run db:gen`。**sea-orm-cli 必须 1.1.20**（2.0.1 生成产物会导致全项目编译失败）。
 3. **三处一致**：数据库 Schema / 生成实体 / 业务代码引用必须一致（`entity/代码/库` 漂移是历史最高频 bug 源）。
 4. **敏感值走 `Secret`**：Debug/日志必须脱敏；`auth.jwt_secret` 等不落日志、不入库。
-5. **提交规范**：中文 message（feat/fix/chore/docs/refactor 前缀），按角度分批提交；提交前 `cargo fmt --all && cargo check -p floatctf` 与相关测试全绿。
+5. **提交规范**：中文 message（feat/fix/chore/docs/refactor 前缀），按角度分批提交；提交前 `cargo fmt --all && cargo check -p floatctf` 与相关测试全绿。**push 前必须本地完整过一遍验证**：`mise run check` 全绿，前端额外 `tsc --noEmit` 与 `vite build` 通过（CI 跑的是 `vite build && tsc`，本地不绿推送必红）。
 6. **先诊断后修复**：修 bug 先定位根因并给证据；涉及行为/数据变更，先向用户说明方案获批后再动手。
 
 ## 常用命令速查
@@ -43,4 +43,4 @@ cargo test -p floatctf <关键词>                 # 跑指定单元测试
 - API：`http://localhost:9090`（mise run dev:api）；Web：`http://localhost:3000`；统一入口 `http://localhost:7780`（Nginx）
 - 开发库：`postgres://postgres:postgres@127.0.0.1:5432/floatctf_db`（容器 floatctf-dev-db）
 - 对象存储：RustFS `http://127.0.0.1:9000`（桶 `floatctf-public` / `floatctf-private`）
-- 配置样例：`apps/api/config/development.toml`；启动日志：`apps/api/logs/`（按天滚动）
+- 配置样例：`apps/api/config/development.toml`；启动日志：`WORK_DIR/logs/api/`（按天滚动，开发库 WORK_DIR=`../../app` → `app/logs/api/`）

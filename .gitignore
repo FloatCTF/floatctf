@@ -1,2 +1,14 @@
 target/
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
 /app
+/tmp
+/chore
+/var
+/.codegraph/
+# migrate.sh 的 flock 锁文件（临时）
+apps/api/src/sql/.migrate.lock

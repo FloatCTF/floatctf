@@ -1,0 +1,13 @@
+target
+**/target
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.env
+.env.*
+!.env.example
+app
+/tmp
+/var

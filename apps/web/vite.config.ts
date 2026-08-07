@@ -22,6 +22,9 @@ export default defineConfig({
         },
     },
     server: {
+        // host: true 让 dev server 监听 0.0.0.0，
+        // 这样 nginx 容器可通过 host-gateway (172.17.0.1:3000) 反向代理。
+        host: true,
         watch: {
             ignored: ["**/routeTree.gen.ts"], // ← 加这 3 行
         },

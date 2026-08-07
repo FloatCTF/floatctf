@@ -1,5 +1,8 @@
 volumes:
-    floatctf-db_data:
+    floatctf-db-data:
+      name: floatctf-dev-db-data
+    floatctf-rustfs-data:
+      name: floatctf-dev-rustfs-data
 
 services:
     db:
@@ -12,8 +15,8 @@ services:
             POSTGRES_PASSWORD: postgres
             POSTGRES_DB: floatctf_db
         volumes:
-            - floatctf-db_data:/var/lib/postgresql/data
-            - ${PROJECT_ROOT}/apps/api/src/sql/init:/docker-entrypoint-initdb.d
+            - floatctf-db-data:/var/lib/postgresql/data
+            - ${PROJECT_ROOT}/apps/api/src/sql/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
         restart: unless-stopped
 
     nginx:
@@ -38,13 +41,15 @@ services:
         container_name: floatctf-dev-rustfs
         image: rustfs/rustfs:latest
         volumes:
-            - ${PROJECT_ROOT}/app/data:/data
+            - floatctf-rustfs-data:/data
+            - ${PROJECT_ROOT}/app/logs/rustfs:/logs
         ports:
-          - "9000:9000"
-          - "9001:9001"
+          - "127.0.0.1:9000:9000"
+          - "127.0.0.1:9001:9001"
         environment:
             RUSTFS_ADDRESS: ":9000"
             RUSTFS_SERVER_DOMAINS: example.com
             RUSTFS_ACCESS_KEY: rustfsadmin
             RUSTFS_SECRET_KEY: rustfsadmin
-            RUSTFS_CONSOLE_ENABLE: true
+            RUSTFS_CONSOLE_ENABLE: "true"
+            RUSTFS_OBS_LOG_DIRECTORY: /logs

@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  web:
+    name: Build web release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.5.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @floatctf/web build
+      - run: tar -czf web-dist.tar.gz -C apps/web/dist .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: web-dist.tar.gz
+          generate_release_notes: true
+
+  rust:
+    name: Build Rust release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release
+      - run: tar -czf rust-binaries.tar.gz -C target/release floatctf fcmc floatctf-migration awd_flagserver awd_judgeserver
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: rust-binaries.tar.gz
+          generate_release_notes: true

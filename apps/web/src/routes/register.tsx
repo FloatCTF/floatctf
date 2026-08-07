@@ -1,11 +1,12 @@
 import { Avatar, Button, FormControl, Heading, TextInput } from "@primer/react";
 import { useMutation } from "@tanstack/react-query";
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
 import { useEffect, useRef } from "react";
 
 import { serviceApi } from "@/api";
 import { useMsgInlineBanner } from "@/components";
+import { AppLink } from "@/navigation";
 import { ServiceRouteGuardWithRedirect } from "@/routes/service/route";
 
 export const Route = createFileRoute("/register")({
@@ -163,9 +164,9 @@ function Register() {
 				<Button type="submit" variant="primary" disabled={form.buttonDisabled}>
 					{form.buttonMessage}
 				</Button>
-				<Link to="/" className="text-center">
+				<AppLink to="/" className="text-center">
 					Already have an account? Login
-				</Link>
+				</AppLink>
 			</form>
 
 			<banner.BannerComponent />

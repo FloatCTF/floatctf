@@ -1,11 +1,12 @@
 import { Avatar, Button, FormControl, Heading, TextInput } from "@primer/react";
 import { useMutation } from "@tanstack/react-query";
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
 import { useEffect, useRef } from "react";
 
 import { serviceApi } from "@/api";
 import { useMsgInlineBanner } from "@/components";
+import { AppLink } from "@/navigation";
 import { ServiceRouteGuardWithRedirect } from "@/routes/service/route";
 import { useAuthStore } from "@/stores/AuthStore";
 
@@ -105,8 +106,8 @@ function App() {
 					{form.buttonMessage}
 				</Button>
 				<div className="flex justify-between">
-					<Link to="/register">Don't have an account? Register</Link>
-					<Link to="/reset">Forgot password?</Link>
+					<AppLink to="/register">Don't have an account? Register</AppLink>
+					<AppLink to="/reset">Forgot password?</AppLink>
 				</div>
 			</form>
 

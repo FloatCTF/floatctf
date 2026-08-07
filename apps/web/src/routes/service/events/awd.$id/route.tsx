@@ -1,12 +1,8 @@
+import { AppLink, useNavigation } from "@/navigation";
 import { RocketIcon } from "@primer/octicons-react";
 import { Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import {
-	Link,
-	Outlet,
-	createFileRoute,
-	useMatchRoute,
-} from "@tanstack/react-router";
+import { Outlet, createFileRoute, useMatchRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { createContext } from "react";
 
@@ -36,11 +32,11 @@ function RouterNavItem({
 	const params = { id } as never;
 	const isActive = matchRoute({ to: path, params, fuzzy: false });
 	return (
-		<Link style={{ textDecoration: "none" }} to={path} params={params}>
+		<AppLink style={{ textDecoration: "none" }} to={path} params={params}>
 			<UnderlineNav.Item aria-current={isActive ? "page" : undefined}>
 				{children}
 			</UnderlineNav.Item>
-		</Link>
+		</AppLink>
 	);
 }
 
@@ -73,22 +69,13 @@ function RouteComponent() {
 					<RouterNavItem to="/service/events/awd/$id" id={id}>
 						Overview
 					</RouterNavItem>
-					<RouterNavItem
-						to="/service/events/awd/$id/gameboxes"
-						id={id}
-					>
+					<RouterNavItem to="/service/events/awd/$id/gameboxes" id={id}>
 						GameBoxes
 					</RouterNavItem>
-					<RouterNavItem
-						to="/service/events/awd/$id/scoreboard"
-						id={id}
-					>
+					<RouterNavItem to="/service/events/awd/$id/scoreboard" id={id}>
 						Scoreboard
 					</RouterNavItem>
-					<RouterNavItem
-						to="/service/events/awd/$id/wireguard"
-						id={id}
-					>
+					<RouterNavItem to="/service/events/awd/$id/wireguard" id={id}>
 						WireGuard
 					</RouterNavItem>
 				</UnderlineNav>

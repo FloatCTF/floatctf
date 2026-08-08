@@ -2,7 +2,6 @@ import { CheckIcon } from "@primer/octicons-react";
 import {
 	Button,
 	ButtonGroup,
-	Checkbox,
 	Dialog,
 	Stack,
 	TextInput,
@@ -185,7 +184,6 @@ function RouteComponent() {
 function ImportButton() {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(null);
-	const [isBatch, setIsBatch] = useState(false);
 	const [message, setMessage] = useState<null | {
 		type: "success" | "error";
 		text: string;
@@ -193,13 +191,12 @@ function ImportButton() {
 	const queryClient = useQueryClient();
 
 	const importMutation = useMutation({
-		mutationFn: (vars: { file: File; isBatch: boolean }) =>
-			adminApi.challenges.importChallenge(vars.file, vars.isBatch),
+		mutationFn: (vars: { file: File }) =>
+			adminApi.challenges.importChallenge(vars.file),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["Challenges"] });
 			setMessage({ type: "success", text: "上传成功 🎉" });
 			setFile(null);
-			setIsBatch(false);
 
 			// 3 秒后清理提示
 			setTimeout(() => setMessage(null), 3000);
@@ -226,7 +223,7 @@ function ImportButton() {
 
 	const handleUpload = () => {
 		if (!file) return;
-		importMutation.mutate({ file, isBatch });
+		importMutation.mutate({ file });
 	};
 
 	return (
@@ -244,16 +241,6 @@ function ImportButton() {
 			{file && (
 				<div className="flex items-center gap-3">
 					<span className="text-sm text-gray-500">{file.name}</span>
-					<div className="flex items-center gap-2">
-						<Checkbox
-							id="batch"
-							checked={isBatch}
-							onChange={(e) => setIsBatch(e.target.checked)}
-						/>
-						<label htmlFor="batch" className="text-sm cursor-pointer">
-							批量导入
-						</label>
-					</div>
 					<Button
 						onClick={handleUpload}
 						disabled={importMutation.isPending}

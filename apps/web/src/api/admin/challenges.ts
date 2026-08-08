@@ -34,13 +34,10 @@ export const challengeAdminApi = {
         });
         return res.data;
     },
-    importChallenge: async (
-        file: File,
-        isBatch: boolean,
-    ): Promise<UniResponse<null>> => {
+    // 后端单/批量同逻辑：根目录有 meta.toml 按单题，否则递归发现所有 meta.toml
+    importChallenge: async (file: File): Promise<UniResponse<null>> => {
         const form = new FormData();
-        const field = isBatch ? "challenge_list_zip" : "challenge_zip";
-        form.append(field, file, file.name);
+        form.append("challenge_list_zip", file, file.name);
 
         const res = await admin_api.post("/challenges/import", form, {
             headers: {

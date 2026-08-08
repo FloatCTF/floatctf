@@ -13,7 +13,6 @@ use fcmc::{ChallengeMeta, DockerContainerRuntime};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::OnConflict,
 };
-use std::io::Read;
 use tempfile::NamedTempFile;
 
 #[derive(Debug, MultipartForm)]
@@ -47,11 +46,11 @@ pub async fn web_import_challenge(
     }
 
     if let Some(challenge_zip) = form.challenge_zip {
-        let toml_str = import_challenge_zip(&ctx.db, challenge_zip.file)
+        let toml_strs = import_challenge_zip(&ctx.db, challenge_zip.file)
             .await
             .map_err(|e| AppError::BadRequest(format!("import challenge zip error: {}", e)))?;
 
-        will_insert_toml_strs.push(toml_str);
+        will_insert_toml_strs.extend(toml_strs);
     }
 
     if let Some(challenge_list_zip) = form.challenge_list_zip {
@@ -133,53 +132,97 @@ pub async fn import_challenge(
     Ok(model)
 }
 
+/// 导入题目压缩包（单题/批量统一逻辑）：
+/// 1. 解压到临时目录；
+/// 2. 先检查解压根目录是否有 meta.toml —— 有则视为单题导入；
+/// 3. 没有则递归查找目录树下所有 meta.toml，每个 meta.toml 所在目录视为一道题目；
+/// 4. 按 meta.toml 所在位置把整个目录覆盖复制到 {CHALLENGES_DIR}/{safe_name}；
+/// 5. 返回所有 meta.toml 原文，由 DB 侧按 name upsert 覆盖导入。
 pub async fn import_challenge_zip(
     db: &DatabaseConnection,
     challenge_zip: tempfile::NamedTempFile,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Vec<String>> {
     let output_root = get_setting(&db, "CHALLENGES_DIR")
         .await
         .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
+
+    let tmp_dir = tempfile::tempdir()?;
     let mut archive = zip::ZipArchive::new(challenge_zip)?;
+    // zip crate 的 extract 自带 zip-slip 路径穿越防护，越界条目直接报错
+    archive.extract(tmp_dir.path())?;
 
-    let meta_toml = {
-        let mut meta_toml_file = archive.by_name("meta.toml")?;
-        let mut meta_toml_content = String::new();
-        meta_toml_file.read_to_string(&mut meta_toml_content)?;
-        meta_toml_content
-    };
-
-    let cm = ChallengeMeta::from_toml_str(&meta_toml)?;
-    let safe_name = generate_safe_name(&cm.name);
-    let output_dir = std::path::Path::new(&output_root).join(safe_name);
-
-    if output_dir.exists() {
-        // 覆盖题目
-        std::fs::remove_dir_all(&output_dir)?;
+    let meta_paths = find_meta_tomls(tmp_dir.path());
+    if meta_paths.is_empty() {
+        anyhow::bail!("压缩包内未找到 meta.toml");
     }
 
-    std::fs::create_dir_all(&output_dir)?;
+    let mut will_insert_toml_strs = Vec::with_capacity(meta_paths.len());
+    for meta_path in meta_paths {
+        let meta_toml = std::fs::read_to_string(&meta_path)?;
+        let cm = ChallengeMeta::from_toml_str(&meta_toml)?;
+        let safe_name = generate_safe_name(&cm.name);
 
-    archive.extract(&output_dir)?;
+        let dest = std::path::Path::new(&output_root).join(&safe_name);
+        if dest.exists() {
+            // 覆盖导入：整目录重建
+            std::fs::remove_dir_all(&dest)?;
+        }
+        let src_dir = meta_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("meta.toml 缺少父目录"))?;
+        copy_dir_all(src_dir, &dest)?;
 
-    Ok(meta_toml)
+        will_insert_toml_strs.push(meta_toml);
+    }
+    Ok(will_insert_toml_strs)
 }
 
+/// 批量压缩包与单包同逻辑（解压后按 meta.toml 所在位置递归导入）。
 pub async fn import_challenge_list_zip(
     db: &DatabaseConnection,
     challenge_list_zip: tempfile::NamedTempFile,
 ) -> anyhow::Result<Vec<String>> {
-    let mut archive = zip::ZipArchive::new(challenge_list_zip)?;
-    let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
-    let mut will_insert_toml_strs = Vec::new();
-    for zip_name in file_names {
-        let mut file = archive.by_name(&zip_name)?;
-        let mut temp_file = NamedTempFile::new()?;
-        std::io::copy(&mut file, &mut temp_file)?;
-        let meta_toml = import_challenge_zip(db, temp_file).await?;
-        will_insert_toml_strs.push(meta_toml);
+    import_challenge_zip(db, challenge_list_zip).await
+}
+
+/// 递归查找 meta.toml：根目录存在则只按单题处理；否则收集所有子目录中的 meta.toml。
+fn find_meta_tomls(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let root_meta = root.join("meta.toml");
+    if root_meta.is_file() {
+        return vec![root_meta];
     }
-    Ok(will_insert_toml_strs)
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if entry.file_name() == "meta.toml" {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 递归复制目录（meta.toml 所在目录整体搬入 CHALLENGES_DIR/{safe_name}）。
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// POST /api/admin/challenges/check
@@ -330,4 +373,60 @@ pub async fn build_challenge(
     }
 
     UniResponse::ok(res.into()).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_meta_tomls_root_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("meta.toml"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/meta.toml"), "").unwrap();
+        let found = find_meta_tomls(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], dir.path().join("meta.toml"));
+    }
+
+    #[test]
+    fn find_meta_tomls_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        std::fs::create_dir_all(dir.path().join("c")).unwrap();
+        std::fs::write(dir.path().join("a/meta.toml"), "").unwrap();
+        std::fs::write(dir.path().join("a/b/meta.toml"), "").unwrap();
+        std::fs::write(dir.path().join("c/meta.toml"), "").unwrap();
+        let found = find_meta_tomls(dir.path());
+        assert_eq!(found.len(), 3);
+        // 排序后确定顺序：a/b/meta.toml < a/meta.toml < c/meta.toml
+        assert_eq!(found[0], dir.path().join("a/b/meta.toml"));
+        assert_eq!(found[1], dir.path().join("a/meta.toml"));
+        assert_eq!(found[2], dir.path().join("c/meta.toml"));
+    }
+
+    #[test]
+    fn find_meta_tomls_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("x")).unwrap();
+        std::fs::write(dir.path().join("x/readme.txt"), "").unwrap();
+        assert!(find_meta_tomls(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn copy_dir_all_recursive() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(src.path().join("src")).unwrap();
+        std::fs::write(src.path().join("meta.toml"), "m").unwrap();
+        std::fs::write(src.path().join("src/main.py"), "code").unwrap();
+        copy_dir_all(src.path(), &dst.path().join("out")).unwrap();
+        let out = dst.path().join("out");
+        assert_eq!(std::fs::read_to_string(out.join("meta.toml")).unwrap(), "m");
+        assert_eq!(
+            std::fs::read_to_string(out.join("src/main.py")).unwrap(),
+            "code"
+        );
+    }
 }

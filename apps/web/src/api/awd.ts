@@ -22,6 +22,16 @@ export type GameBoxRevisionDto = {
 	image_digest: string | null;
 	username: string;
 	spec_digest: string;
+	// 完整配置回传（Edit 对话框回填，§46）
+	cpu_millis: number;
+	memory_bytes: number;
+	pids_limit: number;
+	healthcheck_json: Record<string, unknown> | null;
+	judge_script_name: string | null;
+	judge_script_content: string | null;
+	judge_args_json: Record<string, unknown> | null;
+	judge_timeout_secs: number | null;
+	judge_retry_interval_secs: number | null;
 	created_at: string;
 };
 

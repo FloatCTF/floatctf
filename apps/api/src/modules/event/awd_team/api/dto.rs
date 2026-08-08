@@ -353,6 +353,16 @@ pub struct GameBoxRevisionDto {
     pub image_digest: Option<String>,
     pub username: String,
     pub spec_digest: String,
+    /// 完整配置随 Revision 回传，供前端 Edit 对话框回填（同 Challenges 页编辑语义）。
+    pub cpu_millis: i64,
+    pub memory_bytes: i64,
+    pub pids_limit: i64,
+    pub healthcheck_json: Option<serde_json::Value>,
+    pub judge_script_name: Option<String>,
+    pub judge_script_content: Option<String>,
+    pub judge_args_json: Option<serde_json::Value>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
@@ -365,6 +375,15 @@ impl From<&crate::entity::gamebox_revisions::Model> for GameBoxRevisionDto {
             image_digest: r.image_digest.clone(),
             username: r.username.clone(),
             spec_digest: r.spec_digest.clone(),
+            cpu_millis: r.default_cpu_millis,
+            memory_bytes: r.default_memory_bytes,
+            pids_limit: r.default_pids_limit,
+            healthcheck_json: r.healthcheck_json.clone(),
+            judge_script_name: r.judge_script_name.clone(),
+            judge_script_content: r.judge_script_content.clone(),
+            judge_args_json: r.judge_args_json.clone(),
+            judge_timeout_secs: r.default_judge_timeout_secs,
+            judge_retry_interval_secs: r.default_judge_retry_interval_secs,
             created_at: r.created_at,
         }
     }

@@ -140,7 +140,7 @@ pub async fn ensure_peer_for_user(
     // Host peer add when AWD_HOST_NETWORK is enabled (mirrors HostNetworkRuntime selection).
     let allowed = assigned_ip.clone();
     add_peer_on_host(
-        awd_config.host_network,
+        awd_config.network_runtime == "host",
         &awd_event.wireguard_interface_name,
         &kp.public_key,
         &allowed,

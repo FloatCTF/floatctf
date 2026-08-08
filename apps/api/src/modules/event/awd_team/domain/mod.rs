@@ -10,6 +10,7 @@
 //! Generated entity enums are re-exported here for call-site convenience; they must
 //! never be edited by hand (sea-orm-cli only).
 
+pub mod firewall_state;
 pub mod flag;
 pub mod network;
 pub mod score;
@@ -25,6 +26,7 @@ mod gamebox_ext;
 mod round_ext;
 
 pub use event_ext::*;
+pub use firewall_state::{DesiredEventPolicy, DesiredFirewallState, DesiredTeamPolicy, IpNet};
 pub use flag::{generate_flag, hash_flag, verify_flag};
 pub use gamebox_ext::*;
 pub use network::Ipv4Cidr;

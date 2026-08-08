@@ -14,9 +14,12 @@ use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     crypto::{AwdCrypto, EncryptedBlob},
     domain::Ipv4Cidr,
-    infrastructure::network::{AwdNetworkRuntime, EventNetworkIdentity, WireGuardDesiredState},
+    infrastructure::{
+        firewall::FirewallRuntime,
+        network::{AwdNetworkRuntime, WireGuardDesiredState},
+    },
     repo::event_repo,
-    service::network_policy_service,
+    service::firewall_service,
 };
 use fcmc::AwdContainerRuntime;
 
@@ -25,6 +28,7 @@ pub async fn recover_all(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
 ) -> AwdResult<u32> {
     let active_events = event_repo::find_active_events(db)
@@ -34,7 +38,7 @@ pub async fn recover_all(
     let mut recovered = 0u32;
 
     for event in &active_events {
-        match recover_event(db, containers, network, crypto, event).await {
+        match recover_event(db, containers, network, firewall, crypto, event).await {
             Ok(n) => {
                 recovered += n;
                 info!(
@@ -66,6 +70,7 @@ async fn recover_event(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
     event: &awd_events::Model,
 ) -> AwdResult<u32> {
@@ -173,24 +178,11 @@ async fn recover_event(
         );
     }
 
-    // ── 3. Restore firewall for current phase ──
-    network_policy_service::apply_phase_policy(db, network, event.event_id, event.phase.clone())
+    // ── 3. Restore firewall（nftables 全局 desired-state reconcile，DB 是事实源）──
+    // 失败 Fail Closed：不吞错，由调用方决定是否置 NetworkError。
+    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
         .await?;
-    // conntrack cleanup：策略已应用后尽力清理既有连接，失败显式记录（Phase 0 P0-4 吞错扫描）。
-    // 注：Phase 1 nftables reconcile 落地后，conntrack 清理纳入 desired-state 操作的失败模型。
-    if let Err(e) = network
-        .clear_event_connections(EventNetworkIdentity {
-            event_id: event.event_id,
-            gamebox_cidr: event.gamebox_cidr.clone(),
-        })
-        .await
-    {
-        tracing::error!(
-            "[Recovery] conntrack cleanup failed for event {}: {}",
-            event.event_id,
-            e
-        );
-    }
+    firewall_service::flush_event_connections(network, event.event_id, &event.gamebox_cidr).await;
     recovered += 1;
 
     Ok(recovered)

@@ -13,6 +13,7 @@ use crate::infrastructure::logging::LogService;
 use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::EventModuleRegistry;
 use crate::modules::event::awd_team::crypto::AwdCrypto;
+use crate::modules::event::awd_team::infrastructure::firewall::FirewallRuntime;
 use crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime;
 use crate::scheduler::TaskScheduler;
 use fcmc::AwdContainerRuntime;
@@ -57,8 +58,10 @@ pub struct AwdDependencies {
     pub publisher: Arc<dyn EventPublisher>,
     /// Docker-backed AWD container/network runtime.
     pub containers: Arc<dyn AwdContainerRuntime>,
-    /// Host WireGuard / firewall / conntrack runtime.
+    /// Host WireGuard / conntrack runtime.
     pub network: Arc<dyn AwdNetworkRuntime>,
+    /// Native nftables firewall runtime（唯一生产实现，Phase 1）。
+    pub firewall: Arc<dyn FirewallRuntime>,
 }
 
 impl AppState {

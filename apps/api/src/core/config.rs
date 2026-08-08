@@ -75,7 +75,10 @@ pub struct PathConfig {
 pub struct AwdStaticConfig {
     /// Whether AWD crypto could be derived from the shared JWT secret material.
     pub crypto_from_app_secret: bool,
-    pub host_network: bool,
+    /// 网络 runtime 选择（P1-17）：`host` = HostNetworkRuntime + NftablesFirewallRuntime；
+    /// `noop` = 仅 unit test / dev mock（Noop 永远不允许 Verified）。
+    /// 取代旧 `host_network = true/false`；不新增 `firewall_backend` 开关。
+    pub network_runtime: String,
     pub flagserver_image: String,
     pub judgeserver_image: String,
 }
@@ -207,19 +210,24 @@ struct FeaturesToml {
 struct AwdToml {
     #[serde(default = "default_true")]
     crypto_from_app_secret: bool,
-    #[serde(default)]
-    host_network: bool,
+    /// 默认 `noop`（dev/CI 无特权环境）；生产配置显式写 `host`。
+    #[serde(default = "default_network_runtime")]
+    network_runtime: String,
     #[serde(default = "default_flagserver_image")]
     flagserver_image: String,
     #[serde(default = "default_judgeserver_image")]
     judgeserver_image: String,
 }
 
+fn default_network_runtime() -> String {
+    "noop".to_string()
+}
+
 impl Default for AwdToml {
     fn default() -> Self {
         Self {
             crypto_from_app_secret: true,
-            host_network: false,
+            network_runtime: default_network_runtime(),
             flagserver_image: default_flagserver_image(),
             judgeserver_image: default_judgeserver_image(),
         }
@@ -298,7 +306,7 @@ impl AppConfig {
             },
             awd: AwdStaticConfig {
                 crypto_from_app_secret: file.awd.crypto_from_app_secret,
-                host_network: file.awd.host_network,
+                network_runtime: file.awd.network_runtime,
                 flagserver_image: file.awd.flagserver_image,
                 judgeserver_image: file.awd.judgeserver_image,
             },

@@ -139,41 +139,6 @@ pub mod wireguard_cmd {
     }
 }
 
-/// Build `iptables` / `iptables-restore` command arguments safely.
-pub mod firewall_cmd {
-    use super::*;
-
-    pub async fn apply_rules(runner: &dyn CommandRunner, rules: &str) -> anyhow::Result<()> {
-        // Write rules to temp file, then iptables-restore
-        let tmp = tempfile::NamedTempFile::new()?;
-        std::fs::write(tmp.path(), rules)?;
-        let args = vec![
-            "iptables-restore".to_string(),
-            "--noflush".to_string(),
-            tmp.path().to_string_lossy().to_string(),
-        ];
-        // Actually use iptables-restore as the command
-        runner.run("iptables-restore", &args[1..]).await?;
-        Ok(())
-    }
-
-    pub async fn save_snapshot(
-        runner: &dyn CommandRunner,
-        chain_prefix: &str,
-    ) -> anyhow::Result<String> {
-        let out = runner
-            .run("iptables-save", &["-t".to_string(), "filter".to_string()])
-            .await?;
-        // Filter lines matching chain_prefix
-        let filtered: Vec<&str> = out
-            .stdout
-            .lines()
-            .filter(|l| l.contains(chain_prefix))
-            .collect();
-        Ok(filtered.join("\n"))
-    }
-}
-
 /// Build `conntrack` command arguments safely.
 pub mod conntrack_cmd {
     use super::*;

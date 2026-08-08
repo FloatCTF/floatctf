@@ -111,8 +111,13 @@ pub async fn start_awd_event(
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    event_service::start_event(ctx.db.get_ref(), awd.network.as_ref(), event_id)
-        .await
+    event_service::start_event(
+        ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        event_id,
+    )
+    .await
         .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
@@ -126,8 +131,13 @@ pub async fn pause_awd_event(
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    event_service::pause_event(ctx.db.get_ref(), awd.network.as_ref(), event_id)
-        .await
+    event_service::pause_event(
+        ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        event_id,
+    )
+    .await
         .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
@@ -141,8 +151,13 @@ pub async fn resume_awd_event(
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    event_service::resume_event(ctx.db.get_ref(), awd.network.as_ref(), event_id)
-        .await
+    event_service::resume_event(
+        ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        event_id,
+    )
+    .await
         .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
@@ -271,6 +286,7 @@ pub async fn deploy_awd_event(
         ctx.db.get_ref(),
         awd.containers.as_ref(),
         awd.network.as_ref(),
+        awd.firewall.as_ref(),
         awd.crypto.as_ref(),
         &ctx.config.awd,
         event_id,

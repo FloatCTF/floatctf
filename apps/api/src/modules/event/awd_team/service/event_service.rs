@@ -7,15 +7,19 @@ use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus}
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     domain::AwdEventStatusExt,
-    infrastructure::network::AwdNetworkRuntime,
+    infrastructure::{
+        firewall::FirewallRuntime,
+        network::{AwdNetworkRuntime, EventNetworkIdentity},
+    },
     repo::{event_repo, round_repo},
-    service::network_policy_service,
+    service::firewall_service,
 };
 
 /// Start an AWD event: validate status, create first round, set hardening phase + policy.
 pub async fn start_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
@@ -66,7 +70,10 @@ pub async fn start_event(
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    network_policy_service::apply_phase_policy(db, network, event_id, AwdPhase::Hardening).await?;
+    // 全局 desired-state reconcile（nftables）+ conntrack 清理（Phase 1 P1-10）
+    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
+        .await?;
+    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())
 }
@@ -75,6 +82,7 @@ pub async fn start_event(
 pub async fn pause_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
@@ -115,7 +123,9 @@ pub async fn pause_event(
     )
     .await?;
 
-    network_policy_service::apply_phase_policy(db, network, event_id, AwdPhase::Pause).await?;
+    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
+        .await?;
+    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())
 }
@@ -124,6 +134,7 @@ pub async fn pause_event(
 pub async fn resume_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
@@ -179,7 +190,9 @@ pub async fn resume_event(
     )
     .await?;
 
-    network_policy_service::apply_phase_policy(db, network, event_id, resume_phase).await?;
+    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
+        .await?;
+    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())
 }

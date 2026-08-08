@@ -195,6 +195,28 @@ pub async fn get_setting(db: &DbConn, key: &str) -> Result<String, anyhow::Error
     Ok(resolve_value_with_map(&raw, &map))
 }
 
+/// Upsert 一个设置值（不存在则插入，存在则更新 value）。
+///
+/// 动态设置统一走这里（AGENTS.md 铁律 1：配置只从 TOML / settings 表读取）。
+/// 内部系统参数（如 AWD 网络策略 revision）由系统自动维护。
+pub async fn upsert_setting(db: &DbConn, key: &str, value: &str) -> Result<(), anyhow::Error> {
+    settings::Entity::insert(settings::ActiveModel {
+        key: Set(key.to_string()),
+        value: Set(value.to_string()),
+        r#type: Set(SettingValueType::String),
+        description: Set("内部系统参数（自动维护）".to_string()),
+        ..Default::default()
+    })
+    .on_conflict(
+        OnConflict::column(settings::Column::Key)
+            .update_column(settings::Column::Value)
+            .to_owned(),
+    )
+    .exec(db)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

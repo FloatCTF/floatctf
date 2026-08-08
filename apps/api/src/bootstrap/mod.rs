@@ -125,13 +125,28 @@ pub async fn run() -> Result<(), BootstrapError> {
     // AWD host network runtime (shared by HTTP + scheduler).
     let awd_network: Arc<
         dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
-    > = if config.awd.host_network {
+    > = if config.awd.network_runtime == "host" {
         info!("AWD host network enabled — using HostNetworkRuntime");
         Arc::new(
             crate::modules::event::awd_team::infrastructure::network::HostNetworkRuntime::new(),
         )
     } else {
+        info!("AWD host network disabled (network_runtime=noop) — NoopNetworkRuntime");
         Arc::new(crate::modules::event::awd_team::infrastructure::network::NoopNetworkRuntime)
+    };
+
+    // AWD firewall runtime：唯一生产实现为 native nftables（Phase 1）。
+    // Noop 仅用于 unit test / dev mock，且 Noop 永远不允许 Verified（Phase 2 双门禁）。
+    let awd_firewall: Arc<
+        dyn crate::modules::event::awd_team::infrastructure::firewall::FirewallRuntime,
+    > = if config.awd.network_runtime == "host" {
+        info!("AWD firewall enabled — using NftablesFirewallRuntime");
+        Arc::new(
+            crate::modules::event::awd_team::infrastructure::firewall::NftablesFirewallRuntime::new(),
+        )
+    } else {
+        info!("AWD firewall disabled — using NoopFirewallRuntime (dev/mock only)");
+        Arc::new(crate::modules::event::awd_team::infrastructure::firewall::NoopFirewallRuntime)
     };
 
     // Initialize scheduler
@@ -141,6 +156,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         rustfs.clone(),
         log_service.clone(),
         awd_network.clone(),
+        awd_firewall.clone(),
     )
     .await
     .expect("init startup handlers failed!");
@@ -182,6 +198,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         publisher: publisher.clone(),
         containers: awd_containers.clone(),
         network: awd_network.clone(),
+        firewall: awd_firewall.clone(),
     });
 
     let ip = config.server.listen_ip.clone();

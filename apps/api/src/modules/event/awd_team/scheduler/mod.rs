@@ -24,9 +24,9 @@ use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus}
 use crate::modules::event::awd_team::{
     crypto::{AwdCrypto, EncryptedBlob},
     domain::AwdEventStatusExt,
-    infrastructure::network::AwdNetworkRuntime,
+    infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
     repo::{event_repo, judge_repo, round_repo},
-    service::{event_service, judge_service, network_policy_service},
+    service::{event_service, firewall_service, judge_service},
 };
 use fcmc::AwdContainerRuntime;
 use std::sync::Arc;
@@ -134,6 +134,7 @@ pub struct AwdEventStartHandler {
     pub network: std::sync::Arc<
         dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
     >,
+    pub firewall: Arc<dyn FirewallRuntime>,
 }
 
 #[async_trait]
@@ -149,7 +150,13 @@ impl TaskHandler for AwdEventStartHandler {
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         let event_id = event_id_from_task(&task)?;
         info!("[AWD] Starting scheduled event {}", event_id);
-        event_service::start_event(self.db.get_ref(), self.network.as_ref(), event_id).await?;
+        event_service::start_event(
+            self.db.get_ref(),
+            self.network.as_ref(),
+            self.firewall.as_ref(),
+            event_id,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -159,6 +166,7 @@ pub struct AwdRoundStartHandler {
     pub db: WebDb,
     pub docker: WebDocker,
     pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
 }
 
 #[async_trait]
@@ -245,14 +253,19 @@ impl TaskHandler for AwdRoundStartHandler {
             new_round.round_number, event_id, phase_debug
         );
 
-        // Same path as start/pause/resume: phase firewall + conntrack flush.
-        network_policy_service::apply_phase_policy(
+        // phase 切换 = DB desired phase → 全局 DesiredFirewallState → nftables reconcile（Phase 1 P1-10）
+        firewall_service::reconcile_global(
             self.db.get_ref(),
-            self.network.as_ref(),
-            event_id,
-            phase,
+            self.firewall.as_ref(),
+            firewall_service::next_network_revision(self.db.get_ref()).await?,
         )
         .await?;
+        firewall_service::flush_event_connections(
+            self.network.as_ref(),
+            event_id,
+            &awd_event.gamebox_cidr,
+        )
+        .await;
 
         let token_ciphertext = awd_event
             .judgeserver_token_ciphertext

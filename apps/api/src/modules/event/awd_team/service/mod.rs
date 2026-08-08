@@ -3,10 +3,10 @@
 pub mod archive_service;
 pub mod deploy_service;
 pub mod event_service;
+pub mod firewall_service;
 pub mod flag_service;
 pub mod gamebox_service;
 pub mod judge_service;
-pub mod network_policy_service;
 pub mod precheck_service;
 pub mod recovery_service;
 pub mod reset_service;

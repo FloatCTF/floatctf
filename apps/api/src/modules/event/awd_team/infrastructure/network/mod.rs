@@ -1,14 +1,13 @@
-//! AWD host networking: WireGuard, firewall, conntrack.
+//! AWD host networking: WireGuard, conntrack (firewall moved to `infrastructure::firewall`).
 
 pub mod keys;
 pub mod runtime;
 
 pub use keys::{WgKeyPair, generate_keypair, public_from_private};
 pub use runtime::{
-    AwdNetworkRuntime, EventNetworkIdentity, EventNetworkPolicy, HostNetworkRuntime,
-    NetworkObservedState, NoopNetworkRuntime, PeerIdentity, TeamNetworkIdentity,
-    WireGuardDesiredState,
+    AwdNetworkRuntime, EventNetworkIdentity, HostNetworkRuntime, NetworkObservedState,
+    NoopNetworkRuntime, PeerIdentity, TeamNetworkIdentity, WireGuardDesiredState,
 };
 
 // Compatibility re-exports of the system command layer.
-pub use crate::modules::event::awd_team::system::{command, conntrack, firewall, wireguard};
+pub use crate::modules::event::awd_team::system::{command, conntrack, wireguard};

@@ -7,7 +7,7 @@ use crate::modules::event::awd_team::{
     AwdResult,
     system::{
         command::{CommandRunner, RealCommandRunner},
-        conntrack, firewall, wireguard,
+        conntrack, wireguard,
     },
 };
 
@@ -49,21 +49,14 @@ pub struct NetworkObservedState {
     pub notes: Vec<String>,
 }
 
-/// Rendered firewall policy for one apply operation.
-#[derive(Debug, Clone)]
-pub struct EventNetworkPolicy {
-    pub event_id: Uuid,
-    /// Pre-rendered rules from `firewall::render_*`.
-    pub rules: crate::modules::event::awd_team::system::firewall::RenderedRules,
-    pub dry_run: bool,
-}
-
-/// Platform host networking for AWD (WG / iptables / conntrack).
+/// Platform host networking for AWD (WireGuard / conntrack).
+///
+/// 防火墙策略已迁移到独立 `FirewallRuntime`（native nftables，Phase 1）；
+/// 本 runtime 只管 WG 生命周期与 conntrack 清理。
 #[async_trait]
 pub trait AwdNetworkRuntime: Send + Sync {
     async fn ensure_wireguard(&self, desired: WireGuardDesiredState) -> AwdResult<()>;
     async fn remove_wireguard(&self, interface: &str) -> AwdResult<()>;
-    async fn apply_policy(&self, policy: EventNetworkPolicy) -> AwdResult<()>;
     async fn revoke_peer(&self, peer: PeerIdentity) -> AwdResult<()>;
     async fn clear_event_connections(&self, event: EventNetworkIdentity) -> AwdResult<()>;
     async fn clear_team_connections(&self, team: TeamNetworkIdentity) -> AwdResult<()>;
@@ -115,18 +108,6 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
         wireguard::delete_interface(self.runner(), interface).await
     }
 
-    async fn apply_policy(&self, policy: EventNetworkPolicy) -> AwdResult<()> {
-        if policy.dry_run {
-            tracing::info!(
-                event_id = %policy.event_id,
-                bytes = policy.rules.iptables_restore_input.len(),
-                "[Network] dry-run policy (not applied)"
-            );
-            return Ok(());
-        }
-        firewall::apply_rules(self.runner(), &policy.rules).await
-    }
-
     async fn revoke_peer(&self, peer: PeerIdentity) -> AwdResult<()> {
         wireguard::remove_peer(self.runner(), &peer.interface, &peer.public_key).await
     }
@@ -159,9 +140,6 @@ impl AwdNetworkRuntime for NoopNetworkRuntime {
         Ok(())
     }
     async fn remove_wireguard(&self, _interface: &str) -> AwdResult<()> {
-        Ok(())
-    }
-    async fn apply_policy(&self, _policy: EventNetworkPolicy) -> AwdResult<()> {
         Ok(())
     }
     async fn revoke_peer(&self, _peer: PeerIdentity) -> AwdResult<()> {

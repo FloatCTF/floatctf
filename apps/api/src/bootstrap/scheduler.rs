@@ -7,9 +7,12 @@ use tracing::info;
 use crate::{
     infrastructure::LogService,
     infrastructure::{WebDb, WebDocker, WebRustfs},
-    modules::event::awd_team::scheduler::{
-        AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler, AwdRoundEndHandler,
-        AwdRoundGraceEndHandler, AwdRoundStartHandler,
+    modules::event::awd_team::{
+        infrastructure::firewall::FirewallRuntime,
+        scheduler::{
+            AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler,
+            AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler,
+        },
     },
     scheduler::{
         CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
@@ -24,6 +27,7 @@ pub async fn build_task_scheduler(
     rustfs: WebRustfs,
     logger: LogService,
     network: Arc<dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime>,
+    firewall: Arc<dyn FirewallRuntime>,
 ) -> Result<TaskScheduler> {
     let mut scheduler = TaskScheduler::new(db.clone(), docker.clone(), rustfs.clone(), logger);
 
@@ -41,11 +45,13 @@ pub async fn build_task_scheduler(
         Arc::new(AwdEventStartHandler {
             db: db.clone(),
             network: network.clone(),
+            firewall: firewall.clone(),
         }),
         Arc::new(AwdRoundStartHandler {
             db: db.clone(),
             docker: docker.clone(),
             network: network.clone(),
+            firewall: firewall.clone(),
         }),
         Arc::new(AwdRoundEndHandler { db: db.clone() }),
         Arc::new(AwdRoundGraceEndHandler { db: db.clone() }),

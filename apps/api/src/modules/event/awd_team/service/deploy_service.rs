@@ -19,8 +19,12 @@ use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     crypto::{AwdCrypto, EncryptedBlob},
     domain::{AwdEventStatusExt, Ipv4Cidr},
-    infrastructure::network::{AwdNetworkRuntime, WireGuardDesiredState},
+    infrastructure::{
+        firewall::FirewallRuntime,
+        network::{AwdNetworkRuntime, WireGuardDesiredState},
+    },
     repo::event_repo,
+    service::firewall_service,
 };
 use fcmc::{AwdContainerRuntime, EventNetworkSpec, GameBoxSpec, InfrastructureContainerSpec};
 
@@ -39,6 +43,7 @@ pub async fn deploy_event(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
     network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
     awd_config: &AwdStaticConfig,
     event_id: Uuid,
@@ -121,8 +126,9 @@ pub async fn deploy_event(
     // ── 6. WireGuard ──
     ensure_wireguard(db, network, crypto, awd_config, &awd_event, event_id).await?;
 
-    // ── 7. Hardening firewall ──
-    ensure_hardening_firewall(db, network, &awd_event, event_id).await?;
+    // ── 7. Hardening firewall（全局 desired-state reconcile，Phase 1 P1-10）──
+    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
+        .await?;
 
     // ── 8. Deployed（状态机唯一入口）──
     event_repo::transition_event(
@@ -531,28 +537,6 @@ async fn ensure_wireguard(
     info!(
         "[Deploy] WireGuard interface {} ensured",
         awd_event.wireguard_interface_name
-    );
-    Ok(())
-}
-
-async fn ensure_hardening_firewall(
-    db: &DatabaseConnection,
-    network: &dyn AwdNetworkRuntime,
-    _awd_event: &awd_events::Model,
-    event_id: Uuid,
-) -> AwdResult<()> {
-    // Multi-event merge so deploy does not wipe sibling event chains.
-    crate::modules::event::awd_team::service::network_policy_service::apply_phase_policy(
-        db,
-        network,
-        event_id,
-        AwdPhase::Hardening,
-    )
-    .await?;
-
-    info!(
-        "[Deploy] Hardening firewall policy applied for {}",
-        event_id
     );
     Ok(())
 }

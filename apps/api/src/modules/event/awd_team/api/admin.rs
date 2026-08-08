@@ -202,33 +202,83 @@ pub async fn finish_awd_event(
 // ── Ban Management ──
 
 /// POST /api/admin/events/{event_id}/awd/teams/{team_id}/ban
+///
+/// P4-5 跨层闭环：DB ban → WG host 挂起（DB 保持 Active）→ banned set reconcile
+/// → conntrack 清理 → publish。duration_secs 设置时创建自动解封任务（P4-7）。
 #[post("/events/{event_id}/awd/teams/{team_id}/ban")]
 pub async fn ban_team(
-    _admin: SuperAdminJwtGuard,
+    admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
     body: web::Json<BanTeamRequest>,
 ) -> UniResult<Uuid> {
     let (event_id, team_id) = path.into_inner();
-    let admin_id = _admin.into_inner().id;
+    let admin_id = admin.into_inner().id;
 
-    // Find active round for effective_round_id
-    let active_round = round_repo::find_active_round(ctx.db.get_ref(), event_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-    let ban = ban_repo::create_ban(
+    let ban_id = crate::modules::event::awd_team::service::ban_service::ban_team(
         ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        awd.publisher.as_ref(),
         event_id,
         team_id,
         body.reason.as_deref(),
-        active_round.map(|r| r.id),
         Some(admin_id),
     )
     .await
-    .map_err(|e| AppError::Database(e.to_string()))?;
+    .map_err(AppError::from)?;
 
-    UniResponse::ok(ban.id.into()).into()
+    // P4-7：duration 到期自动解封任务
+    if let Some(duration_secs) = body.duration_secs {
+        if duration_secs > 0 {
+            let execute_at = chrono::Utc::now() + chrono::Duration::seconds(duration_secs);
+            schedule_team_unban(
+                ctx.db.get_ref(),
+                event_id,
+                ban_id,
+                execute_at,
+            )
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+    }
+
+    UniResponse::ok(ban_id.into()).into()
+}
+
+/// 创建自动解封一次性任务（P4-7）。
+async fn schedule_team_unban(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+    ban_id: Uuid,
+    execute_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sea_orm::DbErr> {
+    use crate::entity::scheduled_tasks;
+    use sea_orm::ActiveValue::Set;
+    let now = chrono::Utc::now();
+    scheduled_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        group_id: Set(Some(event_id)),
+        task_name: Set(format!("AWD auto-unban ban {ban_id}")),
+        description: Set(Some("automatic unban after ban duration".into())),
+        task_key: Set(crate::scheduler::TaskKey::AwdTeamUnban.to_string()),
+        trigger_type: Set("once".into()),
+        status: Set("pending".into()),
+        execute_at: Set(Some(execute_at.into())),
+        payload: Set(Some(serde_json::json!({
+            "event_id": event_id,
+            "round_id": ban_id,
+        }))),
+        enabled: Set(true),
+        protected: Set(true),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+    Ok(())
 }
 
 /// DELETE /api/admin/events/{event_id}/awd/teams/{team_id}/ban
@@ -236,31 +286,24 @@ pub async fn ban_team(
 pub async fn unban_team(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
     let (event_id, team_id) = path.into_inner();
     let admin_id = _admin.into_inner().id;
 
-    let ban = ban_repo::find_active_ban(ctx.db.get_ref(), event_id, team_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("No active ban found".into()))?;
-
-    // Find next round for effective unban
-    let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-    if let Some(round) = latest {
-        ban_repo::request_unban(ctx.db.get_ref(), ban.id, round.id)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-    }
-
-    // For MVP: complete unban immediately
-    ban_repo::complete_unban(ctx.db.get_ref(), ban.id, Some(admin_id))
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    // P4-5 反向闭环：DB unbanned → WG host 恢复 peers → banned set reconcile → publish
+    crate::modules::event::awd_team::service::ban_service::unban_team(
+        ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        awd.publisher.as_ref(),
+        event_id,
+        team_id,
+        Some(admin_id),
+    )
+    .await
+    .map_err(AppError::from)?;
 
     UniResponse::ok_none().into()
 }

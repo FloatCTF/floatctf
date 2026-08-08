@@ -14,6 +14,7 @@ use crate::{
         scheduler::{
             AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler,
             AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler,
+            AwdTeamUnbanHandler,
         },
     },
     scheduler::{
@@ -71,6 +72,12 @@ pub async fn build_task_scheduler(
         Arc::new(AwdRoundEndHandler { db: db.clone() }),
         Arc::new(AwdRoundGraceEndHandler {
             db: db.clone(),
+            publisher: publisher.clone(),
+        }),
+        Arc::new(AwdTeamUnbanHandler {
+            db: db.clone(),
+            network: network.clone(),
+            firewall: firewall.clone(),
             publisher: publisher.clone(),
         }),
         Arc::new(AwdArchiveCleanupHandler {

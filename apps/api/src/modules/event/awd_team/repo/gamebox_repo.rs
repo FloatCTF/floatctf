@@ -66,6 +66,19 @@ pub async fn find_instance_by_id(
     awd_gamebox_instances::Entity::find_by_id(id).one(db).await
 }
 
+/// 查询队伍网络分配（ban conntrack 清理用）。
+pub async fn find_team_network(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    team_id: Uuid,
+) -> Result<Option<crate::entity::awd_team_networks::Model>, sea_orm::DbErr> {
+    crate::entity::awd_team_networks::Entity::find()
+        .filter(crate::entity::awd_team_networks::Column::EventId.eq(event_id))
+        .filter(crate::entity::awd_team_networks::Column::TeamId.eq(team_id))
+        .one(db)
+        .await
+}
+
 pub async fn update_instance_status(
     db: &DatabaseConnection,
     id: Uuid,

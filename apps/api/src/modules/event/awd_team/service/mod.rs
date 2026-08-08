@@ -1,6 +1,7 @@
 //! AWD service layer — orchestrates repositories, domain logic, and external systems.
 
 pub mod archive_service;
+pub mod ban_service;
 pub mod deploy_service;
 pub mod event_service;
 pub mod firewall_service;

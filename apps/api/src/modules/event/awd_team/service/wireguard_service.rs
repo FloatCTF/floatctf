@@ -384,6 +384,31 @@ pub async fn restore_active_peers_to_host(
     restore_peers_to_host(network, &awd_event.wireguard_interface_name, &peers).await
 }
 
+/// Ban 语义（P4-5）：把指定队伍的所有 Active peers 从 host 移除（`wg set <iface> peer <pubkey> remove`），
+/// **DB 逻辑状态保持 Active**（ban = suspend，非永久 revoke）。返回移除数量。
+pub async fn suspend_team_peers_from_host(
+    db: &DatabaseConnection,
+    network: &dyn AwdNetworkRuntime,
+    event_id: Uuid,
+    team_id: Uuid,
+) -> AwdResult<usize> {
+    let awd_event = load_awd_event(db, event_id).await?;
+    let peers = wireguard_repo::find_peers_by_team(db, event_id, team_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    let mut removed = 0usize;
+    for peer in &peers {
+        network
+            .revoke_peer(PeerIdentity {
+                interface: awd_event.wireguard_interface_name.clone(),
+                public_key: peer.public_key.clone(),
+            })
+            .await?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 /// 逐个把 Active peer 加回 host（`wg set <iface> peer <pubkey> allowed-ips <ip>`，幂等）。
 async fn restore_peers_to_host(
     network: &dyn AwdNetworkRuntime,

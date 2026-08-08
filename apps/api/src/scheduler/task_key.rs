@@ -12,6 +12,7 @@ pub enum TaskKey {
     AwdRoundEnd,
     AwdRoundGraceEnd,
     AwdArchiveCleanup,
+    AwdTeamUnban,
 }
 
 impl TaskKey {
@@ -26,6 +27,7 @@ impl TaskKey {
             Self::AwdRoundEnd => "awd.round.end",
             Self::AwdRoundGraceEnd => "awd.round.grace_end",
             Self::AwdArchiveCleanup => "awd.archive.cleanup",
+            Self::AwdTeamUnban => "awd.team.unban",
         }
     }
 }
@@ -50,6 +52,7 @@ impl FromStr for TaskKey {
             "awd.round.end" => Ok(Self::AwdRoundEnd),
             "awd.round.grace_end" => Ok(Self::AwdRoundGraceEnd),
             "awd.archive.cleanup" => Ok(Self::AwdArchiveCleanup),
+            "awd.team.unban" => Ok(Self::AwdTeamUnban),
             _ => Err(format!("unknown scheduled task key: {value}")),
         }
     }
@@ -71,6 +74,7 @@ mod tests {
             TaskKey::AwdRoundEnd,
             TaskKey::AwdRoundGraceEnd,
             TaskKey::AwdArchiveCleanup,
+            TaskKey::AwdTeamUnban,
         ];
 
         for key in keys {

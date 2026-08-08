@@ -38,6 +38,9 @@ pub struct PrecheckRequest {
 #[derive(Debug, Deserialize)]
 pub struct BanTeamRequest {
     pub reason: Option<String>,
+    /// 封禁时长（秒）；设置后创建自动解封任务（P4-7）。
+    #[serde(default)]
+    pub duration_secs: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

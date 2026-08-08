@@ -231,46 +231,54 @@ async fn scenario_e_network_failure_fail_closed() {
 /// Scenario F：多赛事互不干扰（P5-6）——两个事件不同 phase 同时存在于 desired set。
 #[tokio::test]
 async fn scenario_f_multi_event_desired_state() {
-    let Some(db) = connect_or_skip().await else { return };
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
     let e1 = seed_running_event(&db, "multiA").await;
     let e2 = seed_running_event(&db, "multiB").await;
 
     // 把 e1 置为 Attack（round 2 phase），e2 保持 Hardening
-    let row1 = event_repo::find_by_event_id(&db, e1).await.unwrap().unwrap();
+    let row1 = event_repo::find_by_event_id(&db, e1)
+        .await
+        .unwrap()
+        .unwrap();
     event_repo::update_phase(&db, row1.id, AwdPhase::Attack)
         .await
         .expect("e1 attack");
 
-    let desired = floatctf::modules::event::awd_team::service::firewall_service::build_desired_state(
-        &db,
-        1,
-    )
-    .await
-    .expect("build desired");
-    let keys: Vec<String> = desired.event_keys().into_iter().map(|s| s.to_string()).collect();
+    let desired =
+        floatctf::modules::event::awd_team::service::firewall_service::build_desired_state(&db, 1)
+            .await
+            .expect("build desired");
+    let keys: Vec<String> = desired
+        .event_keys()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
     // 断言我们的两个赛事都在（不依赖库内无其他赛事）
-    let k1 = floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(
-        &e1,
-    )
-    .as_str()
-    .to_string();
-    let k2 = floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(
-        &e2,
-    )
-    .as_str()
-    .to_string();
+    let k1 =
+        floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(&e1)
+            .as_str()
+            .to_string();
+    let k2 =
+        floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(&e2)
+            .as_str()
+            .to_string();
     assert!(keys.contains(&k1), "e1 missing: {keys:?}");
     assert!(keys.contains(&k2), "e2 missing: {keys:?}");
 
     // 两个赛事 key 都出现 → 渲染含两个 event chain（Event A 更新不影响 Event B）
-    let rendered = floatctf::modules::event::awd_team::infrastructure::firewall::render::render_table(
-        &desired,
-    );
+    let rendered =
+        floatctf::modules::event::awd_team::infrastructure::firewall::render::render_table(
+            &desired,
+        );
     for k in &keys {
-        assert!(rendered.contains(&format!("chain event_{k}")), "missing {k}");
+        assert!(
+            rendered.contains(&format!("chain event_{k}")),
+            "missing {k}"
+        );
     }
 
     cleanup_event(&db, e1).await;
     cleanup_event(&db, e2).await;
 }
-

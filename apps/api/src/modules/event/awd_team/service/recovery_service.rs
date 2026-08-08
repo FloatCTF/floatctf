@@ -176,12 +176,21 @@ async fn recover_event(
     // ── 3. Restore firewall for current phase ──
     network_policy_service::apply_phase_policy(db, network, event.event_id, event.phase.clone())
         .await?;
-    let _ = network
+    // conntrack cleanup：策略已应用后尽力清理既有连接，失败显式记录（Phase 0 P0-4 吞错扫描）。
+    // 注：Phase 1 nftables reconcile 落地后，conntrack 清理纳入 desired-state 操作的失败模型。
+    if let Err(e) = network
         .clear_event_connections(EventNetworkIdentity {
             event_id: event.event_id,
             gamebox_cidr: event.gamebox_cidr.clone(),
         })
-        .await;
+        .await
+    {
+        tracing::error!(
+            "[Recovery] conntrack cleanup failed for event {}: {}",
+            event.event_id,
+            e
+        );
+    }
     recovered += 1;
 
     Ok(recovered)
@@ -198,9 +207,21 @@ pub async fn handle_network_error(
         event_id, error_msg
     );
 
-    event_repo::update_status(db, event_id, AwdEventStatus::NetworkError)
+    let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+
+    // 状态机唯一入口（Phase 0）：按当前状态发起 NetworkError 转移，
+    // 非法来源（如 Paused→NetworkError 不在转移表）直接拒绝，Fail Closed。
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        awd_event.status.clone(),
+        AwdEventStatus::NetworkError,
+        Default::default(),
+    )
+    .await?;
 
     if let Some(round) =
         crate::modules::event::awd_team::repo::round_repo::find_active_round(db, event_id)

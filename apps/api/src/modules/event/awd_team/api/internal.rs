@@ -165,8 +165,11 @@ pub async fn judge_callback(
 
         let idempotency_key = cb.callback_id.clone();
 
-        // Try to record score (will be ignored if duplicate due to unique constraint)
-        let _ = score_repo::create_score_event(
+        // 记录计分（Phase 0 P0-4：禁止静默吞错）。
+        // 重复回调由 idempotency_key 唯一约束兜底 → 视为幂等成功；
+        // 其他失败显式返回错误，JudgeServer 重试（同 callback_id，P3-9），
+        // 完整的事务化/可重试设计见 Phase 3 P3-8。
+        match score_repo::create_score_event(
             ctx.db.get_ref(),
             event_id,
             Some(task.round_id),
@@ -179,10 +182,35 @@ pub async fn judge_callback(
             Some(task.template_id),
             Some("judge check"),
         )
-        .await;
+        .await
+        {
+            Ok(_) => {}
+            Err(e) if is_duplicate_key(&e) => {
+                tracing::debug!(
+                    "[Judge] duplicate score event (callback_id={}) — idempotent skip",
+                    idempotency_key
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[Judge] score write failed for task {} callback {}: {}",
+                    cb.task_id,
+                    idempotency_key,
+                    e
+                );
+                return Err(AppError::Internal(format!("score write failed: {e}")));
+            }
+        }
     }
 
     UniResponse::ok_none().into()
+}
+
+/// 判断数据库错误是否为唯一约束冲突（幂等重复回调）。
+/// 不依赖 sqlx 直接依赖：以错误文本中的 constraint code / 关键词判定。
+fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
+    let msg = e.to_string().to_lowercase();
+    msg.contains("23505") || msg.contains("duplicate")
 }
 
 /// GET /internal/awd/events/{event_id}/health

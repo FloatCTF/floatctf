@@ -134,12 +134,21 @@ pub async fn apply_phase_policy(
     }
 
     // Conntrack flush on phase change so established flows cannot bypass new policy.
-    let _ = network
+    // Phase 0 P0-4：不再静默吞错；主策略已成功应用，此处失败显式记录。
+    // 完整失败模型（reconcile 失败 → NetworkError Fail Closed）见 Phase 1/3。
+    if let Err(e) = network
         .clear_event_connections(EventNetworkIdentity {
             event_id,
             gamebox_cidr: awd_event.gamebox_cidr.clone(),
         })
-        .await;
+        .await
+    {
+        tracing::error!(
+            "[NetworkPolicy] conntrack cleanup failed for event {}: {}",
+            event_id,
+            e
+        );
+    }
 
     Ok(())
 }

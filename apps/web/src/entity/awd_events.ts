@@ -39,4 +39,5 @@ export type AwdEvents = {
   finished_at?: string;
   created_at: string;
   updated_at: string;
+  paused_phase?: AwdPhase;
 };

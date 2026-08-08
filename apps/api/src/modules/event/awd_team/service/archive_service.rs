@@ -118,10 +118,15 @@ pub async fn archive_event(
         }
     }
 
-    // 5. Mark as archived
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Archived)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // 5. Mark as archived（状态机唯一入口，Phase 0）
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        awd_event.status.clone(),
+        AwdEventStatus::Archived,
+        Default::default(),
+    )
+    .await?;
 
     info!("[Archive] Event {} archived", event_id);
     Ok(())
@@ -129,8 +134,18 @@ pub async fn archive_event(
 
 /// Quick archive: just mark as archived without cleaning Docker (manual cleanup).
 pub async fn quick_archive(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<()> {
-    event_repo::update_status(db, event_id, AwdEventStatus::Archived)
+    // 先按 event_id（外键）解析真实主键，再走状态机唯一入口（Phase 0）。
+    let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        awd_event.status.clone(),
+        AwdEventStatus::Archived,
+        Default::default(),
+    )
+    .await?;
     Ok(())
 }

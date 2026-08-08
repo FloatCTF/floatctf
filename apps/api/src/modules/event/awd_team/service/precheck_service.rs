@@ -43,11 +43,45 @@ pub async fn run_precheck(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    if !awd_event.status.is_configurable() {
+    if !awd_event.status.is_configurable() && awd_event.status != AwdEventStatus::Prechecking {
         return Err(AwdError::InvalidState(format!(
             "Cannot precheck in {:?} status",
             awd_event.status
         )));
+    }
+
+    // 状态机唯一入口（Phase 0）：进入 Prechecking。
+    match &awd_event.status {
+        AwdEventStatus::Prechecking => {}
+        // 已 Verified 的手动重检：先清除 verified 标记回到 Configuring，再进入 Prechecking。
+        AwdEventStatus::Verified => {
+            event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Verified,
+                AwdEventStatus::Configuring,
+                event_repo::TransitionPatch::config_changed(),
+            )
+            .await?;
+            event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Configuring,
+                AwdEventStatus::Prechecking,
+                Default::default(),
+            )
+            .await?;
+        }
+        other => {
+            event_repo::transition_event(
+                db,
+                awd_event.id,
+                other.clone(),
+                AwdEventStatus::Prechecking,
+                Default::default(),
+            )
+            .await?;
+        }
     }
 
     // Create precheck run record
@@ -151,14 +185,36 @@ pub async fn run_precheck(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     if is_passed {
-        // Mark event as verified
+        // Mark event as verified（守卫版：要求当前 Prechecking，Phase 0）
         let revision = compute_revision(&awd_event);
-        event_repo::mark_verified(db, awd_event.id, &revision)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+        event_repo::transition_event(
+            db,
+            awd_event.id,
+            AwdEventStatus::Prechecking,
+            AwdEventStatus::Verified,
+            event_repo::TransitionPatch::verified(&revision),
+        )
+        .await?;
 
         info!("[Precheck] Event {} verified", event_id);
     } else {
+        // 失败：Prechecking → VerificationFailed（Phase 0）
+        // 记录失败状态的失败属 best-effort（显式告警，precheck run 记录已落库）。
+        if let Err(e) = event_repo::transition_event(
+            db,
+            awd_event.id,
+            AwdEventStatus::Prechecking,
+            AwdEventStatus::VerificationFailed,
+            Default::default(),
+        )
+        .await
+        {
+            tracing::warn!(
+                "[Precheck] failed to record VerificationFailed for event {}: {}",
+                event_id,
+                e
+            );
+        }
         info!(
             "[Precheck] Event {} failed precheck: {} errors",
             event_id,

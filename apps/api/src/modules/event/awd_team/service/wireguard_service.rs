@@ -147,7 +147,7 @@ pub async fn ensure_peer_for_user(
     )
     .await?;
 
-    let _ = network;
+    let _network = network;
     Ok((peer, kp.private_key))
 }
 

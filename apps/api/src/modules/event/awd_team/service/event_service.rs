@@ -38,14 +38,19 @@ pub async fn start_event(
         ));
     }
 
-    // Start with hardening phase
-    event_repo::update_phase(db, awd_event.id, AwdPhase::Hardening)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Running)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // Start with hardening phase + started_at，经状态机唯一入口（Phase 0）
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        AwdEventStatus::Verified,
+        AwdEventStatus::Running,
+        event_repo::TransitionPatch {
+            phase: Some(AwdPhase::Hardening),
+            started_at: Some(chrono::Utc::now()),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     // Create the first round
     let now = chrono::Utc::now();
@@ -83,12 +88,11 @@ pub async fn pause_event(
         ));
     }
 
-    // Pause the active round
-    if let Some(round) = round_repo::find_active_round(db, event_id)
+    let now = chrono::Utc::now();
+    let remaining = if let Some(round) = round_repo::find_active_round(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
     {
-        let now = chrono::Utc::now();
         let remaining = (round.scheduled_end_at.with_timezone(&chrono::Utc) - now)
             .num_seconds()
             .max(0) as i32;
@@ -96,15 +100,20 @@ pub async fn pause_event(
         round_repo::pause_round(db, round.id, remaining)
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
-    }
+        remaining
+    } else {
+        0
+    };
 
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Paused)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    event_repo::update_phase(db, awd_event.id, AwdPhase::Pause)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // 状态 + phase + paused_phase + pause_remaining_secs 同事务原子写入（Phase 0）
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        AwdEventStatus::Running,
+        AwdEventStatus::Paused,
+        event_repo::TransitionPatch::paused(awd_event.phase, remaining),
+    )
+    .await?;
 
     network_policy_service::apply_phase_policy(db, network, event_id, AwdPhase::Pause).await?;
 
@@ -153,16 +162,24 @@ pub async fn resume_event(
             .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    // Restore appropriate phase based on round phase or default to attack
-    event_repo::update_phase(db, awd_event.id, AwdPhase::Attack)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // Restore the pre-pause phase（paused_phase，Phase 0 P0-1b 迁移），缺省回退 Hardening 而非 Attack
+    let resume_phase = awd_event.paused_phase.unwrap_or(AwdPhase::Hardening);
 
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Running)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // 状态 + phase 同事务原子写入（Phase 0）
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        AwdEventStatus::Paused,
+        AwdEventStatus::Running,
+        event_repo::TransitionPatch {
+            phase: Some(resume_phase.clone()),
+            pause_remaining_secs: Some(0),
+            ..Default::default()
+        },
+    )
+    .await?;
 
-    network_policy_service::apply_phase_policy(db, network, event_id, AwdPhase::Attack).await?;
+    network_policy_service::apply_phase_policy(db, network, event_id, resume_phase).await?;
 
     Ok(())
 }
@@ -190,9 +207,15 @@ pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<
             .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Finished)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // 状态 + finished_at 同事务原子写入（Phase 0）
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        awd_event.status.clone(),
+        AwdEventStatus::Finished,
+        event_repo::TransitionPatch::finished(),
+    )
+    .await?;
 
     Ok(())
 }

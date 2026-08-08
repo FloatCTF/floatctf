@@ -59,6 +59,7 @@ pub struct Model {
     pub finished_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    pub paused_phase: Option<AwdPhase>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

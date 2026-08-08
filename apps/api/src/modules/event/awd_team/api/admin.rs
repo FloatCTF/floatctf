@@ -530,7 +530,9 @@ pub async fn update_network(
 
     let mut active: crate::entity::awd_events::ActiveModel =
         crate::entity::awd_events::ActiveModel {
-            id: Set(event_id),
+            // 注意：必须用 awd_events 真实主键 awd_event.id（原实现误用外键 event_id，
+            // 条件匹配 0 行、字段更新被静默丢弃——Phase 0 修复）。
+            id: Set(awd_event.id),
             ..Default::default()
         };
 
@@ -553,11 +555,33 @@ pub async fn update_network(
         active.judgeserver_ip = Set(ip.clone());
     }
 
-    // Config change clears verified
-    active.verified_at = Set(None);
-    active.verified_revision = Set(None);
-    active.status = Set(crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring);
+    // 状态机唯一入口（Phase 0）：配置变更 → Configuring 并清除 verified 标记。
+    if awd_event.status != crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring {
+        event_repo::transition_event(
+            ctx.db.get_ref(),
+            awd_event.id,
+            awd_event.status.clone(),
+            crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring,
+            event_repo::TransitionPatch::config_changed(),
+        )
+        .await
+        .map_err(AppError::from)?;
+    } else {
+        // 已是 Configuring：仅清除 verified 标记（保持原语义）。
+        let mut clear: crate::entity::awd_events::ActiveModel =
+            crate::entity::awd_events::ActiveModel {
+                id: Set(awd_event.id),
+                verified_at: Set(None),
+                verified_revision: Set(None),
+                ..Default::default()
+            };
+        clear
+            .update(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+    }
 
+    // 最后更新非状态字段（转移成功后）。
     active
         .update(ctx.db.get_ref())
         .await

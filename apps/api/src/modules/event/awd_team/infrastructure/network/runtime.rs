@@ -96,7 +96,10 @@ impl Default for HostNetworkRuntime {
 #[async_trait]
 impl AwdNetworkRuntime for HostNetworkRuntime {
     async fn ensure_wireguard(&self, desired: WireGuardDesiredState) -> AwdResult<()> {
-        // Idempotent-ish: try create; if exists, still set key/port/address best-effort.
+        // best-effort create：接口已存在时 create 会失败，属预期（幂等重入），忽略后继续配置；
+        // 其他失败也先继续（configure 会暴露真实问题）。
+        // Phase 0 P0-4 吞错扫描：此处为有意幂等语义；
+        // WG 命令失败的严格失败模型见 Phase 1 P1-15（Active→Rotating→Revoked 生命周期）。
         let _ = wireguard::create_interface(
             self.runner(),
             &desired.interface,
@@ -105,7 +108,6 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
             &desired.address,
         )
         .await;
-        // create_interface fails if iface exists — ignore and continue with configure if needed.
         Ok(())
     }
 

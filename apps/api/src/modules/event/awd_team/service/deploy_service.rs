@@ -58,9 +58,17 @@ pub async fn deploy_event(
         )));
     }
 
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Deploying)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // 状态机唯一入口（Phase 0）：仅当尚未处于 Deploying 时才发起转移（幂等重入）。
+    if awd_event.status != AwdEventStatus::Deploying {
+        event_repo::transition_event(
+            db,
+            awd_event.id,
+            awd_event.status.clone(),
+            AwdEventStatus::Deploying,
+            Default::default(),
+        )
+        .await?;
+    }
 
     // ── 1. Docker network ──
     let (docker_network_id, docker_network_name) =
@@ -116,10 +124,15 @@ pub async fn deploy_event(
     // ── 7. Hardening firewall ──
     ensure_hardening_firewall(db, network, &awd_event, event_id).await?;
 
-    // ── 8. Deployed ──
-    event_repo::update_status(db, awd_event.id, AwdEventStatus::Deployed)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // ── 8. Deployed（状态机唯一入口）──
+    event_repo::transition_event(
+        db,
+        awd_event.id,
+        AwdEventStatus::Deploying,
+        AwdEventStatus::Deployed,
+        Default::default(),
+    )
+    .await?;
 
     info!("[Deploy] Event {} fully deployed", event_id);
     Ok(())
@@ -495,7 +508,7 @@ async fn ensure_wireguard(
         (kp.private_key, kp.public_key)
     };
 
-    let _ = public_key; // stored on awd_events for client configs
+    let _public_key = public_key; // stored on awd_events for client configs
     let server_addr = format!(
         "{}/{}",
         Ipv4Cidr::parse(&awd_event.wireguard_cidr)

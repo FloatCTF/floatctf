@@ -26,11 +26,23 @@ use crate::{
 
 pub use state::{AppState, AwdDependencies};
 
+/// 启动阶段致命错误（fail-fast）。
+///
+/// Phase 0 P0-2：AWD crypto 初始化失败不允许降级运行（历史存在全零密钥回退，
+/// 攻击者可预测所有 token/flag）。`run()` 返回 Err 后由 `main` 打印原因并 `exit(1)`。
+#[derive(Debug, thiserror::Error)]
+pub enum BootstrapError {
+    #[error("AWD crypto initialization failed: {0}")]
+    Crypto(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
 /// Initialize and run the FloatCTF HTTP server.
 ///
 /// This is the single entry point for both the binary and integration tests.
-/// Returns `Err` if initialization fails (database, Docker, or S3 connection).
-pub async fn run() -> std::io::Result<()> {
+/// Returns `Err` if initialization fails (database, Docker, S3, or AWD crypto).
+pub async fn run() -> Result<(), BootstrapError> {
     // Load all process-static settings from TOML — fail fast before touching infrastructure.
     let config_path = std::env::var_os("FLOATCTF_CONFIG")
         .map(std::path::PathBuf::from)
@@ -162,28 +174,15 @@ pub async fn run() -> std::io::Result<()> {
     let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
         Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
 
-    let awd_deps = match AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes()) {
-        Ok(crypto) => web::Data::new(AwdDependencies {
-            crypto: Arc::new(crypto),
-            publisher: publisher.clone(),
-            containers: awd_containers.clone(),
-            network: awd_network.clone(),
-        }),
-        Err(e) => {
-            error!(
-                "Failed to initialize AWD crypto: {}. AWD features will be unavailable.",
-                e
-            );
-            web::Data::new(AwdDependencies {
-                crypto: Arc::new(AwdCrypto::new(
-                    crate::modules::event::awd_team::crypto::AwdSecret::new(vec![0u8; 32]),
-                )),
-                publisher: publisher.clone(),
-                containers: awd_containers,
-                network: awd_network,
-            })
-        }
-    };
+    let awd_deps = web::Data::new(AwdDependencies {
+        crypto: Arc::new(
+            AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
+                .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
+        ),
+        publisher: publisher.clone(),
+        containers: awd_containers.clone(),
+        network: awd_network.clone(),
+    });
 
     let ip = config.server.listen_ip.clone();
     let port = config.server.listen_port;
@@ -216,7 +215,8 @@ pub async fn run() -> std::io::Result<()> {
     })
     .bind((ip, port))?
     .run()
-    .await
+    .await?;
+    Ok(())
 }
 
 pub use routes::{configure_all_routes, configure_routes};

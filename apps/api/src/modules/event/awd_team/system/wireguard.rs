@@ -88,7 +88,7 @@ pub async fn create_interface(
 
 /// Delete a WireGuard interface.
 pub async fn delete_interface(runner: &dyn CommandRunner, iface: &str) -> AwdResult<()> {
-    // Bring down first
+    // Bring down first（best-effort：接口可能已处于 down 状态，Phase 0 P0-4 吞错扫描）。
     let _ = runner
         .run(
             "ip",

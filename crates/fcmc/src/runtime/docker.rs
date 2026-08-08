@@ -224,106 +224,18 @@ impl ContainerRuntime for DockerContainerRuntime {
 
     async fn create_container(&self, spec: ContainerSpec) -> anyhow::Result<ContainerHandle> {
         use bollard::query_parameters::CreateContainerOptionsBuilder;
-        use bollard::secret::{ContainerCreateBody, HostConfig, NetworkingConfig};
 
+        let container_name = spec.name.clone();
         let options = CreateContainerOptionsBuilder::new()
-            .name(&spec.name)
+            .name(&container_name)
             .build();
 
-        let mut host_config = HostConfig {
-            auto_remove: Some(spec.auto_remove),
-            privileged: Some(spec.resources.privileged),
-            ..Default::default()
-        };
-
-        if let Some(mode) = &spec.network_mode {
-            host_config.network_mode = Some(mode.clone());
-        } else if let Some(net) = &spec.network_name {
-            host_config.network_mode = Some(net.clone());
-        }
-
-        if let Some(cpu) = spec.resources.cpu_millis {
-            host_config.cpu_period = Some(100_000i64);
-            host_config.cpu_quota = Some(cpu * 100);
-        }
-        if let Some(mem) = spec.resources.memory_bytes {
-            host_config.memory = Some(mem);
-        }
-        if let Some(pids) = spec.resources.pids_limit {
-            host_config.pids_limit = Some(pids);
-        }
-        if !spec.resources.cap_drop.is_empty() {
-            host_config.cap_drop = Some(spec.resources.cap_drop.clone());
-        }
-        if !spec.resources.extra_hosts.is_empty() {
-            host_config.extra_hosts = Some(spec.resources.extra_hosts.clone());
-        }
-
-        if !spec.port_bindings.is_empty() {
-            let mut map = HashMap::new();
-            for pb in &spec.port_bindings {
-                map.insert(
-                    pb.container_port.clone(),
-                    Some(vec![bollard::models::PortBinding {
-                        host_ip: pb.host_ip.clone().or_else(|| Some("0.0.0.0".into())),
-                        host_port: pb.host_port.clone(),
-                    }]),
-                );
-            }
-            host_config.port_bindings = Some(map);
-        }
-
-        let networking_config =
-            if let (Some(net), Some(ip)) = (spec.network_name.as_ref(), spec.fixed_ip.as_ref()) {
-                let mut endpoints = HashMap::new();
-                endpoints.insert(
-                    net.clone(),
-                    bollard::models::EndpointSettings {
-                        ipam_config: Some(bollard::models::EndpointIpamConfig {
-                            ipv4_address: Some(ip.clone()),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                );
-                Some(NetworkingConfig {
-                    endpoints_config: Some(endpoints),
-                })
-            } else {
-                None
-            };
-
-        let healthcheck = spec.healthcheck.map(|hc| bollard::secret::HealthConfig {
-            test: Some(hc.test),
-            interval: Some(hc.interval_secs * 1_000_000_000),
-            timeout: Some(hc.timeout_secs * 1_000_000_000),
-            retries: Some(hc.retries),
-            start_period: Some(hc.start_period_secs * 1_000_000_000),
-            ..Default::default()
-        });
-
-        let body = ContainerCreateBody {
-            image: Some(spec.image),
-            env: if spec.env.is_empty() {
-                None
-            } else {
-                Some(spec.env)
-            },
-            labels: if spec.labels.is_empty() {
-                None
-            } else {
-                Some(spec.labels)
-            },
-            healthcheck,
-            host_config: Some(host_config),
-            networking_config,
-            ..Default::default()
-        };
+        let body = spec_to_create_body(spec);
 
         let created = self.docker.create_container(Some(options), body).await?;
         Ok(ContainerHandle {
             container_id: created.id,
-            container_name: spec.name,
+            container_name,
         })
     }
 
@@ -489,3 +401,270 @@ impl ContainerRuntime for DockerContainerRuntime {
 }
 
 pub use super::model::DEFAULT_STOP_TIMEOUT as STOP_TIMEOUT_DEFAULT;
+
+/// Convert a mode-agnostic [`ContainerSpec`] into a bollard container-create body.
+///
+/// Pure conversion, kept separate from the Docker API call so the mapping rules
+/// (CPU quota math, healthcheck nanosecond conversion, port/network wiring) are
+/// unit-testable without a running daemon.
+pub(crate) fn spec_to_create_body(spec: ContainerSpec) -> bollard::secret::ContainerCreateBody {
+    use bollard::secret::{HostConfig, NetworkingConfig};
+
+    let mut host_config = HostConfig {
+        auto_remove: Some(spec.auto_remove),
+        privileged: Some(spec.resources.privileged),
+        ..Default::default()
+    };
+
+    if let Some(mode) = &spec.network_mode {
+        host_config.network_mode = Some(mode.clone());
+    } else if let Some(net) = &spec.network_name {
+        host_config.network_mode = Some(net.clone());
+    }
+
+    if let Some(cpu) = spec.resources.cpu_millis {
+        host_config.cpu_period = Some(100_000i64);
+        host_config.cpu_quota = Some(cpu * 100);
+    }
+    if let Some(mem) = spec.resources.memory_bytes {
+        host_config.memory = Some(mem);
+    }
+    if let Some(pids) = spec.resources.pids_limit {
+        host_config.pids_limit = Some(pids);
+    }
+    if !spec.resources.cap_drop.is_empty() {
+        host_config.cap_drop = Some(spec.resources.cap_drop.clone());
+    }
+    if !spec.resources.extra_hosts.is_empty() {
+        host_config.extra_hosts = Some(spec.resources.extra_hosts.clone());
+    }
+
+    if !spec.port_bindings.is_empty() {
+        let mut map = std::collections::HashMap::new();
+        for pb in &spec.port_bindings {
+            map.insert(
+                pb.container_port.clone(),
+                Some(vec![bollard::models::PortBinding {
+                    host_ip: pb.host_ip.clone().or_else(|| Some("0.0.0.0".into())),
+                    host_port: pb.host_port.clone(),
+                }]),
+            );
+        }
+        host_config.port_bindings = Some(map);
+    }
+
+    let networking_config =
+        if let (Some(net), Some(ip)) = (spec.network_name.as_ref(), spec.fixed_ip.as_ref()) {
+            let mut endpoints = std::collections::HashMap::new();
+            endpoints.insert(
+                net.clone(),
+                bollard::models::EndpointSettings {
+                    ipam_config: Some(bollard::models::EndpointIpamConfig {
+                        ipv4_address: Some(ip.clone()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            );
+            Some(NetworkingConfig {
+                endpoints_config: Some(endpoints),
+            })
+        } else {
+            None
+        };
+
+    let healthcheck = spec.healthcheck.map(|hc| bollard::secret::HealthConfig {
+        test: Some(hc.test),
+        interval: Some(hc.interval_secs * 1_000_000_000),
+        timeout: Some(hc.timeout_secs * 1_000_000_000),
+        retries: Some(hc.retries),
+        start_period: Some(hc.start_period_secs * 1_000_000_000),
+        ..Default::default()
+    });
+
+    bollard::secret::ContainerCreateBody {
+        image: Some(spec.image),
+        env: if spec.env.is_empty() {
+            None
+        } else {
+            Some(spec.env)
+        },
+        labels: if spec.labels.is_empty() {
+            None
+        } else {
+            Some(spec.labels)
+        },
+        healthcheck,
+        host_config: Some(host_config),
+        networking_config,
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::model::{HealthcheckSpec, PortBinding, ResourceLimits};
+
+    fn base_spec() -> ContainerSpec {
+        ContainerSpec {
+            name: "test-c".into(),
+            image: "img:v1".into(),
+            env: vec!["A=1".into()],
+            labels: Default::default(),
+            network_name: None,
+            fixed_ip: None,
+            port_bindings: vec![],
+            auto_remove: true,
+            resources: ResourceLimits::default(),
+            network_mode: None,
+            healthcheck: None,
+        }
+    }
+
+    #[test]
+    fn body_passes_basic_fields() {
+        let mut spec = base_spec();
+        spec.labels.insert("k".into(), "v".into());
+        let body = spec_to_create_body(spec);
+        assert_eq!(body.image.as_deref(), Some("img:v1"));
+        assert_eq!(body.env.as_ref(), Some(&vec!["A=1".to_string()]));
+        assert_eq!(
+            body.labels.as_ref().and_then(|m| m.get("k")),
+            Some(&"v".to_string())
+        );
+        let hc = body.host_config.as_ref().unwrap();
+        assert_eq!(hc.auto_remove, Some(true));
+        assert_eq!(hc.privileged, Some(false));
+    }
+
+    #[test]
+    fn body_empty_env_and_labels_become_none() {
+        let spec = ContainerSpec {
+            env: vec![],
+            ..base_spec()
+        };
+        let body = spec_to_create_body(spec);
+        assert!(body.env.is_none(), "empty env must be None");
+        assert!(body.labels.is_none(), "empty labels must be None");
+    }
+
+    #[test]
+    fn body_cpu_quota_math() {
+        let mut spec = base_spec();
+        spec.resources.cpu_millis = Some(1000);
+        let body = spec_to_create_body(spec);
+        let hc = body.host_config.as_ref().unwrap();
+        assert_eq!(hc.cpu_period, Some(100_000));
+        assert_eq!(hc.cpu_quota, Some(100_000));
+
+        let mut spec = base_spec();
+        spec.resources.cpu_millis = Some(250);
+        let body = spec_to_create_body(spec);
+        assert_eq!(body.host_config.unwrap().cpu_quota, Some(25_000));
+    }
+
+    #[test]
+    fn body_memory_pids_and_caps() {
+        let mut spec = base_spec();
+        spec.resources.memory_bytes = Some(512 * 1024 * 1024);
+        spec.resources.pids_limit = Some(100);
+        spec.resources.cap_drop = vec!["NET_ADMIN".into()];
+        spec.resources.extra_hosts = vec!["host:1.2.3.4".into()];
+        let body = spec_to_create_body(spec);
+        let hc = body.host_config.as_ref().unwrap();
+        assert_eq!(hc.memory, Some(512 * 1024 * 1024));
+        assert_eq!(hc.pids_limit, Some(100));
+        assert_eq!(hc.cap_drop.as_ref(), Some(&vec!["NET_ADMIN".to_string()]));
+        assert_eq!(
+            hc.extra_hosts.as_ref(),
+            Some(&vec!["host:1.2.3.4".to_string()])
+        );
+    }
+
+    #[test]
+    fn body_port_bindings_default_host_ip() {
+        let mut spec = base_spec();
+        spec.port_bindings = vec![
+            PortBinding {
+                container_port: "80/tcp".into(),
+                host_ip: None,
+                host_port: Some("8080".into()),
+            },
+            PortBinding {
+                container_port: "53/udp".into(),
+                host_ip: Some("127.0.0.1".into()),
+                host_port: None,
+            },
+        ];
+        let body = spec_to_create_body(spec);
+        let hc = body.host_config.as_ref().unwrap();
+        let pb = hc.port_bindings.as_ref().unwrap();
+        let first = pb.get("80/tcp").unwrap().as_ref().unwrap();
+        assert_eq!(first[0].host_ip.as_deref(), Some("0.0.0.0"));
+        assert_eq!(first[0].host_port.as_deref(), Some("8080"));
+        let second = pb.get("53/udp").unwrap().as_ref().unwrap();
+        assert_eq!(second[0].host_ip.as_deref(), Some("127.0.0.1"));
+        assert!(second[0].host_port.is_none());
+    }
+
+    #[test]
+    fn body_network_mode_overrides_network_name() {
+        let mut spec = base_spec();
+        spec.network_name = Some("br0".into());
+        spec.network_mode = Some("host".into());
+        let body = spec_to_create_body(spec);
+        assert_eq!(
+            body.host_config.as_ref().unwrap().network_mode.as_deref(),
+            Some("host")
+        );
+
+        let mut spec = base_spec();
+        spec.network_name = Some("br0".into());
+        let body = spec_to_create_body(spec);
+        assert_eq!(
+            body.host_config.as_ref().unwrap().network_mode.as_deref(),
+            Some("br0")
+        );
+    }
+
+    #[test]
+    fn body_fixed_ip_requires_network() {
+        // fixed_ip without network_name -> no networking config
+        let mut spec = base_spec();
+        spec.fixed_ip = Some("10.0.0.5".into());
+        let body = spec_to_create_body(spec);
+        assert!(body.networking_config.is_none());
+
+        // both set -> endpoint with ipam ipv4
+        let mut spec = base_spec();
+        spec.network_name = Some("evt-net".into());
+        spec.fixed_ip = Some("10.0.0.5".into());
+        let body = spec_to_create_body(spec);
+        let endpoints = body.networking_config.unwrap().endpoints_config.unwrap();
+        let ep = endpoints.get("evt-net").unwrap();
+        assert_eq!(
+            ep.ipam_config.as_ref().unwrap().ipv4_address.as_deref(),
+            Some("10.0.0.5")
+        );
+    }
+
+    #[test]
+    fn body_healthcheck_converts_to_nanoseconds() {
+        let mut spec = base_spec();
+        spec.healthcheck = Some(HealthcheckSpec {
+            test: vec!["CMD-SHELL".into(), "pgrep sshd".into()],
+            interval_secs: 30,
+            timeout_secs: 10,
+            retries: 3,
+            start_period_secs: 60,
+        });
+        let body = spec_to_create_body(spec);
+        let hc = body.healthcheck.unwrap();
+        assert_eq!(hc.test, Some(vec!["CMD-SHELL".into(), "pgrep sshd".into()]));
+        assert_eq!(hc.interval, Some(30_000_000_000));
+        assert_eq!(hc.timeout, Some(10_000_000_000));
+        assert_eq!(hc.retries, Some(3));
+        assert_eq!(hc.start_period, Some(60_000_000_000));
+    }
+}

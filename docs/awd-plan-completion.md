@@ -118,7 +118,7 @@ GameBox（长期身份）
 
 ## 交付
 
-- Migration A-D：`20260808-awd-gamebox-domain-{a,b,c,d}`（22 → 23 迁移；新表
+- Migration A-D：`20260808-awd-gamebox-domain-{a,b,c,d}`（18 → 22 迁移；新表
   gamebox_revisions/awd_event_gameboxes；数据回填带 MIGRATION CONFLICT 检测与
   可验证断言；删除 awd_gamebox_templates/event_gameboxes/gameboxes 计分列/
   next_gamebox_host/instances.gamebox_id/judge+score 的 template_id 列）

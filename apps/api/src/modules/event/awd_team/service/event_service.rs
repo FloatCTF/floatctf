@@ -130,15 +130,31 @@ pub async fn pause_event(
     )
     .await?;
 
-    firewall_service::reconcile_global(
+    // P4-10：pause 网络应用失败 → Fail Closed（NetworkError），不留"Paused 但网络没生效"
+    match firewall_service::reconcile_global(
         db,
         firewall,
         firewall_service::next_network_revision(db).await?,
     )
-    .await?;
-    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
-
-    Ok(())
+    .await
+    {
+        Ok(_) => {
+            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
+                .await;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Paused,
+                AwdEventStatus::NetworkError,
+                Default::default(),
+            )
+            .await;
+            Err(AwdError::Network(format!("pause network reconcile failed: {e}")))
+        }
+    }
 }
 
 /// Resume an event: restore round time, restore network phase.
@@ -201,15 +217,31 @@ pub async fn resume_event(
     )
     .await?;
 
-    firewall_service::reconcile_global(
+    match firewall_service::reconcile_global(
         db,
         firewall,
         firewall_service::next_network_revision(db).await?,
     )
-    .await?;
-    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
-
-    Ok(())
+    .await
+    {
+        Ok(_) => {
+            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
+                .await;
+            Ok(())
+        }
+        Err(e) => {
+            // P4-10：resume 网络应用失败 → NetworkError（Running→NetworkError 合法）
+            let _ = event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Running,
+                AwdEventStatus::NetworkError,
+                Default::default(),
+            )
+            .await;
+            Err(AwdError::Network(format!("resume network reconcile failed: {e}")))
+        }
+    }
 }
 
 /// Finish an event: stop rounds, stop scoring, preserve data.

@@ -49,7 +49,8 @@ impl AwdEventStatusExt for AwdEventStatus {
             Self::Prechecking => &[Self::Verified, Self::VerificationFailed, Self::Deployed],
             Self::Verified => &[Self::Running, Self::StartBlocked, Self::Configuring],
             Self::Running => &[Self::Paused, Self::Finished, Self::NetworkError],
-            Self::Paused => &[Self::Running, Self::Finished],
+            // P4-10：暂停中网络策略应用失败同样 Fail Closed（不留"Paused 但网络没生效"）
+            Self::Paused => &[Self::Running, Self::Finished, Self::NetworkError],
             Self::NetworkError => &[Self::Paused, Self::Finished],
             Self::StartBlocked => &[Self::Prechecking, Self::Configuring],
             Self::Finished => &[Self::Archived],
@@ -187,11 +188,12 @@ mod tests {
     }
 
     #[test]
-    fn paused_to_network_error_is_invalid() {
+    fn paused_to_network_error_is_valid() {
+        // P4-10：暂停中网络策略应用失败必须能 Fail Closed（NetworkError）
         assert!(
             AwdEventStatus::Paused
                 .can_transition_to(AwdEventStatus::NetworkError)
-                .is_err()
+                .is_ok()
         );
     }
 

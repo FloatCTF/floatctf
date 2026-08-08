@@ -51,8 +51,11 @@ function RouteComponent() {
                 {event.title} #{event.id}
             </h3>
             <UnderlineNav aria-label="Repository">
-                <RouterNavItem to="/admin/events/awd/$id" params={{ id }}>
-                    Challenges
+                <RouterNavItem
+                    to="/admin/events/awd/$id/gameboxes"
+                    params={{ id }}
+                >
+                    GameBoxes
                 </RouterNavItem>
                 <RouterNavItem
                     to="/admin/events/awd/$id/ops"
@@ -68,12 +71,6 @@ function RouteComponent() {
                         Teams
                     </RouterNavItem>
                 )}
-                <RouterNavItem
-                    to="/admin/events/awd/$id/gameboxes"
-                    params={{ id }}
-                >
-                    GameBoxes
-                </RouterNavItem>
                 <RouterNavItem
                     to="/admin/events/awd/$id/announcements"
                     params={{ id }}

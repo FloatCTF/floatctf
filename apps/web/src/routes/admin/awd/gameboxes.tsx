@@ -1,18 +1,20 @@
-import { PencilIcon, PlusIcon } from "@primer/octicons-react";
-import { Button, Dialog, Spinner, TextInput } from "@primer/react";
+import { ActionList } from "@primer/react";
+import { Button, Dialog, TextInput } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { adminApi } from "@/api";
 import type { GameBoxConfigPayload, GameBoxLibraryDto } from "@/api/awd";
-import { useMsgBanner } from "@/components";
+import { GenericTable, useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../route";
 
 export const Route = createFileRoute("/admin/awd/gameboxes")({
 	component: RouteComponent,
 	loader: AdminRouteGuard,
 });
+
+const QUERY_KEY = "AWDGameBoxes";
 
 const EMPTY_CONFIG = {
 	source_toml: "",
@@ -37,11 +39,11 @@ function RouteComponent() {
 	const [editId, setEditId] = useState<string | null>(null);
 
 	const q = useQuery({
-		queryKey: ["admin-awd-gamebox-library"],
+		queryKey: [QUERY_KEY],
 		queryFn: () => adminApi.awd.listGameboxes(),
 	});
 	const onDone = () => {
-		queryClient.invalidateQueries({ queryKey: ["admin-awd-gamebox-library"] });
+		queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
 	};
 
 	const hide = useMutation({
@@ -53,70 +55,84 @@ function RouteComponent() {
 	const items = q.data?.data ?? [];
 	const editing = editId ? items.find((g) => g.id === editId) : null;
 
+	const columns = [
+		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
+		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
+		{
+			accessorKey: "safe_name",
+			header: "Safe Name",
+			field: "safe_name",
+		},
+		{
+			accessorKey: "latest_revision",
+			header: "Latest Revision",
+			field: "latest_revision",
+			renderCell: (row: GameBoxLibraryDto) => (
+				<span>
+					{row.latest_revision
+						? `rev ${row.latest_revision.revision_number}`
+						: "(none)"}
+				</span>
+			),
+		},
+		{
+			accessorKey: "image",
+			header: "Image",
+			field: "image",
+			renderCell: (row: GameBoxLibraryDto) => (
+				<span>
+					{row.latest_revision?.image_ref ?? "-"}
+					{row.latest_revision?.image_digest ? " 🔒" : ""}
+				</span>
+			),
+		},
+		{
+			accessorKey: "hidden",
+			header: "Hidden",
+			field: "hidden",
+			renderCell: (row: GameBoxLibraryDto) => (
+				<span>{row.hidden ? "yes" : "no"}</span>
+			),
+		},
+	];
+
+	const customActions = (
+		<Button variant="primary" onClick={() => setCreateOpen(true)}>
+			New GameBox
+		</Button>
+	);
+
+	const columnActions = (row: GameBoxLibraryDto) => (
+		<ActionList>
+			<ActionList.Item onSelect={() => setEditId(row.id)}>
+				Edit (Rev N+1)
+			</ActionList.Item>
+			<ActionList.Item
+				variant="danger"
+				onSelect={() => {
+					if (window.confirm(`Hide GameBox ${row.name}?（被赛事引用时将被拒绝）`)) {
+						hide.mutate(row.id);
+					}
+				}}
+			>
+				Hide
+			</ActionList.Item>
+		</ActionList>
+	);
+
 	return (
 		<div>
 			<banner.BannerComponent />
-			<div className="mb-2 flex items-center justify-between">
-				<h3 className="m-0">AWD GameBox Library（GameBox = AWD 题目长期身份）</h3>
-				<Button onClick={() => setCreateOpen(true)}>
-					New GameBox
-				</Button>
-			</div>
-			{q.isLoading ? (
-				<Spinner />
-			) : (
-				<table className="w-full text-sm">
-					<thead>
-						<tr className="border-b text-left">
-							<th className="px-2 py-1">Name</th>
-							<th className="px-2 py-1">safe_name</th>
-							<th className="px-2 py-1">Latest Revision</th>
-							<th className="px-2 py-1">Image</th>
-							<th className="px-2 py-1">Hidden</th>
-							<th className="px-2 py-1"></th>
-						</tr>
-					</thead>
-					<tbody>
-						{items.map((g: GameBoxLibraryDto) => (
-							<tr key={g.id} className="border-b">
-								<td className="px-2 py-1">{g.name}</td>
-								<td className="px-2 py-1">{g.safe_name}</td>
-								<td className="px-2 py-1">
-									{g.latest_revision
-										? `rev ${g.latest_revision.revision_number} · ${g.latest_revision.username}@${g.latest_revision.image_ref}`
-										: "(none)"}
-								</td>
-								<td className="px-2 py-1">
-									{g.latest_revision?.image_digest
-										? g.latest_revision.image_ref.slice(0, 40)
-										: "digest 未 pin"}
-								</td>
-								<td className="px-2 py-1">{g.hidden ? "yes" : "no"}</td>
-								<td className="px-2 py-1">
-									<Button
-										size="small"
-										onClick={() => setEditId(g.id)}
-									>
-										Edit (Rev N+1)
-									</Button>
-									<Button
-										size="small"
-										variant="danger"
-										className="ml-1"
-										onClick={() => {
-											if (window.confirm(`Hide GameBox ${g.name}?`)) {
-												hide.mutate(g.id);
-											}
-										}}
-									>
-										Hide
-									</Button>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
+			<GenericTable
+				subject={QUERY_KEY}
+				columns={columns}
+				queryFn={adminApi.awd.listGameboxes}
+				customActions={customActions}
+				columnActions={columnActions}
+				disableAdd
+				disablePagination
+				subtitle="GameBox = AWD 题目长期身份；编辑 = 创建不可变 Revision N+1"
+			/>
 			{createOpen && (
 				<GameBoxFormDialog
 					title="New GameBox"

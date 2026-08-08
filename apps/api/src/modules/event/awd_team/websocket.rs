@@ -136,6 +136,53 @@ pub fn round_ended(event_id: Uuid, round_number: i32) -> AwdEvent {
     )
 }
 
+/// Publish a network policy applied event（P3-7：payload 只含 revision/phase，不含完整 ruleset）。
+pub fn network_policy_applied(
+    event_id: Uuid,
+    desired_revision: u64,
+    observed_revision: u64,
+    phase: &str,
+) -> AwdEvent {
+    AwdEvent::new(
+        "network.policy.applied",
+        event_id,
+        serde_json::json!({
+            "desired_revision": desired_revision,
+            "observed_revision": observed_revision,
+            "phase": phase,
+        }),
+    )
+}
+
+/// Publish a network policy failure event（P3-7）。
+pub fn network_policy_failed(
+    event_id: Uuid,
+    desired_revision: u64,
+    observed_revision: Option<u64>,
+    phase: &str,
+) -> AwdEvent {
+    AwdEvent::new(
+        "network.policy.failed",
+        event_id,
+        serde_json::json!({
+            "desired_revision": desired_revision,
+            "observed_revision": observed_revision,
+            "phase": phase,
+        }),
+    )
+}
+
+/// Publish a round completed event（P3-7）。
+pub fn round_completed(event_id: Uuid, round_number: i32) -> AwdEvent {
+    AwdEvent::new(
+        "round.completed",
+        event_id,
+        serde_json::json!({
+            "round_number": round_number,
+        }),
+    )
+}
+
 /// Publish a GameBox reset event.
 pub fn gamebox_reset(event_id: Uuid, instance_id: Uuid, team_id: Uuid, status: &str) -> AwdEvent {
     AwdEvent::new(

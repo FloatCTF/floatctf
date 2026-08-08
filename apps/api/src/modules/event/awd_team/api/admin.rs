@@ -137,6 +137,7 @@ pub async fn start_awd_event(
         ctx.db.get_ref(),
         awd.network.as_ref(),
         awd.firewall.as_ref(),
+        awd.publisher.as_ref(),
         event_id,
     )
     .await

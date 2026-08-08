@@ -191,6 +191,7 @@ pub struct AwdEventStartHandler {
         dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
     >,
     pub firewall: Arc<dyn FirewallRuntime>,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
 }
 
 #[async_trait]
@@ -210,6 +211,7 @@ impl TaskHandler for AwdEventStartHandler {
             self.db.get_ref(),
             self.network.as_ref(),
             self.firewall.as_ref(),
+            self.publisher.as_ref(),
             event_id,
         )
         .await?;
@@ -222,6 +224,7 @@ pub struct AwdRoundStartHandler {
     pub db: WebDb,
     pub network: Arc<dyn AwdNetworkRuntime>,
     pub firewall: Arc<dyn FirewallRuntime>,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
 }
 
 #[async_trait]
@@ -256,6 +259,7 @@ impl TaskHandler for AwdRoundStartHandler {
             self.db.get_ref(),
             self.network.as_ref(),
             self.firewall.as_ref(),
+            self.publisher.as_ref(),
             event_id,
         )
         .await?;
@@ -304,6 +308,7 @@ impl TaskHandler for AwdRoundEndHandler {
 /// Handler: Grace period ends — complete the round（thin 代理 → round_service::grace_end_round）。
 pub struct AwdRoundGraceEndHandler {
     pub db: WebDb,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
 }
 
 #[async_trait]
@@ -332,7 +337,13 @@ impl TaskHandler for AwdRoundGraceEndHandler {
         };
 
         info!("[AWD] Grace period ending for round {round_id} event {event_id}");
-        round_service::grace_end_round(self.db.get_ref(), event_id, round_id).await?;
+        round_service::grace_end_round(
+            self.db.get_ref(),
+            event_id,
+            round_id,
+            self.publisher.as_ref(),
+        )
+        .await?;
         Ok(())
     }
 }

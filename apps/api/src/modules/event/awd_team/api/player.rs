@@ -89,6 +89,7 @@ pub async fn reset_my_gamebox(
 pub async fn submit_flag(
     user: UserJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<SubmitFlagRequest>,
 ) -> UniResult<SubmissionResponse> {
@@ -148,6 +149,7 @@ pub async fn submit_flag(
         template.loss_points,
         template.first_bonus,
         template.id,
+        awd.publisher.as_ref(),
     )
     .await
     .map_err(AppError::from)?;

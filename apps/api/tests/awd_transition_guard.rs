@@ -331,7 +331,8 @@ async fn configuration_generation_gates_start() {
     to_verified(&db, awd.id).await;
     let network = NoopNetworkRuntime;
     let firewall = NoopFirewallRuntime;
-    event_service::start_event(&db, &network, &firewall, _event_id)
+    let publisher = floatctf::infrastructure::realtime::NoopEventPublisher;
+    event_service::start_event(&db, &network, &firewall, &publisher, _event_id)
         .await
         .expect("start must pass when verified_generation == configuration_generation");
 
@@ -341,7 +342,7 @@ async fn configuration_generation_gates_start() {
     event_repo::touch_configuration(&db, awd2.id)
         .await
         .expect("touch_configuration");
-    let err = event_service::start_event(&db, &network, &firewall, _eid2)
+    let err = event_service::start_event(&db, &network, &firewall, &publisher, _eid2)
         .await
         .expect_err("start must be blocked after config change");
     assert!(

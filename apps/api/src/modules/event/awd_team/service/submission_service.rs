@@ -43,142 +43,158 @@ pub async fn process_submission(
     loss_points: i64,
     first_bonus: i64,
     template_id: Uuid,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
 ) -> AwdResult<SubmissionResult> {
-    db.transaction(|tx| {
-        Box::pin(async move {
-            // 1. Check if this team already submitted for this instance this round
-            let already_submitted = flag_repo::has_submission(
-                tx,
-                event_id,
-                round_id,
-                attacker_team_id,
-                gamebox_instance_id,
-            )
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                // 1. Check if this team already submitted for this instance this round
+                let already_submitted = flag_repo::has_submission(
+                    tx,
+                    event_id,
+                    round_id,
+                    attacker_team_id,
+                    gamebox_instance_id,
+                )
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
 
-            if already_submitted {
-                return Err(AwdError::Conflict(
-                    "Already submitted this flag for this target this round".into(),
-                ));
-            }
-
-            // 2. Insert submission (unique constraint protects against races)
-            flag_repo::create_submission(
-                tx,
-                event_id,
-                round_id,
-                flag_issue_id,
-                attacker_team_id,
-                victim_team_id,
-                gamebox_instance_id,
-                submitted_by_user_id,
-            )
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("duplicate") || msg.contains("unique") {
-                    AwdError::Conflict("Already submitted (concurrent request)".into())
-                } else {
-                    AwdError::Database(msg)
+                if already_submitted {
+                    return Err(AwdError::Conflict(
+                        "Already submitted this flag for this target this round".into(),
+                    ));
                 }
-            })?;
 
-            // 3. Insert attack score event
-            let attack_key = IdempotencyKey::attack(
-                &event_id.to_string(),
-                &round_id.to_string(),
-                &attacker_team_id.to_string(),
-                &gamebox_instance_id.to_string(),
-            );
-
-            score_repo::create_score_event(
-                tx,
-                event_id,
-                Some(round_id),
-                attacker_team_id,
-                ScoreEventType::Attack,
-                break_points,
-                &attack_key,
-                Some(victim_team_id),
-                Some(gamebox_instance_id),
-                None,
-                Some("flag capture"),
-            )
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("duplicate") || msg.contains("unique") {
-                    AwdError::Conflict("Attack already scored".into())
-                } else {
-                    AwdError::Database(msg)
-                }
-            })?;
-
-            // 4. Insert victim loss score event
-            let loss_key = IdempotencyKey::victim_loss(
-                &event_id.to_string(),
-                &round_id.to_string(),
-                &attacker_team_id.to_string(),
-                &gamebox_instance_id.to_string(),
-            );
-
-            let _loss_event = score_repo::create_score_event(
-                tx,
-                event_id,
-                Some(round_id),
-                victim_team_id,
-                ScoreEventType::VictimLoss,
-                -loss_points,
-                &loss_key,
-                Some(attacker_team_id),
-                Some(gamebox_instance_id),
-                None,
-                Some("flag stolen"),
-            )
-            .await
-            .map_err(|e| AwdError::Database(format!("Victim loss scoring failed: {}", e)))?;
-
-            // 5. Try first-blood bonus (once per template per event)
-            let bonus_key =
-                IdempotencyKey::first_bonus(&event_id.to_string(), &template_id.to_string());
-
-            let bonus_result = score_repo::create_score_event(
-                tx,
-                event_id,
-                Some(round_id),
-                attacker_team_id,
-                ScoreEventType::FirstBonus,
-                first_bonus,
-                &bonus_key,
-                None,
-                None,
-                Some(template_id),
-                Some("first blood"),
-            )
-            .await;
-
-            let was_first_blood = match &bonus_result {
-                Ok(_) => true,
-                Err(e) => {
+                // 2. Insert submission (unique constraint protects against races)
+                flag_repo::create_submission(
+                    tx,
+                    event_id,
+                    round_id,
+                    flag_issue_id,
+                    attacker_team_id,
+                    victim_team_id,
+                    gamebox_instance_id,
+                    submitted_by_user_id,
+                )
+                .await
+                .map_err(|e| {
                     let msg = e.to_string();
                     if msg.contains("duplicate") || msg.contains("unique") {
-                        false // already claimed by another team
+                        AwdError::Conflict("Already submitted (concurrent request)".into())
                     } else {
-                        return Err(AwdError::Database(msg));
+                        AwdError::Database(msg)
                     }
-                }
-            };
+                })?;
 
-            Ok(SubmissionResult {
-                attack_score_delta: break_points,
-                victim_loss_delta: loss_points,
-                first_bonus_delta: if was_first_blood { first_bonus } else { 0 },
-                was_first_blood,
+                // 3. Insert attack score event
+                let attack_key = IdempotencyKey::attack(
+                    &event_id.to_string(),
+                    &round_id.to_string(),
+                    &attacker_team_id.to_string(),
+                    &gamebox_instance_id.to_string(),
+                );
+
+                score_repo::create_score_event(
+                    tx,
+                    event_id,
+                    Some(round_id),
+                    attacker_team_id,
+                    ScoreEventType::Attack,
+                    break_points,
+                    &attack_key,
+                    Some(victim_team_id),
+                    Some(gamebox_instance_id),
+                    None,
+                    Some("flag capture"),
+                )
+                .await
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("duplicate") || msg.contains("unique") {
+                        AwdError::Conflict("Attack already scored".into())
+                    } else {
+                        AwdError::Database(msg)
+                    }
+                })?;
+
+                // 4. Insert victim loss score event
+                let loss_key = IdempotencyKey::victim_loss(
+                    &event_id.to_string(),
+                    &round_id.to_string(),
+                    &attacker_team_id.to_string(),
+                    &gamebox_instance_id.to_string(),
+                );
+
+                let _loss_event = score_repo::create_score_event(
+                    tx,
+                    event_id,
+                    Some(round_id),
+                    victim_team_id,
+                    ScoreEventType::VictimLoss,
+                    -loss_points,
+                    &loss_key,
+                    Some(attacker_team_id),
+                    Some(gamebox_instance_id),
+                    None,
+                    Some("flag stolen"),
+                )
+                .await
+                .map_err(|e| AwdError::Database(format!("Victim loss scoring failed: {}", e)))?;
+
+                // 5. Try first-blood bonus (once per template per event)
+                let bonus_key =
+                    IdempotencyKey::first_bonus(&event_id.to_string(), &template_id.to_string());
+
+                let bonus_result = score_repo::create_score_event(
+                    tx,
+                    event_id,
+                    Some(round_id),
+                    attacker_team_id,
+                    ScoreEventType::FirstBonus,
+                    first_bonus,
+                    &bonus_key,
+                    None,
+                    None,
+                    Some(template_id),
+                    Some("first blood"),
+                )
+                .await;
+
+                let was_first_blood = match &bonus_result {
+                    Ok(_) => true,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("duplicate") || msg.contains("unique") {
+                            false // already claimed by another team
+                        } else {
+                            return Err(AwdError::Database(msg));
+                        }
+                    }
+                };
+
+                Ok(SubmissionResult {
+                    attack_score_delta: break_points,
+                    victim_loss_delta: loss_points,
+                    first_bonus_delta: if was_first_blood { first_bonus } else { 0 },
+                    was_first_blood,
+                })
             })
         })
-    })
-    .await
-    .map_err(|e| AwdError::Database(format!("Transaction failed: {}", e)))
-    .and_then(|r| Ok(r))
+        .await
+        .map_err(|e| AwdError::Database(format!("Transaction failed: {}", e)))?;
+
+    // P3-7：DB commit 后发布 score.changed（best-effort，不回滚业务）
+    let _ = publisher
+        .publish(
+            crate::modules::event::awd_team::websocket::score_changed(
+                event_id,
+                attacker_team_id,
+                break_points,
+                break_points,
+            )
+            .into_realtime(),
+        )
+        .await;
+
+    Ok(result)
 }

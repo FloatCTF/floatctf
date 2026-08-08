@@ -31,12 +31,14 @@ use crate::entity::{
         AwdEventStatus, AwdPhase, JudgeTaskStatus, RoundStatus, ScoreEventType,
     },
 };
+use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     domain::AwdEventStatusExt,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
     repo::{event_repo, judge_repo, round_repo, score_repo},
     service::{firewall_service, judge_service},
+    websocket,
 };
 use crate::scheduler::TaskKey;
 
@@ -97,6 +99,7 @@ pub async fn start_round(
     db: &sea_orm::DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
     firewall: &dyn FirewallRuntime,
+    publisher: &dyn EventPublisher,
     event_id: Uuid,
 ) -> AwdResult<RoundStarted> {
     // ── 事务内：DB 状态变更 ──
@@ -211,18 +214,46 @@ pub async fn start_round(
 
     // ── COMMIT 后：网络副作用（横切规则 3）──
     // phase 切换 = DB desired → 全局 DesiredFirewallState → nftables reconcile（P3-6）
-    firewall_service::reconcile_global(
-        db,
-        firewall,
-        firewall_service::next_network_revision(db).await?,
-    )
-    .await?;
-    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
+    let revision = firewall_service::next_network_revision(db).await?;
+    match firewall_service::reconcile_global(db, firewall, revision).await {
+        Ok(_) => {
+            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
+                .await;
+            // P3-7：DB commit 后发布；publish 失败不回滚业务（best-effort）
+            let phase_str = format!("{:?}", phase).to_lowercase();
+            let _ = publisher
+                .publish(
+                    websocket::network_policy_applied(event_id, revision, revision, &phase_str)
+                        .into_realtime(),
+                )
+                .await;
+            let _ = publisher
+                .publish(
+                    websocket::round_started(event_id, round.round_number, &phase_str)
+                        .into_realtime(),
+                )
+                .await;
+        }
+        Err(e) => {
+            // P3-6 Fail Closed：reconcile 失败 → network.policy.failed + 返回错误（调用方置 NetworkError）
+            let phase_str = format!("{:?}", phase).to_lowercase();
+            let _ = publisher
+                .publish(
+                    websocket::network_policy_failed(event_id, revision, None, &phase_str)
+                        .into_realtime(),
+                )
+                .await;
+            return Err(e);
+        }
+    }
 
     // judge batch 分发（P3-2：非致命——round 已提交，judge 分发可重试，
     // 失败只记录，不让轮次启动因网络抖动回滚）
     if let Err(e) = dispatch_judge_for_round(db, &awd_event, round.id, event_id).await {
-        warn!("[Round] judge dispatch failed for round {} event {}: {}", round.id, event_id, e);
+        warn!(
+            "[Round] judge dispatch failed for round {} event {}: {}",
+            round.id, event_id, e
+        );
     }
 
     Ok(RoundStarted {
@@ -322,6 +353,7 @@ pub async fn grace_end_round(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
     round_id: Uuid,
+    publisher: &dyn EventPublisher,
 ) -> AwdResult<()> {
     let txn = db
         .begin()
@@ -376,7 +408,12 @@ pub async fn grace_end_round(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
+    let completed_round_number = round.round_number;
     info!("[Round] Round {round_id} completed for event {event_id}");
+    // P3-7：DB commit 后发布（best-effort）
+    let _ = publisher
+        .publish(websocket::round_completed(event_id, completed_round_number).into_realtime())
+        .await;
     Ok(())
 }
 

@@ -6,6 +6,7 @@ use tracing::info;
 
 use crate::{
     infrastructure::LogService,
+    infrastructure::realtime::EventPublisher,
     infrastructure::{WebDb, WebDocker, WebRustfs},
     modules::event::awd_team::{
         crypto::AwdCrypto,
@@ -30,6 +31,7 @@ pub async fn build_task_scheduler(
     network: Arc<dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime>,
     firewall: Arc<dyn FirewallRuntime>,
     crypto: Arc<AwdCrypto>,
+    publisher: Arc<dyn EventPublisher>,
 ) -> Result<TaskScheduler> {
     let mut scheduler = TaskScheduler::new(db.clone(), docker.clone(), rustfs.clone(), logger);
 
@@ -58,14 +60,19 @@ pub async fn build_task_scheduler(
             db: db.clone(),
             network: network.clone(),
             firewall: firewall.clone(),
+            publisher: publisher.clone(),
         }),
         Arc::new(AwdRoundStartHandler {
             db: db.clone(),
             network: network.clone(),
             firewall: firewall.clone(),
+            publisher: publisher.clone(),
         }),
         Arc::new(AwdRoundEndHandler { db: db.clone() }),
-        Arc::new(AwdRoundGraceEndHandler { db: db.clone() }),
+        Arc::new(AwdRoundGraceEndHandler {
+            db: db.clone(),
+            publisher: publisher.clone(),
+        }),
         Arc::new(AwdArchiveCleanupHandler {
             db,
             docker: docker.clone(),

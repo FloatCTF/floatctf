@@ -20,6 +20,7 @@ pub async fn start_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
     firewall: &dyn FirewallRuntime,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
@@ -79,7 +80,7 @@ pub async fn start_event(
 
     // P3-1：第一轮经 round_service 创建（幂等 find-or-create + 插入 RoundEnd(1) 任务
     // + COMMIT 后 reconcile + conntrack + judge dispatch）。
-    round_service::start_round(db, network, firewall, event_id).await?;
+    round_service::start_round(db, network, firewall, publisher, event_id).await?;
 
     Ok(())
 }

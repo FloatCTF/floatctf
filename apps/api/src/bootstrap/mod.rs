@@ -150,6 +150,32 @@ pub async fn run() -> Result<(), BootstrapError> {
         Arc::new(crate::modules::event::awd_team::infrastructure::firewall::NoopFirewallRuntime)
     };
 
+    // AWD crypto（fail-fast，Phase 0 P0-2）
+    let awd_crypto = Arc::new(
+        AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
+            .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
+    );
+
+    // AWD startup recovery（Phase 1 P1-16 接线）：
+    // Firewall Recovery 必须先于 AWD Scheduler（§5.14 启动顺序）。
+    // recover_all 失败不阻塞启动——记录错误，交由 Precheck/Start gate 判定。
+    {
+        let awd_containers_for_recovery: Arc<dyn fcmc::AwdContainerRuntime> =
+            Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
+        match crate::modules::event::awd_team::service::recovery_service::recover_all(
+            db.get_ref(),
+            awd_containers_for_recovery.as_ref(),
+            awd_network.as_ref(),
+            awd_firewall.as_ref(),
+            awd_crypto.as_ref(),
+        )
+        .await
+        {
+            Ok(n) => info!("[Recovery] startup recovery complete: {n} resources reconciled"),
+            Err(e) => error!("[Recovery] startup recovery failed: {}", e),
+        }
+    }
+
     // Initialize scheduler
     let task_scheduler = scheduler::build_task_scheduler(
         db.clone(),
@@ -192,10 +218,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
 
     let awd_deps = web::Data::new(AwdDependencies {
-        crypto: Arc::new(
-            AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
-                .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
-        ),
+        crypto: awd_crypto.clone(),
         publisher: publisher.clone(),
         containers: awd_containers.clone(),
         network: awd_network.clone(),

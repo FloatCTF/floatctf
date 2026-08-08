@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod auth;
 pub mod dto;
+pub mod gamebox_admin;
 pub mod internal;
 pub mod player;
 
@@ -28,7 +29,16 @@ pub fn admin_routes(cfg: &mut web::ServiceConfig) {
         .service(admin::archive_event)
         .service(admin::rotate_tokens)
         .service(admin::update_network)
-        .service(admin::get_event_scores);
+        .service(admin::get_event_scores)
+        // GameBox 库 + 赛事 GameBox 管理（§46 术语：gamebox / revision / event_gamebox）
+        .service(gamebox_admin::list_gamebox_library)
+        .service(gamebox_admin::create_gamebox)
+        .service(gamebox_admin::edit_gamebox_revision)
+        .service(gamebox_admin::hide_gamebox)
+        .service(gamebox_admin::list_event_gameboxes)
+        .service(gamebox_admin::add_event_gamebox)
+        .service(gamebox_admin::update_event_gamebox)
+        .service(gamebox_admin::delete_event_gamebox);
 }
 
 /// Register AWD player routes under `/api`.

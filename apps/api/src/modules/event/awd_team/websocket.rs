@@ -66,7 +66,7 @@ pub fn attack_success(
     event_id: Uuid,
     attacker_team_id: Uuid,
     victim_team_id: Uuid,
-    template_id: Uuid,
+    event_gamebox_id: Uuid,
     points: i64,
 ) -> AwdEvent {
     AwdEvent::new(
@@ -75,7 +75,7 @@ pub fn attack_success(
         serde_json::json!({
             "attacker_team_id": attacker_team_id,
             "victim_team_id": victim_team_id,
-            "template_id": template_id,
+            "event_gamebox_id": event_gamebox_id,
             "points": points,
         }),
     )
@@ -98,7 +98,7 @@ pub fn score_changed(event_id: Uuid, team_id: Uuid, new_total: i64, delta: i64) 
 pub fn judge_result(
     event_id: Uuid,
     team_id: Uuid,
-    template_id: Uuid,
+    event_gamebox_id: Uuid,
     status: &str,
     duration_ms: Option<i32>,
 ) -> AwdEvent {
@@ -107,7 +107,7 @@ pub fn judge_result(
         event_id,
         serde_json::json!({
             "team_id": team_id,
-            "template_id": template_id,
+            "event_gamebox_id": event_gamebox_id,
             "status": status,
             "duration_ms": duration_ms,
         }),

@@ -61,7 +61,6 @@ pub async fn build_task_scheduler(
         }),
         Arc::new(AwdRoundStartHandler {
             db: db.clone(),
-            docker: docker.clone(),
             network: network.clone(),
             firewall: firewall.clone(),
         }),

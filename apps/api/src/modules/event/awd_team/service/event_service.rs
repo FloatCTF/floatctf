@@ -12,7 +12,7 @@ use crate::modules::event::awd_team::{
         network::{AwdNetworkRuntime, EventNetworkIdentity},
     },
     repo::{event_repo, round_repo},
-    service::firewall_service,
+    service::{firewall_service, round_service},
 };
 
 /// Start an AWD event: validate status, create first round, set hardening phase + policy.
@@ -77,28 +77,9 @@ pub async fn start_event(
     )
     .await?;
 
-    // Create the first round
-    let now = chrono::Utc::now();
-    let round_end = now + chrono::Duration::seconds(awd_event.round_duration_secs as i64);
-
-    round_repo::create_round(
-        db,
-        event_id,
-        1, // round 1
-        AwdPhase::Hardening,
-        round_end,
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    // 全局 desired-state reconcile（nftables）+ conntrack 清理（Phase 1 P1-10）
-    firewall_service::reconcile_global(
-        db,
-        firewall,
-        firewall_service::next_network_revision(db).await?,
-    )
-    .await?;
-    firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
+    // P3-1：第一轮经 round_service 创建（幂等 find-or-create + 插入 RoundEnd(1) 任务
+    // + COMMIT 后 reconcile + conntrack + judge dispatch）。
+    round_service::start_round(db, network, firewall, event_id).await?;
 
     Ok(())
 }

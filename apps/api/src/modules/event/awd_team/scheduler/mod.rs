@@ -25,8 +25,8 @@ use crate::modules::event::awd_team::{
     crypto::{AwdCrypto, EncryptedBlob},
     domain::AwdEventStatusExt,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
-    repo::{event_repo, judge_repo, round_repo},
-    service::{event_service, firewall_service, judge_service},
+    repo::{event_repo, round_repo},
+    service::{event_service, firewall_service, round_service},
 };
 use fcmc::AwdContainerRuntime;
 use std::sync::Arc;
@@ -217,10 +217,9 @@ impl TaskHandler for AwdEventStartHandler {
     }
 }
 
-/// Handler: Start a new AWD round.
+/// Handler: Start a new AWD round（thin 代理 → round_service::start_round，P3-2）。
 pub struct AwdRoundStartHandler {
     pub db: WebDb,
-    pub docker: WebDocker,
     pub network: Arc<dyn AwdNetworkRuntime>,
     pub firewall: Arc<dyn FirewallRuntime>,
 }
@@ -236,123 +235,36 @@ impl TaskHandler for AwdRoundStartHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let event_id = event_id_from_task(&task)?;
+        let payload: round_service::RoundTaskPayload =
+            serde_json::from_value(task.payload.clone().unwrap_or_default())?;
+        let event_id = payload.event_id;
 
         info!("[AWD] Starting new round for event {}", event_id);
 
-        // Verify event is running
-        let awd_event = event_repo::find_by_event_id(self.db.get_ref(), event_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("AWD event not found"))?;
-
-        if !awd_event.status.is_active() {
-            warn!(
-                "[AWD] Event {} is not active, skipping round start",
-                event_id
-            );
-            return Ok(());
+        // 非 Running 赛事：跳过（scheduler 任务不失败）
+        if let Some(ev) = event_repo::find_by_event_id(self.db.get_ref(), event_id).await? {
+            if !ev.status.is_active() {
+                warn!(
+                    "[AWD] Event {} is not active ({:?}), skipping round start",
+                    event_id, ev.status
+                );
+                return Ok(());
+            }
         }
 
-        // Complete the previous round if any
-        if let Some(prev_round) = round_repo::find_active_round(self.db.get_ref(), event_id).await?
-        {
-            // Timeout pending judge tasks from previous round
-            let timed_out =
-                judge_repo::timeout_pending_tasks(self.db.get_ref(), prev_round.id).await?;
-            info!(
-                "[AWD] Round {} ended. {} tasks timed out.",
-                prev_round.round_number, timed_out
-            );
-
-            round_repo::update_round_status(
-                self.db.get_ref(),
-                prev_round.id,
-                RoundStatus::Completed,
-            )
-            .await?;
-        }
-
-        // Get the latest round number
-        let latest = round_repo::find_latest_round(self.db.get_ref(), event_id).await?;
-        let next_round_number = latest.map(|r| r.round_number + 1).unwrap_or(1);
-
-        // Determine phase (round 1 starts with hardening, subsequent rounds are attack)
-        let phase = if next_round_number == 1 {
-            AwdPhase::Hardening
-        } else {
-            AwdPhase::Attack
-        };
-        let phase_debug = format!("{:?}", phase);
-
-        // Update event phase
-        crate::modules::event::awd_team::repo::event_repo::update_phase(
+        round_service::start_round(
             self.db.get_ref(),
-            awd_event.id,
-            phase.clone(),
-        )
-        .await?;
-
-        let now = chrono::Utc::now();
-        let round_end = now + chrono::Duration::seconds(awd_event.round_duration_secs as i64);
-
-        let new_round = round_repo::create_round(
-            self.db.get_ref(),
-            event_id,
-            next_round_number,
-            phase.clone(),
-            round_end,
-        )
-        .await?;
-
-        info!(
-            "[AWD] Round {} started for event {} (phase: {})",
-            new_round.round_number, event_id, phase_debug
-        );
-
-        // phase 切换 = DB desired phase → 全局 DesiredFirewallState → nftables reconcile（Phase 1 P1-10）
-        firewall_service::reconcile_global(
-            self.db.get_ref(),
-            self.firewall.as_ref(),
-            firewall_service::next_network_revision(self.db.get_ref()).await?,
-        )
-        .await?;
-        firewall_service::flush_event_connections(
             self.network.as_ref(),
+            self.firewall.as_ref(),
             event_id,
-            &awd_event.gamebox_cidr,
         )
-        .await;
-
-        let token_ciphertext = awd_event
-            .judgeserver_token_ciphertext
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("JudgeServer token is not configured"))?;
-        let token_nonce = awd_event
-            .judgeserver_token_nonce
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("JudgeServer token nonce is not configured"))?;
-        let crypto = AwdCrypto::from_config_secret()?;
-        let token = crypto.decrypt(
-            &EncryptedBlob {
-                ciphertext: token_ciphertext,
-                nonce: token_nonce,
-                key_version: awd_event.key_version,
-            },
-            &AwdCrypto::build_aad(event_id, "internal_token"),
-        )?;
-        let token = String::from_utf8(token)
-            .map_err(|_| anyhow::anyhow!("JudgeServer token is not valid UTF-8"))?;
-        let batch_id =
-            judge_service::create_batch(self.db.get_ref(), event_id, new_round.id).await?;
-        let judgeserver_url = format!("http://{}:8082", awd_event.judgeserver_ip);
-        judge_service::dispatch_batch(self.db.get_ref(), batch_id, &judgeserver_url, &token)
-            .await?;
+        .await?;
 
         Ok(())
     }
 }
 
-/// Handler: End the current AWD round (grace period).
+/// Handler: End the current AWD round (grace period)——thin 代理 → round_service::end_round。
 pub struct AwdRoundEndHandler {
     pub db: WebDb,
 }
@@ -368,32 +280,28 @@ impl TaskHandler for AwdRoundEndHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let event_id = event_id_from_task(&task)?;
-
-        info!("[AWD] Ending round for event {}", event_id);
-
-        let active_round = match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
-            Some(r) => r,
-            None => {
-                warn!("[AWD] No active round for event {}", event_id);
-                return Ok(());
-            }
+        let payload: round_service::RoundTaskPayload =
+            serde_json::from_value(task.payload.clone().unwrap_or_default())?;
+        let event_id = payload.event_id;
+        // end 任务携带 round_id；缺失时按 active round 兜底
+        let round_id = match payload.round_id {
+            Some(id) => id,
+            None => match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
+                Some(r) => r.id,
+                None => {
+                    warn!("[AWD] No active round for event {}", event_id);
+                    return Ok(());
+                }
+            },
         };
 
-        // Start grace period
-        round_repo::update_round_status(self.db.get_ref(), active_round.id, RoundStatus::Grace)
-            .await?;
-
-        info!(
-            "[AWD] Round {} in grace period for event {}",
-            active_round.round_number, event_id
-        );
-
+        info!("[AWD] Ending round {round_id} for event {event_id}");
+        round_service::end_round(self.db.get_ref(), event_id, round_id).await?;
         Ok(())
     }
 }
 
-/// Handler: Grace period ends — complete the round.
+/// Handler: Grace period ends — complete the round（thin 代理 → round_service::grace_end_round）。
 pub struct AwdRoundGraceEndHandler {
     pub db: WebDb,
 }
@@ -409,27 +317,22 @@ impl TaskHandler for AwdRoundGraceEndHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let event_id = event_id_from_task(&task)?;
-
-        info!("[AWD] Grace period ending for event {}", event_id);
-
-        // Timeout any remaining pending tasks
-        let active_round = match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
-            Some(r) => r,
-            None => return Ok(()),
+        let payload: round_service::RoundTaskPayload =
+            serde_json::from_value(task.payload.clone().unwrap_or_default())?;
+        let event_id = payload.event_id;
+        let round_id = match payload.round_id {
+            Some(id) => id,
+            None => match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
+                Some(r) => r.id,
+                None => {
+                    warn!("[AWD] No active round for event {}", event_id);
+                    return Ok(());
+                }
+            },
         };
 
-        let timed_out =
-            judge_repo::timeout_pending_tasks(self.db.get_ref(), active_round.id).await?;
-        info!(
-            "[AWD] Grace ended. {} tasks timed out for round {}.",
-            timed_out, active_round.round_number
-        );
-
-        // Complete the round
-        round_repo::update_round_status(self.db.get_ref(), active_round.id, RoundStatus::Completed)
-            .await?;
-
+        info!("[AWD] Grace period ending for round {round_id} event {event_id}");
+        round_service::grace_end_round(self.db.get_ref(), event_id, round_id).await?;
         Ok(())
     }
 }

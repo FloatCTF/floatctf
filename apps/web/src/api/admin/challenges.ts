@@ -34,10 +34,10 @@ export const challengeAdminApi = {
         });
         return res.data;
     },
-    // 后端单/批量同逻辑：根目录有 meta.toml 按单题，否则递归发现所有 meta.toml
+    // 后端归一化：单题（根目录 meta.toml）/批量（目录树递归发现 meta.toml）统一走一个字段
     importChallenge: async (file: File): Promise<UniResponse<null>> => {
         const form = new FormData();
-        form.append("challenge_list_zip", file, file.name);
+        form.append("import_challenges_zip", file, file.name);
 
         const res = await admin_api.post("/challenges/import", form, {
             headers: {

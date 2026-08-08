@@ -10,16 +10,13 @@ use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
 use base64::Engine;
 use fcmc::{ChallengeMeta, DockerContainerRuntime};
 
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::OnConflict,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 #[derive(Debug, MultipartForm)]
 struct UploadForm {
-    #[multipart(limit = "1024MB")]
-    challenge_zip: Option<TempFile>,
+    /// 归一化导入字段：单题（根目录 meta.toml）或批量（目录树递归发现 meta.toml）统一走这里
     #[multipart(limit = "10240MB")]
-    challenge_list_zip: Option<TempFile>,
+    import_challenges_zip: Option<TempFile>,
     toml_str_b64: Option<Text<String>>,
 }
 /// POST /api/admin/challenges/import
@@ -44,20 +41,12 @@ pub async fn web_import_challenge(
         will_insert_toml_strs.push(toml_str);
     }
 
-    if let Some(challenge_zip) = form.challenge_zip {
-        let toml_strs = import_challenge_zip(&ctx.db, challenge_zip.file)
+    if let Some(zip) = form.import_challenges_zip {
+        let models = import_challenges_zip(&ctx.db, zip.file)
             .await
-            .map_err(|e| AppError::BadRequest(format!("import challenge zip error: {}", e)))?;
+            .map_err(|e| AppError::BadRequest(format!("import challenges zip error: {}", e)))?;
 
-        will_insert_toml_strs.extend(toml_strs);
-    }
-
-    if let Some(challenge_list_zip) = form.challenge_list_zip {
-        let toml_strs = import_challenge_list_zip(&ctx.db, challenge_list_zip.file)
-            .await
-            .map_err(|e| AppError::BadRequest(format!("import challenge list zip error: {}", e)))?;
-
-        will_insert_toml_strs.extend(toml_strs);
+        inserted_challenges.extend(models);
     }
 
     for toml_str in will_insert_toml_strs {
@@ -95,58 +84,85 @@ pub async fn import_challenge(
 ) -> anyhow::Result<challenges::Model> {
     let c = ChallengeMeta::from_toml_str(&challenge_toml_str)?;
 
+    // 同名已存在 → 覆盖导入（保留原有 safe_name，避免与其它行撞 UNIQUE）
+    if let Some(existing) = Challenges::find()
+        .filter(challenges::Column::Name.eq(&c.name))
+        .one(db)
+        .await?
+    {
+        let mut am: challenges::ActiveModel = existing.into();
+        am.category = Set(c.category);
+        am.description = Set(c.description);
+        am.attachment = Set(c.attachment);
+        am.toml_str = Set(challenge_toml_str);
+        am.update(db).await?;
+
+        return Challenges::find()
+            .filter(challenges::Column::Name.eq(&c.name))
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("challenge not found after update"));
+    }
+
+    // 新题：safe_name 若被其它行占用则追加 -2/-3 去重（challenges_safe_name_key UNIQUE）
+    let safe_name = unique_safe_name(db, &generate_safe_name(&c.name)).await?;
+
     let new_challenge = challenges::ActiveModel {
         name: Set(c.name.clone()),
         category: Set(c.category),
         description: Set(c.description),
         attachment: Set(c.attachment),
-        safe_name: Set(generate_safe_name(&c.name)),
+        safe_name: Set(safe_name),
         toml_str: Set(challenge_toml_str),
         ..Default::default()
     };
-
-    // 关键：按 name 唯一键 UPSERT（存在则覆盖更新）
-    challenges::Entity::insert(new_challenge)
-        .on_conflict(
-            OnConflict::column(challenges::Column::Name)
-                .update_columns([
-                    challenges::Column::Category,
-                    challenges::Column::Description,
-                    challenges::Column::Attachment,
-                    challenges::Column::TomlStr,
-                    challenges::Column::SafeName,
-                ])
-                .to_owned(),
-        )
-        .exec(db)
-        .await?;
-
-    // 返回最新记录（无论是插入还是更新）
-    let model = challenges::Entity::find()
-        .filter(challenges::Column::Name.eq(c.name))
+    let res = challenges::Entity::insert(new_challenge).exec(db).await?;
+    challenges::Entity::find_by_id(res.last_insert_id)
         .one(db)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("challenge not found after upsert"))?;
+        .ok_or_else(|| anyhow::anyhow!("challenge not found after insert"))
+}
 
-    Ok(model)
+/// 判断 safe_name 是否已被占用（challenges_safe_name_key UNIQUE）。
+async fn safe_name_taken(db: &DatabaseConnection, safe_name: &str) -> anyhow::Result<bool> {
+    Ok(Challenges::find()
+        .filter(challenges::Column::SafeName.eq(safe_name))
+        .one(db)
+        .await?
+        .is_some())
+}
+
+/// 生成未被占用的 safe_name：base 被占用则依次尝试 base-2、base-3…
+async fn unique_safe_name(db: &DatabaseConnection, base: &str) -> anyhow::Result<String> {
+    if !safe_name_taken(db, base).await? {
+        return Ok(base.to_string());
+    }
+    for i in 2..=999 {
+        let candidate = format!("{}-{}", base, i);
+        if !safe_name_taken(db, &candidate).await? {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("无法为挑战生成唯一 safe_name: {}", base)
 }
 
 /// 导入题目压缩包（单题/批量统一逻辑）：
 /// 1. 解压到临时目录；
 /// 2. 先检查解压根目录是否有 meta.toml —— 有则视为单题导入；
 /// 3. 没有则递归查找目录树下所有 meta.toml，每个 meta.toml 所在目录视为一道题目；
-/// 4. 按 meta.toml 所在位置把整个目录覆盖复制到 {CHALLENGES_DIR}/{safe_name}；
-/// 5. 返回所有 meta.toml 原文，由 DB 侧按 name upsert 覆盖导入。
-pub async fn import_challenge_zip(
+/// 4. 每道题先落 DB（同名覆盖 / safe_name 去重），拿到最终 safe_name 后
+///    再把 meta.toml 所在目录覆盖复制到 {CHALLENGES_DIR}/{safe_name}；
+/// 5. 返回导入/更新后的 challenges 行。
+pub async fn import_challenges_zip(
     db: &DatabaseConnection,
-    challenge_zip: tempfile::NamedTempFile,
-) -> anyhow::Result<Vec<String>> {
+    challenges_zip: tempfile::NamedTempFile,
+) -> anyhow::Result<Vec<challenges::Model>> {
     let output_root = get_setting(&db, "CHALLENGES_DIR")
         .await
         .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
 
     let tmp_dir = tempfile::tempdir()?;
-    let mut archive = zip::ZipArchive::new(challenge_zip)?;
+    let mut archive = zip::ZipArchive::new(challenges_zip)?;
     // zip crate 的 extract 自带 zip-slip 路径穿越防护，越界条目直接报错
     archive.extract(tmp_dir.path())?;
 
@@ -155,13 +171,14 @@ pub async fn import_challenge_zip(
         anyhow::bail!("压缩包内未找到 meta.toml");
     }
 
-    let mut will_insert_toml_strs = Vec::with_capacity(meta_paths.len());
+    let mut imported = Vec::with_capacity(meta_paths.len());
     for meta_path in meta_paths {
         let meta_toml = std::fs::read_to_string(&meta_path)?;
-        let cm = ChallengeMeta::from_toml_str(&meta_toml)?;
-        let safe_name = generate_safe_name(&cm.name);
+        // 先落 DB（同名覆盖 / safe_name 去重），返回带最终 safe_name 的行
+        let model = import_challenge(db, meta_toml).await?;
 
-        let dest = std::path::Path::new(&output_root).join(&safe_name);
+        // 再按 DB 中的 safe_name 覆盖复制 meta.toml 所在目录，目录与行始终一致
+        let dest = std::path::Path::new(&output_root).join(&model.safe_name);
         if dest.exists() {
             // 覆盖导入：整目录重建
             std::fs::remove_dir_all(&dest)?;
@@ -171,17 +188,9 @@ pub async fn import_challenge_zip(
             .ok_or_else(|| anyhow::anyhow!("meta.toml 缺少父目录"))?;
         copy_dir_all(src_dir, &dest)?;
 
-        will_insert_toml_strs.push(meta_toml);
+        imported.push(model);
     }
-    Ok(will_insert_toml_strs)
-}
-
-/// 批量压缩包与单包同逻辑（解压后按 meta.toml 所在位置递归导入）。
-pub async fn import_challenge_list_zip(
-    db: &DatabaseConnection,
-    challenge_list_zip: tempfile::NamedTempFile,
-) -> anyhow::Result<Vec<String>> {
-    import_challenge_zip(db, challenge_list_zip).await
+    Ok(imported)
 }
 
 /// 递归查找 meta.toml：根目录存在则只按单题处理；否则收集所有子目录中的 meta.toml。

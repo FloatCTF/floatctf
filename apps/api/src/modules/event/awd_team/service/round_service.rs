@@ -640,11 +640,13 @@ mod tests {
         let p = RoundTaskPayload {
             event_id: Uuid::new_v4(),
             round_id: Some(Uuid::new_v4()),
+            round_number: Some(3),
         };
         let v = serde_json::to_value(&p).unwrap();
         let back: RoundTaskPayload = serde_json::from_value(v).unwrap();
         assert_eq!(back.event_id, p.event_id);
         assert_eq!(back.round_id, p.round_id);
+        assert_eq!(back.round_number, Some(3));
     }
 
     #[test]

@@ -181,8 +181,20 @@ pub async fn find_by_event_id<C: ConnectionTrait + Send>(
 pub async fn find_active_events<C: ConnectionTrait + Send>(
     db: &C,
 ) -> Result<Vec<awd_events::Model>, sea_orm::DbErr> {
+    // 验收 #11 范围扩展：除 Running/Paused（完整恢复 gamebox+WG+round），
+    // 覆盖比赛前状态（Verified/Deploying/Deployed/Prechecking）——这些阶段崩溃
+    // 会留下半管理资源，重启后同样需要 gamebox/WG/firewall 收敛（reconcile 幂等）；
+    // DeployFailed/NetworkError/StartBlocked 保持不动（冻结/失败态，交给管理员或
+    // Start Gate 判定）。
     awd_events::Entity::find()
-        .filter(awd_events::Column::Status.is_in([AwdEventStatus::Running, AwdEventStatus::Paused]))
+        .filter(awd_events::Column::Status.is_in([
+            AwdEventStatus::Running,
+            AwdEventStatus::Paused,
+            AwdEventStatus::Verified,
+            AwdEventStatus::Deploying,
+            AwdEventStatus::Deployed,
+            AwdEventStatus::Prechecking,
+        ]))
         .all(db)
         .await
 }

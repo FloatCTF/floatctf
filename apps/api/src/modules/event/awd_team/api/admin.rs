@@ -701,6 +701,32 @@ pub async fn rotate_tokens(
 }
 
 /// 重建一个 infra 容器（stop → create，同 fixed_ip/网络，env 带新 token）。
+/// 探活：固定 IP:端口 TCP connect，最多 ~12s（24 × 500ms），容器启动需要时间。
+async fn wait_for_tcp_ready(host: &str, port: u16) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use tokio::net::TcpStream;
+    use tokio::time::{Duration, sleep, timeout};
+
+    let addr = match host.parse::<IpAddr>() {
+        Ok(ip) => SocketAddr::new(ip, port),
+        Err(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
+    };
+    for attempt in 0..24u32 {
+        if timeout(Duration::from_millis(500), TcpStream::connect(addr))
+            .await
+            .is_ok_and(|r| r.is_ok())
+        {
+            if attempt > 0 {
+                tracing::info!("[Rotate] health probe ok after {attempt} attempt(s): {addr}");
+            }
+            return true;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+    tracing::warn!("[Rotate] health probe failed (24 attempts): {addr}");
+    false
+}
+
 async fn rollout_infra_container(
     db: &sea_orm::DatabaseConnection,
     containers: &dyn fcmc::AwdContainerRuntime,
@@ -741,6 +767,15 @@ async fn rollout_infra_container(
             ))
         })?;
 
+    // 验收 #16：两段健康才完成——重建后探活固定 IP:8080（TCP connect 证明容器
+    // 监听中；app 级 /health 校验留待 Judgeserver 自身），未就绪视为失败可重跑
+    if !wait_for_tcp_ready(fixed_ip, 8080).await {
+        return Err(AppError::Internal(format!(
+            "token rotation DB committed but {kind} container not healthy after rollout "
+        )));
+    }
+    tracing::info!("[Rotate] {kind} container healthy after rollout ({container_name})");
+
     // 更新 runtime resource 记录的 container_id（rollout 后容器 id 变化）
     use crate::entity::awd_runtime_resources;
     let updated = awd_runtime_resources::Entity::update_many()
@@ -756,7 +791,6 @@ async fn rollout_infra_container(
     if updated.rows_affected == 0 {
         tracing::warn!("[Rotate] no awd_runtime_resources row for {kind} — recorded manually");
     }
-
     let _ = awd_event;
     tracing::info!("[Rotate] {kind} container rolled out as {}", container_name);
     UniResponse::ok_none().into()

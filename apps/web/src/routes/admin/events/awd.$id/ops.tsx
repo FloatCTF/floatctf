@@ -1,6 +1,7 @@
-import { Button, ButtonGroup, Spinner } from "@primer/react";
+import { Button, ButtonGroup, Spinner, TextInput } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 
 import { adminApi } from "@/api";
 import { useMsgBanner } from "@/components";
@@ -62,6 +63,31 @@ function RouteComponent() {
 		onSuccess: onOk("Archive"),
 		onError: banner.showErrorBanner,
 	});
+	const rotate = useMutation({
+		mutationFn: () => adminApi.awd.rotateTokens(id),
+		onSuccess: onOk("Token Rotated"),
+		onError: banner.showErrorBanner,
+	});
+
+	// Score Adjust（P5-11 审计）
+	const [adjTeam, setAdjTeam] = useState("");
+	const [adjDelta, setAdjDelta] = useState("0");
+	const [adjReason, setAdjReason] = useState("");
+	const adjust = useMutation({
+		mutationFn: () =>
+			adminApi.awd.adjustScore(id, {
+				team_id: adjTeam,
+				delta: parseInt(adjDelta, 10) || 0,
+				reason: adjReason.trim() || "manual adjustment",
+			}),
+		onSuccess: () => {
+			banner.showBanner("success", "Score adjusted");
+			qc.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
+			setAdjDelta("0");
+			setAdjReason("");
+		},
+		onError: banner.showErrorBanner,
+	});
 
 	const pending =
 		deploy.isPending ||
@@ -70,7 +96,9 @@ function RouteComponent() {
 		pause.isPending ||
 		resume.isPending ||
 		finish.isPending ||
-		archive.isPending;
+		archive.isPending ||
+		rotate.isPending ||
+		adjust.isPending;
 
 	const rows = scores.data?.data ?? [];
 
@@ -109,12 +137,67 @@ function RouteComponent() {
 					>
 						Archive
 					</Button>
+					<Button
+						variant="danger"
+						disabled={pending}
+						onClick={() => {
+							if (
+								window.confirm(
+									"确认轮换内部 Token？\n将 key_version+1、重新加密并重建 FlagServer/JudgeServer 容器。",
+								)
+							)
+								rotate.mutate();
+						}}
+					>
+						Rotate Tokens
+					</Button>
 				</ButtonGroup>
 				{pending && (
 					<span className="ml-2">
 						<Spinner size="small" />
 					</span>
 				)}
+			</section>
+
+			<section>
+				<h4 className="font-bold mb-2">Score Adjust (audited)</h4>
+				<div className="flex items-center gap-2 flex-wrap">
+					<select
+						className="border rounded px-2 py-1 text-sm"
+						value={adjTeam}
+						onChange={(e) => setAdjTeam(e.target.value)}
+						disabled={adjust.isPending}
+					>
+						<option value="">Select team…</option>
+						{rows.map((r) => (
+							<option key={r.team_id} value={r.team_id}>
+								{r.team_name}
+							</option>
+						))}
+					</select>
+					<TextInput
+						aria-label="delta"
+						placeholder="delta (e.g. 100 / -50)"
+						value={adjDelta}
+						onChange={(e) => setAdjDelta(e.target.value)}
+						disabled={adjust.isPending}
+						style={{ width: 180 }}
+					/>
+					<TextInput
+						aria-label="reason"
+						placeholder="reason"
+						value={adjReason}
+						onChange={(e) => setAdjReason(e.target.value)}
+						disabled={adjust.isPending}
+						style={{ width: 240 }}
+					/>
+					<Button
+						disabled={!adjTeam || adjust.isPending || pending}
+						onClick={() => adjust.mutate()}
+					>
+						Apply
+					</Button>
+				</div>
 			</section>
 
 			<section>

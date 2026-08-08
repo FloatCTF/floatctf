@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Fragment } from "react";
 
 import { adminApi } from "@/api";
-import { GenericTable } from "@/components";
+import { GenericTable, useMsgBanner } from "@/components";
 import type { EventTeamMemberRole, EventTeams } from "@/entity";
 import { DatetimeToShow } from "@/util";
 import { AdminRouteGuard } from "../../route";
@@ -33,19 +33,42 @@ function RouteComponent() {
     const { id } = Route.useParams();
     const subject = `EventTeams-${id}`;
     const queryClient = useQueryClient();
+    const banner = useMsgBanner({});
+    const onDone = () => {
+        queryClient.invalidateQueries({ queryKey: [subject] });
+    };
     const bannedEventTeam = useMutation({
-        mutationFn: adminApi.event_teams.banned,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: [subject] });
-        },
+        mutationFn: ({ eventId, teamId, body }: {
+            eventId: string;
+            teamId: string;
+            body: { reason?: string; durationSecs?: number };
+        }) => adminApi.awd.banTeam(eventId, teamId, body),
+        onSuccess: onDone,
+        onError: banner.showErrorBanner,
     });
 
     const unbannedEventTeam = useMutation({
-        mutationFn: adminApi.event_teams.unbanned,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: [subject] });
-        },
+        mutationFn: ({ eventId, teamId }: { eventId: string; teamId: string }) =>
+            adminApi.awd.unbanTeam(eventId, teamId),
+        onSuccess: onDone,
+        onError: banner.showErrorBanner,
     });
+
+    // 封禁：询问时长（秒，留空/0 = 永久；>0 触发 P4-7 自动解封任务）
+    const askBan = (teamId: string) => {
+        const input = window.prompt(
+            "AWD 跨层封禁（WG 挂起 + 防火墙 banned set + 连接清理）\n封禁时长（秒），留空为永久封禁；\n例如：3600 = 1 小时后自动解封",
+        );
+        if (input === null) return; // 取消
+        const n = parseInt(input, 10);
+        bannedEventTeam.mutate({
+            eventId: id,
+            teamId,
+            body: {
+                durationSecs: Number.isFinite(n) && n > 0 ? n : undefined,
+            },
+        });
+    };
 
     const columns = [
         {
@@ -136,8 +159,8 @@ function RouteComponent() {
                         variant="default"
                         onSelect={() => {
                             unbannedEventTeam.mutate({
-                                event_id: id,
-                                team_id: row.team.id,
+                                eventId: id,
+                                teamId: row.team.id,
                             });
                         }}
                     >
@@ -147,13 +170,10 @@ function RouteComponent() {
                     <ActionList.Item
                         variant="danger"
                         onSelect={() => {
-                            bannedEventTeam.mutate({
-                                event_id: id,
-                                team_id: row.team.id,
-                            });
+                            askBan(row.team.id);
                         }}
                     >
-                        Banned
+                        Ban (AWD)
                     </ActionList.Item>
                 )}
             </ActionList>
@@ -162,16 +182,19 @@ function RouteComponent() {
     const filterKeys = ["id", "name", "points", "banned"];
 
     return (
-        <GenericTable
-            className="m-2"
-            subject={subject}
-            columns={columns}
-            queryFn={adminApi.event_teams.getTeams(id)}
-            removeFn={adminApi.event_teams.remove(id)}
-            disablePagination={true}
-            columnActions={columns_actions}
-            getRowId={(row) => row.team.id}
-            filterKeys={filterKeys}
-        />
+        <div className="flex flex-col gap-2">
+            <banner.BannerComponent />
+            <GenericTable
+                className="m-2"
+                subject={subject}
+                columns={columns}
+                queryFn={adminApi.event_teams.getTeams(id)}
+                removeFn={adminApi.event_teams.remove(id)}
+                disablePagination={true}
+                columnActions={columns_actions}
+                getRowId={(row) => row.team.id}
+                filterKeys={filterKeys}
+            />
+        </div>
     );
 }

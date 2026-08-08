@@ -75,6 +75,47 @@ export const awdAdminApi = {
 		);
 		return res.data;
 	},
+	/** P4-5/P4-6：AWD 跨层封禁（WG suspend + banned set reconcile + conntrack + publish）。 */
+	banTeam: async (
+		eventId: string,
+		teamId: string,
+		body: { reason?: string; durationSecs?: number },
+	): Promise<UniResponse<string>> => {
+		const res = await admin_api.post(
+			`/events/${eventId}/awd/teams/${teamId}/ban`,
+			{
+				reason: body.reason,
+				duration_secs: body.durationSecs,
+			},
+		);
+		return res.data;
+	},
+	/** P4-5：AWD 解封（反向闭环：DB unbanned → WG 恢复 peers → banned set reconcile）。 */
+	unbanTeam: async (
+		eventId: string,
+		teamId: string,
+	): Promise<UniResponse<null>> => {
+		const res = await admin_api.delete(
+			`/events/${eventId}/awd/teams/${teamId}/ban`,
+		);
+		return res.data;
+	},
+	/** P3-10：内部 token 轮换（key_version+1 + 容器 rollout + 审计）。 */
+	rotateTokens: async (eventId: string): Promise<UniResponse<null>> => {
+		const res = await admin_api.post(`/events/${eventId}/awd/tokens/rotate`);
+		return res.data;
+	},
+	/** P5-11：AWD 分数调整（审计）。 */
+	adjustScore: async (
+		eventId: string,
+		body: { team_id: string; delta: number; reason: string },
+	): Promise<UniResponse<null>> => {
+		const res = await admin_api.post(
+			`/events/${eventId}/awd/score/adjust`,
+			body,
+		);
+		return res.data;
+	},
 };
 
 /** Player AWD endpoints (User JWT). */

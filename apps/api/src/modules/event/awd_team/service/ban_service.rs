@@ -18,10 +18,11 @@
 //! 不依赖 nft table 中旧 ban elements 作为事实源。
 //! ```
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::Expr};
 use tracing::info;
 use uuid::Uuid;
 
+use crate::entity::event_teams;
 use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -58,7 +59,22 @@ pub async fn ban_team(
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 2. WG host 挂起（DB 保持 Active）
+    // 2. 与通用 event_teams.banned 标志同步（仅供前端展示；玩家侧门禁以 awd_team_bans 为准）
+    //    best-effort：标志不同步不应阻断 AWD 跨层封禁（WG/banned set/conntrack 才是安全关键）
+    if let Err(e) = event_teams::Entity::update_many()
+        .filter(
+            event_teams::Column::Id
+                .eq(team_id)
+                .and(event_teams::Column::EventId.eq(event_id)),
+        )
+        .col_expr(event_teams::Column::Banned, Expr::value(true))
+        .exec(db)
+        .await
+    {
+        tracing::error!("[Ban] sync event_teams.banned flag failed: {e}");
+    }
+
+    // 3. WG host 挂起（DB 保持 Active）
     let removed =
         wireguard_service::suspend_team_peers_from_host(db, network, event_id, team_id).await?;
     info!(
@@ -120,6 +136,20 @@ pub async fn unban_team(
     ban_repo::complete_unban(db, ban.id, unbanned_by)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    // 1b. 通用标志同步（best-effort，展示用）
+    if let Err(e) = event_teams::Entity::update_many()
+        .filter(
+            event_teams::Column::Id
+                .eq(team_id)
+                .and(event_teams::Column::EventId.eq(event_id)),
+        )
+        .col_expr(event_teams::Column::Banned, Expr::value(false))
+        .exec(db)
+        .await
+    {
+        tracing::error!("[Unban] sync event_teams.banned flag failed: {e}");
+    }
 
     // 2. WG host 恢复 Active peers（幂等）
     wireguard_service::restore_active_peers_to_host(db, network, event_id).await?;

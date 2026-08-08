@@ -3,7 +3,7 @@
  * Admin:  /api/admin/events/{eventId}/awd/...  (create: POST /api/admin/events/awd)
  * Player: /api/events/{eventId}/awd/...
  */
-import { type UniResponse, admin_api, service_api } from "@/api/axios";
+import { type QueryParams, type UniResponse, admin_api, service_api } from "@/api/axios";
 
 export type AwdGameBox = {
 	id: string;
@@ -186,8 +186,11 @@ export const awdAdminApi = {
 		return res.data;
 	},
 	// ── GameBox 库（全局 identity + immutable Revision，§46）──
-	listGameboxes: async (): Promise<UniResponse<GameBoxLibraryDto[]>> => {
-		const res = await admin_api.get(`/awd/gameboxes`);
+	// 支持 Challenges 同款搜索/分页：?page=&limit=&filter=name:xx&category:yy
+	listGameboxes: async (
+		params: QueryParams = {},
+	): Promise<UniResponse<GameBoxLibraryDto[]>> => {
+		const res = await admin_api.get(`/awd/gameboxes`, { params });
 		return res.data;
 	},
 	createGamebox: async (
@@ -220,8 +223,11 @@ export const awdAdminApi = {
 	// ── 赛事 GameBox 选择（EventGameBox）──
 	listEventGameboxes: async (
 		eventId: string,
+		params: QueryParams = {},
 	): Promise<UniResponse<EventGameBoxDto[]>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd/gameboxes`);
+		const res = await admin_api.get(`/events/${eventId}/awd/gameboxes`, {
+			params,
+		});
 		return res.data;
 	},
 	addEventGamebox: async (

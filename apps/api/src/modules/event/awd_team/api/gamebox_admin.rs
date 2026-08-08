@@ -5,12 +5,21 @@
 //!
 //! Handler 只做 parse/auth/service 调用（§64），复杂逻辑一律在 service/repo。
 
+use std::str::FromStr;
+
 use actix_web::web;
-use sea_orm::{DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    sea_query::Query,
+};
 use uuid::Uuid;
 
 use crate::{
-    api::{AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*},
+    api::{
+        AppError, FilterMapping, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard,
+        prelude::*, sea_orm_utils::query_query,
+    },
+    entity::{awd_event_gameboxes, gameboxes},
     modules::event::awd_team::{
         domain::instance_ip_for_offset,
         repo::{event_gamebox_repo, event_repo, gamebox_lib_repo},
@@ -25,27 +34,69 @@ use super::dto::*;
 // ────────────────────────────────────────────────────────────────────────────
 
 /// GET /api/admin/awd/gameboxes
+/// 支持 Challenges 同款搜索/分页：`?page=&limit=&filter=name:xxx&category:yyy`。
 #[get("/awd/gameboxes")]
 pub async fn list_gamebox_library(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    query_params: web::Query<QueryParams>,
 ) -> UniResult<Vec<GameBoxLibraryDto>> {
-    let items = gamebox_lib_repo::list_gameboxes_with_revisions(ctx.db.get_ref(), true)
-        .await
-        .map_err(AppError::from)?;
-    let dto: Vec<GameBoxLibraryDto> = items
-        .into_iter()
-        .map(|g| GameBoxLibraryDto {
-            id: g.gamebox.id,
-            name: g.gamebox.name,
-            safe_name: g.gamebox.safe_name,
-            category: g.gamebox.category,
-            description: g.gamebox.description,
-            hidden: g.gamebox.hidden,
-            latest_revision: g.latest_revision.as_ref().map(GameBoxRevisionDto::from),
-        })
-        .collect();
-    UniResponse::ok(dto.into()).into()
+    let mut query_params = query_params.0;
+    let mappings = [
+        FilterMapping {
+            key: "id",
+            column: Box::new(|v| {
+                Condition::all()
+                    .add(gameboxes::Column::Id.eq(Uuid::from_str(v).unwrap_or(Uuid::nil())))
+            }),
+        },
+        FilterMapping {
+            key: "name",
+            column: Box::new(|v| Condition::all().add(gameboxes::Column::Name.contains(v))),
+        },
+        FilterMapping {
+            key: "safe_name",
+            column: Box::new(|v| Condition::all().add(gameboxes::Column::SafeName.contains(v))),
+        },
+        FilterMapping {
+            key: "category",
+            column: Box::new(|v| Condition::all().add(gameboxes::Column::Category.contains(v))),
+        },
+        FilterMapping {
+            key: "hidden",
+            column: Box::new(|v| {
+                Condition::all()
+                    .add(gameboxes::Column::Hidden.eq(v.parse::<bool>().unwrap_or(true)))
+            }),
+        },
+    ];
+    let (items, total_items) = query_query::<gameboxes::Entity>(
+        ctx.db.get_ref(),
+        &mappings,
+        &query_params,
+        Some(Box::new(|stmt| stmt.order_by_asc(gameboxes::Column::Name))),
+    )
+    .await?;
+
+    let mut dto = Vec::with_capacity(items.len());
+    for gb in items {
+        let latest = gamebox_lib_repo::find_revisions_by_gamebox(ctx.db.get_ref(), gb.id)
+            .await
+            .map_err(AppError::from)?
+            .into_iter()
+            .next();
+        dto.push(GameBoxLibraryDto {
+            id: gb.id,
+            name: gb.name,
+            safe_name: gb.safe_name,
+            category: gb.category,
+            description: gb.description,
+            hidden: gb.hidden,
+            latest_revision: latest.as_ref().map(GameBoxRevisionDto::from),
+        });
+    }
+    query_params.total = Some(total_items);
+    UniResponse::ok_meta(Some(dto), query_params.into()).into()
 }
 
 /// POST /api/admin/awd/gameboxes —— 创建 GameBox（自动 Revision 1）
@@ -157,42 +208,109 @@ pub async fn hide_gamebox(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// GET /api/admin/events/{event_id}/awd/gameboxes
+/// 支持搜索（gamebox_name/gamebox_safe_name）+ 分页，同 event_challenges。
 #[get("/events/{event_id}/awd/gameboxes")]
 pub async fn list_event_gameboxes(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
+    query_params: web::Query<QueryParams>,
 ) -> UniResult<Vec<EventGameBoxDto>> {
     let event_id = path.into_inner();
-    let details = event_gamebox_repo::find_event_gameboxes_detail(ctx.db.get_ref(), event_id)
-        .await
-        .map_err(AppError::from)?;
-    let dto: Vec<EventGameBoxDto> = details
-        .into_iter()
-        .map(|d| EventGameBoxDto {
-            id: d.event_gamebox.id,
-            gamebox_id: d.gamebox.id,
-            gamebox_name: d.gamebox.name,
-            gamebox_safe_name: d.gamebox.safe_name,
-            revision_id: d.revision.id,
-            revision_number: d.revision.revision_number,
-            host_offset: d.event_gamebox.host_offset,
-            enabled: d.event_gamebox.enabled,
-            hidden: d.event_gamebox.hidden,
-            cpu_millis: d.event_gamebox.cpu_millis,
-            memory_bytes: d.event_gamebox.memory_bytes,
-            pids_limit: d.event_gamebox.pids_limit,
-            judge_timeout_secs: d.event_gamebox.judge_timeout_secs,
-            judge_retry_interval_secs: d.event_gamebox.judge_retry_interval_secs,
-            break_points: d.event_gamebox.break_points,
-            loss_points: d.event_gamebox.loss_points,
-            fix_points: d.event_gamebox.fix_points,
-            down_points: d.event_gamebox.down_points,
-            first_bonus: d.event_gamebox.first_bonus,
-            created_at: d.event_gamebox.created_at,
-        })
-        .collect();
-    UniResponse::ok(dto.into()).into()
+    let mut query_params = query_params.0;
+    let mappings = [
+        FilterMapping {
+            key: "gamebox_name",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    awd_event_gameboxes::Column::GameboxId.in_subquery(
+                        Query::select()
+                            .column(gameboxes::Column::Id)
+                            .from(gameboxes::Entity)
+                            .and_where(gameboxes::Column::Name.contains(v))
+                            .to_owned(),
+                    ),
+                )
+            }),
+        },
+        FilterMapping {
+            key: "gamebox_safe_name",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    awd_event_gameboxes::Column::GameboxId.in_subquery(
+                        Query::select()
+                            .column(gameboxes::Column::Id)
+                            .from(gameboxes::Entity)
+                            .and_where(gameboxes::Column::SafeName.contains(v))
+                            .to_owned(),
+                    ),
+                )
+            }),
+        },
+    ];
+    let (items, total_items) = query_query::<awd_event_gameboxes::Entity>(
+        ctx.db.get_ref(),
+        &mappings,
+        &query_params,
+        Some(Box::new(move |stmt| {
+            stmt.filter(awd_event_gameboxes::Column::EventId.eq(event_id))
+                .order_by_asc(awd_event_gameboxes::Column::HostOffset)
+        })),
+    )
+    .await?;
+
+    let mut dto = Vec::with_capacity(items.len());
+    for eg in items {
+        let revision = match event_gamebox_repo::find_pinned_revision(ctx.db.get_ref(), &eg)
+            .await
+            .map_err(AppError::from)?
+        {
+            Some(r) => r,
+            None => continue, // 理论上不会发生（FK 保证）
+        };
+        let gamebox =
+            match event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), eg.gamebox_id)
+                .await
+                .map_err(AppError::from)?
+            {
+                Some(g) => g,
+                None => continue,
+            };
+        dto.push(to_event_gamebox_dto(
+            event_gamebox_repo::EventGameBoxDetail {
+                event_gamebox: eg,
+                revision,
+                gamebox,
+            },
+        ));
+    }
+    query_params.total = Some(total_items);
+    UniResponse::ok_meta(Some(dto), query_params.into()).into()
+}
+
+fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameBoxDto {
+    EventGameBoxDto {
+        id: d.event_gamebox.id,
+        gamebox_id: d.gamebox.id,
+        gamebox_name: d.gamebox.name,
+        gamebox_safe_name: d.gamebox.safe_name,
+        revision_id: d.revision.id,
+        revision_number: d.revision.revision_number,
+        host_offset: d.event_gamebox.host_offset,
+        enabled: d.event_gamebox.enabled,
+        hidden: d.event_gamebox.hidden,
+        cpu_millis: d.event_gamebox.cpu_millis,
+        memory_bytes: d.event_gamebox.memory_bytes,
+        pids_limit: d.event_gamebox.pids_limit,
+        judge_timeout_secs: d.event_gamebox.judge_timeout_secs,
+        judge_retry_interval_secs: d.event_gamebox.judge_retry_interval_secs,
+        break_points: d.event_gamebox.break_points,
+        loss_points: d.event_gamebox.loss_points,
+        fix_points: d.event_gamebox.fix_points,
+        down_points: d.event_gamebox.down_points,
+        first_bonus: d.event_gamebox.first_bonus,
+        created_at: d.event_gamebox.created_at,
+    }
 }
 
 /// POST /api/admin/events/{event_id}/awd/gameboxes —— 赛事选择 GameBox

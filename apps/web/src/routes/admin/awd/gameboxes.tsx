@@ -4,7 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
 
 import { adminApi } from "@/api";
-import { type UniResponse } from "@/api/axios";
+import { type QueryParams, type UniResponse } from "@/api/axios";
 import type {
 	GameBoxConfigPayload,
 	GameBoxLibraryDto,
@@ -292,8 +292,10 @@ function RouteComponent() {
 		</ActionList>
 	);
 
-	const queryFn = async (): Promise<UniResponse<FlattenedGameBox[]>> => {
-		const res = await adminApi.awd.listGameboxes();
+	const queryFn = async (
+		params?: QueryParams,
+	): Promise<UniResponse<FlattenedGameBox[]>> => {
+		const res = await adminApi.awd.listGameboxes(params);
 		return { ...res, data: (res.data ?? []).map(flattenGameBox) };
 	};
 	const createFn = async (
@@ -327,7 +329,7 @@ function RouteComponent() {
 				mutationColumns={mutationColumns}
 				mutationData={mutationData}
 				columnActions={columnActions}
-				disablePagination
+				filterKeys={["name", "safe_name", "category", "hidden"]}
 				subtitle="GameBox = AWD 题目长期身份；Edit = 创建不可变 Revision N+1"
 			/>
 		</div>

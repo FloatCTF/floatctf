@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
 import type { EventGameBoxDto, GameBoxLibraryDto } from "@/api/awd";
+import type { QueryParams } from "@/api/axios";
 import { GenericTable, useMsgBanner } from "@/components";
 import { useSelectedRowIds } from "@/util";
 import { AdminRouteGuard } from "../../route";
@@ -101,7 +102,9 @@ function RouteComponent() {
 			<GenericTable
 				subject={subject}
 				columns={columns}
-				queryFn={() => adminApi.awd.listEventGameboxes(id)}
+				queryFn={(params?: QueryParams) =>
+					adminApi.awd.listEventGameboxes(id, params)
+				}
 				removeFn={(ids) =>
 					adminApi.awd
 						.removeEventGamebox(id, ids[0])
@@ -110,6 +113,7 @@ function RouteComponent() {
 				columnActions={columnActions}
 				customActions={customActions}
 				disableAdd
+				filterKeys={["gamebox_name", "gamebox_safe_name"]}
 				externalBanner={banner}
 			/>
 		</div>
@@ -197,8 +201,8 @@ function AddGameBoxButton({
 					<GenericTable
 						subject={LIB_QUERY_KEY}
 						columns={columns}
-						queryFn={async () => {
-							const res = await adminApi.awd.listGameboxes();
+						queryFn={async (params?: QueryParams) => {
+							const res = await adminApi.awd.listGameboxes(params);
 							return {
 								...res,
 								data: (res.data as GameBoxLibraryDto[]).map(

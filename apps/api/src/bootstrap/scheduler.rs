@@ -84,6 +84,7 @@ pub async fn build_task_scheduler(
             db,
             docker: docker.clone(),
             network,
+            firewall,
             containers: awd_containers,
         }),
     ];

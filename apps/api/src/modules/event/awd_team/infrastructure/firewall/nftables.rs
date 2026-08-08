@@ -122,6 +122,28 @@ impl FirewallRuntime for NftablesFirewallRuntime {
     }
 
     async fn reconcile(&self, desired: &DesiredFirewallState) -> AwdResult<FirewallApplyResult> {
+        // 0. 空态（无任何赛事需要策略）→ 删除整个 floatctf_awd table（P4-13 方案 B）
+        if desired.is_empty() {
+            let observed = self.inspect().await?;
+            if observed.table_exists {
+                let delete = format!("delete table inet {TABLE_NAME}\n");
+                let delete_tmp = tempfile::NamedTempFile::new()
+                    .map_err(|e| AwdError::Network(format!("nft temp file: {e}")))?;
+                std::fs::write(delete_tmp.path(), &delete)
+                    .map_err(|e| AwdError::Network(format!("nft ruleset write: {e}")))?;
+                let delete_path = delete_tmp
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| AwdError::Network("temp path not utf8".into()))?
+                    .to_string();
+                self.apply_file(&delete_path).await?;
+            }
+            return Ok(FirewallApplyResult {
+                revision: desired.revision,
+                applied: true,
+            });
+        }
+
         // 1. render 完整 table（整个 floatctf_awd 内容）
         let ruleset = render::render_table(desired);
         let tmp = tempfile::NamedTempFile::new()

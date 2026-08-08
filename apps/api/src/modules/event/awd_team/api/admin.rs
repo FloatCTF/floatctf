@@ -525,6 +525,7 @@ pub async fn archive_event(
         ctx.db.get_ref(),
         awd.containers.as_ref(),
         awd.network.as_ref(),
+        awd.firewall.as_ref(),
         event_id,
     )
     .await

@@ -393,6 +393,7 @@ pub struct AwdArchiveCleanupHandler {
     pub db: WebDb,
     pub docker: WebDocker,
     pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
     pub containers: Arc<dyn AwdContainerRuntime>,
 }
 
@@ -412,28 +413,37 @@ impl TaskHandler for AwdArchiveCleanupHandler {
         use crate::entity::awd_events;
         use sea_orm::QueryFilter;
 
+        // P4-12：按每个赛事的 archive_retention_hours 计算 cutoff（不再硬编码 168h）
         let now = chrono::Utc::now();
-        let retention_cutoff = now - chrono::Duration::hours(168); // default 7 days
-
-        let events = awd_events::Entity::find()
+        let finished = awd_events::Entity::find()
             .filter(awd_events::Column::Status.eq(AwdEventStatus::Finished))
-            .filter(awd_events::Column::FinishedAt.lte(retention_cutoff))
             .all(self.db.get_ref())
             .await?;
 
-        let event_count = events.len();
-        for event in events {
+        let mut event_count = 0usize;
+        for event in finished {
+            let retention = event.archive_retention_hours.max(0) as i64;
+            let cutoff = now - chrono::Duration::hours(retention);
+            let expired = event
+                .finished_at
+                .map(|f| f.with_timezone(&chrono::Utc) <= cutoff)
+                .unwrap_or(false);
+            if !expired {
+                continue;
+            }
             info!(
-                "[AWD] Archiving event {} (retention period expired)",
-                event.event_id
+                "[AWD] Archiving event {} (retention {}h expired)",
+                event.event_id, retention
             );
             crate::modules::event::awd_team::service::archive_service::archive_event(
                 self.db.get_ref(),
                 self.containers.as_ref(),
                 self.network.as_ref(),
+                self.firewall.as_ref(),
                 event.event_id,
             )
             .await?;
+            event_count += 1;
         }
 
         info!(

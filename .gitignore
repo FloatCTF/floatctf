@@ -12,3 +12,4 @@ dist/
 /.codegraph/
 # migrate.sh 的 flock 锁文件（临时）
 apps/api/src/sql/.migrate.lock
+apps/api/src/sql/merged.sql

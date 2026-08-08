@@ -10,6 +10,7 @@ pub mod judge_service;
 pub mod precheck_service;
 pub mod recovery_service;
 pub mod reset_service;
+pub mod round_service;
 pub mod score_service;
 pub mod submission_service;
 pub mod wireguard_service;

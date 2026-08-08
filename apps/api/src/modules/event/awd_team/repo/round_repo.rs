@@ -1,15 +1,15 @@
 //! Round repository.
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
 use crate::entity::{awd_rounds, sea_orm_active_enums::RoundStatus};
 
 pub async fn find_active_round(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     event_id: Uuid,
 ) -> Result<Option<awd_rounds::Model>, sea_orm::DbErr> {
     awd_rounds::Entity::find()
@@ -24,7 +24,7 @@ pub async fn find_active_round(
 }
 
 pub async fn find_latest_round(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     event_id: Uuid,
 ) -> Result<Option<awd_rounds::Model>, sea_orm::DbErr> {
     awd_rounds::Entity::find()
@@ -35,7 +35,7 @@ pub async fn find_latest_round(
 }
 
 pub async fn find_round_by_id(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     id: Uuid,
 ) -> Result<Option<awd_rounds::Model>, sea_orm::DbErr> {
     awd_rounds::Entity::find_by_id(id).one(db).await
@@ -43,7 +43,7 @@ pub async fn find_round_by_id(
 
 /// Create a new round in a transaction, ensuring at most one active round.
 pub async fn create_round(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     event_id: Uuid,
     round_number: i32,
     phase: crate::entity::sea_orm_active_enums::AwdPhase,
@@ -64,7 +64,7 @@ pub async fn create_round(
 }
 
 pub async fn update_round_status(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     id: Uuid,
     status: RoundStatus,
 ) -> Result<(), sea_orm::DbErr> {
@@ -82,7 +82,7 @@ pub async fn update_round_status(
 }
 
 pub async fn pause_round(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     id: Uuid,
     remaining_secs: i32,
 ) -> Result<(), sea_orm::DbErr> {

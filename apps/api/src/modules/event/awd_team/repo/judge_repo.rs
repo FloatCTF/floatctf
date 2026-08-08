@@ -1,7 +1,8 @@
 //! Judge batch and task repository.
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, QueryFilter,
 };
 use uuid::Uuid;
 
@@ -54,7 +55,7 @@ pub async fn update_task_status(
 }
 
 pub async fn timeout_pending_tasks(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + Send),
     round_id: Uuid,
 ) -> Result<u64, sea_orm::DbErr> {
     let result = awd_judge_tasks::Entity::update_many()

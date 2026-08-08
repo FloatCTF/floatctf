@@ -282,3 +282,82 @@ async fn scenario_f_multi_event_desired_state() {
     cleanup_event(&db, e1).await;
     cleanup_event(&db, e2).await;
 }
+
+/// P4-9 回归：pause/resume 后 round.end 调度任务重建（修复卡死 bug）。
+/// 真实路径：暂停期间 RoundEnd 任务触发（round 非 Active 幂等跳过）后被消费；
+/// 测试模拟「任务被消费」，resume 后断言新的 pending awd.round.end 任务已按新 deadline 重建。
+#[tokio::test]
+async fn pause_resume_rebuilds_round_end_task() {
+    use floatctf::entity::{awd_rounds, scheduled_tasks, sea_orm_active_enums::RoundStatus};
+    use floatctf::modules::event::awd_team::{
+        infrastructure::firewall::NoopFirewallRuntime, service::event_service,
+    };
+
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = seed_running_event(&db, "pauseresume").await;
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    // Round 1 启动（创建 RoundEnd 任务）
+    let r1 = round_service::start_round(&db, &network, &firewall, &publisher, event_id, Some(1))
+        .await
+        .expect("round 1 start");
+    let pending_after_start = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq("awd.round.end"))
+        .filter(scheduled_tasks::Column::Status.eq("pending"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("round end task scheduled at start");
+    let original_execute_at = pending_after_start.execute_at;
+
+    // Pause（round → Paused）
+    event_service::pause_event(&db, &network, &firewall, event_id)
+        .await
+        .expect("pause");
+
+    // 模拟暂停期间任务被消费（真实场景：触发后幂等跳过并标记完成）
+    scheduled_tasks::Entity::delete_many()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq("awd.round.end"))
+        .exec(&db)
+        .await
+        .expect("consume round end task");
+
+    // Resume
+    event_service::resume_event(&db, &network, &firewall, event_id)
+        .await
+        .expect("resume");
+
+    // 断言：round 回到 Active，且新的 pending round.end 任务已重建
+    let round = awd_rounds::Entity::find_by_id(r1.round_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(round.status, RoundStatus::Active, "round resumes Active");
+
+    let rebuilt = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq("awd.round.end"))
+        .filter(scheduled_tasks::Column::Status.eq("pending"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("round end task rebuilt after resume");
+    assert_eq!(
+        rebuilt.execute_at.unwrap(),
+        round.scheduled_end_at,
+        "rebuilt task deadline == resumed round scheduled_end_at"
+    );
+    assert_ne!(
+        rebuilt.execute_at, original_execute_at,
+        "rebuilt deadline differs from pre-pause deadline"
+    );
+
+    cleanup_event(&db, event_id).await;
+}

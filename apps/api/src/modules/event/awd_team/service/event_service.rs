@@ -1,6 +1,7 @@
 //! Event lifecycle service — AWD event CRUD, deployment, and phase management.
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus};
@@ -229,6 +230,13 @@ pub async fn resume_event(
         Ok(_) => {
             firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
                 .await;
+
+            // P4-9 修复：暂停期间原 round.end/grace_end 任务已被消费（触发时 round 非
+            // Active/Grace 而幂等跳过）；resume 后必须按新 deadline 重建，否则比赛卡死
+            let restored = round_service::restore_round_scheduling(db, event_id).await?;
+            if restored > 0 {
+                info!("[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)");
+            }
             Ok(())
         }
         Err(e) => {

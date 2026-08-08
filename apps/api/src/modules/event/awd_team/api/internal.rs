@@ -9,11 +9,11 @@ use uuid::Uuid;
 
 use crate::{
     api::{AppError, UniResponse, UniResult, prelude::*},
-    entity::sea_orm_active_enums::{JudgeTaskStatus, ScoreEventType},
+    entity::sea_orm_active_enums::{AwdEventStatus, JudgeTaskStatus, ScoreEventType},
     modules::event::awd_team::{
         AwdError,
         api::auth::{AwdInternalAuth, AwdInternalPrincipal},
-        domain::JudgeTaskStatusExt,
+        domain::{AwdPhaseExt, JudgeTaskStatusExt},
         repo::{event_repo, judge_repo, round_repo, score_repo},
         service::flag_service,
     },
@@ -138,6 +138,16 @@ pub async fn judge_callback(
         return UniResponse::ok_none().into();
     }
 
+    // 铁律 #8 冻结门禁：事件不在 Running 或 phase 不允许 judge（NetworkError/
+    // Pause/Finished 等）时，任务结果仍记录（避免僵尸重试），但**不写分**。
+    // 注：submit 路径门禁在 flag_service::validate_submission（is_active + phase +
+    // round + ban）；此处补齐 judge 路径，保证冻结期零 judge score。
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    let frozen = awd_event.status != AwdEventStatus::Running || !awd_event.phase.allows_judge();
+
     // Parse status from callback
     let status = match cb.status.as_str() {
         "up" => JudgeTaskStatus::Up,
@@ -163,8 +173,8 @@ pub async fn judge_callback(
     .await
     .map_err(|e| AppError::Database(e.to_string()))?;
 
-    // If up/down, record score
-    if is_up || is_down {
+    // If up/down, record score (跳过冻结事件)
+    if (is_up || is_down) && !frozen {
         // Get the template for scoring values
         use crate::entity::awd_gamebox_templates;
         let template = awd_gamebox_templates::Entity::find_by_id(task.template_id)
@@ -223,6 +233,14 @@ pub async fn judge_callback(
                 return Err(AppError::Internal(format!("score write failed: {e}")));
             }
         }
+    } else if is_up || is_down {
+        // 冻结期间记录但不计分（铁律 #8）：状态/phase = {}/{}。
+        tracing::info!(
+            "[Judge] event {event_id} frozen (status={:?}, phase={:?}): task {} result recorded WITHOUT score",
+            awd_event.status,
+            awd_event.phase,
+            cb.task_id
+        );
     }
 
     UniResponse::ok_none().into()

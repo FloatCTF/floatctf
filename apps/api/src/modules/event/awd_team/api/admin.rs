@@ -354,6 +354,7 @@ pub async fn get_event_scores(
 pub async fn run_precheck(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
 ) -> UniResult<Uuid> {
     let event_id = path.into_inner();
@@ -361,6 +362,10 @@ pub async fn run_precheck(
         ctx.db.get_ref(),
         event_id,
         "manual",
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        awd.containers.as_ref(),
+        awd.crypto.as_ref(),
     )
     .await
     .map_err(AppError::from)?;

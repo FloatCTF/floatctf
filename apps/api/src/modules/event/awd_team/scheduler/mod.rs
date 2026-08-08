@@ -151,6 +151,10 @@ fn event_id_from_task(task: &scheduled_tasks::Model) -> anyhow::Result<Uuid> {
 /// Handler: Run the automatic precheck scheduled before an AWD event.
 pub struct AwdAutoPrecheckHandler {
     pub db: WebDb,
+    pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
+    pub containers: Arc<dyn AwdContainerRuntime>,
+    pub crypto: Arc<AwdCrypto>,
 }
 
 #[async_trait]
@@ -170,6 +174,10 @@ impl TaskHandler for AwdAutoPrecheckHandler {
             self.db.get_ref(),
             event_id,
             "scheduled",
+            self.network.as_ref(),
+            self.firewall.as_ref(),
+            self.containers.as_ref(),
+            self.crypto.as_ref(),
         )
         .await?;
         Ok(())

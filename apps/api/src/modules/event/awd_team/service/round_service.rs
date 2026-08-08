@@ -27,7 +27,9 @@ use uuid::Uuid;
 
 use crate::entity::{
     awd_events, awd_judge_tasks, awd_rounds, scheduled_tasks,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, JudgeTaskStatus, RoundStatus, ScoreEventType},
+    sea_orm_active_enums::{
+        AwdEventStatus, AwdPhase, JudgeTaskStatus, RoundStatus, ScoreEventType,
+    },
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -98,7 +100,10 @@ pub async fn start_round(
     event_id: Uuid,
 ) -> AwdResult<RoundStarted> {
     // ── 事务内：DB 状态变更 ──
-    let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     let awd_event = event_repo::find_by_event_id(&txn, event_id)
         .await
@@ -110,7 +115,9 @@ pub async fn start_round(
             "[Round] Event {} is not Running ({:?}) — skip round start",
             event_id, awd_event.status
         );
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Err(AwdError::InvalidState(format!(
             "Cannot start round in {:?} status",
             awd_event.status
@@ -122,7 +129,10 @@ pub async fn start_round(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
     {
-        info!("[Round] Completing leftover active round {} for event {}", prev.round_number, event_id);
+        info!(
+            "[Round] Completing leftover active round {} for event {}",
+            prev.round_number, event_id
+        );
         let timed_out = judge_repo::timeout_pending_tasks(&txn, prev.id)
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -150,7 +160,9 @@ pub async fn start_round(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
     if let Some(round) = existing {
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Ok(RoundStarted {
             round_id: round.id,
             round_number: round.round_number,
@@ -188,7 +200,9 @@ pub async fn start_round(
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     info!(
         "[Round] Round {} (phase {:?}) started for event {}",
@@ -224,7 +238,10 @@ pub async fn end_round(
     event_id: Uuid,
     round_id: Uuid,
 ) -> AwdResult<()> {
-    let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     let round = awd_rounds::Entity::find_by_id(round_id)
         .one(&txn)
@@ -232,13 +249,20 @@ pub async fn end_round(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("Round not found".into()))?;
     if round.event_id != event_id {
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Err(AwdError::Forbidden("Round belongs to another event".into()));
     }
 
     if round.status != RoundStatus::Active {
-        warn!("[Round] Round {} already {:?} — skip grace", round_id, round.status);
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        warn!(
+            "[Round] Round {} already {:?} — skip grace",
+            round_id, round.status
+        );
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Ok(());
     }
 
@@ -264,7 +288,10 @@ pub async fn end_round(
         grace_ends_at: Set(Some(grace_ends_at.into())),
         ..Default::default()
     };
-    active.update(&txn).await.map_err(|e| AwdError::Database(e.to_string()))?;
+    active
+        .update(&txn)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // 插入 GraceEnd 任务
     schedule_round_task(
@@ -277,7 +304,9 @@ pub async fn end_round(
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     info!("[Round] Round {round_id} entered grace until {grace_ends_at}");
     Ok(())
@@ -291,7 +320,10 @@ pub async fn grace_end_round(
     event_id: Uuid,
     round_id: Uuid,
 ) -> AwdResult<()> {
-    let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     let round = awd_rounds::Entity::find_by_id(round_id)
         .one(&txn)
@@ -299,13 +331,20 @@ pub async fn grace_end_round(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("Round not found".into()))?;
     if round.event_id != event_id {
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Err(AwdError::Forbidden("Round belongs to another event".into()));
     }
 
     if round.status != RoundStatus::Grace {
-        warn!("[Round] Round {round_id} not in Grace ({:?}) — skip", round.status);
-        txn.rollback().await.map_err(|e| AwdError::Database(e.to_string()))?;
+        warn!(
+            "[Round] Round {round_id} not in Grace ({:?}) — skip",
+            round.status
+        );
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         return Ok(());
     }
 
@@ -330,7 +369,9 @@ pub async fn grace_end_round(
         .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
     info!("[Round] Round {round_id} completed for event {event_id}");
     Ok(())
@@ -394,7 +435,8 @@ pub async fn score_judge_timeouts(
 
     // 收集涉及到的 template 分值
     use crate::entity::awd_gamebox_templates;
-    let mut template_points: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+    let mut template_points: std::collections::HashMap<Uuid, i64> =
+        std::collections::HashMap::new();
     for t in &timed_out {
         if !template_points.contains_key(&t.template_id) {
             if let Some(tpl) = awd_gamebox_templates::Entity::find_by_id(t.template_id)

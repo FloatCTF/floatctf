@@ -293,19 +293,16 @@ async fn legal_transitions_smoke_across_table() {
 #[tokio::test]
 async fn configuration_generation_gates_start() {
     use floatctf::modules::event::awd_team::{
-        infrastructure::{
-            firewall::NoopFirewallRuntime, network::NoopNetworkRuntime,
-        },
+        infrastructure::{firewall::NoopFirewallRuntime, network::NoopNetworkRuntime},
         service::event_service,
     };
 
-    let Some(db) = connect_or_skip().await else { return };
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
 
     // 推进到 Verified 的辅助：直接在主连接上操作（start_event 需要 &DatabaseConnection）
-    async fn to_verified(
-        db: &sea_orm::DatabaseConnection,
-        awd_id: Uuid,
-    ) {
+    async fn to_verified(db: &sea_orm::DatabaseConnection, awd_id: Uuid) {
         for (from, to) in [
             (AwdEventStatus::Draft, AwdEventStatus::Configuring),
             (AwdEventStatus::Configuring, AwdEventStatus::Prechecking),
@@ -347,12 +344,16 @@ async fn configuration_generation_gates_start() {
         err.to_string().contains("AWD_CONFIG_CHANGED"),
         "expected AWD_CONFIG_CHANGED, got {err}"
     );
-    let row = awd_events::Entity::find_by_id(awd2.id).one(&db).await.unwrap().unwrap();
+    let row = awd_events::Entity::find_by_id(awd2.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.status, AwdEventStatus::StartBlocked);
 
     // 清理：删除轮次/事件/父行（settings revision 全局保留）
-    use sea_orm::QueryFilter;
     use floatctf::entity::awd_rounds;
+    use sea_orm::QueryFilter;
     let _ = awd_rounds::Entity::delete_many()
         .filter(awd_rounds::Column::EventId.is_in([_event_id, _eid2]))
         .exec(&db)

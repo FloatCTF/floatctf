@@ -184,6 +184,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         log_service.clone(),
         awd_network.clone(),
         awd_firewall.clone(),
+        awd_crypto.clone(),
     )
     .await
     .expect("init startup handlers failed!");

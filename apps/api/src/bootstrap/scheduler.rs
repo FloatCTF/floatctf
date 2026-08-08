@@ -8,6 +8,7 @@ use crate::{
     infrastructure::LogService,
     infrastructure::{WebDb, WebDocker, WebRustfs},
     modules::event::awd_team::{
+        crypto::AwdCrypto,
         infrastructure::firewall::FirewallRuntime,
         scheduler::{
             AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler,
@@ -28,8 +29,13 @@ pub async fn build_task_scheduler(
     logger: LogService,
     network: Arc<dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime>,
     firewall: Arc<dyn FirewallRuntime>,
+    crypto: Arc<AwdCrypto>,
 ) -> Result<TaskScheduler> {
     let mut scheduler = TaskScheduler::new(db.clone(), docker.clone(), rustfs.clone(), logger);
+
+    // AWD 容器 runtime：自动 precheck 与 archive cleanup 共享同一实例。
+    let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
+        Arc::new(DockerRuntime::new(docker.get_ref().clone()));
 
     let handlers: Vec<Arc<dyn TaskHandler>> = vec![
         Arc::new(CheckPracticeEventHandler { db: db.clone() }),
@@ -41,7 +47,13 @@ pub async fn build_task_scheduler(
             db: db.clone(),
             rustfs,
         }),
-        Arc::new(AwdAutoPrecheckHandler { db: db.clone() }),
+        Arc::new(AwdAutoPrecheckHandler {
+            db: db.clone(),
+            network: network.clone(),
+            firewall: firewall.clone(),
+            containers: awd_containers.clone(),
+            crypto: crypto.clone(),
+        }),
         Arc::new(AwdEventStartHandler {
             db: db.clone(),
             network: network.clone(),
@@ -59,7 +71,7 @@ pub async fn build_task_scheduler(
             db,
             docker: docker.clone(),
             network,
-            containers: Arc::new(DockerRuntime::new(docker.get_ref().clone())),
+            containers: awd_containers,
         }),
     ];
 

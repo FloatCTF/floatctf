@@ -58,7 +58,8 @@ pub async fn start_event(
         )
         .await;
         return Err(AwdError::InvalidState(
-            "Cannot start event: configuration changed since verification (AWD_CONFIG_CHANGED)".into(),
+            "Cannot start event: configuration changed since verification (AWD_CONFIG_CHANGED)"
+                .into(),
         ));
     }
 

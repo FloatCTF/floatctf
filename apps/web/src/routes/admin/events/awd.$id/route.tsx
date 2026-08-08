@@ -69,6 +69,12 @@ function RouteComponent() {
                     </RouterNavItem>
                 )}
                 <RouterNavItem
+                    to="/admin/events/awd/$id/gameboxes"
+                    params={{ id }}
+                >
+                    GameBoxes
+                </RouterNavItem>
+                <RouterNavItem
                     to="/admin/events/awd/$id/announcements"
                     params={{ id }}
                 >

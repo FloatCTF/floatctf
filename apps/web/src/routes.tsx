@@ -57,6 +57,11 @@ export const admin_routes: NavRoute[] = [
 		icon: <ListUnorderedIcon />,
 	},
 	{
+		label: "AWD GameBoxes",
+		path: "/admin/awd/gameboxes",
+		icon: <ContainerIcon />,
+	},
+	{
 		label: "Announcements",
 		path: "/admin/announcements",
 		icon: <MegaphoneIcon />,

@@ -8,11 +8,70 @@ import { type UniResponse, admin_api, service_api } from "@/api/axios";
 export type AwdGameBox = {
 	id: string;
 	team_id: string;
-	template_id: string;
+	event_gamebox_id: string;
 	status: string;
 	gamebox_ip: string;
 	container_name: string;
 	health_status: string;
+};
+
+export type GameBoxRevisionDto = {
+	id: string;
+	revision_number: number;
+	image_ref: string;
+	image_digest: string | null;
+	username: string;
+	spec_digest: string;
+	created_at: string;
+};
+
+export type GameBoxLibraryDto = {
+	id: string;
+	name: string;
+	safe_name: string;
+	category: string;
+	description: string;
+	hidden: boolean;
+	latest_revision: GameBoxRevisionDto | null;
+};
+
+export type EventGameBoxDto = {
+	id: string;
+	gamebox_id: string;
+	gamebox_name: string;
+	gamebox_safe_name: string;
+	revision_id: string;
+	revision_number: number;
+	host_offset: number;
+	enabled: boolean;
+	hidden: boolean;
+	cpu_millis: number;
+	memory_bytes: number;
+	pids_limit: number;
+	judge_timeout_secs: number | null;
+	judge_retry_interval_secs: number | null;
+	break_points: number;
+	loss_points: number;
+	fix_points: number;
+	down_points: number;
+	first_bonus: number;
+	created_at: string;
+};
+
+export type GameBoxConfigPayload = {
+	source_toml?: string;
+	image_ref: string;
+	image_digest?: string | null;
+	username?: string;
+	cpu_millis?: number;
+	memory_bytes?: number;
+	pids_limit?: number;
+	healthcheck?: Record<string, unknown> | null;
+	judge_script_name?: string | null;
+	judge_script_content?: string | null;
+	judge_args?: Record<string, unknown> | null;
+	judge_timeout_secs?: number | null;
+	judge_retry_interval_secs?: number | null;
 };
 
 export type AwdScoreRow = {
@@ -113,6 +172,99 @@ export const awdAdminApi = {
 		const res = await admin_api.post(
 			`/events/${eventId}/awd/score/adjust`,
 			body,
+		);
+		return res.data;
+	},
+	// ── GameBox 库（全局 identity + immutable Revision，§46）──
+	listGameboxes: async (): Promise<UniResponse<GameBoxLibraryDto[]>> => {
+		const res = await admin_api.get(`/awd/gameboxes`);
+		return res.data;
+	},
+	createGamebox: async (
+		body: {
+			name: string;
+			safe_name?: string;
+			category?: string;
+			description?: string;
+			hidden?: boolean;
+			config: GameBoxConfigPayload;
+		},
+	): Promise<UniResponse<GameBoxLibraryDto>> => {
+		const res = await admin_api.post(`/awd/gameboxes`, body);
+		return res.data;
+	},
+	editGameboxRevision: async (
+		gameboxId: string,
+		body: { config: GameBoxConfigPayload },
+	): Promise<UniResponse<GameBoxLibraryDto>> => {
+		const res = await admin_api.post(
+			`/awd/gameboxes/${gameboxId}/revisions`,
+			body,
+		);
+		return res.data;
+	},
+	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
+		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
+		return res.data;
+	},
+	// ── 赛事 GameBox 选择（EventGameBox）──
+	listEventGameboxes: async (
+		eventId: string,
+	): Promise<UniResponse<EventGameBoxDto[]>> => {
+		const res = await admin_api.get(`/events/${eventId}/awd/gameboxes`);
+		return res.data;
+	},
+	addEventGamebox: async (
+		eventId: string,
+		body: {
+			gamebox_id: string;
+			revision_id?: string;
+			host_offset?: number;
+			hidden?: boolean;
+			break_points?: number;
+			loss_points?: number;
+			fix_points?: number;
+			down_points?: number;
+			first_bonus?: number;
+		},
+	): Promise<UniResponse<EventGameBoxDto>> => {
+		const res = await admin_api.post(
+			`/events/${eventId}/awd/gameboxes`,
+			body,
+		);
+		return res.data;
+	},
+	updateEventGamebox: async (
+		eventId: string,
+		eventGameboxId: string,
+		body: {
+			revision_id?: string;
+			enabled?: boolean;
+			hidden?: boolean;
+			cpu_millis?: number;
+			memory_bytes?: number;
+			pids_limit?: number;
+			judge_timeout_secs?: number | null;
+			judge_retry_interval_secs?: number | null;
+			break_points?: number;
+			loss_points?: number;
+			fix_points?: number;
+			down_points?: number;
+			first_bonus?: number;
+		},
+	): Promise<UniResponse<EventGameBoxDto>> => {
+		const res = await admin_api.patch(
+			`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
+			body,
+		);
+		return res.data;
+	},
+	removeEventGamebox: async (
+		eventId: string,
+		eventGameboxId: string,
+	): Promise<UniResponse<null>> => {
+		const res = await admin_api.delete(
+			`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
 		);
 		return res.data;
 	},

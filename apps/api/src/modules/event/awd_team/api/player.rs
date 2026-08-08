@@ -71,6 +71,16 @@ pub async fn reset_my_gamebox(
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
 
+    // P5-10 限流：reset（每队伍每小时）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Reset,
+            &membership.team_id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
+
     // P4-2：player reset 接入完整 execute_reset 流程（同 IP/同密码/Ready/ResetFailed）
     crate::modules::event::awd_team::service::reset_service::execute_reset(
         ctx.db.get_ref(),
@@ -102,6 +112,16 @@ pub async fn submit_flag(
 ) -> UniResult<SubmissionResponse> {
     let event_id = path.into_inner();
     let user = user.into_inner();
+
+    // P5-10 限流：submit（每用户每分钟）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Submit,
+            &user.id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
 
     // Find user's team for this event (using centralized repository)
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)

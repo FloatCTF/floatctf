@@ -30,6 +30,7 @@ use actix_web::post;
 pub async fn issue_flag(
     auth: AwdInternalAuth,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<IssueFlagInternalRequest>,
 ) -> UniResult<FlagIssueResponse> {
@@ -38,6 +39,16 @@ pub async fn issue_flag(
         AwdInternalPrincipal::FlagServer { event_id } => event_id,
         _ => return Err(AppError::Forbidden("Not enough permission".into())),
     };
+
+    // P5-10 限流：internal（每 event 每分钟）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Internal,
+            &event_id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
 
     let _path_event_id = path.into_inner();
 
@@ -88,6 +99,7 @@ pub async fn issue_flag(
 pub async fn judge_callback(
     auth: AwdInternalAuth,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<JudgeCallbackRequest>,
 ) -> UniResult<()> {
@@ -96,6 +108,16 @@ pub async fn judge_callback(
         AwdInternalPrincipal::JudgeServer { event_id } => event_id,
         _ => return Err(AppError::Forbidden("Not enough permission".into())),
     };
+
+    // P5-10 限流：internal（每 event 每分钟）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Internal,
+            &event_id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
 
     let _path_event_id = path.into_inner();
     let cb = body.into_inner();

@@ -8,6 +8,7 @@ pub mod audit;
 pub mod database;
 pub mod docker;
 pub mod logging;
+pub mod ratelimit;
 pub mod realtime;
 pub mod settings;
 pub mod storage;

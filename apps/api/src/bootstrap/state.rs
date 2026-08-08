@@ -62,6 +62,8 @@ pub struct AwdDependencies {
     pub network: Arc<dyn AwdNetworkRuntime>,
     /// Native nftables firewall runtime（唯一生产实现，Phase 1）。
     pub firewall: Arc<dyn FirewallRuntime>,
+    /// 进程内限流器（P5-10）。
+    pub rate_limiter: Arc<crate::infrastructure::ratelimit::RateLimiter>,
 }
 
 impl AppState {

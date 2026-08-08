@@ -225,6 +225,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         containers: awd_containers.clone(),
         network: awd_network.clone(),
         firewall: awd_firewall.clone(),
+        rate_limiter: Arc::new(crate::infrastructure::ratelimit::RateLimiter::new()),
     });
 
     let ip = config.server.listen_ip.clone();

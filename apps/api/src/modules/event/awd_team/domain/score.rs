@@ -35,9 +35,10 @@ impl IdempotencyKey {
         )
     }
 
-    /// First blood bonus: once per template per event.
-    pub fn first_bonus(event_id: &str, template_id: &str) -> String {
-        format!("first-bonus:{}:{}", event_id, template_id)
+    /// First blood bonus: once per EventGameBox per event（§29）。
+    /// 同一全局 GameBox 在两个 Event 中各自拥有 first blood。
+    pub fn first_bonus(event_id: &str, event_gamebox_id: &str) -> String {
+        format!("first-bonus:{}:{}", event_id, event_gamebox_id)
     }
 
     /// Judge check result: once per task.
@@ -89,9 +90,12 @@ mod tests {
     }
 
     #[test]
-    fn test_first_bonus_once_per_event_template() {
-        let k1 = IdempotencyKey::first_bonus("evt-1", "tpl-1");
-        let k2 = IdempotencyKey::first_bonus("evt-1", "tpl-1");
-        assert_eq!(k1, k2, "Same event+template must have same key");
+    fn test_first_bonus_once_per_event_gamebox() {
+        let k1 = IdempotencyKey::first_bonus("evt-1", "eg-1");
+        let k2 = IdempotencyKey::first_bonus("evt-1", "eg-1");
+        assert_eq!(k1, k2, "Same event+event_gamebox must have same key");
+        // §29：同 GameBox 在不同 Event 各自独立 first blood
+        let other_event = IdempotencyKey::first_bonus("evt-2", "eg-1");
+        assert_ne!(k1, other_event, "Event 之间 first blood 独立");
     }
 }

@@ -325,5 +325,6 @@ fn awd_labels_content() {
         "00000000-0000-0000-0000-000000000000"
     );
     assert_eq!(labels.get("awd.resource_kind").unwrap(), "gamebox");
-    assert_eq!(labels.len(), 5);
+    assert_eq!(labels.get("awd.runtime_generation").unwrap(), "0");
+    assert_eq!(labels.len(), 6);
 }

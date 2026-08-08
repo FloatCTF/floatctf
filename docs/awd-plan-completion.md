@@ -99,3 +99,43 @@ cargo check --workspace       → 0 error
 2. judge 超时计分用 `JudgeDown` + reason 标注（score_event_type 枚举无 JudgeTimeout 变体，避免 enum 迁移）。
 3. precheck 矩阵验证 = firewall.verify + revision 一致（真实包流 probe 留 E2E，方案 A/B 已文档化）。
 4. token rotation 无长窗口新旧并存（DB 原子更新 + 立即容器 rollout；无 schema 支撑双版本存储）。
+
+---
+
+# GameBox 领域模型重构（2026-08-08 追加）
+
+计划：`chore/plans/FloatCTF GameBox 领域模型重构任务.md`（§0-79 全部完成）。
+
+## 最终模型
+
+```
+GameBox（长期身份）
+  └─ GameBoxRevision（不可变部署版本，spec_digest canonical）
+       └─ AwdEventGameBox（赛事选择 + pin revision + host_offset + 赛事计分）
+            └─ GameBoxInstance（稳定逻辑靶机，runtime_generation）
+                 └─ Docker Container（可替换运行时）
+```
+
+## 交付
+
+- Migration A-D：`20260808-awd-gamebox-domain-{a,b,c,d}`（22 → 23 迁移；新表
+  gamebox_revisions/awd_event_gameboxes；数据回填带 MIGRATION CONFLICT 检测与
+  可验证断言；删除 awd_gamebox_templates/event_gameboxes/gameboxes 计分列/
+  next_gamebox_host/instances.gamebox_id/judge+score 的 template_id 列）
+- 业务：单一 resolver `resolve_event_gamebox_spec`（Deploy/Reset/Recovery/Precheck
+  共用，§50）；host_offset 确定性 IP；Reset 保 IP/凭据/pinned revision + generation+1；
+  first-bonus 幂等键 `{event_id}:{event_gamebox_id}`；fcmc labels 绑定
+  event_gamebox_id + runtime_generation
+- API/前端：GameBox 库管理（/api/admin/awd/gameboxes）+ 赛事选择管理
+  （/api/admin/events/{id}/awd/gameboxes），admin 两页 UI，术语统一无 template
+- 测试：3 个 DB-gated 领域测试（revision 去重/pin 隔离/计分独立/Reset mock 回归）
+  + IP 确定性单元测试
+
+## 明确保留/偏差
+
+1. **SSH 凭据保持 team-level**（§22.1）：产品契约为一队一个密码
+   （awd_team_networks.ssh_password_*），未迁到 per-instance。
+2. **gamebox_ip 保持 VARCHAR**（§23 逃生口）：SeaORM 1.1.20 将 INET 映射为
+   String，INSERT 按 TEXT 绑定被 PG 拒绝，INET 迁移列为独立后续项。
+3. event_gameboxes（旧 Jeopardy-GameBox 关联）与 instances.gamebox_id 确认
+   无业务调用者后删除（§32/§33）。

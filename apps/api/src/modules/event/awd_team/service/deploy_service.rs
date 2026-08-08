@@ -830,6 +830,8 @@ mod tests {
             wg_server_private_key_nonce: None,
             wg_server_public_key: None,
             key_version: 1,
+            configuration_generation: 0,
+            verified_generation: None,
             free_reset_count: 0,
             extra_reset_penalty: 0,
             reset_protection_secs: 0,

@@ -206,12 +206,15 @@ pub struct ObservedFirewallState {
     pub observed_revision: Option<u64>,
     /// 观测到的 event chains（`event_<key>`）。
     pub event_chains: Vec<String>,
+    /// 原始 `nft list table` 输出（P2-5 结构检查用：chain awd_forward / hook forward）。
+    pub raw_output: String,
     pub notes: Vec<String>,
 }
 
 /// 从 `nft list table inet floatctf_awd` 输出解析观测状态（P1-9 verify 用）。
 pub fn parse_observed_table(output: &str) -> ObservedFirewallState {
     let mut state = ObservedFirewallState::default();
+    state.raw_output = output.to_string();
     state.table_exists = output.contains("table inet floatctf_awd");
     for line in output.lines() {
         let line = line.trim();

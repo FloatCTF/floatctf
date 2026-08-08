@@ -26,14 +26,14 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_rounds, scheduled_tasks,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus},
+    awd_events, awd_judge_tasks, awd_rounds, scheduled_tasks,
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, JudgeTaskStatus, RoundStatus, ScoreEventType},
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     domain::AwdEventStatusExt,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
-    repo::{event_repo, judge_repo, round_repo},
+    repo::{event_repo, judge_repo, round_repo, score_repo},
     service::{firewall_service, judge_service},
 };
 use crate::scheduler::TaskKey;
@@ -128,6 +128,8 @@ pub async fn start_round(
             .map_err(|e| AwdError::Database(e.to_string()))?;
         if timed_out > 0 {
             warn!("[Round] {timed_out} pending judge tasks timed out");
+            // P3-5：deadline 超时计分（在事务外，读已提交的 JudgeTimeout 状态）
+            score_judge_timeouts(db, prev.id).await?;
         }
         round_repo::update_round_status(&txn, prev.id, RoundStatus::Completed)
             .await
@@ -240,7 +242,7 @@ pub async fn end_round(
         return Ok(());
     }
 
-    // 超时未回 judge 任务
+    // 超时未回 judge 任务（deadline 强制，P3-5）
     let timed_out = judge_repo::timeout_pending_tasks(&txn, round_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -370,6 +372,71 @@ async fn dispatch_judge_for_round(
     let judgeserver_url = format!("http://{}:8082", awd_event.judgeserver_ip);
     judge_service::dispatch_batch(db, batch_id, &judgeserver_url, &token).await?;
     Ok(())
+}
+
+/// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。
+///
+/// 语义：超时 = 防御方未响应 = 视为 down（-down_points）。
+/// score_event_type 枚举无 JudgeTimeout 变体（避免 enum 迁移），
+/// 用 JudgeDown + reason="judge deadline timeout" 表达，审计可区分。
+/// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
+/// 返回计分的任务数。
+pub async fn score_judge_timeouts(
+    db: &sea_orm::DatabaseConnection,
+    round_id: Uuid,
+) -> AwdResult<u64> {
+    let timed_out = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::RoundId.eq(round_id))
+        .filter(awd_judge_tasks::Column::Status.eq(JudgeTaskStatus::JudgeTimeout))
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    // 收集涉及到的 template 分值
+    use crate::entity::awd_gamebox_templates;
+    let mut template_points: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+    for t in &timed_out {
+        if !template_points.contains_key(&t.template_id) {
+            if let Some(tpl) = awd_gamebox_templates::Entity::find_by_id(t.template_id)
+                .one(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?
+            {
+                template_points.insert(t.template_id, tpl.down_points);
+            }
+        }
+    }
+
+    let mut scored = 0u64;
+    for t in &timed_out {
+        let delta = -template_points.get(&t.template_id).copied().unwrap_or(0);
+        let key = format!("judge-timeout:{}", t.id);
+        match score_repo::create_score_event(
+            db,
+            t.event_id,
+            Some(round_id),
+            t.team_id,
+            ScoreEventType::JudgeDown,
+            delta,
+            &key,
+            None,
+            Some(t.gamebox_instance_id),
+            Some(t.template_id),
+            Some("judge deadline timeout"),
+        )
+        .await
+        {
+            Ok(_) => scored += 1,
+            Err(e) => {
+                // 幂等重复（scheduler retry）不视为错误
+                let msg = e.to_string().to_lowercase();
+                if !(msg.contains("23505") || msg.contains("duplicate")) {
+                    return Err(AwdError::Database(e.to_string()));
+                }
+            }
+        }
+    }
+    Ok(scored)
 }
 
 #[cfg(test)]

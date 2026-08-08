@@ -229,6 +229,10 @@ make_merged() {
         printf '%s\n' '-- ================================================================================================'
     } > "$temp_file"
 
+    # mktemp 默认 0600；docker-entrypoint 以 postgres(uid 999) 读 init 脚本，
+    # 必须保证 merged.sql 对容器可读，否则全新 volume 初始化会失败（库被建空）。
+    chmod 644 "$temp_file"
+
     mv -- "$temp_file" "$MERGED_FILE"
     trap - EXIT INT TERM
 

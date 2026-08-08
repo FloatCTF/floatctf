@@ -7,6 +7,8 @@
 //! 3. Script receives target IP via command-line args
 //! 4. Script checks the target GameBox's services over the network
 //! 5. Each task result is immediately POSTed back to the platform
+//!    （失败按指数退避重试，且复用同一 callback_id，见 P3-9）
+//! 6. Judge 脚本执行时使用最小 env 白名单（PATH/HOME/LANG + JUDGE_*，见 P3-12）
 //!
 //! # Configuration (env vars)
 //!
@@ -129,7 +131,7 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
     // Write script to temp file
     if let Err(e) = tokio::fs::write(&script_path, &task.script_content).await {
         tracing::error!("Failed to write script {}: {}", script_path, e);
-        send_result(
+        let _ = send_result(
             state,
             &task,
             TaskResult {
@@ -172,7 +174,13 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
 
         let result = tokio::time::timeout(
             Duration::from_secs(task.timeout_secs),
-            Command::new(&script_path).args(&args).output(),
+            // env 白名单（P3-12）：只透传 PATH/HOME/LANG 与 JUDGE_* 前缀变量，
+            // 其余宿主环境（含 INTERNAL_TOKEN 等敏感项）对脚本一律不可见。
+            Command::new(&script_path)
+                .args(&args)
+                .env_clear()
+                .envs(build_script_env(env::vars()))
+                .output(),
         )
         .await;
 
@@ -194,7 +202,7 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
                     _ => "judge_error",
                 };
 
-                send_result(
+                let _ = send_result(
                     state,
                     &task,
                     TaskResult {
@@ -217,7 +225,7 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
             Ok(Err(e)) => {
                 tracing::error!("Task {} failed: {}", task.id, e);
                 if attempts >= max_attempts {
-                    send_result(
+                    let _ = send_result(
                         state,
                         &task,
                         TaskResult {
@@ -239,7 +247,7 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
             Err(_timeout) => {
                 tracing::warn!("Task {} timed out", task.id);
                 if attempts >= max_attempts {
-                    send_result(
+                    let _ = send_result(
                         state,
                         &task,
                         TaskResult {
@@ -262,38 +270,108 @@ async fn execute_single_task(state: &AppState, task: JudgeTask) {
     }
 }
 
+// ── Callback 重试（P3-9）──
+
+/// 回调最大尝试次数：初始 1 次 + 3 次重试。
+const CALLBACK_MAX_ATTEMPTS: usize = 4;
+/// 指数退避间隔（秒）：第 2 / 3 / 4 次尝试前分别等待 1s / 2s / 4s。
+const CALLBACK_RETRY_DELAYS_SECS: [u64; 3] = [1, 2, 4];
+
+/// 第 `attempt` 次尝试前的退避等待时长（attempt 从 1 开始；首次尝试不等待）。
+/// 调用方需保证 `attempt >= 2`。
+fn callback_retry_delay(attempt: usize) -> Duration {
+    Duration::from_secs(CALLBACK_RETRY_DELAYS_SECS[attempt - 2])
+}
+
+/// Judge 脚本执行的最小 env 白名单（P3-12，安全边界）。
+///
+/// 规则：禁止透传宿主全部环境变量；只保留
+/// - `PATH` / `HOME` / `LANG`：脚本正常运行所需的基础变量
+/// - 宿主中以 `JUDGE_` 开头的变量：运维可按需给脚本注入自定义配置
+///
+/// 其余环境变量一律清除——特别是 `INTERNAL_TOKEN` 等敏感项
+/// 绝不能对任意脚本内容可见。
+fn build_script_env(host_env: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+    host_env
+        .filter(|(key, _)| {
+            key == "PATH" || key == "HOME" || key == "LANG" || key.starts_with("JUDGE_")
+        })
+        .collect()
+}
+
 /// POST the task result back to the platform.
-async fn send_result(state: &AppState, task: &JudgeTask, result: TaskResult) {
+///
+/// 失败时按指数退避自动重试（最多 `CALLBACK_MAX_ATTEMPTS` 次）。
+/// **每次重试复用同一个 `result`（同一 callback_id / 同一 callback identity）**：
+/// 平台侧 judge_callback 已按 callback_id/task_id 幂等（P3-8），
+/// 重复投递不会重复计分；绝不能为每次重试生成新 ID（计划 §5.7）。
+/// 全部尝试仍失败 → 记录 error 并返回 Err（保持原有"记录后继续"语义）。
+async fn send_result(state: &AppState, task: &JudgeTask, result: TaskResult) -> Result<(), String> {
     let url = format!(
         "{}/internal/awd/events/{}/judge/callback",
         state.platform_url, state.event_id
     );
 
-    let res = state
-        .client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", state.internal_token))
-        .json(&result)
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await;
+    let mut last_error = String::new();
 
-    match res {
-        Ok(resp) => {
-            if resp.status().is_success() {
+    for attempt in 1..=CALLBACK_MAX_ATTEMPTS {
+        if attempt > 1 {
+            let delay = callback_retry_delay(attempt);
+            tracing::warn!(
+                "Callback for task {} failed, retrying in {:?} (attempt {}/{})",
+                task.id,
+                delay,
+                attempt,
+                CALLBACK_MAX_ATTEMPTS
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        // 每次尝试复用同一个 result（含同一 callback_id），保持同 identity。
+        let res = state
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", state.internal_token))
+            .json(&result)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await;
+
+        match res {
+            Ok(resp) if resp.status().is_success() => {
                 tracing::info!("Callback OK for task {}", task.id);
-            } else {
+                return Ok(());
+            }
+            Ok(resp) => {
+                last_error = format!("HTTP {}", resp.status());
                 tracing::warn!(
-                    "Callback failed for task {}: HTTP {}",
+                    "Callback failed for task {}: HTTP {} (attempt {}/{})",
                     task.id,
-                    resp.status()
+                    resp.status(),
+                    attempt,
+                    CALLBACK_MAX_ATTEMPTS
+                );
+            }
+            Err(e) => {
+                last_error = format!("network error: {}", e);
+                tracing::warn!(
+                    "Callback network error for task {}: {} (attempt {}/{})",
+                    task.id,
+                    e,
+                    attempt,
+                    CALLBACK_MAX_ATTEMPTS
                 );
             }
         }
-        Err(e) => {
-            tracing::error!("Callback network error for task {}: {}", task.id, e);
-        }
     }
+
+    tracing::error!(
+        "Callback permanently failed for task {} after {} attempts: {}",
+        task.id,
+        CALLBACK_MAX_ATTEMPTS,
+        last_error
+    );
+    Err(last_error)
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
@@ -322,6 +400,45 @@ mod tests {
         assert!(has_valid_bearer_token(&matching, "event-token"));
         assert!(!has_valid_bearer_token(&missing, "event-token"));
         assert!(!has_valid_bearer_token(&wrong, "event-token"));
+    }
+
+    #[test]
+    fn callback_retry_delay_follows_exponential_backoff() {
+        // 最多 4 次尝试（初始 1 次 + 3 次重试），退避间隔 1s / 2s / 4s。
+        assert_eq!(CALLBACK_MAX_ATTEMPTS, 4);
+        assert_eq!(CALLBACK_RETRY_DELAYS_SECS, [1, 2, 4]);
+        assert_eq!(callback_retry_delay(2), Duration::from_secs(1));
+        assert_eq!(callback_retry_delay(3), Duration::from_secs(2));
+        assert_eq!(callback_retry_delay(4), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn script_env_allowlist_only_keeps_whitelisted_vars() {
+        let host_env = vec![
+            ("PATH".to_string(), "/usr/bin:/bin".to_string()),
+            ("HOME".to_string(), "/root".to_string()),
+            ("LANG".to_string(), "C.UTF-8".to_string()),
+            ("JUDGE_TIMEOUT_FACTOR".to_string(), "3".to_string()),
+            // 敏感项与无关变量必须被过滤掉。
+            ("INTERNAL_TOKEN".to_string(), "should-not-leak".to_string()),
+            (
+                "PLATFORM_INTERNAL_URL".to_string(),
+                "http://127.0.0.1".to_string(),
+            ),
+            ("RUST_LOG".to_string(), "debug".to_string()),
+        ];
+
+        let allowlist = build_script_env(host_env.into_iter());
+        let keys: Vec<&str> = allowlist.iter().map(|(k, _)| k.as_str()).collect();
+
+        assert!(keys.contains(&"PATH"));
+        assert!(keys.contains(&"HOME"));
+        assert!(keys.contains(&"LANG"));
+        assert!(keys.contains(&"JUDGE_TIMEOUT_FACTOR"));
+        assert!(!keys.contains(&"INTERNAL_TOKEN"));
+        assert!(!keys.contains(&"PLATFORM_INTERNAL_URL"));
+        assert!(!keys.contains(&"RUST_LOG"));
+        assert_eq!(allowlist.len(), 4);
     }
 }
 

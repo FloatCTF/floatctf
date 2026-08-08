@@ -14,16 +14,6 @@ pub struct Model {
     pub event_id: Uuid,
     pub status: AwdEventStatus,
     pub phase: AwdPhase,
-    pub gamebox_cidr: String,
-    pub wireguard_cidr: String,
-    #[sea_orm(unique)]
-    pub wireguard_interface_name: String,
-    #[sea_orm(unique)]
-    pub wireguard_listen_port: i32,
-    pub flagserver_ip: String,
-    pub judgeserver_ip: String,
-    pub docker_network_id: Option<String>,
-    pub docker_network_name: Option<String>,
     #[sea_orm(column_type = "VarBinary(StringLen::None)")]
     pub event_secret_ciphertext: Vec<u8>,
     #[sea_orm(column_type = "VarBinary(StringLen::None)")]

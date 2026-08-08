@@ -8,12 +8,6 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct CreateAwdEventRequest {
     pub event_id: Uuid,
-    pub gamebox_cidr: String,
-    pub wireguard_cidr: String,
-    pub wireguard_interface_name: String,
-    pub wireguard_listen_port: i32,
-    pub flagserver_ip: String,
-    pub judgeserver_ip: String,
     #[serde(default = "default_round_duration")]
     pub round_duration_secs: i32,
     /// 计划开始时间（可选；设置后创建 awd.event.start 一次性任务，P2-12）。
@@ -57,12 +51,12 @@ pub struct ResetGameBoxRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct NetworkUpdateRequest {
+    /// 分配模式：automatic（默认）/ manual
+    #[serde(default)]
+    pub allocation_mode: Option<String>,
     pub gamebox_cidr: Option<String>,
     pub wireguard_cidr: Option<String>,
-    pub wireguard_interface_name: Option<String>,
     pub wireguard_listen_port: Option<i32>,
-    pub flagserver_ip: Option<String>,
-    pub judgeserver_ip: Option<String>,
 }
 
 // ── Player request DTOs ──
@@ -99,11 +93,23 @@ pub struct AwdEventResponse {
     pub event_id: Uuid,
     pub status: String,
     pub phase: String,
+    pub verified: bool,
+}
+
+/// Event Network 响应（赛事网络页，§22/§64）。
+#[derive(Debug, Serialize)]
+pub struct EventNetworkResponse {
+    pub event_id: Uuid,
+    pub allocation_mode: String,
     pub gamebox_cidr: String,
     pub wireguard_cidr: String,
+    pub infrastructure_subnet: String,
     pub flagserver_ip: String,
     pub judgeserver_ip: String,
-    pub verified: bool,
+    pub wireguard_interface_name: String,
+    pub wireguard_listen_port: i32,
+    pub docker_network_name: String,
+    pub locked: bool,
 }
 
 #[derive(Debug, Serialize)]

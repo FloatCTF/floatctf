@@ -70,38 +70,11 @@ pub async fn create_awd_event(
         .encrypt(&js_token, &js_aad, 1)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // ── P1-14：跨赛事 CIDR / IP 重叠校验（提交前）──
-    // 当前赛事尚未入库：存量 awd_events / awd_team_networks 全部视为“其他赛事”，
-    // 任何重叠/端口 IP 落入即拒绝创建。
-    use crate::entity::{awd_events, awd_team_networks};
-    let existing_events = awd_events::Entity::find()
-        .all(ctx.db.get_ref())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let existing_networks = awd_team_networks::Entity::find()
-        .all(ctx.db.get_ref())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    crate::modules::event::awd_team::service::deploy_service::validate_no_cross_event_overlap(
-        &existing_events,
-        &existing_networks,
-        &b.gamebox_cidr,
-        &b.wireguard_cidr,
-        &b.flagserver_ip,
-        &b.judgeserver_ip,
-    )
-    .map_err(AppError::from)?;
-
-    // Create the awd_events record
-    let model = awd_events::ActiveModel {
+    // 网络字段不在创建时固化：Event Network 由赛事网络页分配
+    // （Draft 不强制占用，Configuring 才 reserve，§21/§49/§50）。
+    let model = crate::entity::awd_events::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
-        gamebox_cidr: Set(b.gamebox_cidr),
-        wireguard_cidr: Set(b.wireguard_cidr),
-        wireguard_interface_name: Set(b.wireguard_interface_name),
-        wireguard_listen_port: Set(b.wireguard_listen_port),
-        flagserver_ip: Set(b.flagserver_ip),
-        judgeserver_ip: Set(b.judgeserver_ip),
         round_duration_secs: Set(b.round_duration_secs),
         event_secret_ciphertext: Set(secret_blob.ciphertext),
         event_secret_nonce: Set(secret_blob.nonce),
@@ -652,10 +625,14 @@ pub async fn rotate_tokens(
     txn.commit().await?;
 
     // 4. 容器 rollout：recreate flagserver/judgeserver（同 IP/网络，新 token）
-    let network_name = awd_event
-        .docker_network_name
-        .clone()
-        .ok_or_else(|| AppError::Internal("Docker network not configured".into()))?;
+    let event_network =
+        crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+            ctx.db.get_ref(),
+            event_id,
+        )
+        .await
+        .map_err(AppError::from)?;
+    let network_name = event_network.docker_network_name.clone();
     let fs_token_str =
         String::from_utf8(fs_token).map_err(|_| AppError::Internal("token not utf8".into()))?;
     let js_token_str =
@@ -666,7 +643,7 @@ pub async fn rotate_tokens(
         &awd_event,
         event_id,
         "flagserver",
-        &awd_event.flagserver_ip,
+        &event_network.flagserver_ip.to_string(),
         &network_name,
         ctx.config.awd.flagserver_image.clone(),
         fs_token_str,
@@ -678,7 +655,7 @@ pub async fn rotate_tokens(
         &awd_event,
         event_id,
         "judgeserver",
-        &awd_event.judgeserver_ip,
+        &event_network.judgeserver_ip.to_string(),
         &network_name,
         ctx.config.awd.judgeserver_image.clone(),
         js_token_str,
@@ -796,7 +773,37 @@ async fn rollout_infra_container(
     UniResponse::ok_none().into()
 }
 
-/// PUT /api/admin/events/{event_id}/awd/network
+/// GET /api/admin/events/{event_id}/awd/network —— 查看 Event Network（§64）
+#[get("/events/{event_id}/awd/network")]
+pub async fn get_event_network(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<super::dto::EventNetworkResponse> {
+    let event_id = path.into_inner();
+    let net = crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+        ctx.db.get_ref(),
+        event_id,
+    )
+    .await
+    .map_err(AppError::from)?;
+    Ok(UniResponse::ok(Some(super::dto::EventNetworkResponse {
+        event_id: net.event_id,
+        allocation_mode: format!("{:?}", net.allocation_mode).to_lowercase(),
+        gamebox_cidr: net.gamebox_cidr.to_string(),
+        wireguard_cidr: net.wireguard_cidr.to_string(),
+        infrastructure_subnet: net.infrastructure_subnet.to_string(),
+        flagserver_ip: net.flagserver_ip.to_string(),
+        judgeserver_ip: net.judgeserver_ip.to_string(),
+        wireguard_interface_name: net.wireguard_interface_name,
+        wireguard_listen_port: net.wireguard_listen_port,
+        docker_network_name: net.docker_network_name,
+        locked: net.locked_at.is_some(),
+    })))
+}
+
+/// PUT /api/admin/events/{event_id}/awd/network —— 分配（automatic 默认 / manual，§23/§24）
+/// 幂等：已分配未锁定 → 直接返回；已锁定 → AWD_NETWORK_LOCKED。
 #[put("/events/{event_id}/awd/network")]
 pub async fn update_network(
     _admin: SuperAdminJwtGuard,
@@ -805,87 +812,61 @@ pub async fn update_network(
     body: web::Json<super::dto::NetworkUpdateRequest>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+    use crate::modules::event::awd_team::{
+        repo::event_network_repo, service::event_network_service,
+    };
+
+    if let Some(existing) = event_network_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
-
-    if !awd_event.status.is_configurable() {
-        return Err(AppError::BadRequest(
-            "Cannot update network in current status".into(),
-        ));
+        .map_err(AppError::from)?
+    {
+        if existing.locked_at.is_some() {
+            return Err(AppError::from(
+                crate::modules::event::awd_team::AwdError::NetworkLocked(
+                    "network locked after deploy（AWD_NETWORK_LOCKED）".into(),
+                ),
+            ));
+        }
+        // 已分配未锁定：幂等 no-op
+        return UniResponse::ok_none().into();
     }
 
-    // Check if network is locked (deployed or later)
-    if awd_event.docker_network_id.is_some() {
-        return Err(AppError::BadRequest(
-            "Network is locked after first deployment".into(),
-        ));
-    }
-
-    let mut active: crate::entity::awd_events::ActiveModel =
-        crate::entity::awd_events::ActiveModel {
-            // 注意：必须用 awd_events 真实主键 awd_event.id（原实现误用外键 event_id，
-            // 条件匹配 0 行、字段更新被静默丢弃——Phase 0 修复）。
-            id: Set(awd_event.id),
-            ..Default::default()
-        };
-
-    if let Some(cidr) = &body.gamebox_cidr {
-        active.gamebox_cidr = Set(cidr.clone());
-    }
-    if let Some(cidr) = &body.wireguard_cidr {
-        active.wireguard_cidr = Set(cidr.clone());
-    }
-    if let Some(name) = &body.wireguard_interface_name {
-        active.wireguard_interface_name = Set(name.clone());
-    }
-    if let Some(port) = body.wireguard_listen_port {
-        active.wireguard_listen_port = Set(port);
-    }
-    if let Some(ip) = &body.flagserver_ip {
-        active.flagserver_ip = Set(ip.clone());
-    }
-    if let Some(ip) = &body.judgeserver_ip {
-        active.judgeserver_ip = Set(ip.clone());
-    }
-
-    // 状态机唯一入口（Phase 0）：配置变更 → Configuring 并清除 verified 标记。
-    if awd_event.status != crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring {
-        event_repo::transition_event(
+    let b = body.into_inner();
+    let is_manual = b.gamebox_cidr.is_some() || b.wireguard_cidr.is_some();
+    if is_manual {
+        event_network_service::allocate_manual(
             ctx.db.get_ref(),
-            awd_event.id,
-            awd_event.status.clone(),
-            crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring,
-            event_repo::TransitionPatch::config_changed(),
+            event_id,
+            event_network_service::ManualNetworkRequest {
+                gamebox_cidr: b.gamebox_cidr.unwrap_or_default(),
+                wireguard_cidr: b.wireguard_cidr.unwrap_or_default(),
+                wireguard_listen_port: b.wireguard_listen_port,
+            },
         )
         .await
         .map_err(AppError::from)?;
     } else {
-        // 已是 Configuring：仅清除 verified 标记（保持原语义）。
-        let mut clear: crate::entity::awd_events::ActiveModel =
-            crate::entity::awd_events::ActiveModel {
-                id: Set(awd_event.id),
-                verified_at: Set(None),
-                verified_revision: Set(None),
-                ..Default::default()
-            };
-        clear
-            .update(ctx.db.get_ref())
+        event_network_service::allocate_automatic(ctx.db.get_ref(), event_id)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(AppError::from)?;
     }
 
-    // P2-9：配置代数 +1（使 Start Gate 拦截旧 verified_generation）
-    event_repo::touch_configuration(ctx.db.get_ref(), awd_event.id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    UniResponse::ok_none().into()
+}
 
-    // 最后更新非状态字段（转移成功后）。
-    active
-        .update(ctx.db.get_ref())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
+/// POST /api/admin/events/{event_id}/awd/network/reallocate —— §33/§93
+#[post("/events/{event_id}/awd/network/reallocate")]
+pub async fn reallocate_network(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<()> {
+    let event_id = path.into_inner();
+    crate::modules::event::awd_team::service::event_network_service::reallocate(
+        ctx.db.get_ref(),
+        event_id,
+    )
+    .await
+    .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }

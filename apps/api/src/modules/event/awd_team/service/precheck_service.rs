@@ -37,7 +37,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_gamebox_instances, awd_precheck_runs, awd_team_networks,
+    awd_event_networks, awd_events, awd_gamebox_instances, awd_precheck_runs, awd_team_networks,
     sea_orm_active_enums::{AwdEventStatus, PrecheckStatus},
 };
 use crate::modules::event::awd_team::{
@@ -48,7 +48,7 @@ use crate::modules::event::awd_team::{
         firewall::{FirewallRuntime, HostFirewallEnvironment, ObservedFirewallState, env},
         network::{AwdNetworkRuntime, EventNetworkIdentity},
     },
-    repo::{event_repo, gamebox_repo, wireguard_repo},
+    repo::{event_network_repo, event_repo, gamebox_repo, wireguard_repo},
     service::firewall_service,
     system::command::{CommandRunner, RealCommandRunner},
 };
@@ -78,6 +78,13 @@ pub async fn run_precheck(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+
+    // Event Network 已分配是预检前提（§62 结构性检查数据源）
+    let event_network = event_network_repo::find_by_event_id(db, event_id)
+        .await?
+        .ok_or_else(|| {
+            AwdError::NotFound("event network not allocated；请先在赛事网络页分配".into())
+        })?;
 
     if !awd_event.status.is_configurable() && awd_event.status != AwdEventStatus::Prechecking {
         return Err(AwdError::InvalidState(format!(
@@ -143,8 +150,8 @@ pub async fn run_precheck(
     let mut errors: Vec<(String, String)> = Vec::new();
     let mut notes: Vec<(String, String)> = Vec::new();
 
-    // ── Check 1: Config validation ──
-    let config_result = validate_config(&awd_event);
+    // ── Check 1: Event Network 结构校验（§62）──
+    let config_result = validate_event_network(&event_network);
     if let Err(e) = config_result {
         errors.push(("config".to_string(), e));
     }
@@ -177,29 +184,23 @@ pub async fn run_precheck(
         errors.push(("gameboxes".to_string(), "No EventGameBox configured".into()));
     }
 
-    // ── Check 4: Docker network ID set ──
-    if awd_event.docker_network_id.is_none() {
+    // ── Check 4: Docker network observed 记录存在（§14 Observed → runtime resources）──
+    use crate::entity::awd_runtime_resources;
+    let docker_tracked = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .is_some();
+    if !docker_tracked {
         errors.push((
             "docker".to_string(),
             "Docker network not yet created".into(),
         ));
     }
 
-    // ── Check 5: FlagServer IP configured ──
-    if awd_event.flagserver_ip.is_empty() {
-        errors.push((
-            "flagserver".to_string(),
-            "FlagServer IP not configured".into(),
-        ));
-    }
-
-    // ── Check 6: JudgeServer IP configured ──
-    if awd_event.judgeserver_ip.is_empty() {
-        errors.push((
-            "judgeserver".to_string(),
-            "JudgeServer IP not configured".into(),
-        ));
-    }
+    // ── Check 5/6: FlagServer / JudgeServer IP —— validate_event_network 已校验 ──
 
     // ── Check 7: Docker 存活（P2-2）──
     // FlagServer / JudgeServer 容器（名称含 "flagserver"/"judgeserver"）running；
@@ -224,8 +225,13 @@ pub async fn run_precheck(
     notes.extend(ssh_report.notes.clone());
 
     // ── Check 9: WireGuard（P2-4）──
-    let (wg_report, wg_observed, wg_active_peers) =
-        check_wireguard(network, db, event_id, &awd_event.gamebox_cidr).await;
+    let (wg_report, wg_observed, wg_active_peers) = check_wireguard(
+        network,
+        db,
+        event_id,
+        &event_network.gamebox_cidr.to_string(),
+    )
+    .await;
     errors.extend(wg_report.errors.clone());
     notes.extend(wg_report.notes.clone());
 
@@ -330,7 +336,7 @@ pub async fn run_precheck(
 
     if is_passed {
         // Mark event as verified（守卫版：要求当前 Prechecking，Phase 0；P2-9 记录配置代数）
-        let revision = compute_revision(&awd_event);
+        let revision = compute_revision(&event_network);
         let generation = read_configuration_generation(db, awd_event.id).await?;
         event_repo::transition_event(
             db,
@@ -806,22 +812,21 @@ fn host_env_json(env: &HostFirewallEnvironment) -> serde_json::Value {
     })
 }
 
-/// Validate basic config: CIDR format, IPs are within ranges, interface name valid.
-fn validate_config(event: &awd_events::Model) -> Result<(), String> {
-    // Check gamebox CIDR
-    let gbox_cidr =
-        Ipv4Cidr::parse(&event.gamebox_cidr).map_err(|e| format!("Invalid gamebox_cidr: {}", e))?;
-
-    // Check wireguard CIDR
-    let wg_cidr = Ipv4Cidr::parse(&event.wireguard_cidr)
+/// §62 Event Network 结构性校验：CIDR 合法且不重叠、infra 是 gamebox 的第一块
+/// team-size 子网、flag/judge IP 位于 infra 内且互不相同、interface 名长度合法。
+fn validate_event_network(net: &awd_event_networks::Model) -> Result<(), String> {
+    // gamebox / wireguard CIDR 合法
+    let gbox_cidr = Ipv4Cidr::parse(&net.gamebox_cidr.to_string())
+        .map_err(|e| format!("Invalid gamebox_cidr: {}", e))?;
+    let wg_cidr = Ipv4Cidr::parse(&net.wireguard_cidr.to_string())
         .map_err(|e| format!("Invalid wireguard_cidr: {}", e))?;
 
-    // Check CIDRs don't overlap
+    // 不重叠
     if gbox_cidr.overlaps(&wg_cidr) {
         return Err("gamebox_cidr and wireguard_cidr overlap".into());
     }
 
-    // Check CIDR capacity: /16 required (65536 addresses)
+    // CIDR 容量：/16 或更小（65536 地址）
     if gbox_cidr.prefix_len > 16 {
         return Err(format!(
             "gamebox_cidr must be /16 or smaller, got /{}",
@@ -829,41 +834,49 @@ fn validate_config(event: &awd_events::Model) -> Result<(), String> {
         ));
     }
 
-    // Check wireguard interface name length (max 15 chars for Linux interfaces)
-    if event.wireguard_interface_name.len() > 15 {
+    // infra 子网：位于 gamebox CIDR 内（§25 派生规则）
+    let infra = Ipv4Cidr::parse(&net.infrastructure_subnet.to_string())
+        .map_err(|e| format!("Invalid infrastructure_subnet: {}", e))?;
+    if !gbox_cidr.contains(infra.network) {
+        return Err(format!(
+            "infrastructure_subnet {} 不在 gamebox_cidr {} 内",
+            net.infrastructure_subnet, net.gamebox_cidr
+        ));
+    }
+
+    // flag/judge IP 在 infra 子网内且互不相同
+    let fs_ip: std::net::Ipv4Addr = net
+        .flagserver_ip
+        .to_string()
+        .parse()
+        .map_err(|_| format!("Invalid flagserver_ip: {}", net.flagserver_ip))?;
+    let js_ip: std::net::Ipv4Addr = net
+        .judgeserver_ip
+        .to_string()
+        .parse()
+        .map_err(|_| format!("Invalid judgeserver_ip: {}", net.judgeserver_ip))?;
+    if !infra.contains(fs_ip) {
+        return Err(format!(
+            "flagserver_ip {} 不在 infrastructure_subnet {} 内",
+            net.flagserver_ip, net.infrastructure_subnet
+        ));
+    }
+    if !infra.contains(js_ip) {
+        return Err(format!(
+            "judgeserver_ip {} 不在 infrastructure_subnet {} 内",
+            net.judgeserver_ip, net.infrastructure_subnet
+        ));
+    }
+    if net.flagserver_ip == net.judgeserver_ip {
+        return Err("flagserver_ip and judgeserver_ip must be different".into());
+    }
+
+    // WG 接口名长度（Linux 15 字符限制）
+    if net.wireguard_interface_name.len() > 15 {
         return Err(format!(
             "wireguard_interface_name too long: {} (max 15)",
-            event.wireguard_interface_name.len()
+            net.wireguard_interface_name.len()
         ));
-    }
-
-    // Check flagserver IP is in gamebox CIDR
-    let fs_ip: std::net::Ipv4Addr = event
-        .flagserver_ip
-        .parse()
-        .map_err(|_| format!("Invalid flagserver_ip: {}", event.flagserver_ip))?;
-    if !gbox_cidr.contains(fs_ip) {
-        return Err(format!(
-            "flagserver_ip {} is not in gamebox_cidr {}",
-            event.flagserver_ip, event.gamebox_cidr
-        ));
-    }
-
-    // Check judgeserver IP is in gamebox CIDR
-    let js_ip: std::net::Ipv4Addr = event
-        .judgeserver_ip
-        .parse()
-        .map_err(|_| format!("Invalid judgeserver_ip: {}", event.judgeserver_ip))?;
-    if !gbox_cidr.contains(js_ip) {
-        return Err(format!(
-            "judgeserver_ip {} is not in gamebox_cidr {}",
-            event.judgeserver_ip, event.gamebox_cidr
-        ));
-    }
-
-    // Check flagserver IP != judgeserver IP
-    if event.flagserver_ip == event.judgeserver_ip {
-        return Err("flagserver_ip and judgeserver_ip must be different".into());
     }
 
     Ok(())
@@ -884,14 +897,15 @@ async fn read_configuration_generation(
 }
 
 /// Compute a configuration revision hash for verification tracking.
-fn compute_revision(event: &awd_events::Model) -> String {
+fn compute_revision(net: &awd_event_networks::Model) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(event.gamebox_cidr.as_bytes());
-    hasher.update(event.wireguard_cidr.as_bytes());
-    hasher.update(event.wireguard_interface_name.as_bytes());
-    hasher.update(event.flagserver_ip.as_bytes());
-    hasher.update(event.judgeserver_ip.as_bytes());
+    hasher.update(net.gamebox_cidr.to_string().as_bytes());
+    hasher.update(net.wireguard_cidr.to_string().as_bytes());
+    hasher.update(net.wireguard_interface_name.as_bytes());
+    hasher.update(net.infrastructure_subnet.to_string().as_bytes());
+    hasher.update(net.flagserver_ip.to_string().as_bytes());
+    hasher.update(net.judgeserver_ip.to_string().as_bytes());
     hex::encode(hasher.finalize())
 }
 

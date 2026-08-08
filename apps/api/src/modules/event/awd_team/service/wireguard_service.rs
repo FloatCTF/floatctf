@@ -15,9 +15,12 @@ use uuid::Uuid;
 
 use crate::core::config::AwdStaticConfig;
 use crate::entity::{
-    awd_events, awd_team_networks, awd_wireguard_peers, sea_orm_active_enums::WgPeerStatus,
+    awd_event_networks, awd_events, awd_team_networks, awd_wireguard_peers,
+    sea_orm_active_enums::WgPeerStatus,
 };
 use tracing::warn;
+
+use super::super::repo::event_network_repo;
 
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -71,6 +74,13 @@ pub fn allocate_peer_ip(wireguard_subnet: &Ipv4Cidr, next_host: u32) -> AwdResul
 /// Ensure the user has an active WG peer; create one with pure-Rust keys if missing.
 ///
 /// Returns `(peer_model, plaintext_private_key)` for config rendering only.
+async fn load_event_network(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> AwdResult<awd_event_networks::Model> {
+    event_network_repo::require_by_event_id(db, event_id).await
+}
+
 pub async fn ensure_peer_for_user(
     db: &DatabaseConnection,
     crypto: &AwdCrypto,
@@ -103,6 +113,7 @@ pub async fn ensure_peer_for_user(
     }
 
     let awd_event = load_awd_event(db, event_id).await?;
+    let event_network = load_event_network(db, event_id).await?;
 
     let mut team_net = awd_team_networks::Entity::find()
         .filter(awd_team_networks::Column::EventId.eq(event_id))
@@ -112,7 +123,7 @@ pub async fn ensure_peer_for_user(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("Team network not configured".into()))?;
 
-    let subnet = Ipv4Cidr::parse(&team_net.wireguard_subnet)
+    let subnet = Ipv4Cidr::parse(&team_net.wireguard_subnet.to_string())
         .map_err(|e| AwdError::Validation(e.to_string()))?;
     let (assigned_ip, next_host) = allocate_peer_ip(&subnet, team_net.next_wireguard_host as u32)?;
 
@@ -128,7 +139,10 @@ pub async fn ensure_peer_for_user(
         team_id: Set(team_id),
         user_id: Set(user_id),
         status: Set(WgPeerStatus::Active),
-        assigned_ip: Set(assigned_ip.clone()),
+        assigned_ip: Set(assigned_ip
+            .clone()
+            .parse()
+            .map_err(|e| AwdError::Validation(format!("invalid assigned_ip: {e}")))?),
         public_key: Set(kp.public_key.clone()),
         private_key_ciphertext: Set(blob.ciphertext),
         private_key_nonce: Set(blob.nonce),
@@ -150,7 +164,7 @@ pub async fn ensure_peer_for_user(
     let allowed = assigned_ip.clone();
     add_peer_on_host(
         awd_config.network_runtime == "host",
-        &awd_event.wireguard_interface_name,
+        &event_network.wireguard_interface_name,
         &kp.public_key,
         &allowed,
     )
@@ -234,9 +248,10 @@ pub async fn revoke_peer(
 ) -> AwdResult<()> {
     let peer = find_peer(db, event_id, peer_id).await?;
     let awd_event = load_awd_event(db, event_id).await?;
+    let event_network = load_event_network(db, event_id).await?;
     remove_peer_from_host(
         network,
-        &awd_event.wireguard_interface_name,
+        &event_network.wireguard_interface_name,
         &peer.public_key,
     )
     .await?;
@@ -329,6 +344,7 @@ pub async fn rotate_peer_keys(
     let peer = find_peer(db, event_id, peer_id).await?;
     assert_peer_rotatable(&peer)?;
     let awd_event = load_awd_event(db, event_id).await?;
+    let event_network = load_event_network(db, event_id).await?;
 
     // 新 keypair + 用事件当前 key_version 加密（不再硬编码 1）。
     let kp = generate_keypair();
@@ -345,10 +361,10 @@ pub async fn rotate_peer_keys(
     // 2) host 轮换：加新 peer + 移除旧 peer。
     if let Err(e) = apply_rotation_to_host(
         network,
-        &awd_event.wireguard_interface_name,
+        &event_network.wireguard_interface_name,
         &peer.public_key,
         &kp.public_key,
-        &peer.assigned_ip,
+        &peer.assigned_ip.to_string(),
     )
     .await
     {
@@ -380,8 +396,9 @@ pub async fn restore_active_peers_to_host(
     event_id: Uuid,
 ) -> AwdResult<usize> {
     let awd_event = load_awd_event(db, event_id).await?;
+    let event_network = load_event_network(db, event_id).await?;
     let peers = load_active_peers(db, event_id).await?;
-    restore_peers_to_host(network, &awd_event.wireguard_interface_name, &peers).await
+    restore_peers_to_host(network, &event_network.wireguard_interface_name, &peers).await
 }
 
 /// Ban 语义（P4-5）：把指定队伍的所有 Active peers 从 host 移除（`wg set <iface> peer <pubkey> remove`），
@@ -393,6 +410,7 @@ pub async fn suspend_team_peers_from_host(
     team_id: Uuid,
 ) -> AwdResult<usize> {
     let awd_event = load_awd_event(db, event_id).await?;
+    let event_network = load_event_network(db, event_id).await?;
     let peers = wireguard_repo::find_peers_by_team(db, event_id, team_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -400,7 +418,7 @@ pub async fn suspend_team_peers_from_host(
     for peer in &peers {
         network
             .revoke_peer(PeerIdentity {
-                interface: awd_event.wireguard_interface_name.clone(),
+                interface: event_network.wireguard_interface_name.clone(),
                 public_key: peer.public_key.clone(),
             })
             .await?;
@@ -423,7 +441,7 @@ async fn restore_peers_to_host(
                     interface: iface.to_string(),
                     public_key: peer.public_key.clone(),
                 },
-                &peer.assigned_ip,
+                &peer.assigned_ip.to_string(),
             )
             .await?;
         restored += 1;
@@ -523,7 +541,7 @@ mod tests {
             team_id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),
             status,
-            assigned_ip: "10.42.1.2/32".to_string(),
+            assigned_ip: "10.42.1.2/32".parse().unwrap(),
             public_key: "PUB_KEY_OLD".to_string(),
             private_key_ciphertext: vec![1, 2, 3],
             private_key_nonce: vec![4, 5, 6],
@@ -609,7 +627,7 @@ mod tests {
         for i in 0..3 {
             let mut p = sample_peer(WgPeerStatus::Active);
             p.public_key = format!("PUB_KEY_{}", i);
-            p.assigned_ip = format!("10.42.1.{}/32", i + 2);
+            p.assigned_ip = format!("10.42.1.{}/32", i + 2).parse().unwrap();
             peers.push(p);
         }
 

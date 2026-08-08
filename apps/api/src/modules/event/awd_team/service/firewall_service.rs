@@ -44,6 +44,9 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
         .all(db)
         .await
         .map_err(|e| AwdError::Database(format!("load awd_events: {e}")))?;
+    // Event Network 是 Desired State 源（§45/§54）；无网络的 event 不进防火墙 desired set
+    let event_networks =
+        crate::modules::event::awd_team::repo::event_network_repo::list_all(db).await?;
 
     let mut desired = DesiredFirewallState {
         revision,
@@ -54,6 +57,13 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
         if !in_firewall_desired_set(&event.status) {
             continue;
         }
+        let Some(event_network) = event_networks
+            .iter()
+            .find(|en| en.event_id == event.event_id)
+            .cloned()
+        else {
+            continue;
+        };
 
         // 队伍网络分配
         let networks = awd_team_networks::Entity::find()
@@ -77,19 +87,26 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
         for n in networks {
             teams.push(DesiredTeamPolicy {
                 team_id: n.team_id,
-                wireguard_network: IpNet::parse(&n.wireguard_subnet)
+                wireguard_network: IpNet::parse(&n.wireguard_subnet.to_string())
                     .map_err(|e| AwdError::Validation(format!("wg subnet: {e}")))?,
-                gamebox_network: IpNet::parse(&n.gamebox_subnet)
+                gamebox_network: IpNet::parse(&n.gamebox_subnet.to_string())
                     .map_err(|e| AwdError::Validation(format!("gamebox subnet: {e}")))?,
             });
         }
 
-        let flagserver_ip: std::net::Ipv4Addr = event
+        let flagserver_ip: std::net::Ipv4Addr = event_network
             .flagserver_ip
+            .to_string()
             .parse()
-            .map_err(|_| AwdError::Validation(format!("flagserver_ip {}", event.flagserver_ip)))?;
-        let judgeserver_ip: std::net::Ipv4Addr = event.judgeserver_ip.parse().map_err(|_| {
-            AwdError::Validation(format!("judgeserver_ip {}", event.judgeserver_ip))
+            .map_err(|_| {
+                AwdError::Validation(format!("flagserver_ip {}", event_network.flagserver_ip))
+            })?;
+        let judgeserver_ip: std::net::Ipv4Addr = event_network
+            .judgeserver_ip
+            .to_string()
+            .parse()
+            .map_err(|_| {
+            AwdError::Validation(format!("judgeserver_ip {}", event_network.judgeserver_ip))
         })?;
 
         desired.events.push(DesiredEventPolicy {
@@ -101,10 +118,11 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
                 .to_string(),
             event_id: event.event_id,
             phase: event.phase,
-            gamebox_network: IpNet::parse(&event.gamebox_cidr)
+            gamebox_network: IpNet::parse(&event_network.gamebox_cidr.to_string())
                 .map_err(|e| AwdError::Validation(format!("gamebox_cidr: {e}")))?,
-            // 基础设施网络 = FlagServer 所在 /24（分配约定：infra 在 .0.x，队伍从 .1.x 起）
-            infrastructure_network: infra_network(flagserver_ip),
+            // 基础设施网络：Event Network 显式固化的 infrastructure_subnet（§25/§45）
+            infrastructure_network: IpNet::parse(&event_network.infrastructure_subnet.to_string())
+                .map_err(|e| AwdError::Validation(format!("infrastructure_subnet: {e}")))?,
             flagserver_ip,
             judgeserver_ip,
             banned_teams: bans.into_iter().map(|b| b.team_id).collect(),

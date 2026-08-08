@@ -37,6 +37,32 @@ pub enum AwdEventStatus {
     VerificationFailed,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awd_network_allocation_kind"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdNetworkAllocationKind {
+    #[sea_orm(string_value = "gamebox")]
+    Gamebox,
+    #[sea_orm(string_value = "wireguard")]
+    Wireguard,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awd_network_allocation_mode"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdNetworkAllocationMode {
+    #[sea_orm(string_value = "automatic")]
+    Automatic,
+    #[sea_orm(string_value = "manual")]
+    Manual,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "awd_phase")]
 #[serde(rename_all = "snake_case")]
 pub enum AwdPhase {

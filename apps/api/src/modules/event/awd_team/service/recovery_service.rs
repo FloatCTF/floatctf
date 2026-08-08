@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_gamebox_instances,
+    awd_event_networks, awd_events, awd_gamebox_instances,
     sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
 };
 use crate::modules::event::awd_team::{
@@ -16,7 +16,7 @@ use crate::modules::event::awd_team::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
-    repo::event_repo,
+    repo::{event_network_repo, event_repo},
     service::{firewall_service, round_service},
 };
 use fcmc::AwdContainerRuntime;
@@ -36,7 +36,35 @@ pub async fn recover_all(
     let mut recovered = 0u32;
 
     for event in &active_events {
-        match recover_event(db, containers, network, firewall, crypto, event).await {
+        // Event Network 是恢复的 Desired State 源（§54）
+        let event_network = match event_network_repo::find_by_event_id(db, event.event_id).await {
+            Ok(Some(net)) => net,
+            Ok(None) => {
+                warn!(
+                    "[Recovery] Event {} 无 Event Network（Draft？）— 跳过",
+                    event.event_id
+                );
+                continue;
+            }
+            Err(e) => {
+                error!(
+                    "[Recovery] Event {} network load failed: {}",
+                    event.event_id, e
+                );
+                continue;
+            }
+        };
+        match recover_event(
+            db,
+            containers,
+            network,
+            firewall,
+            crypto,
+            event,
+            &event_network,
+        )
+        .await
+        {
             Ok(n) => {
                 recovered += n;
                 info!(
@@ -71,6 +99,7 @@ async fn recover_event(
     firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
     event: &awd_events::Model,
+    event_network: &awd_event_networks::Model,
 ) -> AwdResult<u32> {
     let mut recovered = 0u32;
 
@@ -147,17 +176,18 @@ async fn recover_event(
             Ok(pk_bytes) => {
                 let private_key =
                     String::from_utf8(pk_bytes).map_err(|e| AwdError::Crypto(e.to_string()))?;
-                let prefix = event.wireguard_cidr.split('/').nth(1).unwrap_or("16");
-                let server_host = Ipv4Cidr::parse(&event.wireguard_cidr)
+                let wg_cidr_str = event_network.wireguard_cidr.to_string();
+                let prefix = wg_cidr_str.split('/').nth(1).unwrap_or("16");
+                let server_host = Ipv4Cidr::parse(&wg_cidr_str)
                     .ok()
                     .and_then(|c| c.nth_host(0))
                     .map(|ip| ip.to_string())
                     .unwrap_or_else(|| "10.1.0.1".into());
                 network
                     .ensure_wireguard(WireGuardDesiredState {
-                        interface: event.wireguard_interface_name.clone(),
+                        interface: event_network.wireguard_interface_name.clone(),
                         private_key,
-                        listen_port: event.wireguard_listen_port as u16,
+                        listen_port: event_network.wireguard_listen_port as u16,
                         address: format!("{server_host}/{prefix}"),
                     })
                     .await?;
@@ -184,7 +214,12 @@ async fn recover_event(
         firewall_service::next_network_revision(db).await?,
     )
     .await?;
-    firewall_service::flush_event_connections(network, event.event_id, &event.gamebox_cidr).await;
+    firewall_service::flush_event_connections(
+        network,
+        event.event_id,
+        &event_network.gamebox_cidr.to_string(),
+    )
+    .await;
     recovered += 1;
 
     // ── 4. Round 调度恢复（P3-13）：Active/Grace round 缺任务则按时间重建 ──

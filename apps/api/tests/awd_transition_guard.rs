@@ -12,7 +12,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awd_events, events, sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
+    awd_event_networks, awd_events, events, sea_orm_active_enums,
+    sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
 };
 use floatctf::modules::event::awd_team::{AwdError, domain::AwdEventStatusExt, repo::event_repo};
 
@@ -35,20 +36,42 @@ fn base_awd_event(event_id: Uuid, tag: &str) -> awd_events::ActiveModel {
     awd_events::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
-        gamebox_cidr: Set("10.42.0.0/16".into()),
-        wireguard_cidr: Set("172.31.0.0/16".into()),
-        // 随机后缀保证唯一（历史失败残留行会撞 unique constraint）；≤15 字符
-        wireguard_interface_name: Set(format!(
-            "wg-{}",
-            &Uuid::new_v4().to_string().replace('-', "")[..8]
-        )),
-        wireguard_listen_port: Set(5_0000 + Uuid::new_v4().as_u128() as i32 % 1000),
-        flagserver_ip: Set("10.42.0.10".into()),
-        judgeserver_ip: Set("10.42.0.11".into()),
         event_secret_ciphertext: Set(vec![1u8; 32]),
         event_secret_nonce: Set(vec![2u8; 24]),
         ..Default::default()
     }
+}
+
+/// Event Network fixture（新模型）：网络配置独立固化。
+async fn seed_event_network<C: ConnectionTrait + Send>(
+    conn: &C,
+    event_id: Uuid,
+    tag: &str,
+) -> awd_event_networks::Model {
+    let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
+    let wg_port = 5_0000 + Uuid::new_v4().as_u128() as i32 % 1000;
+    awd_event_networks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
+        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+        wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
+        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+        flagserver_ip: Set("10.42.0.10".parse().unwrap()),
+        judgeserver_ip: Set("10.42.0.11".parse().unwrap()),
+        wireguard_interface_name: Set(wg_iface),
+        wireguard_listen_port: Set(wg_port),
+        docker_network_name: Set(format!(
+            "fctf-awd-{}-{}",
+            tag,
+            &Uuid::new_v4().simple().to_string()[..4]
+        )),
+        locked_at: Set(None),
+        ..Default::default()
+    }
+    .insert(conn)
+    .await
+    .expect("insert awd_event_networks")
 }
 
 async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, awd_events::Model) {
@@ -65,6 +88,7 @@ async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, aw
         .insert(conn)
         .await
         .expect("insert awd_events row");
+    seed_event_network(conn, event_id, tag).await;
     (event_id, model)
 }
 

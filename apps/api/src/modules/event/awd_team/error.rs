@@ -20,6 +20,12 @@ pub enum AwdError {
     Forbidden(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Network pool exhausted: {0}")]
+    PoolExhausted(String),
+    #[error("Network allocation locked: {0}")]
+    NetworkLocked(String),
+    #[error("Network overlap: {0}")]
+    NetworkOverlap(String),
     #[error("Internal error: {0}")]
     Internal(String),
 }

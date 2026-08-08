@@ -101,7 +101,7 @@ pub async fn ban_team(
             .clear_team_connections(TeamNetworkIdentity {
                 event_id,
                 team_id,
-                gamebox_subnet: net.gamebox_subnet.clone(),
+                gamebox_subnet: net.gamebox_subnet.to_string(),
             })
             .await
         {

@@ -30,6 +30,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
     AwdEventGameboxes,
+    #[sea_orm(has_one = "super::awd_event_networks::Entity")]
+    AwdEventNetworks,
     #[sea_orm(has_one = "super::awd_events::Entity")]
     AwdEvents,
     #[sea_orm(has_many = "super::awd_flag_issues::Entity")]
@@ -44,6 +46,8 @@ pub enum Relation {
     AwdJudgeBatches,
     #[sea_orm(has_many = "super::awd_judge_tasks::Entity")]
     AwdJudgeTasks,
+    #[sea_orm(has_many = "super::awd_network_allocations::Entity")]
+    AwdNetworkAllocations,
     #[sea_orm(has_many = "super::awd_orphan_resources::Entity")]
     AwdOrphanResources,
     #[sea_orm(has_many = "super::awd_precheck_runs::Entity")]
@@ -90,6 +94,12 @@ impl Related<super::awd_event_gameboxes::Entity> for Entity {
     }
 }
 
+impl Related<super::awd_event_networks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEventNetworks.def()
+    }
+}
+
 impl Related<super::awd_events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdEvents.def()
@@ -129,6 +139,12 @@ impl Related<super::awd_judge_batches::Entity> for Entity {
 impl Related<super::awd_judge_tasks::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdJudgeTasks.def()
+    }
+}
+
+impl Related<super::awd_network_allocations::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdNetworkAllocations.def()
     }
 }
 

@@ -15,6 +15,16 @@ export enum AwdEventStatus {
   VerificationFailed = 'verification_failed',
 }
 
+export enum AwdNetworkAllocationKind {
+  Gamebox = 'gamebox',
+  Wireguard = 'wireguard',
+}
+
+export enum AwdNetworkAllocationMode {
+  Automatic = 'automatic',
+  Manual = 'manual',
+}
+
 export enum AwdPhase {
   Hardening = 'hardening',
   Attack = 'attack',

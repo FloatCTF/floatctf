@@ -4,6 +4,7 @@ pub mod prelude;
 
 pub mod announcements;
 pub mod awd_event_gameboxes;
+pub mod awd_event_networks;
 pub mod awd_events;
 pub mod awd_flag_issues;
 pub mod awd_flag_submissions;
@@ -11,6 +12,8 @@ pub mod awd_gamebox_instances;
 pub mod awd_internal_token_rotations;
 pub mod awd_judge_batches;
 pub mod awd_judge_tasks;
+pub mod awd_network_allocations;
+pub mod awd_network_settings;
 pub mod awd_orphan_resources;
 pub mod awd_precheck_runs;
 pub mod awd_reset_records;

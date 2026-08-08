@@ -12,7 +12,8 @@ use uuid::Uuid;
 
 use crate::core::config::AwdStaticConfig;
 use crate::entity::{
-    awd_events, awd_gamebox_instances, awd_runtime_resources, awd_team_networks, event_teams,
+    awd_event_networks, awd_events, awd_gamebox_instances, awd_runtime_resources,
+    awd_team_networks, event_teams,
     sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
 };
 use crate::modules::event::awd_team::{
@@ -23,8 +24,8 @@ use crate::modules::event::awd_team::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
-    repo::{event_gamebox_repo, event_repo, gamebox_repo},
-    service::{firewall_service, gamebox_service},
+    repo::{event_gamebox_repo, event_network_repo, event_repo, gamebox_repo},
+    service::{event_network_service, firewall_service, gamebox_service, team_network_allocator},
 };
 use fcmc::{AwdContainerRuntime, EventNetworkSpec, InfrastructureContainerSpec};
 
@@ -77,11 +78,13 @@ pub async fn deploy_event(
 
     // ── 部署步骤（失败 → DeployFailed，P1-16）──
     let deploy_result: AwdResult<()> = async {
-        // 1. Docker network
+        // 0. Event Network 必须已分配（§21/§51），Deploy 时锁定 addressing（§34）
+        let event_network = event_network_repo::require_by_event_id(db, event_id).await?;
+        event_network_service::lock(db, event_id).await?;
+
+        // 1. Docker network（Desired name 来自 Event Network；Observed ID 进 runtime resources）
         let (docker_network_id, docker_network_name) =
-            ensure_docker_network(db, containers, &awd_event, event_id).await?;
-        awd_event.docker_network_id = Some(docker_network_id.clone());
-        awd_event.docker_network_name = Some(docker_network_name.clone());
+            ensure_docker_network(db, containers, &event_network, event_id).await?;
 
         // ── 2–3. FlagServer + JudgeServer ──
         ensure_infra_container(
@@ -91,7 +94,7 @@ pub async fn deploy_event(
             &awd_event,
             event_id,
             "flagserver",
-            &awd_event.flagserver_ip,
+            &event_network.flagserver_ip.to_string(),
             &docker_network_name,
             awd_config.flagserver_image.clone(),
             &awd_event.flagserver_token_ciphertext,
@@ -105,7 +108,7 @@ pub async fn deploy_event(
             &awd_event,
             event_id,
             "judgeserver",
-            &awd_event.judgeserver_ip,
+            &event_network.judgeserver_ip.to_string(),
             &docker_network_name,
             awd_config.judgeserver_image.clone(),
             &awd_event.judgeserver_token_ciphertext,
@@ -119,6 +122,7 @@ pub async fn deploy_event(
             containers,
             crypto,
             &awd_event,
+            &event_network,
             event_id,
             &docker_network_id,
             &docker_network_name,
@@ -126,7 +130,16 @@ pub async fn deploy_event(
         .await?;
 
         // ── 6. WireGuard ──
-        ensure_wireguard(db, network, crypto, awd_config, &awd_event, event_id).await?;
+        ensure_wireguard(
+            db,
+            network,
+            crypto,
+            awd_config,
+            &awd_event,
+            &event_network,
+            event_id,
+        )
+        .await?;
 
         // ── 7. Hardening firewall（全局 desired-state reconcile，Phase 1 P1-10）──
         firewall_service::reconcile_global(
@@ -184,47 +197,43 @@ pub async fn deploy_event(
 async fn ensure_docker_network(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
-    awd_event: &awd_events::Model,
+    event_network: &awd_event_networks::Model,
     event_id: Uuid,
 ) -> AwdResult<(String, String)> {
-    if let (Some(id), Some(name)) = (
-        awd_event.docker_network_id.clone(),
-        awd_event.docker_network_name.clone(),
-    ) {
+    let net_name = event_network.docker_network_name.clone();
+
+    // Observed network ID（§14）：runtime ID 归 awd_runtime_resources 管理
+    let db_tracked_id = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .map(|r| r.resource_id);
+
+    if let Some(id) = db_tracked_id {
         // Verify still exists; recreate if missing
         match containers.inspect_event_network(&id).await {
-            Ok(state) if state.exists => return Ok((id, name)),
+            Ok(state) if state.exists => return Ok((id, net_name)),
             _ => {
-                warn!("[Deploy] network {} missing — recreating", name);
+                warn!("[Deploy] docker network {} missing — recreating", net_name);
             }
         }
     }
 
     info!("[Deploy] Creating Docker network for event {}", event_id);
-    let net_name = awd_event
-        .docker_network_name
-        .clone()
-        .unwrap_or_else(|| format!("fctf-awd-{}", &event_id.to_string()[..8]));
     let handle = containers
         .create_event_network(EventNetworkSpec {
             event_id,
             network_name: net_name.clone(),
-            subnet_cidr: awd_event.gamebox_cidr.clone(),
+            subnet_cidr: event_network.gamebox_cidr.to_string(),
             internal: true,
         })
         .await
         .map_err(|e| AwdError::Docker(e.to_string()))?;
 
-    let mut active: awd_events::ActiveModel = awd_events::ActiveModel {
-        id: Set(awd_event.id),
-        docker_network_id: Set(Some(handle.network_id.clone())),
-        docker_network_name: Set(Some(handle.network_name.clone())),
-        ..Default::default()
-    };
-    active
-        .update(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // Observed 记录（不写 awd_events）
+    record_resource(db, event_id, "docker_network", &handle.network_id, None).await?;
 
     Ok((handle.network_id, handle.network_name))
 }
@@ -322,113 +331,44 @@ async fn ensure_teams_and_gameboxes(
     containers: &dyn AwdContainerRuntime,
     crypto: &AwdCrypto,
     awd_event: &awd_events::Model,
+    event_network: &awd_event_networks::Model,
     event_id: Uuid,
     docker_network_id: &str,
     docker_network_name: &str,
 ) -> AwdResult<()> {
-    // ── P1-14：部署前跨赛事重叠校验（其他赛事维度）──
-    // 当前赛事的 gamebox_cidr / wireguard_cidr / flagserver_ip / judgeserver_ip
-    // 不得与其他赛事已配置的 CIDR / 队伍子网冲突；冲突则 Fail Closed，不进入分配。
-    let other_events = awd_events::Entity::find()
-        .filter(awd_events::Column::EventId.ne(event_id))
-        .all(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    // ── 部署前跨赛事重叠校验（新数据源：awd_event_networks，§19）──
+    let other_event_networks = event_network_repo::list_all(db)
+        .await?
+        .into_iter()
+        .filter(|en| en.event_id != event_id)
+        .collect::<Vec<_>>();
     let other_networks = awd_team_networks::Entity::find()
         .filter(awd_team_networks::Column::EventId.ne(event_id))
         .all(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
     validate_no_cross_event_overlap(
-        &other_events,
+        &other_event_networks,
         &other_networks,
-        &awd_event.gamebox_cidr,
-        &awd_event.wireguard_cidr,
-        &awd_event.flagserver_ip,
-        &awd_event.judgeserver_ip,
+        &event_network.gamebox_cidr.to_string(),
+        &event_network.wireguard_cidr.to_string(),
+        &event_network.flagserver_ip.to_string(),
+        &event_network.judgeserver_ip.to_string(),
     )?;
 
-    // ── P1-14：teams 枚举确定性：ORDER BY created_at（+ id 兜底）──
-    // 保证子网按队伍创建顺序稳定分配，避免无序扫描导致分配顺序漂移。
+    // ── Team 子网：TeamNetworkAllocator（§36-39，稳定持久分配，不依赖顺序/名称）──
+    let allocated =
+        team_network_allocator::ensure_team_networks(db, event_id, crypto, awd_event.key_version)
+            .await?;
+    let team_network_map: std::collections::HashMap<Uuid, awd_team_networks::Model> =
+        allocated.into_iter().map(|n| (n.team_id, n)).collect();
+
+    // ── teams 枚举（GameBox 循环用，确定性顺序）──
     let teams = event_teams::Entity::find()
         .filter(event_teams::Column::EventId.eq(event_id))
         .order_by_asc(event_teams::Column::CreatedAt)
         .order_by_asc(event_teams::Column::Id)
         .all(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    let gamebox_cidr = Ipv4Cidr::parse(&awd_event.gamebox_cidr)
-        .map_err(|e| AwdError::Validation(e.to_string()))?;
-    let wg_cidr = Ipv4Cidr::parse(&awd_event.wireguard_cidr)
-        .map_err(|e| AwdError::Validation(e.to_string()))?;
-
-    let gamebox_subnets = gamebox_cidr
-        .subnets(24)
-        .ok_or_else(|| AwdError::Validation("gamebox_cidr must be broader than /24".into()))?;
-    let wg_subnets = wg_cidr
-        .subnets(24)
-        .ok_or_else(|| AwdError::Validation("wireguard_cidr must be broader than /24".into()))?;
-
-    // ── P1-14：队伍子网分配 + awd_team_networks 插入事务化 ──
-    // 单个 DB 事务内完成「查询已有行 → 无则分配 /24 并插入」，commit 后统一生效；
-    // 任一步失败整体 rollback，不留半截分配状态。已有 awd_team_networks 行的队伍
-    // 跳过分配（幂等保持），与原有行为一致。
-    let txn = db
-        .begin()
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    let mut team_networks: Vec<(&event_teams::Model, awd_team_networks::Model)> = Vec::new();
-    for (team_index, team) in teams.iter().enumerate() {
-        let team_net = gamebox_subnets.get(team_index).ok_or_else(|| {
-            AwdError::Network(format!(
-                "Insufficient gamebox /24s for team index {team_index}"
-            ))
-        })?;
-        let wg_net = wg_subnets.get(team_index).ok_or_else(|| {
-            AwdError::Network(format!(
-                "Insufficient wireguard /24s for team index {team_index}"
-            ))
-        })?;
-
-        let team_network = match awd_team_networks::Entity::find()
-            .filter(awd_team_networks::Column::EventId.eq(event_id))
-            .filter(awd_team_networks::Column::TeamId.eq(team.id))
-            .one(&txn)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?
-        {
-            Some(n) => n,
-            None => {
-                let password = random_password(16);
-                let aad = AwdCrypto::build_aad(event_id, "ssh_password");
-                let blob = crypto
-                    .encrypt(password.as_bytes(), &aad, awd_event.key_version)
-                    .map_err(|e| AwdError::Crypto(e.to_string()))?;
-
-                awd_team_networks::ActiveModel {
-                    id: Set(Uuid::new_v4()),
-                    event_id: Set(event_id),
-                    team_id: Set(team.id),
-                    gamebox_subnet: Set(team_net.to_string()),
-                    wireguard_subnet: Set(wg_net.to_string()),
-                    ssh_password_ciphertext: Set(blob.ciphertext),
-                    ssh_password_nonce: Set(blob.nonce),
-                    key_version: Set(awd_event.key_version),
-                    next_wireguard_host: Set(2),
-                    ..Default::default()
-                }
-                .insert(&txn)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?
-            }
-        };
-
-        team_networks.push((team, team_network));
-    }
-
-    txn.commit()
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
@@ -439,22 +379,26 @@ async fn ensure_teams_and_gameboxes(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    for (team, team_network) in team_networks {
+    for team in &teams {
+        let team_network = team_network_map.get(&team.id).ok_or_else(|| {
+            AwdError::Internal(format!("team network missing for team {}", team.id))
+        })?;
         // Decrypt SSH password（team-level 凭据，§22.1）
         let password =
-            gamebox_service::decrypt_team_ssh_password(crypto, event_id, &team_network).await?;
+            gamebox_service::decrypt_team_ssh_password(crypto, event_id, team_network).await?;
 
         for eg in &event_gameboxes {
             // 单一 resolver：Revision 默认值 + Event 覆盖（§49/§50）
             let resolved = gamebox_service::resolve_event_gamebox_spec(db, eg.id).await?;
 
-            let gamebox_ip = instance_ip_for_offset(&team_network.gamebox_subnet, eg.host_offset)
-                .ok_or_else(|| {
-                AwdError::Network(format!(
-                    "no host IP for subnet {} offset {}",
-                    team_network.gamebox_subnet, eg.host_offset
-                ))
-            })?;
+            let gamebox_ip =
+                instance_ip_for_offset(&team_network.gamebox_subnet.to_string(), eg.host_offset)
+                    .ok_or_else(|| {
+                        AwdError::Network(format!(
+                            "no host IP for subnet {} offset {}",
+                            team_network.gamebox_subnet, eg.host_offset
+                        ))
+                    })?;
 
             let existing =
                 gamebox_repo::find_instance_by_event_gamebox_team(db, event_id, eg.id, team.id)
@@ -486,7 +430,9 @@ async fn ensure_teams_and_gameboxes(
                     team_id: Set(team.id),
                     status: Set(GameboxStatus::Pending),
                     container_name: Set(container_name.clone()),
-                    gamebox_ip: Set(gamebox_ip.clone()),
+                    gamebox_ip: Set(gamebox_ip.parse().map_err(|e| {
+                        AwdError::Validation(format!("invalid gamebox_ip {gamebox_ip}: {e}"))
+                    })?),
                     runtime_generation: Set(1),
                     health_status: Set("unknown".to_string()),
                     ..Default::default()
@@ -503,6 +449,7 @@ async fn ensure_teams_and_gameboxes(
             let spec = gamebox_service::build_gamebox_runtime_spec(
                 &resolved,
                 awd_event,
+                event_network,
                 instance_id,
                 eg.id,
                 team.id,
@@ -550,6 +497,7 @@ async fn ensure_wireguard(
     crypto: &AwdCrypto,
     awd_config: &AwdStaticConfig,
     awd_event: &awd_events::Model,
+    event_network: &awd_event_networks::Model,
     event_id: Uuid,
 ) -> AwdResult<()> {
     // Load or generate WG private key
@@ -595,26 +543,31 @@ async fn ensure_wireguard(
     let _public_key = public_key; // stored on awd_events for client configs
     let server_addr = format!(
         "{}/{}",
-        Ipv4Cidr::parse(&awd_event.wireguard_cidr)
+        Ipv4Cidr::parse(&event_network.wireguard_cidr.to_string())
             .ok()
             .and_then(|c| c.nth_host(0))
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "10.1.0.1".into()),
-        awd_event.wireguard_cidr.split('/').nth(1).unwrap_or("16")
+        event_network
+            .wireguard_cidr
+            .to_string()
+            .split('/')
+            .nth(1)
+            .unwrap_or("16")
     );
 
     network
         .ensure_wireguard(WireGuardDesiredState {
-            interface: awd_event.wireguard_interface_name.clone(),
+            interface: event_network.wireguard_interface_name.clone(),
             private_key,
-            listen_port: awd_event.wireguard_listen_port as u16,
+            listen_port: event_network.wireguard_listen_port as u16,
             address: server_addr,
         })
         .await?;
 
     info!(
         "[Deploy] WireGuard interface {} ensured",
-        awd_event.wireguard_interface_name
+        event_network.wireguard_interface_name
     );
     Ok(())
 }
@@ -705,7 +658,7 @@ fn parse_ip(ip: &str, name: &str) -> AwdResult<std::net::Ipv4Addr> {
 }
 
 pub fn validate_no_cross_event_overlap(
-    events: &[awd_events::Model],
+    events: &[awd_event_networks::Model],
     networks: &[awd_team_networks::Model],
     gamebox_cidr: &str,
     wireguard_cidr: &str,
@@ -719,8 +672,8 @@ pub fn validate_no_cross_event_overlap(
 
     // 1. 当前赛事 CIDR vs 其他赛事 CIDR（双向交叉：gamebox / wireguard）
     for other in events {
-        let other_gb = parse_cidr(&other.gamebox_cidr, "other gamebox_cidr")?;
-        let other_wg = parse_cidr(&other.wireguard_cidr, "other wireguard_cidr")?;
+        let other_gb = parse_cidr(&other.gamebox_cidr.to_string(), "other gamebox_cidr")?;
+        let other_wg = parse_cidr(&other.wireguard_cidr.to_string(), "other wireguard_cidr")?;
 
         if gb.overlaps(&other_gb) || gb.overlaps(&other_wg) {
             return Err(AwdError::Conflict(format!(
@@ -752,8 +705,11 @@ pub fn validate_no_cross_event_overlap(
 
     // 2b. 端口 IP 不得落在其他赛事已分配队伍子网内
     for net in networks {
-        let net_gb = parse_cidr(&net.gamebox_subnet, "other team gamebox_subnet")?;
-        let net_wg = parse_cidr(&net.wireguard_subnet, "other team wireguard_subnet")?;
+        let net_gb = parse_cidr(&net.gamebox_subnet.to_string(), "other team gamebox_subnet")?;
+        let net_wg = parse_cidr(
+            &net.wireguard_subnet.to_string(),
+            "other team wireguard_subnet",
+        )?;
 
         if net_gb.contains(fs_ip) || net_wg.contains(fs_ip) {
             return Err(AwdError::Conflict(format!(
@@ -776,57 +732,35 @@ pub fn validate_no_cross_event_overlap(
 mod tests {
     use super::*;
 
-    /// 构造一个最小 awd_events::Model（仅校验所需的 CIDR/IP 字段有意义）。
+    /// 构造一个最小 awd_event_networks::Model（validate_no_cross_event_overlap 数据源）。
     fn event_model(
         id: u128,
         gamebox_cidr: &str,
         wireguard_cidr: &str,
         flagserver_ip: &str,
         judgeserver_ip: &str,
-    ) -> awd_events::Model {
+    ) -> awd_event_networks::Model {
         let now: chrono::DateTime<chrono::FixedOffset> = chrono::Utc::now().into();
-        awd_events::Model {
+        awd_event_networks::Model {
             id: Uuid::from_u128(id),
             event_id: Uuid::from_u128(id + 1),
-            status: AwdEventStatus::Draft,
-            phase: crate::entity::sea_orm_active_enums::AwdPhase::Hardening,
-            gamebox_cidr: gamebox_cidr.to_string(),
-            wireguard_cidr: wireguard_cidr.to_string(),
-            wireguard_interface_name: format!("wg-{id}"),
+            allocation_mode: crate::entity::sea_orm_active_enums::AwdNetworkAllocationMode::Manual,
+            gamebox_cidr: gamebox_cidr.parse().unwrap(),
+            wireguard_cidr: wireguard_cidr.parse().unwrap(),
+            infrastructure_subnet: format!(
+                "10.{}.0.0/24",
+                gamebox_cidr.split('.').nth(1).unwrap_or("0")
+            )
+            .parse()
+            .unwrap(),
+            flagserver_ip: flagserver_ip.parse().unwrap(),
+            judgeserver_ip: judgeserver_ip.parse().unwrap(),
+            wireguard_interface_name: format!("fawg_{id:08x}"),
             wireguard_listen_port: 51820,
-            flagserver_ip: flagserver_ip.to_string(),
-            judgeserver_ip: judgeserver_ip.to_string(),
-            docker_network_id: None,
-            docker_network_name: None,
-            event_secret_ciphertext: vec![],
-            event_secret_nonce: vec![],
-            flagserver_token_ciphertext: None,
-            flagserver_token_nonce: None,
-            judgeserver_token_ciphertext: None,
-            judgeserver_token_nonce: None,
-            wg_server_private_key_ciphertext: None,
-            wg_server_private_key_nonce: None,
-            wg_server_public_key: None,
-            key_version: 1,
-            configuration_generation: 0,
-            verified_generation: None,
-            free_reset_count: 0,
-            extra_reset_penalty: 0,
-            reset_protection_secs: 0,
-            judge_max_concurrency: 0,
-            judge_default_timeout_secs: 0,
-            judge_retry_interval_secs: 0,
-            judge_grace_period_secs: 0,
-            round_duration_secs: 60,
-            archive_retention_hours: 0,
-            verified_at: None,
-            verified_revision: None,
-            pause_remaining_secs: None,
-            started_at: None,
-            finished_at: None,
+            docker_network_name: format!("fctf-awd-{id:08x}"),
+            locked_at: None,
             created_at: now.clone(),
             updated_at: now,
-            paused_phase: None,
         }
     }
 
@@ -841,13 +775,14 @@ mod tests {
             id: Uuid::new_v4(),
             event_id,
             team_id: Uuid::new_v4(),
-            gamebox_subnet: gamebox_subnet.to_string(),
-            wireguard_subnet: wireguard_subnet.to_string(),
+            gamebox_subnet: gamebox_subnet.parse().unwrap(),
+            wireguard_subnet: wireguard_subnet.parse().unwrap(),
             ssh_password_ciphertext: vec![],
             ssh_password_nonce: vec![],
             key_version: 1,
             next_wireguard_host: 2,
             status: "allocated".to_string(),
+            subnet_index: 1,
             created_at: now.clone(),
             updated_at: now,
         }

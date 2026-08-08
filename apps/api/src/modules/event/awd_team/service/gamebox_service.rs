@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_gameboxes, awd_events, awd_team_networks, gamebox_revisions, gameboxes,
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gamebox_revisions,
+    gameboxes,
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -321,6 +322,7 @@ pub async fn resolve_event_gamebox_spec(
 pub fn build_gamebox_runtime_spec(
     resolved: &ResolvedGameBoxRuntimeSpec,
     awd_event: &awd_events::Model,
+    event_network: &awd_event_networks::Model,
     instance_id: Uuid,
     event_gamebox_id: Uuid,
     team_id: Uuid,
@@ -348,8 +350,8 @@ pub fn build_gamebox_runtime_spec(
         pids_limit: resolved.effective_pids_limit,
         healthcheck,
         extra_hosts: vec![
-            format!("flagserver:{}", awd_event.flagserver_ip),
-            format!("judgeserver:{}", awd_event.judgeserver_ip),
+            format!("flagserver:{}", event_network.flagserver_ip),
+            format!("judgeserver:{}", event_network.judgeserver_ip),
         ],
         labels: std::collections::HashMap::new(), // fcmc 内部按逻辑身份重打标签
     })

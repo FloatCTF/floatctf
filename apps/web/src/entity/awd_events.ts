@@ -5,14 +5,6 @@ export type AwdEvents = {
   event_id: string;
   status: AwdEventStatus;
   phase: AwdPhase;
-  gamebox_cidr: string;
-  wireguard_cidr: string;
-  wireguard_interface_name: string;
-  wireguard_listen_port: number;
-  flagserver_ip: string;
-  judgeserver_ip: string;
-  docker_network_id?: string;
-  docker_network_name?: string;
   event_secret_ciphertext: string;
   event_secret_nonce: string;
   flagserver_token_ciphertext: string;

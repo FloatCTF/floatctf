@@ -11,4 +11,5 @@ export type AwdTeamNetworks = {
   status: string;
   created_at: string;
   updated_at: string;
+  subnet_index: string;
 };

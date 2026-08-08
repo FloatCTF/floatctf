@@ -282,7 +282,7 @@ pub async fn dispatch_batch(
             id: task.id,
             script_content: script_content.to_string(),
             script_args_json,
-            target_ip: instance.gamebox_ip.clone(),
+            target_ip: instance.gamebox_ip.to_string(),
             timeout_secs: timeout_secs as u64,
             callback_id: task.callback_idempotency_key.clone().unwrap_or_else(|| {
                 format!(

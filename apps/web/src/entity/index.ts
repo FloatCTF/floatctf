@@ -1,6 +1,7 @@
 export * from "./sea_orm_active_enums";
 export * from "./announcements";
 export * from "./awd_event_gameboxes";
+export * from "./awd_event_networks";
 export * from "./awd_events";
 export * from "./awd_flag_issues";
 export * from "./awd_flag_submissions";
@@ -8,6 +9,8 @@ export * from "./awd_gamebox_instances";
 export * from "./awd_internal_token_rotations";
 export * from "./awd_judge_batches";
 export * from "./awd_judge_tasks";
+export * from "./awd_network_allocations";
+export * from "./awd_network_settings";
 export * from "./awd_orphan_resources";
 export * from "./awd_precheck_runs";
 export * from "./awd_reset_records";

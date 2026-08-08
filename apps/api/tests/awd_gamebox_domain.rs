@@ -15,8 +15,8 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awd_event_gameboxes, awd_events, awd_gamebox_instances, awd_rounds, awd_team_networks,
-    event_teams, events, gamebox_revisions, gameboxes,
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_rounds,
+    awd_team_networks, event_teams, events, gamebox_revisions, gameboxes, sea_orm_active_enums,
     sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus, RoundStatus},
 };
 
@@ -56,14 +56,6 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
         event_id: Set(event_id),
         status: Set(AwdEventStatus::Running),
         phase: Set(AwdPhase::Attack),
-        gamebox_cidr: Set("10.42.0.0/16".into()),
-        wireguard_cidr: Set("172.31.0.0/16".into()),
-        wireguard_interface_name: Set(format!("wg-{}", &event_id.to_string()[..8])),
-        wireguard_listen_port: Set(52000 + (event_id.as_bytes()[0] as i32) % 1000),
-        flagserver_ip: Set("10.42.0.2".into()),
-        judgeserver_ip: Set("10.42.0.3".into()),
-        docker_network_id: Set(Some("net-test".into())),
-        docker_network_name: Set(Some(format!("fctf-awd-{}", &event_id.to_string()[..8]))),
         event_secret_ciphertext: Set(vec![0u8; 32]),
         event_secret_nonce: Set(vec![0u8; 24]),
         key_version: Set(1),
@@ -81,6 +73,26 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
     .insert(db)
     .await
     .expect("insert awd_events");
+
+    // Event Network（新模型）
+    awd_event_networks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
+        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+        wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
+        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+        flagserver_ip: Set("10.42.0.2".parse().unwrap()),
+        judgeserver_ip: Set("10.42.0.3".parse().unwrap()),
+        wireguard_interface_name: Set(format!("fawg_{}", &event_id.simple().to_string()[..8])),
+        wireguard_listen_port: Set(52000 + (event_id.as_bytes()[0] as i32) % 1000),
+        docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
+        locked_at: Set(None),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert awd_event_networks");
 
     event_id
 }
@@ -120,11 +132,12 @@ async fn seed_team_network(
         id: Set(net_id),
         event_id: Set(event_id),
         team_id: Set(team_id),
-        gamebox_subnet: Set(subnet.into()),
-        wireguard_subnet: Set("172.31.1.0/24".into()),
+        gamebox_subnet: Set(subnet.parse().unwrap()),
+        wireguard_subnet: Set("172.31.1.0/24".parse().unwrap()),
         ssh_password_ciphertext: Set(blob.ciphertext),
         ssh_password_nonce: Set(blob.nonce),
         key_version: Set(1),
+        subnet_index: Set(1),
         next_wireguard_host: Set(2),
         status: Set("active".into()),
         created_at: Set(chrono::Utc::now().into()),
@@ -522,7 +535,7 @@ async fn reset_keeps_identity_bumps_generation_and_uses_pinned_revision() {
         team_id: Set(team_id),
         status: Set(GameboxStatus::Ready),
         container_name: Set(format!("fctf-gb-reset-{}", &event_id.to_string()[..8])),
-        gamebox_ip: Set("10.42.1.10".into()),
+        gamebox_ip: Set("10.42.1.10".parse().unwrap()),
         runtime_generation: Set(1),
         current_container_id: Set(Some("cid-old".into())),
         health_status: Set("healthy".into()),
@@ -557,7 +570,7 @@ async fn reset_keeps_identity_bumps_generation_and_uses_pinned_revision() {
     assert_eq!(inst.id, instance_id);
     assert_eq!(inst.event_gamebox_id, eg_id, "event_gamebox_id 不变（§24）");
     assert_eq!(inst.team_id, team_id, "team_id 不变");
-    assert_eq!(inst.gamebox_ip, "10.42.1.10", "IP 不变");
+    assert_eq!(inst.gamebox_ip.to_string(), "10.42.1.10/32", "IP 不变");
     assert_eq!(inst.runtime_generation, 2, "runtime_generation +1（§20）");
     let new_cid = inst.current_container_id.as_deref().expect("new container");
     assert_ne!(new_cid, "cid-old", "current container 更换（C1 != C2）");

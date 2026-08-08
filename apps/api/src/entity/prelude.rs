@@ -2,6 +2,7 @@
 
 pub use super::announcements::Entity as Announcements;
 pub use super::awd_event_gameboxes::Entity as AwdEventGameboxes;
+pub use super::awd_event_networks::Entity as AwdEventNetworks;
 pub use super::awd_events::Entity as AwdEvents;
 pub use super::awd_flag_issues::Entity as AwdFlagIssues;
 pub use super::awd_flag_submissions::Entity as AwdFlagSubmissions;
@@ -9,6 +10,8 @@ pub use super::awd_gamebox_instances::Entity as AwdGameboxInstances;
 pub use super::awd_internal_token_rotations::Entity as AwdInternalTokenRotations;
 pub use super::awd_judge_batches::Entity as AwdJudgeBatches;
 pub use super::awd_judge_tasks::Entity as AwdJudgeTasks;
+pub use super::awd_network_allocations::Entity as AwdNetworkAllocations;
+pub use super::awd_network_settings::Entity as AwdNetworkSettings;
 pub use super::awd_orphan_resources::Entity as AwdOrphanResources;
 pub use super::awd_precheck_runs::Entity as AwdPrecheckRuns;
 pub use super::awd_reset_records::Entity as AwdResetRecords;

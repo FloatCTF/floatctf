@@ -45,7 +45,7 @@ pub async fn get_my_gameboxes(
             team_id: i.team_id,
             event_gamebox_id: i.event_gamebox_id,
             status: format!("{:?}", i.status).to_lowercase(),
-            gamebox_ip: i.gamebox_ip,
+            gamebox_ip: i.gamebox_ip.to_string(),
             container_name: i.container_name,
             health_status: i.health_status,
         })
@@ -292,14 +292,21 @@ pub async fn get_wireguard_config(
         .await
         .unwrap_or_else(|_| "127.0.0.1".to_string());
 
+    let event_network =
+        crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+            ctx.db.get_ref(),
+            event_id,
+        )
+        .await
+        .map_err(AppError::from)?;
     let config = crate::modules::event::awd_team::service::wireguard_service::build_client_config(
-        &peer.assigned_ip,
+        &peer.assigned_ip.to_string(),
         &peer_privkey,
         &server_pubkey,
         &endpoint_host,
-        awd_event.wireguard_listen_port as u16,
-        &awd_event.gamebox_cidr,
-        &team_net.wireguard_subnet,
+        event_network.wireguard_listen_port as u16,
+        &event_network.gamebox_cidr.to_string(),
+        &team_net.wireguard_subnet.to_string(),
     );
 
     UniResponse::ok(super::dto::WireGuardConfigResponse { config }.into()).into()

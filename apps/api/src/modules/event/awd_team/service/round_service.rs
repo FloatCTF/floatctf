@@ -230,8 +230,17 @@ pub async fn start_round(
     let revision = firewall_service::next_network_revision(db).await?;
     match firewall_service::reconcile_global(db, firewall, revision).await {
         Ok(_) => {
-            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
-                .await;
+            let event_network =
+                crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+                    db, event_id,
+                )
+                .await?;
+            firewall_service::flush_event_connections(
+                network,
+                event_id,
+                &event_network.gamebox_cidr.to_string(),
+            )
+            .await;
             // P3-7：DB commit 后发布；publish 失败不回滚业务（best-effort）
             let phase_str = format!("{:?}", phase).to_lowercase();
             let _ = publisher
@@ -465,7 +474,12 @@ async fn dispatch_judge_for_round(
     let token = String::from_utf8(token).map_err(|_| AwdError::Crypto("token not utf8".into()))?;
 
     let batch_id = judge_service::create_batch(db, event_id, round_id).await?;
-    let judgeserver_url = format!("http://{}:8082", awd_event.judgeserver_ip);
+    let event_network =
+        crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+            db, event_id,
+        )
+        .await?;
+    let judgeserver_url = format!("http://{}:8082", event_network.judgeserver_ip);
     judge_service::dispatch_batch(db, batch_id, &judgeserver_url, &token).await?;
     Ok(())
 }

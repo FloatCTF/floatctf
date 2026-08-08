@@ -165,10 +165,14 @@ pub async fn execute_reset(
     let resolved =
         gamebox_service::resolve_event_gamebox_spec(db, instance.event_gamebox_id).await?;
 
-    let network_name = awd_event
-        .docker_network_name
-        .clone()
-        .unwrap_or_else(|| format!("fctf-awd-{}", &ctx.event_id.to_string()[..8]));
+    // Docker 网络逻辑名来自 Event Network（desired）；实际 ID 属 Observed
+    let event_network =
+        crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+            db,
+            ctx.event_id,
+        )
+        .await?;
+    let network_name = event_network.docker_network_name.clone();
 
     let crypto = crate::modules::event::awd_team::crypto::AwdCrypto::from_config_secret()
         .map_err(|e| AwdError::Crypto(e.to_string()))?;
@@ -188,11 +192,12 @@ pub async fn execute_reset(
     let recreate_spec = gamebox_service::build_gamebox_runtime_spec(
         &resolved,
         &awd_event,
+        &event_network,
         instance.id,
         instance.event_gamebox_id,
         instance.team_id,
         &instance.container_name,
-        &instance.gamebox_ip,
+        &instance.gamebox_ip.to_string(),
         &network_name,
         password,
         next_generation,

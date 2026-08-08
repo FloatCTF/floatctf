@@ -33,6 +33,9 @@ pub async fn archive_event(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+    let event_network =
+        crate::modules::event::awd_team::repo::event_network_repo::find_by_event_id(db, event_id)
+            .await?;
 
     if awd_event.status == AwdEventStatus::Archived {
         return Ok(());
@@ -80,7 +83,10 @@ pub async fn archive_event(
     for peer in &peers {
         if let Err(e) = network
             .revoke_peer(PeerIdentity {
-                interface: awd_event.wireguard_interface_name.clone(),
+                interface: event_network
+                    .as_ref()
+                    .map(|n| n.wireguard_interface_name.clone())
+                    .unwrap_or_default(),
                 public_key: peer.public_key.clone(),
             })
             .await
@@ -100,20 +106,29 @@ pub async fn archive_event(
     }
 
     // 3. Remove WireGuard interface via runtime
-    if let Err(e) = network
-        .remove_wireguard(&awd_event.wireguard_interface_name)
-        .await
-    {
+    let wg_iface = event_network
+        .as_ref()
+        .map(|n| n.wireguard_interface_name.clone())
+        .unwrap_or_default();
+    if let Err(e) = network.remove_wireguard(&wg_iface).await {
         // Host may fail if iface never existed; surface as network error for Host,
         // Noop never fails. We still continue cleanup of Docker network.
         warn!(
             "[Archive] remove_wireguard {}: {} — continuing",
-            awd_event.wireguard_interface_name, e
+            wg_iface, e
         );
     }
 
-    // 4. Remove Docker network
-    if let Some(ref network_id) = awd_event.docker_network_id {
+    // 4. Remove Docker network（Observed ID 属 awd_runtime_resources，§14）
+    use crate::entity::awd_runtime_resources;
+    let docker_network_id = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .map(|r| r.resource_id);
+    if let Some(ref network_id) = docker_network_id {
         if let Err(e) = containers.remove_event_network(network_id).await {
             info!("[Archive] remove network {}: {}", network_id, e);
         }

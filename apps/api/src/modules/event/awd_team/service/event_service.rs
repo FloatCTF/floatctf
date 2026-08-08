@@ -140,8 +140,17 @@ pub async fn pause_event(
     .await
     {
         Ok(_) => {
-            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
-                .await;
+            let event_network =
+                crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+                    db, event_id,
+                )
+                .await?;
+            firewall_service::flush_event_connections(
+                network,
+                event_id,
+                &event_network.gamebox_cidr.to_string(),
+            )
+            .await;
             Ok(())
         }
         Err(e) => {
@@ -228,8 +237,17 @@ pub async fn resume_event(
     .await
     {
         Ok(_) => {
-            firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr)
-                .await;
+            let event_network =
+                crate::modules::event::awd_team::repo::event_network_repo::require_by_event_id(
+                    db, event_id,
+                )
+                .await?;
+            firewall_service::flush_event_connections(
+                network,
+                event_id,
+                &event_network.gamebox_cidr.to_string(),
+            )
+            .await;
 
             // P4-9 修复：暂停期间原 round.end/grace_end 任务已被消费（触发时 round 非
             // Active/Grace 而幂等跳过）；resume 后必须按新 deadline 重建，否则比赛卡死

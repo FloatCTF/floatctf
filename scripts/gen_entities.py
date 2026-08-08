@@ -241,6 +241,62 @@ def generate_entities(database_url: str) -> None:
 
 
 # ==============================================================================
+# CIDR/INET 列类型修正（sqlx 兼容）
+# ==============================================================================
+# SeaORM 1.1.20 对 PostgreSQL 原生 cidr/inet 列生成 `custom("cidr"/"inet")` +
+# String 字段；但 sqlx 无法把 cidr/inet 的返回值解码成 String（ColumnDecode
+# 错误，2026-08-08 实证）。启用 sea-orm `with-ipnetwork` feature 后解码路径
+# 是 ipnetwork::IpNetwork，因此这里把对应字段类型改为 IpNetwork，保证
+# INSERT/SELECT 均可用（DoD #13：DB 使用原生 CIDR/INET）。
+#
+# 该转换只作用于 `#[sea_orm(column_type = "custom("inet")"/"custom("cidr")")]`
+# 标记的 String 字段；其余字段原样保留。每次 db:gen 后自动执行，保证实体
+# 仍由生成工具产出（不手工改实体）。
+# ==============================================================================
+
+IP_COLUMN_TYPES = ('\\"inet\\"', '\\"cidr\\"')
+
+
+def postprocess_ip_columns() -> None:
+    for entity_file in sorted(ENTITY_DIR.glob("*.rs")):
+        if entity_file.name in ("mod.rs", "prelude.rs", "sea_orm_active_enums.rs"):
+            continue
+        text = entity_file.read_text(encoding="utf-8")
+        # 实体源码里 custom("inet") 以转义形式 custom(\"inet\") 出现
+        if 'custom(' not in text or ('inet' not in text and 'cidr' not in text):
+            continue
+        lines = text.splitlines(keepends=True)
+        out: list[str] = []
+        pending_ip = False
+        for line in lines:
+            if 'column_type = "custom(' in line and any(
+                t in line for t in IP_COLUMN_TYPES
+            ):
+                pending_ip = True
+                out.append(line)
+                continue
+            if pending_ip:
+                pending_ip = False
+                stripped = line.strip()
+                if stripped.startswith("pub "):
+                    # pub xxx: String,  ->  pub xxx: IpNetwork,
+                    head, _, rest = line.partition(":")
+                    out.append(head + ": IpNetwork," + "\n")
+                    continue
+            out.append(line)
+        text = "".join(out)
+        if "IpNetwork" in text and "use ipnetwork::IpNetwork" not in text:
+            # 在 use 段末尾（第一个空行前）补 import
+            lines = text.splitlines(keepends=True)
+            insert_at = 0
+            for i, ln in enumerate(lines):
+                if ln.startswith("use ") and not ln.startswith("use super"):
+                    insert_at = i + 1
+            lines.insert(insert_at, "use ipnetwork::IpNetwork;\n")
+            text = "".join(lines)
+        entity_file.write_text(text, encoding="utf-8")
+
+# ==============================================================================
 # Main
 # ==============================================================================
 
@@ -262,6 +318,7 @@ def main() -> None:
     print()
 
     generate_entities(database_url)
+    postprocess_ip_columns()
 
     print()
     print("=" * 96)

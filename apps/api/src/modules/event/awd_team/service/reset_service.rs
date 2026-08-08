@@ -29,13 +29,30 @@ use crate::modules::event::awd_team::{
     service::score_service,
 };
 
+/// 重置发起方（P4-1 显式化，废弃 admin 传 `Uuid::nil()` hack）。
+#[derive(Debug, Clone)]
+pub enum ResetActor {
+    Player { user_id: Uuid, team_id: Uuid },
+    /// charge_team=true 时该次重置也计入队伍重置次数并可能扣分。
+    Admin { admin_id: Uuid, charge_team: bool },
+}
+
+impl ResetActor {
+    pub fn requester_id(&self) -> Uuid {
+        match self {
+            ResetActor::Player { user_id, .. } => *user_id,
+            ResetActor::Admin { admin_id, .. } => *admin_id,
+        }
+    }
+}
+
 /// Reset record created during a reset operation.
 pub struct ResetContext {
     pub event_id: Uuid,
     pub instance_id: Uuid,
+    /// 归属队伍（Admin 豁免 ownership 校验，但仍需真实 team_id 记账）。
     pub team_id: Uuid,
-    pub requested_by: Uuid,
-    pub is_free: bool,
+    pub actor: ResetActor,
 }
 
 /// Execute the full GameBox reset workflow.
@@ -54,20 +71,26 @@ pub async fn execute_reset(
         return Err(AwdError::Forbidden("Event is not running".into()));
     }
 
-    // 2. Verify instance belongs to team
+    // 2. Load instance（先解析真实 team_id，再按 actor 做 ownership 校验）
     let instance = gamebox_repo::find_instance_by_id(db, ctx.instance_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;
-
-    if instance.team_id != ctx.team_id {
-        return Err(AwdError::Forbidden(
-            "This GameBox does not belong to your team".into(),
-        ));
-    }
+    let team_id = match &ctx.actor {
+        // Player：必须 ownership；Admin：豁免（用 instance 真实 team_id 记账）
+        ResetActor::Player { team_id, .. } => {
+            if *team_id != instance.team_id {
+                return Err(AwdError::Forbidden(
+                    "This GameBox does not belong to your team".into(),
+                ));
+            }
+            *team_id
+        }
+        ResetActor::Admin { .. } => instance.team_id,
+    };
 
     // 3. Check team not banned
-    if ban_repo::find_active_ban(db, ctx.event_id, ctx.team_id)
+    if ban_repo::find_active_ban(db, ctx.event_id, team_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .is_some()
@@ -75,20 +98,32 @@ pub async fn execute_reset(
         return Err(AwdError::Forbidden("Team is banned".into()));
     }
 
-    // 4. Check reset_protection_until — skip judge during protection
+    // 4. Protection 强制（P4-3）：保护窗口内拒绝（防滥用）
     let in_protection = instance
         .reset_protection_until
         .map(|t| t.with_timezone(&chrono::Utc) > chrono::Utc::now())
         .unwrap_or(false);
+    if in_protection {
+        return Err(AwdError::Forbidden(
+            "Reset is in protection window; wait for it to expire".into(),
+        ));
+    }
 
-    // 5. Create reset record
+    // 5. 免费次数判定（P4-3）：count < free_reset_count 为免费；其余付费
+    let used = team_reset_count(db, ctx.event_id, team_id).await?;
+    let is_free = match &ctx.actor {
+        ResetActor::Player { .. } => used < awd_event.free_reset_count as i64,
+        ResetActor::Admin { charge_team, .. } => !charge_team || used < awd_event.free_reset_count as i64,
+    };
+
+    // 6. Create reset record
     let reset_record = awd_reset_records::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(ctx.event_id),
-        team_id: Set(ctx.team_id),
+        team_id: Set(team_id),
         gamebox_instance_id: Set(ctx.instance_id),
-        requested_by: Set(Some(ctx.requested_by)),
-        free_reset: Set(ctx.is_free),
+        requested_by: Set(Some(ctx.actor.requester_id())),
+        free_reset: Set(is_free),
         status: Set("pending".to_string()),
         ..Default::default()
     };
@@ -97,27 +132,6 @@ pub async fn execute_reset(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .id;
-
-    // 6. If not free, apply penalty
-    if !ctx.is_free {
-        let penalty_penalty = awd_event.extra_reset_penalty;
-        let idempotency_key = format!("reset:{}", reset_id);
-        score_repo::create_score_event(
-            db,
-            ctx.event_id,
-            None,
-            ctx.team_id,
-            ScoreEventType::ResetPenalty,
-            -penalty_penalty,
-            &idempotency_key,
-            None,
-            None,
-            None,
-            Some("excess reset penalty"),
-        )
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-    }
 
     // 7. Mark instance as resetting
     gamebox_repo::update_instance_status(db, ctx.instance_id, GameboxStatus::Resetting)
@@ -234,7 +248,29 @@ pub async fn execute_reset(
         }
     }
 
-    // 10. Mark reset record as completed
+    // 10. Penalty 时机（P4-4）：重建成功后才扣分（原实现在重建前扣，
+    // 重建失败用户已被扣分却拿不到新容器）
+    if !is_free {
+        let penalty_penalty = awd_event.extra_reset_penalty;
+        let idempotency_key = format!("reset:{}", reset_id);
+        score_repo::create_score_event(
+            db,
+            ctx.event_id,
+            None,
+            team_id,
+            ScoreEventType::ResetPenalty,
+            -penalty_penalty,
+            &idempotency_key,
+            None,
+            None,
+            None,
+            Some("excess reset penalty"),
+        )
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    }
+
+    // 11. Mark reset record as completed
     let mut reset_active: awd_reset_records::ActiveModel = awd_reset_records::ActiveModel {
         id: Set(reset_id),
         status: Set("completed".to_string()),
@@ -248,7 +284,7 @@ pub async fn execute_reset(
 
     info!(
         "GameBox reset completed: instance {} (free={}, reset_id={})",
-        ctx.instance_id, ctx.is_free, reset_id
+        ctx.instance_id, is_free, reset_id
     );
 
     Ok(())

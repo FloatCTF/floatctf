@@ -59,6 +59,7 @@ pub async fn get_my_gameboxes(
 pub async fn reset_my_gamebox(
     user: UserJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
     let (event_id, instance_id) = path.into_inner();
@@ -70,13 +71,19 @@ pub async fn reset_my_gamebox(
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
 
-    gamebox_service::reset_gamebox(
+    // P4-2：player reset 接入完整 execute_reset 流程（同 IP/同密码/Ready/ResetFailed）
+    crate::modules::event::awd_team::service::reset_service::execute_reset(
         ctx.db.get_ref(),
-        event_id,
-        instance_id,
-        membership.team_id,
-        user.id,
-        false, // player reset may cost a free reset or penalty
+        awd.containers.as_ref(),
+        crate::modules::event::awd_team::service::reset_service::ResetContext {
+            event_id,
+            instance_id,
+            team_id: membership.team_id,
+            actor: crate::modules::event::awd_team::service::reset_service::ResetActor::Player {
+                user_id: user.id,
+                team_id: membership.team_id,
+            },
+        },
     )
     .await
     .map_err(AppError::from)?;

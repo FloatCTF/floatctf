@@ -384,15 +384,18 @@ pub async fn admin_reset_gamebox(
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
     let (event_id, instance_id) = path.into_inner();
+    let admin_id = _admin.into_inner().id;
     crate::modules::event::awd_team::service::reset_service::execute_reset(
         ctx.db.get_ref(),
         awd.containers.as_ref(),
         crate::modules::event::awd_team::service::reset_service::ResetContext {
             event_id,
             instance_id,
-            team_id: uuid::Uuid::nil(),
-            requested_by: uuid::Uuid::nil(),
-            is_free: true,
+            team_id: uuid::Uuid::nil(), // Admin：ownership 豁免，真实 team_id 由 service 解析
+            actor: crate::modules::event::awd_team::service::reset_service::ResetActor::Admin {
+                admin_id,
+                charge_team: false,
+            },
         },
     )
     .await

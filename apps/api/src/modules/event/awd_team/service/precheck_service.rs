@@ -185,14 +185,15 @@ pub async fn run_precheck(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     if is_passed {
-        // Mark event as verified（守卫版：要求当前 Prechecking，Phase 0）
+        // Mark event as verified（守卫版：要求当前 Prechecking，Phase 0；P2-9 记录配置代数）
         let revision = compute_revision(&awd_event);
+        let generation = read_configuration_generation(db, awd_event.id).await?;
         event_repo::transition_event(
             db,
             awd_event.id,
             AwdEventStatus::Prechecking,
             AwdEventStatus::Verified,
-            event_repo::TransitionPatch::verified(&revision),
+            event_repo::TransitionPatch::verified_with_generation(&revision, generation),
         )
         .await?;
 
@@ -286,6 +287,20 @@ fn validate_config(event: &awd_events::Model) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 读取当前配置代数（P2-9）。
+async fn read_configuration_generation(
+    db: &sea_orm::DatabaseConnection,
+    awd_event_id: Uuid,
+) -> AwdResult<i64> {
+    use sea_orm::EntityTrait;
+    let row = awd_events::Entity::find_by_id(awd_event_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+    Ok(row.configuration_generation)
 }
 
 /// Compute a configuration revision hash for verification tracking.

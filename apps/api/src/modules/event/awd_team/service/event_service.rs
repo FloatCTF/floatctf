@@ -38,7 +38,27 @@ pub async fn start_event(
     // Validate: must have verified_at set
     if awd_event.verified_at.is_none() {
         return Err(AwdError::InvalidState(
-            "Cannot start event: precheck has not passed (no verified_at)".into(),
+            "Cannot start event: precheck has not passed (AWD_NOT_VERIFIED)".into(),
+        ));
+    }
+
+    // P2-11 Start Gate：配置代数必须匹配（配置在验证后变更 → StartBlocked）
+    if awd_event
+        .verified_generation
+        .map(|g| g != awd_event.configuration_generation)
+        .unwrap_or(true)
+    {
+        // 进入 StartBlocked（状态机合法路径）
+        let _ = event_repo::transition_event(
+            db,
+            awd_event.id,
+            AwdEventStatus::Verified,
+            AwdEventStatus::StartBlocked,
+            event_repo::TransitionPatch::config_changed(),
+        )
+        .await;
+        return Err(AwdError::InvalidState(
+            "Cannot start event: configuration changed since verification (AWD_CONFIG_CHANGED)".into(),
         ));
     }
 

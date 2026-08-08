@@ -33,6 +33,8 @@ pub struct TransitionPatch {
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
     /// 置空 verified 标记（配置变更 / 重检时清除）。
     pub clear_verified: bool,
+    /// 已验证配置代数（P2-9：Precheck 成功时记录 configuration_generation）。
+    pub verified_generation: Option<i64>,
 }
 
 impl TransitionPatch {
@@ -41,6 +43,16 @@ impl TransitionPatch {
         Self {
             verified_revision: Some(revision.to_string()),
             verified_at: Some(chrono::Utc::now()),
+            ..Default::default()
+        }
+    }
+
+    /// Verified：附配置代数（P2-9）。调用方先读 configuration_generation 再传入。
+    pub fn verified_with_generation(revision: &str, generation: i64) -> Self {
+        Self {
+            verified_revision: Some(revision.to_string()),
+            verified_at: Some(chrono::Utc::now()),
+            verified_generation: Some(generation),
             ..Default::default()
         }
     }
@@ -273,7 +285,31 @@ fn active_model_from_patch(
         active.verified_at = Set(None);
         active.verified_revision = Set(None);
     }
+    if let Some(gen_val) = patch.verified_generation {
+        active.verified_generation = Set(Some(gen_val));
+    }
     active
+}
+
+/// 配置代数 +1（P2-9/P2-10）：所有影响 runtime 的配置写入口调用。
+/// 不改变状态；仅递增 configuration_generation（会使 verified_generation 失配 → StartBlocked）。
+pub async fn touch_configuration<C: ConnectionTrait + Send>(
+    db: &C,
+    id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    let event = awd_events::Entity::find_by_id(id)
+        .one(db)
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
+    let next = event.configuration_generation + 1;
+    let active: awd_events::ActiveModel = awd_events::ActiveModel {
+        id: Set(id),
+        configuration_generation: Set(next),
+        updated_at: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    };
+    active.update(db).await?;
+    Ok(())
 }
 
 /// 守卫版 `update_status`：最终防线。

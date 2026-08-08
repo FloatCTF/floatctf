@@ -40,4 +40,6 @@ export type AwdEvents = {
   created_at: string;
   updated_at: string;
   paused_phase?: AwdPhase;
+  configuration_generation: number;
+  verified_generation?: string;
 };

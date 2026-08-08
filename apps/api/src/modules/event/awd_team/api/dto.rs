@@ -16,6 +16,9 @@ pub struct CreateAwdEventRequest {
     pub judgeserver_ip: String,
     #[serde(default = "default_round_duration")]
     pub round_duration_secs: i32,
+    /// 计划开始时间（可选；设置后创建 awd.event.start 一次性任务，P2-12）。
+    #[serde(default)]
+    pub planned_start_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 fn default_round_duration() -> i32 {

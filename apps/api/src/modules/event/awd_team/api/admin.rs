@@ -14,7 +14,7 @@ use crate::{
     modules::event::awd_team::{
         domain::AwdEventStatusExt,
         repo::{ban_repo, event_repo, round_repo},
-        scheduler::schedule_auto_precheck,
+        scheduler::{schedule_auto_precheck, schedule_event_start},
         service::{event_service, score_service},
     },
 };
@@ -118,6 +118,7 @@ pub async fn create_awd_event(
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     schedule_auto_precheck(&txn, event_id, event.start_time, chrono::Utc::now()).await?;
+    schedule_event_start(&txn, event_id, b.planned_start_at).await?;
     txn.commit().await?;
 
     UniResponse::ok(event_id.into()).into()
@@ -617,6 +618,11 @@ pub async fn update_network(
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
     }
+
+    // P2-9：配置代数 +1（使 Start Gate 拦截旧 verified_generation）
+    event_repo::touch_configuration(ctx.db.get_ref(), awd_event.id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
     // 最后更新非状态字段（转移成功后）。
     active

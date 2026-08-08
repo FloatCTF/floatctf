@@ -94,6 +94,54 @@ pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     Ok(Some(task))
 }
 
+/// Create the one-shot event-start task at `planned_start_at`（P2-12）。
+/// 幂等：同一 event 已存在 AwdEventStart 任务则跳过。
+/// 无 planned start 时间时返回 None（手动开始）。
+pub async fn schedule_event_start<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+    planned_start_at: Option<DateTime<FixedOffset>>,
+) -> Result<Option<scheduled_tasks::Model>, sea_orm::DbErr> {
+    let Some(start_at) = planned_start_at else {
+        return Ok(None);
+    };
+
+    let task_key = TaskKey::AwdEventStart.to_string();
+    let exists = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(&task_key))
+        .one(db)
+        .await?;
+    if exists.is_some() {
+        return Ok(None);
+    }
+
+    let now = Utc::now();
+    let task = scheduled_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        group_id: Set(Some(event_id)),
+        task_name: Set(format!("AWD Event {event_id} planned start")),
+        description: Set(Some(
+            "Planned start: begin competition at scheduled time".into(),
+        )),
+        task_key: Set(task_key),
+        trigger_type: Set("once".into()),
+        status: Set("pending".into()),
+        execute_at: Set(Some(start_at)),
+        expires_at: Set(Some(start_at + Duration::hours(6))),
+        payload: Set(Some(serde_json::json!({ "event_id": event_id }))),
+        enabled: Set(true),
+        protected: Set(true),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    Ok(Some(task))
+}
+
 fn event_id_from_task(task: &scheduled_tasks::Model) -> anyhow::Result<Uuid> {
     let payload: RoundTaskPayload =
         serde_json::from_value(task.payload.clone().unwrap_or_default())?;

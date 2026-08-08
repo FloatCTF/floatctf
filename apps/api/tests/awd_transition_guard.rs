@@ -47,7 +47,7 @@ fn base_awd_event(event_id: Uuid, tag: &str) -> awd_events::ActiveModel {
     }
 }
 
-async fn seed_event(txn: &sea_orm::DatabaseTransaction, tag: &str) -> (Uuid, awd_events::Model) {
+async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, awd_events::Model) {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
         id: Set(event_id),
@@ -56,9 +56,9 @@ async fn seed_event(txn: &sea_orm::DatabaseTransaction, tag: &str) -> (Uuid, awd
         end_time: Set((chrono::Utc::now() + chrono::Duration::hours(1)).into()),
         ..Default::default()
     };
-    parent.insert(txn).await.expect("insert parent events row");
+    parent.insert(conn).await.expect("insert parent events row");
     let model = base_awd_event(event_id, tag)
-        .insert(txn)
+        .insert(conn)
         .await
         .expect("insert awd_events row");
     (event_id, model)
@@ -288,4 +288,81 @@ async fn legal_transitions_smoke_across_table() {
 
     txn.rollback().await.ok();
     let _ = event_id;
+}
+
+#[tokio::test]
+async fn configuration_generation_gates_start() {
+    use floatctf::modules::event::awd_team::{
+        infrastructure::{
+            firewall::NoopFirewallRuntime, network::NoopNetworkRuntime,
+        },
+        service::event_service,
+    };
+
+    let Some(db) = connect_or_skip().await else { return };
+
+    // 推进到 Verified 的辅助：直接在主连接上操作（start_event 需要 &DatabaseConnection）
+    async fn to_verified(
+        db: &sea_orm::DatabaseConnection,
+        awd_id: Uuid,
+    ) {
+        for (from, to) in [
+            (AwdEventStatus::Draft, AwdEventStatus::Configuring),
+            (AwdEventStatus::Configuring, AwdEventStatus::Prechecking),
+        ] {
+            event_repo::transition_event(db, awd_id, from, to, Default::default())
+                .await
+                .expect("forward");
+        }
+        event_repo::transition_event(
+            db,
+            awd_id,
+            AwdEventStatus::Prechecking,
+            AwdEventStatus::Verified,
+            event_repo::TransitionPatch::verified_with_generation("rev-1", 0),
+        )
+        .await
+        .expect("verified");
+    }
+
+    // 用例 1：generation 匹配 → start 成功
+    let (_event_id, awd) = seed_event(&db, "gen").await;
+    to_verified(&db, awd.id).await;
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    event_service::start_event(&db, &network, &firewall, _event_id)
+        .await
+        .expect("start must pass when verified_generation == configuration_generation");
+
+    // 用例 2：touch_configuration 后失配 → StartBlocked（AWD_CONFIG_CHANGED）
+    let (_eid2, awd2) = seed_event(&db, "gen2").await;
+    to_verified(&db, awd2.id).await;
+    event_repo::touch_configuration(&db, awd2.id)
+        .await
+        .expect("touch_configuration");
+    let err = event_service::start_event(&db, &network, &firewall, _eid2)
+        .await
+        .expect_err("start must be blocked after config change");
+    assert!(
+        err.to_string().contains("AWD_CONFIG_CHANGED"),
+        "expected AWD_CONFIG_CHANGED, got {err}"
+    );
+    let row = awd_events::Entity::find_by_id(awd2.id).one(&db).await.unwrap().unwrap();
+    assert_eq!(row.status, AwdEventStatus::StartBlocked);
+
+    // 清理：删除轮次/事件/父行（settings revision 全局保留）
+    use sea_orm::QueryFilter;
+    use floatctf::entity::awd_rounds;
+    let _ = awd_rounds::Entity::delete_many()
+        .filter(awd_rounds::Column::EventId.is_in([_event_id, _eid2]))
+        .exec(&db)
+        .await;
+    let _ = awd_events::Entity::delete_many()
+        .filter(awd_events::Column::EventId.is_in([_event_id, _eid2]))
+        .exec(&db)
+        .await;
+    let _ = events::Entity::delete_many()
+        .filter(events::Column::Id.is_in([_event_id, _eid2]))
+        .exec(&db)
+        .await;
 }

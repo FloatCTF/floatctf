@@ -60,6 +60,8 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub paused_phase: Option<AwdPhase>,
+    pub configuration_generation: i64,
+    pub verified_generation: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

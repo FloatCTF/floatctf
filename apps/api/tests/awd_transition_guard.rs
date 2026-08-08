@@ -37,7 +37,11 @@ fn base_awd_event(event_id: Uuid, tag: &str) -> awd_events::ActiveModel {
         event_id: Set(event_id),
         gamebox_cidr: Set("10.42.0.0/16".into()),
         wireguard_cidr: Set("172.31.0.0/16".into()),
-        wireguard_interface_name: Set(format!("wg-test-{}", tag)),
+        // 随机后缀保证唯一（历史失败残留行会撞 unique constraint）；≤15 字符
+        wireguard_interface_name: Set(format!(
+            "wg-{}",
+            &Uuid::new_v4().to_string().replace('-', "")[..8]
+        )),
         wireguard_listen_port: Set(5_0000 + Uuid::new_v4().as_u128() as i32 % 1000),
         flagserver_ip: Set("10.42.0.10".into()),
         judgeserver_ip: Set("10.42.0.11".into()),

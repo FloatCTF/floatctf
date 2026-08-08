@@ -219,8 +219,11 @@ pub async fn start_round(
     .await?;
     firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
-    // judge batch 分发
-    dispatch_judge_for_round(db, &awd_event, round.id, event_id).await?;
+    // judge batch 分发（P3-2：非致命——round 已提交，judge 分发可重试，
+    // 失败只记录，不让轮次启动因网络抖动回滚）
+    if let Err(e) = dispatch_judge_for_round(db, &awd_event, round.id, event_id).await {
+        warn!("[Round] judge dispatch failed for round {} event {}: {}", round.id, event_id, e);
+    }
 
     Ok(RoundStarted {
         round_id: round.id,

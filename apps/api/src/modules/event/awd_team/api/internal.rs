@@ -3,8 +3,8 @@
 //! All endpoints require AwdInternalAuth (Bearer token validated against
 //! encrypted tokens stored in awd_events).
 
-use actix_web::{HttpResponse, web};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use actix_web::web;
+
 use uuid::Uuid;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
         AwdError,
         api::auth::{AwdInternalAuth, AwdInternalPrincipal},
         domain::{AwdPhaseExt, JudgeTaskStatusExt},
-        repo::{event_repo, judge_repo, round_repo, score_repo},
+        repo::{event_repo, judge_repo, score_repo},
         service::flag_service,
     },
 };
@@ -175,13 +175,17 @@ pub async fn judge_callback(
 
     // If up/down, record score (跳过冻结事件)
     if (is_up || is_down) && !frozen {
-        // Get the template for scoring values
-        use crate::entity::awd_gamebox_templates;
-        let template = awd_gamebox_templates::Entity::find_by_id(task.template_id)
-            .one(ctx.db.get_ref())
+        // 计分作用域 = EventGameBox（§23/§28）：从 pin Revision 解析 fix/down 分值
+        let eg_id = task
+            .event_gamebox_id
+            .ok_or_else(|| AppError::Internal("judge task lacks event_gamebox_id".into()))?;
+        let resolved =
+            crate::modules::event::awd_team::service::gamebox_service::resolve_event_gamebox_spec(
+                ctx.db.get_ref(),
+                eg_id,
+            )
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .ok_or_else(|| AppError::NotFound("Template not found".into()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let score_type = if is_up {
             ScoreEventType::JudgeFix
@@ -190,9 +194,9 @@ pub async fn judge_callback(
         };
 
         let delta = if is_up {
-            template.fix_points
+            resolved.event_gamebox.fix_points
         } else {
-            -template.down_points
+            -resolved.event_gamebox.down_points
         };
 
         let idempotency_key = cb.callback_id.clone();
@@ -211,7 +215,7 @@ pub async fn judge_callback(
             &idempotency_key,
             None,
             Some(task.gamebox_instance_id),
-            Some(task.template_id),
+            Some(eg_id),
             Some("judge check"),
         )
         .await

@@ -17,7 +17,6 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub content: Option<String>,
     pub challenge_id: Option<Uuid>,
-    pub gamebox_id: Option<Uuid>,
     pub user_id: Uuid,
     #[sea_orm(column_type = "Text")]
     pub identifier: String,
@@ -39,14 +38,6 @@ pub enum Relation {
     #[sea_orm(has_many = "super::event_instances::Entity")]
     EventInstances,
     #[sea_orm(
-        belongs_to = "super::gameboxes::Entity",
-        from = "Column::GameboxId",
-        to = "super::gameboxes::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Gameboxes,
-    #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::UserId",
         to = "super::users::Column::Id",
@@ -65,12 +56,6 @@ impl Related<super::challenges::Entity> for Entity {
 impl Related<super::event_instances::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventInstances.def()
-    }
-}
-
-impl Related<super::gameboxes::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Gameboxes.def()
     }
 }
 

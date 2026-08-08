@@ -165,19 +165,16 @@ pub async fn run_precheck(
         ));
     }
 
-    // ── Check 3: GameBox instances exist for all templates × teams ──
-    use crate::entity::awd_gamebox_templates;
-    let templates = awd_gamebox_templates::Entity::find()
-        .filter(awd_gamebox_templates::Column::EventId.eq(event_id))
-        .all(db)
+    // ── Check 3: GameBox instances exist for all EventGameBoxes × teams ──
+    let event_gameboxes =
+        crate::modules::event::awd_team::repo::event_gamebox_repo::find_event_gameboxes_by_event(
+            db, event_id,
+        )
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    if templates.is_empty() {
-        errors.push((
-            "templates".to_string(),
-            "No GameBox templates configured".into(),
-        ));
+    if event_gameboxes.is_empty() {
+        errors.push(("gameboxes".to_string(), "No EventGameBox configured".into()));
     }
 
     // ── Check 4: Docker network ID set ──
@@ -431,10 +428,10 @@ async fn check_containers(
             .push(("gamebox".to_string(), "no GameBox instances".to_string()));
     }
     for inst in instances {
-        let Some(container_id) = inst.container_id.as_deref() else {
+        let Some(container_id) = inst.current_container_id.as_deref() else {
             report.errors.push((
                 "gamebox".to_string(),
-                format!("{}: no container_id in DB", inst.container_name),
+                format!("{}: no current_container_id in DB", inst.container_name),
             ));
             continue;
         };

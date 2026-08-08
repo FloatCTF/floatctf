@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_gamebox_instances, awd_wireguard_peers,
+    awd_gamebox_instances, awd_wireguard_peers,
     sea_orm_active_enums::{AwdEventStatus, WgPeerStatus},
 };
 use crate::modules::event::awd_team::{
@@ -52,7 +52,7 @@ pub async fn archive_event(
 
     for instance in &instances {
         let target = instance
-            .container_id
+            .current_container_id
             .as_deref()
             .unwrap_or(instance.container_name.as_str());
         if let Err(e) = containers.stop_container(target).await {

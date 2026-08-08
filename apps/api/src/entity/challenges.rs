@@ -27,8 +27,6 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::awd_gamebox_templates::Entity")]
-    AwdGameboxTemplates,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
     #[sea_orm(has_many = "super::challenge_solves::Entity")]
@@ -41,12 +39,6 @@ pub enum Relation {
     EventChallenges,
     #[sea_orm(has_many = "super::instances::Entity")]
     Instances,
-}
-
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
-    }
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {

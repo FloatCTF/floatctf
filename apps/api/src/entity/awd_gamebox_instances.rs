@@ -10,36 +10,37 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub event_id: Uuid,
-    pub template_id: Uuid,
     pub team_id: Uuid,
     pub status: GameboxStatus,
-    pub container_id: Option<String>,
     #[sea_orm(unique)]
     pub container_name: String,
+    #[sea_orm(column_type = "custom(\"inet\")")]
     pub gamebox_ip: String,
-    pub docker_network_id: Option<String>,
     pub health_status: String,
     pub reset_protection_until: Option<DateTimeWithTimeZone>,
     pub last_health_check_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub deleted_at: Option<DateTimeWithTimeZone>,
+    pub event_gamebox_id: Uuid,
+    pub runtime_generation: i64,
+    pub current_container_id: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::awd_event_gameboxes::Entity",
+        from = "Column::EventGameboxId",
+        to = "super::awd_event_gameboxes::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Restrict"
+    )]
+    AwdEventGameboxes,
     #[sea_orm(has_many = "super::awd_flag_issues::Entity")]
     AwdFlagIssues,
     #[sea_orm(has_many = "super::awd_flag_submissions::Entity")]
     AwdFlagSubmissions,
-    #[sea_orm(
-        belongs_to = "super::awd_gamebox_templates::Entity",
-        from = "Column::TemplateId",
-        to = "super::awd_gamebox_templates::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    AwdGameboxTemplates,
     #[sea_orm(has_many = "super::awd_judge_tasks::Entity")]
     AwdJudgeTasks,
     #[sea_orm(has_many = "super::awd_reset_records::Entity")]
@@ -64,6 +65,12 @@ pub enum Relation {
     Events,
 }
 
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEventGameboxes.def()
+    }
+}
+
 impl Related<super::awd_flag_issues::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdFlagIssues.def()
@@ -73,12 +80,6 @@ impl Related<super::awd_flag_issues::Entity> for Entity {
 impl Related<super::awd_flag_submissions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdFlagSubmissions.def()
-    }
-}
-
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
     }
 }
 

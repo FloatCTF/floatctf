@@ -17,7 +17,6 @@ pub struct Model {
     #[sea_orm(column_type = "VarBinary(StringLen::None)")]
     pub ssh_password_nonce: Vec<u8>,
     pub key_version: i32,
-    pub next_gamebox_host: i32,
     pub next_wireguard_host: i32,
     pub status: String,
     pub created_at: DateTimeWithTimeZone,

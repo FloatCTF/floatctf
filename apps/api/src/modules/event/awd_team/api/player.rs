@@ -8,7 +8,7 @@ use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     modules::event::awd_team::{
         repo::{gamebox_repo, round_repo},
-        service::{flag_service, gamebox_service, score_service, submission_service},
+        service::{flag_service, score_service, submission_service},
     },
     modules::event::common::infrastructure::event_repository as repo,
 };
@@ -43,7 +43,7 @@ pub async fn get_my_gameboxes(
         .map(|i| GameBoxResponse {
             id: i.id,
             team_id: i.team_id,
-            template_id: i.template_id,
+            event_gamebox_id: i.event_gamebox_id,
             status: format!("{:?}", i.status).to_lowercase(),
             gamebox_ip: i.gamebox_ip,
             container_name: i.container_name,
@@ -148,19 +148,18 @@ pub async fn submit_flag(
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or_else(|| AppError::NotFound("No active round".into()))?;
 
-    // Get template from instance for scoring config
+    // 从 Instance → EventGameBox 解析计分配置（§28：攻击分属于 EventGameBox）
     let instance = gamebox_repo::find_instance_by_id(ctx.db.get_ref(), gamebox_instance_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
         .unwrap();
-
-    // Get template for scoring values
-    use crate::entity::awd_gamebox_templates;
-    let template = awd_gamebox_templates::Entity::find_by_id(instance.template_id)
-        .one(ctx.db.get_ref())
+    let resolved =
+        crate::modules::event::awd_team::service::gamebox_service::resolve_event_gamebox_spec(
+            ctx.db.get_ref(),
+            instance.event_gamebox_id,
+        )
         .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("Template not found".into()))?;
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Process the submission
     let result = submission_service::process_submission(
@@ -172,10 +171,10 @@ pub async fn submit_flag(
         victim_team_id,
         gamebox_instance_id,
         user.id,
-        template.break_points,
-        template.loss_points,
-        template.first_bonus,
-        template.id,
+        resolved.event_gamebox.break_points,
+        resolved.event_gamebox.loss_points,
+        resolved.event_gamebox.first_bonus,
+        resolved.event_gamebox.id,
         awd.publisher.as_ref(),
     )
     .await

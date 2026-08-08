@@ -1,8 +1,6 @@
 //! Startup recovery — reconcile platform state with Docker after restart.
 
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, QueryFilter};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -94,11 +92,11 @@ async fn recover_event(
     for instance in &instances {
         match live_by_name.get(&instance.container_name) {
             Some(state) if state.running => {
-                if instance.container_id.as_deref() != Some(state.container_id.as_str()) {
+                if instance.current_container_id.as_deref() != Some(state.container_id.as_str()) {
                     let mut active: awd_gamebox_instances::ActiveModel =
                         awd_gamebox_instances::ActiveModel {
                             id: Set(instance.id),
-                            container_id: Set(Some(state.container_id.clone())),
+                            current_container_id: Set(Some(state.container_id.clone())),
                             status: Set(GameboxStatus::Ready),
                             ..Default::default()
                         };

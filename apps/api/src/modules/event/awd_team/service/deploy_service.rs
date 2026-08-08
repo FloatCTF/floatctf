@@ -12,22 +12,21 @@ use uuid::Uuid;
 
 use crate::core::config::AwdStaticConfig;
 use crate::entity::{
-    awd_events, awd_gamebox_instances, awd_gamebox_templates, awd_runtime_resources,
-    awd_team_networks, event_teams,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus},
+    awd_events, awd_gamebox_instances, awd_runtime_resources, awd_team_networks, event_teams,
+    sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     crypto::{AwdCrypto, EncryptedBlob},
-    domain::{AwdEventStatusExt, Ipv4Cidr},
+    domain::{AwdEventStatusExt, Ipv4Cidr, instance_ip_for_offset},
     infrastructure::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
-    repo::event_repo,
-    service::firewall_service,
+    repo::{event_gamebox_repo, event_repo, gamebox_repo},
+    service::{firewall_service, gamebox_service},
 };
-use fcmc::{AwdContainerRuntime, EventNetworkSpec, GameBoxSpec, InfrastructureContainerSpec};
+use fcmc::{AwdContainerRuntime, EventNetworkSpec, InfrastructureContainerSpec};
 
 /// Orchestrate full deployment of an AWD event.
 ///
@@ -371,12 +370,6 @@ async fn ensure_teams_and_gameboxes(
         .subnets(24)
         .ok_or_else(|| AwdError::Validation("wireguard_cidr must be broader than /24".into()))?;
 
-    let templates = awd_gamebox_templates::Entity::find()
-        .filter(awd_gamebox_templates::Column::EventId.eq(event_id))
-        .all(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
     // ── P1-14：队伍子网分配 + awd_team_networks 插入事务化 ──
     // 单个 DB 事务内完成「查询已有行 → 无则分配 /24 并插入」，commit 后统一生效；
     // 任一步失败整体 rollback，不留半截分配状态。已有 awd_team_networks 行的队伍
@@ -423,7 +416,6 @@ async fn ensure_teams_and_gameboxes(
                     ssh_password_ciphertext: Set(blob.ciphertext),
                     ssh_password_nonce: Set(blob.nonce),
                     key_version: Set(awd_event.key_version),
-                    next_gamebox_host: Set(2),
                     next_wireguard_host: Set(2),
                     ..Default::default()
                 }
@@ -441,35 +433,36 @@ async fn ensure_teams_and_gameboxes(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // ── GameBox 实例行 + 容器创建（事务外：Docker 调用不占用事务连接）──
+    // 确定性 IP：instance_ip = team.gamebox_subnet + event_gamebox.host_offset（§13/§66），
+    // 与模板枚举顺序无关；新增队伍/新增 GameBox 不影响已分配 IP。
+    let event_gameboxes = event_gamebox_repo::find_event_gameboxes_by_event(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
     for (team, team_network) in team_networks {
-        // Decrypt SSH password for container create
-        let password = {
-            let blob = EncryptedBlob {
-                ciphertext: team_network.ssh_password_ciphertext.clone(),
-                nonce: team_network.ssh_password_nonce.clone(),
-                key_version: team_network.key_version,
-            };
-            let aad = AwdCrypto::build_aad(event_id, "ssh_password");
-            let bytes = crypto
-                .decrypt(&blob, &aad)
-                .map_err(|e| AwdError::Crypto(e.to_string()))?;
-            String::from_utf8(bytes).map_err(|e| AwdError::Crypto(e.to_string()))?
-        };
+        // Decrypt SSH password（team-level 凭据，§22.1）
+        let password =
+            gamebox_service::decrypt_team_ssh_password(crypto, event_id, &team_network).await?;
 
-        let team_net_parsed = Ipv4Cidr::parse(&team_network.gamebox_subnet)
-            .map_err(|e| AwdError::Validation(e.to_string()))?;
+        for eg in &event_gameboxes {
+            // 单一 resolver：Revision 默认值 + Event 覆盖（§49/§50）
+            let resolved = gamebox_service::resolve_event_gamebox_spec(db, eg.id).await?;
 
-        for (ti, template) in templates.iter().enumerate() {
-            let existing = awd_gamebox_instances::Entity::find()
-                .filter(awd_gamebox_instances::Column::EventId.eq(event_id))
-                .filter(awd_gamebox_instances::Column::TemplateId.eq(template.id))
-                .filter(awd_gamebox_instances::Column::TeamId.eq(team.id))
-                .one(db)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
+            let gamebox_ip = instance_ip_for_offset(&team_network.gamebox_subnet, eg.host_offset)
+                .ok_or_else(|| {
+                AwdError::Network(format!(
+                    "no host IP for subnet {} offset {}",
+                    team_network.gamebox_subnet, eg.host_offset
+                ))
+            })?;
 
-            let (instance_id, container_name, gamebox_ip) = if let Some(inst) = existing {
-                if inst.container_id.is_some()
+            let existing =
+                gamebox_repo::find_instance_by_event_gamebox_team(db, event_id, eg.id, team.id)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+
+            let (instance_id, container_name) = if let Some(inst) = existing {
+                if inst.current_container_id.is_some()
                     && matches!(
                         inst.status,
                         GameboxStatus::Ready | GameboxStatus::Running | GameboxStatus::Creating
@@ -477,75 +470,60 @@ async fn ensure_teams_and_gameboxes(
                 {
                     continue;
                 }
-                (inst.id, inst.container_name, inst.gamebox_ip)
+                (inst.id, inst.container_name)
             } else {
-                let host_n = (ti as u32) + 1; // 1st usable host index in nth_host (0=first usable)
-                let ip = team_net_parsed
-                    .nth_host(host_n)
-                    .ok_or_else(|| AwdError::Network("no host IP in team subnet".into()))?
-                    .to_string();
                 let container_name = format!(
                     "fctf-{}-t{}-team{}",
                     &event_id.to_string()[..8],
-                    &template.id.to_string()[..4],
+                    &eg.id.to_string()[..4],
                     &team.id.to_string()[..4]
                 );
                 let id = Uuid::new_v4();
                 awd_gamebox_instances::ActiveModel {
                     id: Set(id),
                     event_id: Set(event_id),
-                    template_id: Set(template.id),
+                    event_gamebox_id: Set(eg.id),
                     team_id: Set(team.id),
                     status: Set(GameboxStatus::Pending),
                     container_name: Set(container_name.clone()),
-                    gamebox_ip: Set(ip.clone()),
-                    docker_network_id: Set(Some(docker_network_id.to_string())),
+                    gamebox_ip: Set(gamebox_ip.clone()),
+                    runtime_generation: Set(1),
                     health_status: Set("unknown".to_string()),
                     ..Default::default()
                 }
                 .insert(db)
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?;
-                (id, container_name, ip)
+                (id, container_name)
             };
 
-            // Mark creating then create container
+            // Mark creating then create container（runtime_generation=1 首次部署）
             gamebox_set_status(db, instance_id, GameboxStatus::Creating).await?;
 
+            let spec = gamebox_service::build_gamebox_runtime_spec(
+                &resolved,
+                awd_event,
+                instance_id,
+                eg.id,
+                team.id,
+                &container_name,
+                &gamebox_ip,
+                docker_network_name,
+                password.clone(),
+                1,
+            )?;
+
             let handle = containers
-                .create_gamebox(GameBoxSpec {
-                    event_id,
-                    team_id: team.id,
-                    template_id: template.id,
-                    instance_id,
-                    container_name: container_name.clone(),
-                    image_ref: template.image_ref.clone(),
-                    network_name: docker_network_name.to_string(),
-                    fixed_ip: gamebox_ip,
-                    username: template.username.clone(),
-                    password: password.clone(),
-                    cpu_millis: template.cpu_millis,
-                    memory_bytes: template.memory_bytes,
-                    pids_limit: template.pids_limit,
-                    healthcheck: None,
-                    extra_hosts: vec![
-                        format!("flagserver:{}", awd_event.flagserver_ip),
-                        format!("judgeserver:{}", awd_event.judgeserver_ip),
-                    ],
-                    labels: std::collections::HashMap::new(),
-                })
+                .create_gamebox(spec)
                 .await
-                .map_err(|e| {
-                    // Best-effort status
-                    AwdError::Docker(e.to_string())
-                });
+                .map_err(|e| AwdError::Docker(e.to_string()));
 
             match handle {
                 Ok(h) => {
                     let mut active: awd_gamebox_instances::ActiveModel =
                         awd_gamebox_instances::ActiveModel {
                             id: Set(instance_id),
-                            container_id: Set(Some(h.container_id)),
+                            current_container_id: Set(Some(h.container_id)),
                             status: Set(GameboxStatus::Ready),
                             health_status: Set("unknown".to_string()),
                             ..Default::default()
@@ -811,7 +789,7 @@ mod tests {
             id: Uuid::from_u128(id),
             event_id: Uuid::from_u128(id + 1),
             status: AwdEventStatus::Draft,
-            phase: AwdPhase::Hardening,
+            phase: crate::entity::sea_orm_active_enums::AwdPhase::Hardening,
             gamebox_cidr: gamebox_cidr.to_string(),
             wireguard_cidr: wireguard_cidr.to_string(),
             wireguard_interface_name: format!("wg-{id}"),
@@ -868,7 +846,6 @@ mod tests {
             ssh_password_ciphertext: vec![],
             ssh_password_nonce: vec![],
             key_version: 1,
-            next_gamebox_host: 2,
             next_wireguard_host: 2,
             status: "allocated".to_string(),
             created_at: now.clone(),

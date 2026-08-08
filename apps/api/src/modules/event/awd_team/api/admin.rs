@@ -2,7 +2,7 @@
 //!
 //! All endpoints require SuperAdmin authentication.
 
-use actix_web::{HttpResponse, web};
+use actix_web::web;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait,

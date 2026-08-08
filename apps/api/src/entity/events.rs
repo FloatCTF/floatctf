@@ -28,6 +28,8 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
+    AwdEventGameboxes,
     #[sea_orm(has_one = "super::awd_events::Entity")]
     AwdEvents,
     #[sea_orm(has_many = "super::awd_flag_issues::Entity")]
@@ -36,8 +38,6 @@ pub enum Relation {
     AwdFlagSubmissions,
     #[sea_orm(has_many = "super::awd_gamebox_instances::Entity")]
     AwdGameboxInstances,
-    #[sea_orm(has_many = "super::awd_gamebox_templates::Entity")]
-    AwdGameboxTemplates,
     #[sea_orm(has_many = "super::awd_internal_token_rotations::Entity")]
     AwdInternalTokenRotations,
     #[sea_orm(has_many = "super::awd_judge_batches::Entity")]
@@ -70,8 +70,6 @@ pub enum Relation {
     EventChallengeSolves,
     #[sea_orm(has_many = "super::event_challenges::Entity")]
     EventChallenges,
-    #[sea_orm(has_many = "super::event_gameboxes::Entity")]
-    EventGameboxes,
     #[sea_orm(has_many = "super::event_instances::Entity")]
     EventInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
@@ -84,6 +82,12 @@ pub enum Relation {
     EventUsers,
     #[sea_orm(has_many = "super::event_writeup::Entity")]
     EventWriteup,
+}
+
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEventGameboxes.def()
+    }
 }
 
 impl Related<super::awd_events::Entity> for Entity {
@@ -107,12 +111,6 @@ impl Related<super::awd_flag_submissions::Entity> for Entity {
 impl Related<super::awd_gamebox_instances::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdGameboxInstances.def()
-    }
-}
-
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
     }
 }
 
@@ -212,12 +210,6 @@ impl Related<super::event_challenges::Entity> for Entity {
     }
 }
 
-impl Related<super::event_gameboxes::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::EventGameboxes.def()
-    }
-}
-
 impl Related<super::event_instances::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventInstances.def()
@@ -260,15 +252,6 @@ impl Related<super::challenges::Entity> for Entity {
     }
     fn via() -> Option<RelationDef> {
         Some(super::event_challenges::Relation::Events.def().rev())
-    }
-}
-
-impl Related<super::gameboxes::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::event_gameboxes::Relation::Gameboxes.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_gameboxes::Relation::Events.def().rev())
     }
 }
 

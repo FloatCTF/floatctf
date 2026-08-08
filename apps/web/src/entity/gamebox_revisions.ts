@@ -1,0 +1,22 @@
+export type GameboxRevisions = {
+  id: string;
+  gamebox_id: string;
+  revision_number: number;
+  source_toml: string;
+  spec_schema_version: number;
+  spec_json: string;
+  spec_digest: string;
+  image_ref: string;
+  image_digest?: string;
+  username: string;
+  default_cpu_millis: number;
+  default_memory_bytes: number;
+  default_pids_limit: number;
+  healthcheck_json?: string;
+  judge_script_name?: string;
+  judge_script_content?: string;
+  judge_args_json?: string;
+  default_judge_timeout_secs?: string;
+  default_judge_retry_interval_secs?: string;
+  created_at: string;
+};

@@ -4,27 +4,21 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "awd_gamebox_templates")]
+#[sea_orm(table_name = "awd_event_gameboxes")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub event_id: Uuid,
-    pub challenge_id: Option<Uuid>,
-    pub name: String,
-    pub image_ref: String,
-    pub username: String,
-    #[sea_orm(column_type = "JsonBinary")]
-    pub meta_json: Json,
+    pub gamebox_id: Uuid,
+    pub gamebox_revision_id: Uuid,
+    pub host_offset: i16,
+    pub enabled: bool,
+    pub hidden: bool,
     pub cpu_millis: i64,
     pub memory_bytes: i64,
     pub pids_limit: i64,
     #[sea_orm(column_type = "JsonBinary", nullable)]
     pub healthcheck_override_json: Option<Json>,
-    pub judge_script_name: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub judge_script_content: Option<String>,
-    #[sea_orm(column_type = "JsonBinary", nullable)]
-    pub judge_args_json: Option<Json>,
     pub judge_timeout_secs: Option<i32>,
     pub judge_retry_interval_secs: Option<i32>,
     pub break_points: i64,
@@ -45,14 +39,6 @@ pub enum Relation {
     #[sea_orm(has_many = "super::awd_score_events::Entity")]
     AwdScoreEvents,
     #[sea_orm(
-        belongs_to = "super::challenges::Entity",
-        from = "Column::ChallengeId",
-        to = "super::challenges::Column::Id",
-        on_update = "NoAction",
-        on_delete = "SetNull"
-    )]
-    Challenges,
-    #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
         to = "super::events::Column::Id",
@@ -60,6 +46,22 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
+    #[sea_orm(
+        belongs_to = "super::gamebox_revisions::Entity",
+        from = "(Column::GameboxRevisionId, Column::GameboxId)",
+        to = "(super::gamebox_revisions::Column::Id, super::gamebox_revisions::Column::GameboxId)",
+        on_update = "NoAction",
+        on_delete = "Restrict"
+    )]
+    GameboxRevisions,
+    #[sea_orm(
+        belongs_to = "super::gameboxes::Entity",
+        from = "Column::GameboxId",
+        to = "super::gameboxes::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Restrict"
+    )]
+    Gameboxes,
 }
 
 impl Related<super::awd_gamebox_instances::Entity> for Entity {
@@ -80,15 +82,21 @@ impl Related<super::awd_score_events::Entity> for Entity {
     }
 }
 
-impl Related<super::challenges::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Challenges.def()
-    }
-}
-
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Events.def()
+    }
+}
+
+impl Related<super::gamebox_revisions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::GameboxRevisions.def()
+    }
+}
+
+impl Related<super::gameboxes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Gameboxes.def()
     }
 }
 

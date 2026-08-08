@@ -12,21 +12,20 @@
 //! Failed resets: mark as reset_failed, leave container state for admin inspection.
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
 };
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_gamebox_instances, awd_gamebox_templates, awd_reset_records, awd_team_networks,
+    awd_gamebox_instances, awd_reset_records, awd_team_networks,
     sea_orm_active_enums::{GameboxStatus, ScoreEventType},
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     domain::{AwdEventStatusExt, GameboxStatusExt},
     repo::{ban_repo, event_repo, gamebox_repo, score_repo},
-    service::score_service,
+    service::{gamebox_service, score_service},
 };
 
 /// 重置发起方（P4-1 显式化，废弃 admin 传 `Uuid::nil()` hack）。
@@ -159,68 +158,51 @@ pub async fn execute_reset(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 9. Docker reset: stop/remove + recreate with same IP / name
-    let template = awd_gamebox_templates::Entity::find_by_id(instance.template_id)
-        .one(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox template not found".into()))?;
+    // 9. Docker reset: stop/remove + recreate with same IP / credential / pinned revision
+    //
+    // §24/§25/§68：Reset 必须使用 Instance → EventGameBox → **pinned** revision，
+    // 即使全局 GameBox 已发布 Revision N+1，本赛事仍按 pin 的 Revision 重建。
+    let resolved =
+        gamebox_service::resolve_event_gamebox_spec(db, instance.event_gamebox_id).await?;
 
     let network_name = awd_event
         .docker_network_name
         .clone()
         .unwrap_or_else(|| format!("fctf-awd-{}", &ctx.event_id.to_string()[..8]));
 
-    let password = {
-        use crate::modules::event::awd_team::crypto::{AwdCrypto, EncryptedBlob};
-        let team_net = awd_team_networks::Entity::find()
-            .filter(awd_team_networks::Column::EventId.eq(ctx.event_id))
-            .filter(awd_team_networks::Column::TeamId.eq(instance.team_id))
-            .one(db)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?
-            .ok_or_else(|| AwdError::NotFound("team network not found".into()))?;
-        let crypto =
-            AwdCrypto::from_config_secret().map_err(|e| AwdError::Crypto(e.to_string()))?;
-        let blob = EncryptedBlob {
-            ciphertext: team_net.ssh_password_ciphertext,
-            nonce: team_net.ssh_password_nonce,
-            key_version: team_net.key_version,
-        };
-        let aad = AwdCrypto::build_aad(ctx.event_id, "ssh_password");
-        let bytes = crypto
-            .decrypt(&blob, &aad)
-            .map_err(|e| AwdError::Crypto(e.to_string()))?;
-        String::from_utf8(bytes).map_err(|e| AwdError::Crypto(e.to_string()))?
-    };
+    let crypto = crate::modules::event::awd_team::crypto::AwdCrypto::from_config_secret()
+        .map_err(|e| AwdError::Crypto(e.to_string()))?;
+    let team_net = awd_team_networks::Entity::find()
+        .filter(awd_team_networks::Column::EventId.eq(ctx.event_id))
+        .filter(awd_team_networks::Column::TeamId.eq(instance.team_id))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("team network not found".into()))?;
+    let password =
+        gamebox_service::decrypt_team_ssh_password(&crypto, ctx.event_id, &team_net).await?;
 
-    let recreate_spec = fcmc::GameBoxSpec {
-        event_id: ctx.event_id,
-        team_id: instance.team_id,
-        template_id: instance.template_id,
-        instance_id: instance.id,
-        container_name: instance.container_name.clone(),
-        image_ref: template.image_ref.clone(),
-        network_name,
-        fixed_ip: instance.gamebox_ip.clone(),
-        username: template.username.clone(),
+    // logical identity 不变（id / event_gamebox_id / team_id / IP / credential），
+    // runtime_generation + 1（§20/§24）
+    let next_generation = instance.runtime_generation + 1;
+    let recreate_spec = gamebox_service::build_gamebox_runtime_spec(
+        &resolved,
+        &awd_event,
+        instance.id,
+        instance.event_gamebox_id,
+        instance.team_id,
+        &instance.container_name,
+        &instance.gamebox_ip,
+        &network_name,
         password,
-        cpu_millis: template.cpu_millis,
-        memory_bytes: template.memory_bytes,
-        pids_limit: template.pids_limit,
-        healthcheck: None,
-        extra_hosts: vec![
-            format!("flagserver:{}", awd_event.flagserver_ip),
-            format!("judgeserver:{}", awd_event.judgeserver_ip),
-        ],
-        labels: std::collections::HashMap::new(),
-    };
+        next_generation,
+    )?;
 
     match containers
         .reset_gamebox(fcmc::GameBoxResetSpec {
             event_id: ctx.event_id,
             team_id: instance.team_id,
-            template_id: instance.template_id,
+            event_gamebox_id: instance.event_gamebox_id,
             instance_id: instance.id,
             container_name: instance.container_name.clone(),
             recreate_spec,
@@ -230,7 +212,8 @@ pub async fn execute_reset(
         Ok(handle) => {
             let mut inst: awd_gamebox_instances::ActiveModel = awd_gamebox_instances::ActiveModel {
                 id: Set(ctx.instance_id),
-                container_id: Set(Some(handle.container_id)),
+                current_container_id: Set(Some(handle.container_id)),
+                runtime_generation: Set(next_generation),
                 status: Set(GameboxStatus::Ready),
                 ..Default::default()
             };

@@ -18,7 +18,7 @@ pub async fn create_score_event(
     idempotency_key: &str,
     related_team_id: Option<Uuid>,
     gamebox_instance_id: Option<Uuid>,
-    gamebox_template_id: Option<Uuid>,
+    event_gamebox_id: Option<Uuid>,
     reason: Option<&str>,
 ) -> Result<awd_score_events::Model, sea_orm::DbErr> {
     let model = awd_score_events::ActiveModel {
@@ -31,7 +31,7 @@ pub async fn create_score_event(
         idempotency_key: Set(idempotency_key.to_string()),
         related_team_id: Set(related_team_id),
         gamebox_instance_id: Set(gamebox_instance_id),
-        gamebox_template_id: Set(gamebox_template_id),
+        event_gamebox_id: Set(event_gamebox_id),
         reason: Set(reason.map(|s| s.to_string())),
         ..Default::default()
     };
@@ -57,7 +57,7 @@ pub async fn create_score_event_if_absent(
     idempotency_key: &str,
     related_team_id: Option<Uuid>,
     gamebox_instance_id: Option<Uuid>,
-    gamebox_template_id: Option<Uuid>,
+    event_gamebox_id: Option<Uuid>,
     reason: Option<&str>,
 ) -> Result<bool, sea_orm::DbErr> {
     let model = awd_score_events::ActiveModel {
@@ -70,7 +70,7 @@ pub async fn create_score_event_if_absent(
         idempotency_key: Set(idempotency_key.to_string()),
         related_team_id: Set(related_team_id),
         gamebox_instance_id: Set(gamebox_instance_id),
-        gamebox_template_id: Set(gamebox_template_id),
+        event_gamebox_id: Set(event_gamebox_id),
         reason: Set(reason.map(|s| s.to_string())),
         ..Default::default()
     };

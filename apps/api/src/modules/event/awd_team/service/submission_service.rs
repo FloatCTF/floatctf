@@ -3,8 +3,7 @@
 //! All operations run in a single database transaction to ensure atomicity.
 //! If any step fails, the entire submission is rolled back.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
-use tracing::info;
+use sea_orm::{DatabaseConnection, TransactionTrait};
 use uuid::Uuid;
 
 use crate::modules::event::awd_team::{
@@ -42,7 +41,7 @@ pub async fn process_submission(
     break_points: i64,
     loss_points: i64,
     first_bonus: i64,
-    template_id: Uuid,
+    event_gamebox_id: Uuid,
     publisher: &dyn crate::infrastructure::realtime::EventPublisher,
 ) -> AwdResult<SubmissionResult> {
     let result = db
@@ -147,8 +146,10 @@ pub async fn process_submission(
                 // 事务置为 aborted（PostgreSQL 语义），随后 COMMIT 静默变 ROLLBACK——
                 // 败者的攻击分 + 受害者损失会被一起丢掉。DO NOTHING 则把「bonus 已被
                 // 别人抢先」当作正常结果，不影响同一事务里已成功的 attack/loss 写入。
-                let bonus_key =
-                    IdempotencyKey::first_bonus(&event_id.to_string(), &template_id.to_string());
+                let bonus_key = IdempotencyKey::first_bonus(
+                    &event_id.to_string(),
+                    &event_gamebox_id.to_string(),
+                );
 
                 let was_first_blood = score_repo::create_score_event_if_absent(
                     tx,
@@ -160,7 +161,7 @@ pub async fn process_submission(
                     &bonus_key,
                     None,
                     None,
-                    Some(template_id),
+                    Some(event_gamebox_id),
                     Some("first blood"),
                 )
                 .await

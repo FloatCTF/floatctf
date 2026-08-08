@@ -15,7 +15,6 @@ pub struct InstancesDto {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub destroy_at: DateTimeWithTimeZone,
-    pub gamebox_id: Option<Uuid>,
 }
 
 impl From<instances::Model> for InstancesDto {
@@ -32,7 +31,6 @@ impl From<instances::Model> for InstancesDto {
             created_at: m.created_at,
             updated_at: m.updated_at,
             destroy_at: m.destroy_at,
-            gamebox_id: m.gamebox_id,
         }
     }
 }

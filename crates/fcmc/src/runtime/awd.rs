@@ -44,8 +44,11 @@ pub struct InfrastructureContainerSpec {
 pub struct GameBoxSpec {
     pub event_id: Uuid,
     pub team_id: Uuid,
-    pub template_id: Uuid,
+    /// EventGameBox（逻辑靶机定义）；不再使用旧 template 概念。
+    pub event_gamebox_id: Uuid,
     pub instance_id: Uuid,
+    /// 当前 runtime generation（首次=1，Reset 后 +1；仅标签/审计，不参与逻辑身份）。
+    pub runtime_generation: i64,
     pub container_name: String,
     pub image_ref: String,
     pub network_name: String,
@@ -64,7 +67,7 @@ pub struct GameBoxSpec {
 pub struct GameBoxResetSpec {
     pub event_id: Uuid,
     pub team_id: Uuid,
-    pub template_id: Uuid,
+    pub event_gamebox_id: Uuid,
     pub instance_id: Uuid,
     pub container_name: String,
     pub recreate_spec: GameBoxSpec,
@@ -111,7 +114,8 @@ pub fn awd_labels(
     event_id: Uuid,
     team_id: Uuid,
     instance_id: Uuid,
-    template_id: Uuid,
+    event_gamebox_id: Uuid,
+    runtime_generation: i64,
     resource_kind: &str,
 ) -> HashMap<String, String> {
     let mut labels = HashMap::new();
@@ -122,8 +126,12 @@ pub fn awd_labels(
         instance_id.to_string(),
     );
     labels.insert(
-        "awd.gamebox_template_id".to_string(),
-        template_id.to_string(),
+        "awd.event_gamebox_id".to_string(),
+        event_gamebox_id.to_string(),
+    );
+    labels.insert(
+        "awd.runtime_generation".to_string(),
+        runtime_generation.to_string(),
     );
     labels.insert("awd.resource_kind".to_string(), resource_kind.to_string());
     labels
@@ -199,6 +207,7 @@ impl AwdContainerRuntime for DockerRuntime {
             Uuid::nil(),
             Uuid::nil(),
             Uuid::nil(),
+            0,
             "infrastructure",
         );
 
@@ -245,7 +254,8 @@ impl AwdContainerRuntime for DockerRuntime {
             spec.event_id,
             spec.team_id,
             spec.instance_id,
-            spec.template_id,
+            spec.event_gamebox_id,
+            spec.runtime_generation,
             "gamebox",
         );
 

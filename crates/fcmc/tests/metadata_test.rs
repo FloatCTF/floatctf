@@ -317,6 +317,7 @@ fn awd_labels_content() {
         uuid::Uuid::nil(),
         uuid::Uuid::nil(),
         uuid::Uuid::nil(),
+        0,
         "gamebox",
     );
     assert_eq!(

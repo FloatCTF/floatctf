@@ -6,7 +6,6 @@ export type AwdJudgeTasks = {
   event_id: string;
   round_id: string;
   gamebox_instance_id: string;
-  template_id: string;
   team_id: string;
   status: JudgeTaskStatus;
   attempt_count: number;
@@ -20,4 +19,5 @@ export type AwdJudgeTasks = {
   duration_ms?: string;
   callback_idempotency_key?: string;
   created_at: string;
+  event_gamebox_id?: string;
 };

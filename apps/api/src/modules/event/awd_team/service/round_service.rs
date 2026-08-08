@@ -19,7 +19,7 @@
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder, TransactionTrait,
+    TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -34,7 +34,6 @@ use crate::entity::{
 use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
-    domain::AwdEventStatusExt,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
     repo::{event_repo, judge_repo, round_repo, score_repo},
     service::{firewall_service, judge_service},
@@ -583,25 +582,27 @@ pub async fn score_judge_timeouts(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 收集涉及到的 template 分值
-    use crate::entity::awd_gamebox_templates;
-    let mut template_points: std::collections::HashMap<Uuid, i64> =
-        std::collections::HashMap::new();
+    // 收集涉及到的 EventGameBox 分值（§23：计分作用域 = EventGameBox）
+    let mut eg_points: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
     for t in &timed_out {
-        if !template_points.contains_key(&t.template_id) {
-            if let Some(tpl) = awd_gamebox_templates::Entity::find_by_id(t.template_id)
-                .one(db)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?
-            {
-                template_points.insert(t.template_id, tpl.down_points);
+        if let Some(eg_id) = t.event_gamebox_id {
+            if !eg_points.contains_key(&eg_id) {
+                if let Ok(Some(eg)) =
+                    crate::modules::event::awd_team::repo::event_gamebox_repo::find_event_gamebox_by_id(db, eg_id).await
+                {
+                    eg_points.insert(eg_id, eg.down_points);
+                }
             }
         }
     }
 
     let mut scored = 0u64;
     for t in &timed_out {
-        let delta = -template_points.get(&t.template_id).copied().unwrap_or(0);
+        let eg_id = t.event_gamebox_id;
+        let delta = -eg_points
+            .get(&eg_id.unwrap_or_default())
+            .copied()
+            .unwrap_or(0);
         let key = format!("judge-timeout:{}", t.id);
         match score_repo::create_score_event(
             db,
@@ -613,7 +614,7 @@ pub async fn score_judge_timeouts(
             &key,
             None,
             Some(t.gamebox_instance_id),
-            Some(t.template_id),
+            eg_id,
             Some("judge deadline timeout"),
         )
         .await

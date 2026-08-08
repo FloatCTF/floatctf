@@ -3,11 +3,11 @@
 pub mod prelude;
 
 pub mod announcements;
+pub mod awd_event_gameboxes;
 pub mod awd_events;
 pub mod awd_flag_issues;
 pub mod awd_flag_submissions;
 pub mod awd_gamebox_instances;
-pub mod awd_gamebox_templates;
 pub mod awd_internal_token_rotations;
 pub mod awd_judge_batches;
 pub mod awd_judge_tasks;
@@ -31,7 +31,6 @@ pub mod discussions;
 pub mod event_announcements;
 pub mod event_challenge_solves;
 pub mod event_challenges;
-pub mod event_gameboxes;
 pub mod event_instances;
 pub mod event_logs;
 pub mod event_team_members;
@@ -39,6 +38,7 @@ pub mod event_teams;
 pub mod event_users;
 pub mod event_writeup;
 pub mod events;
+pub mod gamebox_revisions;
 pub mod gameboxes;
 pub mod instances;
 pub mod logs;

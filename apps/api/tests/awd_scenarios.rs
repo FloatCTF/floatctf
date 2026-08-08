@@ -99,6 +99,19 @@ async fn cleanup_event(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
         .filter(awd_rounds::Column::EventId.eq(event_id))
         .exec(db)
         .await;
+    let _ = floatctf::entity::awd_gamebox_instances::Entity::delete_many()
+        .filter(floatctf::entity::awd_gamebox_instances::Column::EventId.eq(event_id))
+        .exec(db)
+        .await;
+    let _ = floatctf::entity::awd_event_gameboxes::Entity::delete_many()
+        .filter(floatctf::entity::awd_event_gameboxes::Column::EventId.eq(event_id))
+        .exec(db)
+        .await;
+    // 全局 gameboxes 清理（safe_name 前缀 gb-；级联删除 revisions）
+    let _ = floatctf::entity::gameboxes::Entity::delete_many()
+        .filter(floatctf::entity::gameboxes::Column::SafeName.like("gb-%"))
+        .exec(db)
+        .await;
     let _ = awd_events::Entity::delete_many()
         .filter(awd_events::Column::EventId.eq(event_id))
         .exec(db)
@@ -382,12 +395,13 @@ async fn seed_submission_fixture(
     Uuid, // attacker_team_id
     Uuid, // victim_team_id
     Uuid, // instance_id
-    Uuid, // template_id
+    Uuid, // event_gamebox_id
     Uuid, // user_id
     Uuid, // flag_issue_id
 ) {
     use floatctf::entity::{
-        awd_flag_issues, awd_gamebox_instances, awd_gamebox_templates, awd_rounds, event_teams,
+        awd_event_gameboxes, awd_flag_issues, awd_gamebox_instances, awd_rounds, event_teams,
+        gamebox_revisions, gameboxes,
         sea_orm_active_enums::{AwdPhase, GameboxStatus, RoundStatus},
         users,
     };
@@ -441,18 +455,68 @@ async fn seed_submission_fixture(
     .await
     .expect("insert victim team");
 
-    // Template
-    let template_id = Uuid::new_v4();
-    awd_gamebox_templates::ActiveModel {
-        id: Set(template_id),
-        event_id: Set(event_id),
-        name: Set(format!("tmpl-{tag}")),
+    // GameBox identity + Revision 1 + EventGameBox（新四层模型）
+    // safe_name 随机后缀，避免跨 run 残留冲突（gameboxes 是全局表，events 级联清不到）
+    let gamebox_id = Uuid::new_v4();
+    let gb_suffix = &gamebox_id.to_string().replace('-', "")[..8];
+    gameboxes::ActiveModel {
+        id: Set(gamebox_id),
+        name: Set(format!("gb-{tag}")),
+        safe_name: Set(format!("gb-{tag}-{gb_suffix}")),
+        category: Set("other".into()),
+        description: Set(String::new()),
+        hidden: Set(false),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert gamebox");
+
+    let revision_id = Uuid::new_v4();
+    gamebox_revisions::ActiveModel {
+        id: Set(revision_id),
+        gamebox_id: Set(gamebox_id),
+        revision_number: Set(1),
+        source_toml: Set(String::new()),
+        spec_schema_version: Set(1),
+        spec_json: Set(serde_json::json!({})),
+        spec_digest: Set(format!("digest-{tag}")),
         image_ref: Set("fctf/test:latest".into()),
+        image_digest: Set(None),
         username: Set("root".into()),
-        meta_json: Set(serde_json::json!({})),
+        default_cpu_millis: Set(1000),
+        default_memory_bytes: Set(512 * 1024 * 1024),
+        default_pids_limit: Set(256),
+        healthcheck_json: Set(None),
+        judge_script_name: Set(None),
+        judge_script_content: Set(None),
+        judge_args_json: Set(None),
+        default_judge_timeout_secs: Set(None),
+        default_judge_retry_interval_secs: Set(None),
+        created_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert revision");
+
+    let event_gamebox_id = Uuid::new_v4();
+    awd_event_gameboxes::ActiveModel {
+        id: Set(event_gamebox_id),
+        event_id: Set(event_id),
+        gamebox_id: Set(gamebox_id),
+        gamebox_revision_id: Set(revision_id),
+        host_offset: Set(10),
+        enabled: Set(true),
+        hidden: Set(false),
         cpu_millis: Set(1000),
         memory_bytes: Set(512 * 1024 * 1024),
         pids_limit: Set(256),
+        healthcheck_override_json: Set(None),
+        judge_timeout_secs: Set(None),
+        judge_retry_interval_secs: Set(None),
         break_points: Set(100),
         loss_points: Set(50),
         fix_points: Set(80),
@@ -464,18 +528,20 @@ async fn seed_submission_fixture(
     }
     .insert(db)
     .await
-    .expect("insert template");
+    .expect("insert event_gamebox");
 
-    // Instance
+    // Instance（logical identity；container 只是 runtime）
     let instance_id = Uuid::new_v4();
     awd_gamebox_instances::ActiveModel {
         id: Set(instance_id),
         event_id: Set(event_id),
-        template_id: Set(template_id),
+        event_gamebox_id: Set(event_gamebox_id),
         team_id: Set(victim_team_id),
         status: Set(GameboxStatus::Ready),
         container_name: Set(format!("fctf-gb-{}-{tag}", &event_id.to_string()[..8])),
         gamebox_ip: Set("10.42.1.10".into()),
+        runtime_generation: Set(1),
+        current_container_id: Set(Some(format!("cid-{tag}"))),
         health_status: Set("healthy".into()),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -523,7 +589,7 @@ async fn seed_submission_fixture(
         attacker_team_id,
         victim_team_id,
         instance_id,
-        template_id,
+        event_gamebox_id,
         user_id,
         flag_issue_id,
     )

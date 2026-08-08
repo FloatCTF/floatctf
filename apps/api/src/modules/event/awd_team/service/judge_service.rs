@@ -10,14 +10,14 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_gamebox_instances, awd_gamebox_templates, awd_judge_batches, awd_judge_tasks,
-    awd_team_bans,
+    awd_gamebox_instances, awd_judge_batches, awd_judge_tasks, awd_team_bans,
     sea_orm_active_enums::{BanStatus, GameboxStatus, JudgeTaskStatus},
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
     domain::JudgeTaskStatusExt,
-    repo::{event_repo, gamebox_repo, judge_repo},
+    repo::{event_gamebox_repo, event_repo, gamebox_repo, judge_repo},
+    service::gamebox_service,
 };
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -67,15 +67,15 @@ pub async fn create_batch(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    // Get all templates
-    let templates = awd_gamebox_templates::Entity::find()
-        .filter(awd_gamebox_templates::Column::EventId.eq(event_id))
-        .all(db)
+    // Get all EventGameBoxes（§27：Judge 目标是 EventGameBox，配置从 Revision 解析）
+    let event_gameboxes = event_gamebox_repo::find_event_gameboxes_by_event(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    if templates.is_empty() {
-        return Err(AwdError::Validation("No templates for event".into()));
+    if event_gameboxes.is_empty() {
+        return Err(AwdError::Validation(
+            "No gameboxes configured for event".into(),
+        ));
     }
 
     // Get all teams
@@ -102,7 +102,7 @@ pub async fn create_batch(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // Create batch
-    let task_count = templates.len() * teams.len();
+    let task_count = event_gameboxes.len() * teams.len();
     let batch = judge_repo::create_batch(db, event_id, round_id, task_count as i32)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -118,11 +118,11 @@ pub async fn create_batch(
             continue;
         }
 
-        for template in &templates {
-            // Find the instance for this team × template
+        for eg in &event_gameboxes {
+            // Find the instance for this team × EventGameBox
             let instance = instances
                 .iter()
-                .find(|i| i.team_id == team.id && i.template_id == template.id);
+                .find(|i| i.team_id == team.id && i.event_gamebox_id == eg.id);
 
             let (instance_id, status) = match instance {
                 Some(inst) => {
@@ -144,7 +144,7 @@ pub async fn create_batch(
                 event_id: Set(event_id),
                 round_id: Set(round_id),
                 gamebox_instance_id: Set(instance_id),
-                template_id: Set(template.id),
+                event_gamebox_id: Set(Some(eg.id)),
                 team_id: Set(team.id),
                 status: Set(status),
                 max_attempts: Set(2),
@@ -219,17 +219,18 @@ pub async fn dispatch_batch(
         return Ok(());
     }
 
-    let template_ids: HashSet<Uuid> = tasks.iter().map(|task| task.template_id).collect();
+    let event_gamebox_ids: HashSet<Uuid> =
+        tasks.iter().filter_map(|t| t.event_gamebox_id).collect();
     let instance_ids: HashSet<Uuid> = tasks.iter().map(|task| task.gamebox_instance_id).collect();
 
-    let templates = awd_gamebox_templates::Entity::find()
-        .filter(awd_gamebox_templates::Column::Id.is_in(template_ids))
-        .all(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .into_iter()
-        .map(|template| (template.id, template))
-        .collect::<HashMap<_, _>>();
+    // 每个 EventGameBox → 单一 resolver（pin Revision + Event 覆盖，§27/§49）
+    let mut resolved_specs = HashMap::new();
+    for eg_id in &event_gamebox_ids {
+        resolved_specs.insert(
+            *eg_id,
+            gamebox_service::resolve_event_gamebox_spec(db, *eg_id).await?,
+        );
+    }
 
     let instances = awd_gamebox_instances::Entity::find()
         .filter(awd_gamebox_instances::Column::Id.is_in(instance_ids))
@@ -242,9 +243,12 @@ pub async fn dispatch_batch(
 
     let mut dispatch_tasks = Vec::with_capacity(tasks.len());
     for task in &tasks {
-        let template = templates.get(&task.template_id).ok_or_else(|| {
-            AwdError::NotFound(format!("Judge template {} not found", task.template_id))
-        })?;
+        let eg_id = task
+            .event_gamebox_id
+            .ok_or_else(|| AwdError::NotFound("Judge task lacks event_gamebox_id".into()))?;
+        let resolved = resolved_specs
+            .get(&eg_id)
+            .ok_or_else(|| AwdError::NotFound(format!("EventGameBox {} not found", eg_id)))?;
         let instance = instances.get(&task.gamebox_instance_id).ok_or_else(|| {
             AwdError::NotFound(format!(
                 "GameBox instance {} not found",
@@ -252,24 +256,25 @@ pub async fn dispatch_batch(
             ))
         })?;
 
-        let script_content = template
+        let script_content = resolved
+            .revision
             .judge_script_content
             .as_deref()
             .filter(|content| !content.trim().is_empty())
             .ok_or_else(|| {
                 AwdError::Validation(format!(
-                    "Template {} has no judge script content",
-                    template.id
+                    "Revision {} has no judge script content",
+                    resolved.revision.id
                 ))
             })?;
-        let script_args_json = serialize_script_args(template.judge_args_json.as_ref())?;
-        let timeout_secs = template
-            .judge_timeout_secs
+        let script_args_json = serialize_script_args(resolved.revision.judge_args_json.as_ref())?;
+        let timeout_secs = resolved
+            .effective_judge_timeout_secs
             .unwrap_or(awd_event.judge_default_timeout_secs);
         if timeout_secs <= 0 {
             return Err(AwdError::Validation(format!(
-                "Template {} has an invalid judge timeout",
-                template.id
+                "EventGameBox {} has an invalid judge timeout",
+                eg_id
             )));
         }
 

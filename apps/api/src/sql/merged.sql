@@ -1,8 +1,8 @@
 -- ================================================================================================
 -- ================================================================================================
 --                                   FloatCTF Merged Migrations
--- Generated at: 2026-08-08 12:49:14 +0800
--- Migration count: 18
+-- Generated at: 2026-08-08 19:02:41 +0800
+-- Migration count: 22
 -- ================================================================================================
 -- ================================================================================================
 
@@ -1924,6 +1924,627 @@ COMMIT;
 -- ================================================================================================
 -- ================================================================================================
 -- END MIGRATION: 20260808124905-awd-configuration-generation.sql
+-- ================================================================================================
+-- ================================================================================================
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- BEGIN MIGRATION: 20260808183835-awd-gamebox-domain-a.sql
+-- ================================================================================================
+-- ================================================================================================
+
+-- ================================================================================
+-- Migration: 20260808183835-awd-gamebox-domain-a
+-- ================================================================================
+-- GameBox 领域模型重构 — Migration A：新增领域表与实例新列。
+--
+-- 目标模型（四层）：
+--   gameboxes（长期身份）
+--     └─ gamebox_revisions（不可变部署版本）
+--          └─ awd_event_gameboxes（赛事选择 + 计分/资源/可见性配置）
+--               └─ awd_gamebox_instances（每队稳定逻辑靶机）
+--                    └─ Docker Container（可替换运行时，仅 runtime）
+--
+-- 本迁移只做「新增」，不做数据回填（Migration B）与删除（Migration D）。
+-- 回填依赖本迁移创建的表/列，故严格按 A → B → C → D 顺序执行。
+-- ================================================================================
+
+BEGIN;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. gamebox_revisions：GameBox 的不可变部署版本
+-- ──────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS "gamebox_revisions" (
+    "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    "gamebox_id" UUID NOT NULL
+        REFERENCES "gameboxes" ("id") ON DELETE CASCADE,
+
+    "revision_number" INTEGER NOT NULL,
+
+    -- 源配置（用户/题目作者的 TOML），与正规化后的 spec_json 分开保存
+    "source_toml" TEXT NOT NULL,
+
+    "spec_schema_version" INTEGER NOT NULL DEFAULT 1,
+    -- FloatCTF 正规化后的实际配置（canonical JSON）
+    "spec_json" JSONB NOT NULL,
+    -- canonical spec_json 的 SHA-256（可稳定比较的 revision fingerprint）
+    "spec_digest" VARCHAR(64) NOT NULL,
+
+    -- 镜像与 Digest Pinning（§8）：digest 可为 NULL（legacy），
+    -- Deploy/Precheck 必须在进入生产比赛前 resolve/pin。
+    "image_ref" VARCHAR(500) NOT NULL,
+    "image_digest" VARCHAR(200),
+
+    "username" VARCHAR(100) NOT NULL,
+
+    "default_cpu_millis" BIGINT NOT NULL,
+    "default_memory_bytes" BIGINT NOT NULL,
+    "default_pids_limit" BIGINT NOT NULL DEFAULT 100,
+
+    "healthcheck_json" JSONB,
+
+    -- Judge 配置属于 Revision（§9：如何判定 GameBox 是否正常是题目定义的一部分）
+    "judge_script_name" VARCHAR(200),
+    "judge_script_content" TEXT,
+    "judge_args_json" JSONB,
+    "default_judge_timeout_secs" INTEGER,
+    "default_judge_retry_interval_secs" INTEGER,
+
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- 约束（§5 / §11）：revision 不可变、每 GameBox 版本递增；
+    -- UNIQUE(id, gamebox_id) 供 awd_event_gameboxes 复合 FK 使用。
+    CONSTRAINT "gamebox_revisions_gamebox_number_key" UNIQUE ("gamebox_id", "revision_number"),
+    CONSTRAINT "gamebox_revisions_gamebox_digest_key" UNIQUE ("gamebox_id", "spec_digest"),
+    CONSTRAINT "gamebox_revisions_id_gamebox_key" UNIQUE ("id", "gamebox_id")
+);
+
+COMMENT ON TABLE "gamebox_revisions" IS 'GameBox 不可变部署版本：每编辑一次 GameBox 生成新 revision（revision_number +1），旧 revision 永不修改（审计/赛事 pin 保证）';
+COMMENT ON COLUMN "gamebox_revisions"."source_toml" IS '源配置 TOML（用户/题目作者输入）';
+COMMENT ON COLUMN "gamebox_revisions"."spec_json" IS 'FloatCTF 正规化后的实际配置（canonical JSON）';
+COMMENT ON COLUMN "gamebox_revisions"."spec_digest" IS 'canonical spec_json 的 SHA-256，用于稳定比较 revision 是否变化';
+COMMENT ON COLUMN "gamebox_revisions"."image_digest" IS '镜像 digest（sha256:...），可为 NULL（legacy）；生产前必须 pin';
+COMMENT ON COLUMN "gamebox_revisions"."default_cpu_millis" IS '默认 CPU 限制（毫核）';
+COMMENT ON COLUMN "gamebox_revisions"."default_memory_bytes" IS '默认内存限制（字节）';
+COMMENT ON COLUMN "gamebox_revisions"."default_pids_limit" IS '默认进程数限制';
+COMMENT ON COLUMN "gamebox_revisions"."healthcheck_json" IS '默认健康检查配置（JSON）';
+COMMENT ON COLUMN "gamebox_revisions"."judge_script_name" IS '判题脚本文件名';
+COMMENT ON COLUMN "gamebox_revisions"."judge_script_content" IS '判题脚本内容';
+COMMENT ON COLUMN "gamebox_revisions"."judge_args_json" IS '判题脚本参数（JSON）';
+COMMENT ON COLUMN "gamebox_revisions"."default_judge_timeout_secs" IS '默认判题超时（秒，赛事可覆盖）';
+COMMENT ON COLUMN "gamebox_revisions"."default_judge_retry_interval_secs" IS '默认判题重试间隔（秒，赛事可覆盖）';
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 2. awd_event_gameboxes：某场 AWD 赛事选择的 GameBox Revision + 赛事计分配置
+-- ──────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS "awd_event_gameboxes" (
+    "id" UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    "event_id" UUID NOT NULL
+        REFERENCES "events" ("id") ON DELETE CASCADE,
+
+    "gamebox_id" UUID NOT NULL
+        REFERENCES "gameboxes" ("id") ON DELETE RESTRICT,
+
+    -- pin 的具体 revision（§35：保存后必须 pin 为具体 UUID，禁止存 latest）
+    "gamebox_revision_id" UUID NOT NULL,
+
+    -- 确定性 IP 分配的核心：instance_ip = team.gamebox_subnet + host_offset（§13/§38）
+    "host_offset" SMALLINT NOT NULL,
+
+    "enabled" BOOLEAN NOT NULL DEFAULT TRUE,
+    "hidden" BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- 赛事资源覆盖（Revision 默认值之上的覆盖层，§49 effective config）
+    "cpu_millis" BIGINT NOT NULL,
+    "memory_bytes" BIGINT NOT NULL,
+    "pids_limit" BIGINT NOT NULL DEFAULT 100,
+    "healthcheck_override_json" JSONB,
+
+    -- 赛事运行策略覆盖（§9：timeout/retry 更像比赛策略，属 Event 而非题目）
+    "judge_timeout_secs" INTEGER,
+    "judge_retry_interval_secs" INTEGER,
+
+    -- 计分属于 Event × GameBox（§4），全部 BIGINT（§52），首破拼写修正为 first_bonus
+    "break_points" BIGINT NOT NULL,
+    "loss_points" BIGINT NOT NULL,
+    "fix_points" BIGINT NOT NULL,
+    "down_points" BIGINT NOT NULL,
+    "first_bonus" BIGINT NOT NULL,
+
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- §11：gamebox_id + revision_id 一致性由复合 FK 在 DB 层强制
+    CONSTRAINT "awd_event_gameboxes_revision_fk"
+        FOREIGN KEY ("gamebox_revision_id", "gamebox_id")
+        REFERENCES "gamebox_revisions" ("id", "gamebox_id")
+        ON DELETE RESTRICT,
+
+    -- §12：Event 内一个 GameBox 只能有一个选择
+    CONSTRAINT "awd_event_gameboxes_event_gamebox_key" UNIQUE ("event_id", "gamebox_id"),
+
+    -- §13：同赛事 host_offset 唯一
+    CONSTRAINT "awd_event_gameboxes_event_offset_key" UNIQUE ("event_id", "host_offset"),
+
+    -- §13：不占用 network/broadcast/gateway/infra 保留位（.1 = 网关，.255 = 广播）
+    CONSTRAINT "awd_event_gameboxes_host_offset_check" CHECK ("host_offset" BETWEEN 2 AND 254)
+);
+
+COMMENT ON TABLE "awd_event_gameboxes" IS 'AWD 赛事 GameBox 选择：赛事采用的 GameBox Revision + 该场自己的计分/资源/可见性配置';
+COMMENT ON COLUMN "awd_event_gameboxes"."gamebox_id" IS 'GameBox 长期身份（RESTRICT：被赛事引用后禁止 hard delete）';
+COMMENT ON COLUMN "awd_event_gameboxes"."gamebox_revision_id" IS '赛事 pin 的不可变 Revision（保存后为具体 UUID，不存 latest）';
+COMMENT ON COLUMN "awd_event_gameboxes"."host_offset" IS '确定性 IP 分配偏移：instance_ip = team.gamebox_subnet + host_offset（2..254，禁改部署后的偏移）';
+COMMENT ON COLUMN "awd_event_gameboxes"."enabled" IS '是否启用（停用后不再部署/判题）';
+COMMENT ON COLUMN "awd_event_gameboxes"."hidden" IS '对玩家是否隐藏';
+COMMENT ON COLUMN "awd_event_gameboxes"."cpu_millis" IS '赛事 CPU 限制（毫核）覆盖';
+COMMENT ON COLUMN "awd_event_gameboxes"."memory_bytes" IS '赛事内存限制（字节）覆盖';
+COMMENT ON COLUMN "awd_event_gameboxes"."pids_limit" IS '赛事进程数限制覆盖';
+COMMENT ON COLUMN "awd_event_gameboxes"."healthcheck_override_json" IS '健康检查覆盖（JSON）';
+COMMENT ON COLUMN "awd_event_gameboxes"."judge_timeout_secs" IS '判题超时（秒）覆盖';
+COMMENT ON COLUMN "awd_event_gameboxes"."judge_retry_interval_secs" IS '判题重试间隔（秒）覆盖';
+COMMENT ON COLUMN "awd_event_gameboxes"."break_points" IS '被攻破时攻击方得分';
+COMMENT ON COLUMN "awd_event_gameboxes"."loss_points" IS '被攻破时防守方失分';
+COMMENT ON COLUMN "awd_event_gameboxes"."fix_points" IS '修复得分';
+COMMENT ON COLUMN "awd_event_gameboxes"."down_points" IS '宕机扣分';
+COMMENT ON COLUMN "awd_event_gameboxes"."first_bonus" IS '首破奖励';
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 3. awd_gamebox_instances：新增领域列（回填在 Migration B）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_gamebox_instances"
+    ADD COLUMN IF NOT EXISTS "event_gamebox_id" UUID,
+    ADD COLUMN IF NOT EXISTS "runtime_generation" BIGINT NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS "current_container_id" VARCHAR(64);
+
+COMMENT ON COLUMN "awd_gamebox_instances"."event_gamebox_id" IS '所属赛事 GameBox 选择（逻辑靶机定义；Migration B 回填后加 NOT NULL + FK）';
+COMMENT ON COLUMN "awd_gamebox_instances"."runtime_generation" IS '运行时代数：首次部署=1，Reset 成功替换容器 +1（容器只是当前 runtime realization）';
+COMMENT ON COLUMN "awd_gamebox_instances"."current_container_id" IS '当前 Docker 容器 ID（可替换的运行时资源；对应旧 container_id，改名强调非逻辑身份）';
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 4. awd_judge_tasks / awd_score_events：新增 event_gamebox_id 列（回填在 B）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_judge_tasks"
+    ADD COLUMN IF NOT EXISTS "event_gamebox_id" UUID;
+
+ALTER TABLE "awd_score_events"
+    ADD COLUMN IF NOT EXISTS "event_gamebox_id" UUID;
+
+COMMENT ON COLUMN "awd_judge_tasks"."event_gamebox_id" IS '判题目标（EventGameBox 维度；Judge 配置从 EventGameBox → Revision 解析）';
+COMMENT ON COLUMN "awd_score_events"."event_gamebox_id" IS '计分作用域（EventGameBox 维度；first-blood 等按 EventGameBox 独立）';
+
+COMMIT;
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- END MIGRATION: 20260808183835-awd-gamebox-domain-a.sql
+-- ================================================================================================
+-- ================================================================================================
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- BEGIN MIGRATION: 20260808183914-awd-gamebox-domain-b.sql
+-- ================================================================================================
+-- ================================================================================================
+
+-- ================================================================================
+-- Migration: 20260808183914-awd-gamebox-domain-b
+-- ================================================================================
+-- GameBox 领域模型重构 — Migration B：数据回填。
+--
+-- 安全原则（§40-43）：
+--   - 每条 legacy awd_gamebox_templates → 自己的 GameBox identity + Revision 1 + EventGameBox
+--     （禁止按 name/safe_name 猜测合并，宁可保守产生重复 GameBox）
+--   - host_offset 优先从已存在 instance IP 反推（host 字节），
+--     同 template 在不同 Team 偏移不一致 → RAISE（MIGRATION CONFLICT，禁止静默选择）
+--   - 未部署的 template → 按稳定排序分配可用 offset（2..254，跳过已占用）
+--   - 每个旧 gameboxes 全局行 → GameBox + Revision 1（source_toml 保存，spec 最小正规化）
+--   - legacy image 无 digest → image_digest = NULL（§8.1），生产前必须 resolve/pin
+--
+-- 本迁移在空库上零操作，但保持对任何环境的正确性与可验证性。
+-- ================================================================================
+
+BEGIN;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. 回填 legacy awd_gamebox_templates → GameBox + Revision 1 + EventGameBox
+-- ──────────────────────────────────────────────────────────────────────────────
+
+-- 临时映射表：legacy template_id → 新 gamebox_id / event_gamebox_id（后续回填 judge/score 用）
+CREATE TEMP TABLE IF NOT EXISTS _gb_mapping (
+    legacy_template_id UUID PRIMARY KEY,
+    gamebox_id UUID NOT NULL,
+    event_gamebox_id UUID NOT NULL
+) ON COMMIT DROP;
+
+DO $$
+DECLARE
+    t RECORD;
+    gb_id UUID;
+    rev_id UUID;
+    eg_id UUID;
+    safe_base TEXT;
+    safe_name_val TEXT;
+    offset_candidates INT[];
+    first_offset INT;
+    used_offsets INT[];
+    taken BOOLEAN;
+    cand INT;
+    spec_json JSONB;
+    digest TEXT;
+    legacy_count INT;
+BEGIN
+    -- 逐条处理 legacy template（稳定排序：created_at → id，保证确定性）
+    FOR t IN
+        SELECT * FROM awd_gamebox_templates
+        ORDER BY created_at ASC, id ASC
+    LOOP
+        -- a. 创建 GameBox identity（不与其他 gamebox 同名；安全名从 name 生成 + 冲突去重）
+        safe_base := lower(regexp_replace(t.name, '[^a-zA-Z0-9_-]+', '-', 'g'));
+        safe_base := regexp_replace(btrim(safe_base, '-'), '-+', '-', 'g');
+        IF safe_base = '' THEN safe_base := 'gamebox'; END IF;
+        safe_name_val := safe_base;
+        WHILE EXISTS (SELECT 1 FROM gameboxes WHERE safe_name = safe_name_val) LOOP
+            safe_name_val := safe_base || '-' || substr(md5(t.id::text), 1, 6);
+        END LOOP;
+
+        gb_id := gen_random_uuid();
+        INSERT INTO gameboxes (id, name, safe_name, category, description, hidden, created_at, updated_at)
+        VALUES (gb_id, t.name, safe_name_val, 'other', '从 legacy AWD template 迁移（GameBox 领域重构 Migration B）', TRUE, now(), now());
+
+        -- b. 创建 Revision 1：spec_json = 正规化配置（image/username/资源/judge），digest = sha256(canonical)
+        spec_json := jsonb_build_object(
+            'image_ref', t.image_ref,
+            'username', t.username,
+            'cpu_millis', t.cpu_millis,
+            'memory_bytes', t.memory_bytes,
+            'pids_limit', t.pids_limit,
+            'meta_json', COALESCE(t.meta_json, '{}'::jsonb),
+            'healthcheck', t.healthcheck_override_json,
+            'judge_script_name', t.judge_script_name,
+            'judge_script_content', t.judge_script_content,
+            'judge_args', t.judge_args_json
+        );
+        digest := encode(sha256(spec_json::text::bytea), 'hex');
+        rev_id := gen_random_uuid();
+        INSERT INTO gamebox_revisions (
+            id, gamebox_id, revision_number, source_toml, spec_schema_version, spec_json, spec_digest,
+            image_ref, image_digest, username, default_cpu_millis, default_memory_bytes, default_pids_limit,
+            healthcheck_json, judge_script_name, judge_script_content, judge_args_json,
+            default_judge_timeout_secs, default_judge_retry_interval_secs, created_at
+        ) VALUES (
+            rev_id, gb_id, 1, '', 1, spec_json, digest,
+            t.image_ref, NULL, t.username, t.cpu_millis, t.memory_bytes, t.pids_limit,
+            t.healthcheck_override_json, t.judge_script_name, t.judge_script_content, t.judge_args_json,
+            t.judge_timeout_secs, t.judge_retry_interval_secs, now()
+        );
+
+        -- c. host_offset：优先从已存在 instance IP 反推（host 字节）
+        offset_candidates := ARRAY(
+            SELECT DISTINCT (host(split_part(inst.gamebox_ip, '/', 1)::inet))::int
+            FROM awd_gamebox_instances inst
+            WHERE inst.template_id = t.id
+        );
+        IF cardinality(offset_candidates) > 1 THEN
+            RAISE EXCEPTION 'MIGRATION CONFLICT: legacy template % has inconsistent host offsets across teams: %（禁止静默选择，需人工处理）', t.id, offset_candidates;
+        ELSIF cardinality(offset_candidates) = 1 THEN
+            first_offset := offset_candidates[1];
+            IF first_offset < 2 OR first_offset > 254 THEN
+                RAISE EXCEPTION 'MIGRATION CONFLICT: legacy template % host offset % out of range 2..254', t.id, first_offset;
+            END IF;
+        ELSE
+            -- 未部署 → 分配该事件下一个可用 offset（2..254，跳过已占用）
+            used_offsets := ARRAY(
+                SELECT eg.host_offset FROM awd_event_gameboxes eg
+                WHERE eg.event_id = t.event_id
+            );
+            first_offset := NULL;
+            FOR cand IN 2..254 LOOP
+                taken := cand = ANY(used_offsets);
+                IF NOT taken THEN
+                    first_offset := cand;
+                    EXIT;
+                END IF;
+            END LOOP;
+            IF first_offset IS NULL THEN
+                RAISE EXCEPTION 'MIGRATION CONFLICT: no free host_offset (2..254) for legacy template %', t.id;
+            END IF;
+        END IF;
+
+        -- d. 创建 EventGameBox（计分配置从 legacy template 迁移）
+        eg_id := gen_random_uuid();
+        INSERT INTO awd_event_gameboxes (
+            id, event_id, gamebox_id, gamebox_revision_id, host_offset,
+            enabled, hidden, cpu_millis, memory_bytes, pids_limit, healthcheck_override_json,
+            judge_timeout_secs, judge_retry_interval_secs,
+            break_points, loss_points, fix_points, down_points, first_bonus,
+            created_at, updated_at
+        ) VALUES (
+            eg_id, t.event_id, gb_id, rev_id, first_offset,
+            TRUE, FALSE, t.cpu_millis, t.memory_bytes, t.pids_limit, t.healthcheck_override_json,
+            t.judge_timeout_secs, t.judge_retry_interval_secs,
+            t.break_points, t.loss_points, t.fix_points, t.down_points, t.first_bonus,
+            now(), now()
+        );
+
+        -- e. 关联 legacy instance → 新 EventGameBox
+        UPDATE awd_gamebox_instances
+        SET event_gamebox_id = eg_id
+        WHERE template_id = t.id;
+
+        -- f. 记录映射（judge/score 回填用）
+        INSERT INTO _gb_mapping (legacy_template_id, gamebox_id, event_gamebox_id)
+        VALUES (t.id, gb_id, eg_id);
+    END LOOP;
+
+    SELECT count(*) INTO legacy_count FROM awd_gamebox_templates;
+    RAISE NOTICE 'GameBox backfill: % legacy templates migrated (empty in dev)', legacy_count;
+END $$;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 2. 回填 legacy gameboxes（全局库）→ Revision 1
+--    （§41：source_toml 保存原始 TOML；旧计分字段不进入 Revision，不凭空制造赛事计分配置）
+-- ──────────────────────────────────────────────────────────────────────────────
+DO $$
+DECLARE
+    g RECORD;
+    spec_json JSONB;
+    digest TEXT;
+BEGIN
+    FOR g IN SELECT * FROM gameboxes ORDER BY created_at ASC, id ASC LOOP
+        -- 已有 revision 的行跳过（幂等）
+        IF EXISTS (SELECT 1 FROM gamebox_revisions WHERE gamebox_id = g.id) THEN
+            CONTINUE;
+        END IF;
+        spec_json := jsonb_build_object(
+            'legacy', TRUE,
+            'source_toml', COALESCE(g.toml_str, ''),
+            'username', g.username
+        );
+        digest := encode(sha256(spec_json::text::bytea), 'hex');
+        INSERT INTO gamebox_revisions (
+            id, gamebox_id, revision_number, source_toml, spec_schema_version, spec_json, spec_digest,
+            image_ref, image_digest, username, default_cpu_millis, default_memory_bytes, default_pids_limit,
+            healthcheck_json, judge_script_name, judge_script_content, judge_args_json,
+            default_judge_timeout_secs, default_judge_retry_interval_secs, created_at
+        ) VALUES (
+            gen_random_uuid(), g.id, 1, COALESCE(g.toml_str, ''), 1, spec_json, digest,
+            '', NULL, COALESCE(g.username, 'ctf'), 1000, 536870912, 100,
+            NULL, NULL, NULL, NULL, NULL, NULL, now()
+        );
+    END LOOP;
+END $$;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 3. 回填 awd_judge_tasks.event_gamebox_id（经 instance 关联）
+-- ──────────────────────────────────────────────────────────────────────────────
+UPDATE awd_judge_tasks jt
+SET event_gamebox_id = inst.event_gamebox_id
+FROM awd_gamebox_instances inst
+WHERE jt.gamebox_instance_id = inst.id
+  AND jt.event_gamebox_id IS NULL;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 4. 回填 awd_score_events.event_gamebox_id
+--    instance 维度：经 awd_gamebox_instances 关联；
+--    template 维度（如 first-bonus，无 instance）：经 legacy 映射表关联。
+-- ──────────────────────────────────────────────────────────────────────────────
+UPDATE awd_score_events se
+SET event_gamebox_id = inst.event_gamebox_id
+FROM awd_gamebox_instances inst
+WHERE se.gamebox_instance_id = inst.id
+  AND se.event_gamebox_id IS NULL;
+
+UPDATE awd_score_events se
+SET event_gamebox_id = m.event_gamebox_id
+FROM _gb_mapping m
+WHERE se.gamebox_template_id = m.legacy_template_id
+  AND se.event_gamebox_id IS NULL;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 5. 可验证性断言（§61）——任何一条不满足即回滚整个迁移
+-- ──────────────────────────────────────────────────────────────────────────────
+DO $$
+DECLARE
+    template_cnt INT; eg_cnt INT; orphan_inst INT; orphan_link INT; dup_offset INT; dup_inst INT;
+BEGIN
+    SELECT count(*) INTO template_cnt FROM awd_gamebox_templates;
+    SELECT count(*) INTO eg_cnt FROM awd_event_gameboxes;
+    IF template_cnt <> eg_cnt THEN
+        RAISE EXCEPTION 'MIGRATION VERIFY FAIL: legacy templates % <> event_gameboxes %', template_cnt, eg_cnt;
+    END IF;
+
+    -- 每个 legacy instance 都有 event_gamebox_id
+    SELECT count(*) INTO orphan_inst FROM awd_gamebox_instances WHERE event_gamebox_id IS NULL;
+    IF orphan_inst > 0 THEN
+        RAISE EXCEPTION 'MIGRATION VERIFY FAIL: % instances lack event_gamebox_id', orphan_inst;
+    END IF;
+
+    -- 每个 EventGameBox 都有 GameBoxRevision（FK 已保证）且无孤儿 revision link（复合 FK 已保证）
+
+    -- 同 Event host_offset 无重复（UNIQUE 已保证，双保险）
+    SELECT count(*) INTO dup_offset FROM (
+        SELECT event_id, host_offset FROM awd_event_gameboxes GROUP BY 1,2 HAVING count(*) > 1
+    ) d;
+    IF dup_offset > 0 THEN
+        RAISE EXCEPTION 'MIGRATION VERIFY FAIL: duplicate host_offset';
+    END IF;
+
+    -- 同 Event + Team + EventGameBox 只有一个 logical Instance
+    SELECT count(*) INTO dup_inst FROM (
+        SELECT event_id, team_id, event_gamebox_id FROM awd_gamebox_instances
+        GROUP BY 1,2,3 HAVING count(*) > 1
+    ) d;
+    IF dup_inst > 0 THEN
+        RAISE EXCEPTION 'MIGRATION VERIFY FAIL: duplicate logical instances';
+    END IF;
+END $$;
+
+COMMIT;
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- END MIGRATION: 20260808183914-awd-gamebox-domain-b.sql
+-- ================================================================================================
+-- ================================================================================================
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- BEGIN MIGRATION: 20260808183946-awd-gamebox-domain-c.sql
+-- ================================================================================================
+-- ================================================================================================
+
+-- ================================================================================
+-- Migration: 20260808183946-awd-gamebox-domain-c
+-- ================================================================================
+-- GameBox 领域模型重构 — Migration C：回填后的约束收紧。
+--
+-- 仅在 Migration B 回填完成后执行（依赖所有旧行已获得 event_gamebox_id）。
+-- ================================================================================
+
+BEGIN;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. awd_gamebox_instances：event_gamebox_id 强制 + FK + 新 UNIQUE
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_gamebox_instances"
+    ALTER COLUMN "event_gamebox_id" SET NOT NULL;
+
+ALTER TABLE "awd_gamebox_instances"
+    ADD CONSTRAINT "awd_gamebox_instances_event_gamebox_fk"
+    FOREIGN KEY ("event_gamebox_id")
+    REFERENCES "awd_event_gameboxes" ("id")
+    ON DELETE RESTRICT;
+
+-- 旧 UNIQUE(event_id, template_id, team_id) 被新 UNIQUE(event_id, event_gamebox_id, team_id) 取代
+ALTER TABLE "awd_gamebox_instances"
+    DROP CONSTRAINT IF EXISTS "awd_gamebox_instances_event_id_template_id_team_id_key";
+
+ALTER TABLE "awd_gamebox_instances"
+    ADD CONSTRAINT "awd_gamebox_instances_event_gamebox_team_key"
+    UNIQUE ("event_id", "event_gamebox_id", "team_id");
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 2. awd_judge_tasks / awd_score_events：FK（SET NULL 保历史，§57）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_judge_tasks"
+    ADD CONSTRAINT "awd_judge_tasks_event_gamebox_fk"
+    FOREIGN KEY ("event_gamebox_id")
+    REFERENCES "awd_event_gameboxes" ("id")
+    ON DELETE SET NULL;
+
+ALTER TABLE "awd_score_events"
+    ADD CONSTRAINT "awd_score_events_event_gamebox_fk"
+    FOREIGN KEY ("event_gamebox_id")
+    REFERENCES "awd_event_gameboxes" ("id")
+    ON DELETE SET NULL;
+
+COMMENT ON COLUMN "awd_judge_tasks"."event_gamebox_id" IS '判题目标 EventGameBox（SET NULL：EventGameBox 删除后保留历史行）';
+COMMENT ON COLUMN "awd_score_events"."event_gamebox_id" IS '计分作用域 EventGameBox（SET NULL：EventGameBox 删除后保留历史行）';
+
+COMMIT;
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- END MIGRATION: 20260808183946-awd-gamebox-domain-c.sql
+-- ================================================================================================
+-- ================================================================================================
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- BEGIN MIGRATION: 20260808183947-awd-gamebox-domain-d.sql
+-- ================================================================================================
+-- ================================================================================================
+
+-- ================================================================================
+-- Migration: 20260808183947-awd-gamebox-domain-d
+-- ================================================================================
+-- GameBox 领域模型重构 — Migration D：删除 legacy 双轨 schema。
+--
+-- 依赖 A/B/C 全部落库且业务代码已切换到新模型后执行（本文件随 A/B/C 一起
+-- 进入 merged.sql，但语义上属于最终清理：旧表/旧列/旧拼写不再存在于 schema）。
+--
+-- 删除清单（§59）：
+--   - awd_gamebox_templates（被 gameboxes + gamebox_revisions + awd_event_gameboxes 取代）
+--   - event_gameboxes（旧 Jeopardy-GameBox 关联，无业务调用者）
+--   - instances.gamebox_id（旧 GameBox runtime 关联，仅剩 read filter）
+--   - gameboxes.toml_str / username / break_point / fix_point / down_point / first_bouns
+--   - awd_team_networks.next_gamebox_host（host_offset 取代）
+--   - awd_gamebox_instances.template_id / docker_network_id / container_id（→ current_container_id）
+--   - awd_judge_tasks.template_id / awd_score_events.gamebox_template_id（→ event_gamebox_id）
+-- ================================================================================
+
+BEGIN;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 1. awd_gamebox_instances：删旧列 + container_id 改名 + gamebox_ip 转 INET
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_gamebox_instances"
+    DROP COLUMN IF EXISTS "template_id",
+    DROP COLUMN IF EXISTS "docker_network_id",
+    DROP COLUMN IF EXISTS "container_id";
+
+-- 注：gamebox_ip 保持 VARCHAR(15)，不做 INET 转换。
+-- §23 逃生口：SeaORM 1.1.20 将 INET 映射为 String，INSERT/比较时按 TEXT 绑定，
+-- PostgreSQL 拒绝 text→inet（无隐式转换），实体生成产物无法携带类型覆盖。
+-- 因此 INET 迁移列为独立后续项（schema 类型层面改造），本次不改。
+COMMENT ON COLUMN "awd_gamebox_instances"."gamebox_ip" IS '靶机内网 IP（= team.gamebox_subnet + event_gamebox.host_offset，确定性分配）';
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 2. awd_team_networks：删除 next_gamebox_host（§14，host_offset 取代）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_team_networks"
+    DROP COLUMN IF EXISTS "next_gamebox_host";
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 3. gameboxes：删除 legacy runtime/计分列；name 不强制全局唯一（§53，展示名）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "gameboxes"
+    DROP COLUMN IF EXISTS "toml_str",
+    DROP COLUMN IF EXISTS "username",
+    DROP COLUMN IF EXISTS "break_point",
+    DROP COLUMN IF EXISTS "fix_point",
+    DROP COLUMN IF EXISTS "down_point",
+    DROP COLUMN IF EXISTS "first_bouns";
+
+ALTER TABLE "gameboxes"
+    DROP CONSTRAINT IF EXISTS "gameboxes_name_key";
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 4. awd_judge_tasks / awd_score_events：删旧 template 引用列
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "awd_judge_tasks"
+    DROP COLUMN IF EXISTS "template_id";
+
+ALTER TABLE "awd_score_events"
+    DROP COLUMN IF EXISTS "gamebox_template_id";
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 5. 删除 legacy 表
+-- ──────────────────────────────────────────────────────────────────────────────
+DROP TABLE IF EXISTS "awd_gamebox_templates";
+DROP TABLE IF EXISTS "event_gameboxes";
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- 6. instances.gamebox_id（Jeopardy 通用实例不再支持 GameBox，§33）
+-- ──────────────────────────────────────────────────────────────────────────────
+ALTER TABLE "instances"
+    DROP COLUMN IF EXISTS "gamebox_id";
+
+COMMIT;
+
+
+-- ================================================================================================
+-- ================================================================================================
+-- END MIGRATION: 20260808183947-awd-gamebox-domain-d.sql
 -- ================================================================================================
 -- ================================================================================================
 

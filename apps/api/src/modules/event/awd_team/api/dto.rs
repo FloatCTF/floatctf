@@ -110,7 +110,7 @@ pub struct AwdEventResponse {
 pub struct GameBoxResponse {
     pub id: Uuid,
     pub team_id: Uuid,
-    pub template_id: Uuid,
+    pub event_gamebox_id: Uuid,
     pub status: String,
     pub gamebox_ip: String,
     pub container_name: String,

@@ -88,6 +88,7 @@ async fn docker_gamebox_create_and_start() {
             uuid::Uuid::new_v4(),
             uuid::Uuid::new_v4(),
             uuid::Uuid::new_v4(),
+            1,
             "gamebox",
         ),
         network_name: None,

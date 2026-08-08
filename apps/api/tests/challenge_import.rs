@@ -104,7 +104,10 @@ async fn import_overwrite_same_name_and_dedup_safe_name() {
     // 清理
     for sn in [&name_a, &format!("{}-2", name_a)] {
         if let Some(row) = find_by_safe_name(&db, sn).await {
-            challenges::Entity::delete_by_id(row.id).exec(&db).await.ok();
+            challenges::Entity::delete_by_id(row.id)
+                .exec(&db)
+                .await
+                .ok();
         }
     }
 }

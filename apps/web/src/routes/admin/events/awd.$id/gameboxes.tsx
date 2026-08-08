@@ -211,6 +211,7 @@ function AddGameBoxButton({
 							};
 						}}
 						disableAdd
+						filterKeys={["name", "safe_name", "category", "hidden"]}
 						enableInternalActions={false}
 						selectedRowIds={userSelectedRowIds}
 						onSelectedRowIdsChange={setUserSelectedRowIds}

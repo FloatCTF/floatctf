@@ -19,7 +19,7 @@ use crate::modules::event::awd_team::{
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
     repo::event_repo,
-    service::firewall_service,
+    service::{firewall_service, round_service},
 };
 use fcmc::AwdContainerRuntime;
 
@@ -188,6 +188,16 @@ async fn recover_event(
     .await?;
     firewall_service::flush_event_connections(network, event.event_id, &event.gamebox_cidr).await;
     recovered += 1;
+
+    // ── 4. Round 调度恢复（P3-13）：Active/Grace round 缺任务则按时间重建 ──
+    let restored_tasks = round_service::restore_round_scheduling(db, event.event_id).await?;
+    if restored_tasks > 0 {
+        info!(
+            "[Recovery] Event {} restored {} round scheduling task(s)",
+            event.event_id, restored_tasks
+        );
+    }
+    recovered += restored_tasks as u32;
 
     Ok(recovered)
 }

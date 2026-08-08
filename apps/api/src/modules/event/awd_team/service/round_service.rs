@@ -462,6 +462,90 @@ async fn dispatch_judge_for_round(
 /// 用 JudgeDown + reason="judge deadline timeout" 表达，审计可区分。
 /// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
 /// 返回计分的任务数。
+/// P3-13：重启后恢复当前 round 的调度任务（幂等）。
+///
+/// 场景：历史版本创建的 round 没有 RoundEnd 任务，或崩溃发生在任务窗口内。
+/// 恢复规则：
+/// - Active round：缺 pending `awd.round.end` 任务 → 按 scheduled_end_at 重建；
+/// - Grace round：缺 pending `awd.round.grace_end` 任务 → 按 grace_ends_at 重建；
+/// - Paused round：暂停中，不恢复 end/grace 任务（resume 时重建）。
+pub async fn restore_round_scheduling(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+) -> AwdResult<usize> {
+    use crate::entity::sea_orm_active_enums::RoundStatus as RS;
+
+    let Some(round) = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::Status.is_in([
+            RS::Active,
+            RS::Grace,
+            RS::Paused,
+        ]))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+    else {
+        return Ok(0);
+    };
+
+    let mut restored = 0usize;
+    let task_exists = |key: TaskKey| -> std::pin::Pin<Box<dyn std::future::Future<Output = AwdResult<bool>> + Send + '_>> {
+        Box::pin(async move {
+        let found = scheduled_tasks::Entity::find()
+            .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+            .filter(scheduled_tasks::Column::TaskKey.eq(key.to_string()))
+            .filter(scheduled_tasks::Column::Status.eq("pending"))
+            .one(db)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        Ok(found.is_some())
+        })
+    };
+
+    match round.status {
+        RS::Active => {
+            if !task_exists(TaskKey::AwdRoundEnd).await? {
+                let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                schedule_round_task(
+                    &txn,
+                    event_id,
+                    TaskKey::AwdRoundEnd,
+                    round.scheduled_end_at.fixed_offset(),
+                    Some(round.id),
+                )
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+                txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                restored += 1;
+            }
+        }
+        RS::Grace => {
+            if let Some(grace_end) = round.grace_ends_at {
+                if !task_exists(TaskKey::AwdRoundGraceEnd).await? {
+                    let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                    schedule_round_task(
+                        &txn,
+                        event_id,
+                        TaskKey::AwdRoundGraceEnd,
+                        grace_end.fixed_offset(),
+                        Some(round.id),
+                    )
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                    txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                    restored += 1;
+                }
+            }
+        }
+        RS::Paused => {
+            // 暂停中：任务挂起由 resume 重建
+        }
+        _ => {}
+    }
+    Ok(restored)
+}
+
 pub async fn score_judge_timeouts(
     db: &sea_orm::DatabaseConnection,
     round_id: Uuid,

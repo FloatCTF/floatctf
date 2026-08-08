@@ -14,9 +14,7 @@ pub use render::{NftObjectName, ObservedFirewallState, TABLE_NAME};
 
 use async_trait::async_trait;
 
-use crate::modules::event::awd_team::{
-    AwdResult, domain::firewall_state::DesiredFirewallState,
-};
+use crate::modules::event::awd_team::{AwdResult, domain::firewall_state::DesiredFirewallState};
 
 /// 一次 firewall reconcile 的结果。
 #[derive(Debug, Clone)]
@@ -42,10 +40,7 @@ pub struct FirewallVerification {
 #[async_trait]
 pub trait FirewallRuntime: Send + Sync {
     async fn inspect(&self) -> AwdResult<ObservedFirewallState>;
-    async fn reconcile(
-        &self,
-        desired: &DesiredFirewallState,
-    ) -> AwdResult<FirewallApplyResult>;
+    async fn reconcile(&self, desired: &DesiredFirewallState) -> AwdResult<FirewallApplyResult>;
     async fn verify(&self, desired: &DesiredFirewallState) -> AwdResult<FirewallVerification>;
 }
 
@@ -59,10 +54,7 @@ impl FirewallRuntime for NoopFirewallRuntime {
         Ok(ObservedFirewallState::default())
     }
 
-    async fn reconcile(
-        &self,
-        _desired: &DesiredFirewallState,
-    ) -> AwdResult<FirewallApplyResult> {
+    async fn reconcile(&self, _desired: &DesiredFirewallState) -> AwdResult<FirewallApplyResult> {
         Ok(FirewallApplyResult {
             revision: 0,
             applied: false,

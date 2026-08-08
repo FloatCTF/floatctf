@@ -180,8 +180,12 @@ async fn recover_event(
 
     // ── 3. Restore firewall（nftables 全局 desired-state reconcile，DB 是事实源）──
     // 失败 Fail Closed：不吞错，由调用方决定是否置 NetworkError。
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
     firewall_service::flush_event_connections(network, event.event_id, &event.gamebox_cidr).await;
     recovered += 1;
 

@@ -71,8 +71,12 @@ pub async fn start_event(
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // 全局 desired-state reconcile（nftables）+ conntrack 清理（Phase 1 P1-10）
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
     firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())
@@ -123,8 +127,12 @@ pub async fn pause_event(
     )
     .await?;
 
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
     firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())
@@ -190,8 +198,12 @@ pub async fn resume_event(
     )
     .await?;
 
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
     firewall_service::flush_event_connections(network, event_id, &awd_event.gamebox_cidr).await;
 
     Ok(())

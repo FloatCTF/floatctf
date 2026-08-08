@@ -70,8 +70,29 @@ pub async fn create_awd_event(
         .encrypt(&js_token, &js_aad, 1)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
+    // ── P1-14：跨赛事 CIDR / IP 重叠校验（提交前）──
+    // 当前赛事尚未入库：存量 awd_events / awd_team_networks 全部视为“其他赛事”，
+    // 任何重叠/端口 IP 落入即拒绝创建。
+    use crate::entity::{awd_events, awd_team_networks};
+    let existing_events = awd_events::Entity::find()
+        .all(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let existing_networks = awd_team_networks::Entity::find()
+        .all(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    crate::modules::event::awd_team::service::deploy_service::validate_no_cross_event_overlap(
+        &existing_events,
+        &existing_networks,
+        &b.gamebox_cidr,
+        &b.wireguard_cidr,
+        &b.flagserver_ip,
+        &b.judgeserver_ip,
+    )
+    .map_err(AppError::from)?;
+
     // Create the awd_events record
-    use crate::entity::awd_events;
     let model = awd_events::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -118,7 +139,7 @@ pub async fn start_awd_event(
         event_id,
     )
     .await
-        .map_err(AppError::from)?;
+    .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
 
@@ -138,7 +159,7 @@ pub async fn pause_awd_event(
         event_id,
     )
     .await
-        .map_err(AppError::from)?;
+    .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
 
@@ -158,7 +179,7 @@ pub async fn resume_awd_event(
         event_id,
     )
     .await
-        .map_err(AppError::from)?;
+    .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
 

@@ -14,4 +14,5 @@ export type AwdWireguardPeers = {
   created_at: string;
   rotated_at?: string;
   revoked_at?: string;
+  config_fetched_at?: string;
 };

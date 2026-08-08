@@ -142,7 +142,8 @@ pub async fn run() -> Result<(), BootstrapError> {
     > = if config.awd.network_runtime == "host" {
         info!("AWD firewall enabled — using NftablesFirewallRuntime");
         Arc::new(
-            crate::modules::event::awd_team::infrastructure::firewall::NftablesFirewallRuntime::new(),
+            crate::modules::event::awd_team::infrastructure::firewall::NftablesFirewallRuntime::new(
+            ),
         )
     } else {
         info!("AWD firewall disabled — using NoopFirewallRuntime (dev/mock only)");

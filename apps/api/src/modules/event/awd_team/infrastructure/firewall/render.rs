@@ -17,7 +17,9 @@ use sha2::{Digest, Sha256};
 
 use crate::entity::sea_orm_active_enums::AwdPhase;
 
-use crate::modules::event::awd_team::domain::firewall_state::{DesiredEventPolicy, DesiredFirewallState};
+use crate::modules::event::awd_team::domain::firewall_state::{
+    DesiredEventPolicy, DesiredFirewallState,
+};
 
 /// FloatCTF 唯一拥有的 nftables table。
 pub const TABLE_NAME: &str = "floatctf_awd";
@@ -72,7 +74,9 @@ pub fn render_table(desired: &DesiredFirewallState) -> String {
     out.push_str(&format!(
         "        type filter hook forward priority {FORWARD_PRIORITY}; policy accept;\n"
     ));
-    out.push_str("        # managed by FloatCTF: restrictive DROP only; no iptables/Docker rules touched\n");
+    out.push_str(
+        "        # managed by FloatCTF: restrictive DROP only; no iptables/Docker rules touched\n",
+    );
     out.push_str("        ip saddr @banned_players_v4 drop\n");
     out.push_str("        ip6 saddr @banned_players_v6 drop\n");
     for event in &desired.events {
@@ -213,7 +217,11 @@ pub fn parse_observed_table(output: &str) -> ObservedFirewallState {
         let line = line.trim();
         if let Some(idx) = line.find("managed-by=floatctf revision=") {
             let rest = &line[idx + "managed-by=floatctf revision=".len()..];
-            if let Ok(n) = rest.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse::<u64>()
+            if let Ok(n) = rest
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .unwrap_or("")
+                .parse::<u64>()
             {
                 state.observed_revision = Some(n);
             }
@@ -263,7 +271,9 @@ mod tests {
             ],
             banned_teams: if banned { vec![team_a] } else { vec![] },
         };
-        event.event_key = NftObjectName::event_key(&event.event_id).as_str().to_string();
+        event.event_key = NftObjectName::event_key(&event.event_id)
+            .as_str()
+            .to_string();
         event
     }
 
@@ -378,6 +388,10 @@ mod tests {
         assert_eq!(k1, k2);
         assert!(k1.as_str().len() <= 16);
         assert!(k1.as_str().starts_with("ev_"));
-        assert!(k1.as_str().chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'));
+        assert!(
+            k1.as_str()
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        );
     }
 }

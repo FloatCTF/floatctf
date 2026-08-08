@@ -226,6 +226,20 @@ pub async fn get_wireguard_config(
         .await
         .map_err(AppError::from)?;
 
+    // P1-15 私钥一次返回：首次拉取才返回私钥（此后 config_fetched_at 置位）。
+    // 需要轮换/重新获取走 admin 轮换路径。
+    if peer.config_fetched_at.is_some() {
+        return Err(AppError::Forbidden(
+            "WireGuard 私钥仅首次拉取返回；如需重新获取请联系管理员轮换密钥".into(),
+        ));
+    }
+    crate::modules::event::awd_team::repo::wireguard_repo::mark_wg_config_fetched(
+        ctx.db.get_ref(),
+        peer.id,
+    )
+    .await
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
     let awd_event = awd_events::Entity::find()
         .filter(awd_events::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())

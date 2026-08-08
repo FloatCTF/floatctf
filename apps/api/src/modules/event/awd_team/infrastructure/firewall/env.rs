@@ -72,9 +72,11 @@ pub async fn check_host_capability() -> AwdResult<HostNetworkCapability> {
     let version = runner
         .run("nft", &["--version".into()])
         .await
-        .map_err(|e| crate::modules::event::awd_team::AwdError::Network(format!(
-            "nft binary unavailable: {e}"
-        )))?;
+        .map_err(|e| {
+            crate::modules::event::awd_team::AwdError::Network(format!(
+                "nft binary unavailable: {e}"
+            ))
+        })?;
     if version.exit_code != 0 {
         return Ok(HostNetworkCapability::Unsupported(format!(
             "nft binary present but --version failed (exit {})",
@@ -86,9 +88,11 @@ pub async fn check_host_capability() -> AwdResult<HostNetworkCapability> {
     let probe = runner
         .run("nft", &["list".into(), "tables".into()])
         .await
-        .map_err(|e| crate::modules::event::awd_team::AwdError::Network(format!(
-            "nft invocation failed: {e}"
-        )))?;
+        .map_err(|e| {
+            crate::modules::event::awd_team::AwdError::Network(format!(
+                "nft invocation failed: {e}"
+            ))
+        })?;
     if probe.exit_code != 0 {
         return Ok(HostNetworkCapability::Unsupported(format!(
             "nft list tables failed (exit {}): {} — missing nf_tables or CAP_NET_ADMIN",

@@ -19,8 +19,8 @@ use crate::modules::event::awd_team::{
 };
 
 use super::{
-    FirewallApplyResult, FirewallRuntime, FirewallVerification, ObservedFirewallState,
-    TABLE_NAME, render,
+    FirewallApplyResult, FirewallRuntime, FirewallVerification, ObservedFirewallState, TABLE_NAME,
+    render,
 };
 
 /// nft 可执行文件名。
@@ -65,11 +65,7 @@ impl NftablesFirewallRuntime {
             .runner
             .run(
                 NFT_BIN,
-                &[
-                    "-c".to_string(),
-                    "-f".to_string(),
-                    path.to_string(),
-                ],
+                &["-c".to_string(), "-f".to_string(), path.to_string()],
             )
             .await
             .map_err(|e| AwdError::Network(format!("nft -c failed to run: {e}")))?;
@@ -118,15 +114,14 @@ impl FirewallRuntime for NftablesFirewallRuntime {
         let mut state = render::parse_observed_table(&out);
         if !state.table_exists && !out.trim().is_empty() {
             // 非空输出但无我们的 table —— 观测异常（他方规则存在，我们无权处理）
-            state.notes.push("nft list returned output without floatctf_awd table".into());
+            state
+                .notes
+                .push("nft list returned output without floatctf_awd table".into());
         }
         Ok(state)
     }
 
-    async fn reconcile(
-        &self,
-        desired: &DesiredFirewallState,
-    ) -> AwdResult<FirewallApplyResult> {
+    async fn reconcile(&self, desired: &DesiredFirewallState) -> AwdResult<FirewallApplyResult> {
         // 1. render 完整 table（整个 floatctf_awd 内容）
         let ruleset = render::render_table(desired);
         let tmp = tempfile::NamedTempFile::new()
@@ -192,7 +187,10 @@ impl FirewallRuntime for NftablesFirewallRuntime {
             ));
         }
         for event in &desired.events {
-            let chain = format!("event_{}", render::NftObjectName::event_key(&event.event_id).as_str());
+            let chain = format!(
+                "event_{}",
+                render::NftObjectName::event_key(&event.event_id).as_str()
+            );
             if !observed.event_chains.contains(&chain) {
                 notes.push(format!("missing chain {chain}"));
             }
@@ -244,19 +242,10 @@ mod tests {
 
     #[async_trait]
     impl CommandRunner for FakeNftRunner {
-        async fn run(
-            &self,
-            program: &str,
-            args: &[String],
-        ) -> anyhow::Result<CommandOutput> {
+        async fn run(&self, program: &str, args: &[String]) -> anyhow::Result<CommandOutput> {
             assert_eq!(program, "nft");
             if args.first().map(|s| s.as_str()) == Some("list") {
-                let out = self
-                    .store
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .unwrap_or_default();
+                let out = self.store.lock().unwrap().clone().unwrap_or_default();
                 return Ok(CommandOutput {
                     exit_code: if out.is_empty() { 1 } else { 0 },
                     stdout: out,
@@ -340,19 +329,15 @@ mod tests {
         let _ = rt.reconcile(&desired).await;
 
         let cmds = recorder.recorded();
-        let nft_cmds: Vec<(String, Vec<String>)> = cmds
-            .into_iter()
-            .filter(|(p, _)| p == "nft")
-            .collect();
+        let nft_cmds: Vec<(String, Vec<String>)> =
+            cmds.into_iter().filter(|(p, _)| p == "nft").collect();
         // list → (-c -f) → delete(-f) → (-f) → list → list
         let check_idx = nft_cmds
             .iter()
             .position(|(_, a)| a.first().map(|s| s.as_str()) == Some("-c"));
         let apply_idx = nft_cmds
             .iter()
-            .rposition(|(_, a)| {
-                a.first().map(|s| s.as_str()) == Some("-f")
-            });
+            .rposition(|(_, a)| a.first().map(|s| s.as_str()) == Some("-f"));
         assert!(check_idx.is_some(), "must run nft -c first");
         assert!(apply_idx.is_some(), "must run nft -f");
         assert!(check_idx.unwrap() < apply_idx.unwrap());
@@ -363,11 +348,7 @@ mod tests {
         struct FailCheck;
         #[async_trait]
         impl CommandRunner for FailCheck {
-            async fn run(
-                &self,
-                _program: &str,
-                args: &[String],
-            ) -> anyhow::Result<CommandOutput> {
+            async fn run(&self, _program: &str, args: &[String]) -> anyhow::Result<CommandOutput> {
                 if args.contains(&"-c".to_string()) {
                     return Ok(CommandOutput {
                         exit_code: 1,
@@ -383,7 +364,10 @@ mod tests {
             }
         }
         let rt = NftablesFirewallRuntime::with_runner(Arc::new(FailCheck));
-        let err = rt.reconcile(&sample_desired(1)).await.expect_err("must fail");
+        let err = rt
+            .reconcile(&sample_desired(1))
+            .await
+            .expect_err("must fail");
         assert!(err.to_string().contains("syntax"));
     }
 }

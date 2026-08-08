@@ -24,6 +24,7 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub rotated_at: Option<DateTimeWithTimeZone>,
     pub revoked_at: Option<DateTimeWithTimeZone>,
+    pub config_fetched_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

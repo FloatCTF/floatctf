@@ -7,8 +7,7 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_team_bans, awd_team_networks,
-    sea_orm_active_enums::AwdEventStatus,
+    awd_events, awd_team_bans, awd_team_networks, sea_orm_active_enums::AwdEventStatus,
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -41,9 +40,10 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
     db: &C,
     revision: u64,
 ) -> AwdResult<DesiredFirewallState> {
-    let events = awd_events::Entity::find().all(db).await.map_err(|e| {
-        AwdError::Database(format!("load awd_events: {e}"))
-    })?;
+    let events = awd_events::Entity::find()
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(format!("load awd_events: {e}")))?;
 
     let mut desired = DesiredFirewallState {
         revision,
@@ -65,7 +65,10 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
         // 活跃 ban
         let bans = awd_team_bans::Entity::find()
             .filter(awd_team_bans::Column::EventId.eq(event.event_id))
-            .filter(awd_team_bans::Column::Status.eq(crate::entity::sea_orm_active_enums::BanStatus::Active))
+            .filter(
+                awd_team_bans::Column::Status
+                    .eq(crate::entity::sea_orm_active_enums::BanStatus::Active),
+            )
             .all(db)
             .await
             .map_err(|e| AwdError::Database(format!("load awd_team_bans: {e}")))?;
@@ -85,17 +88,17 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
             .flagserver_ip
             .parse()
             .map_err(|_| AwdError::Validation(format!("flagserver_ip {}", event.flagserver_ip)))?;
-        let judgeserver_ip: std::net::Ipv4Addr = event
-            .judgeserver_ip
-            .parse()
-            .map_err(|_| AwdError::Validation(format!("judgeserver_ip {}", event.judgeserver_ip)))?;
+        let judgeserver_ip: std::net::Ipv4Addr = event.judgeserver_ip.parse().map_err(|_| {
+            AwdError::Validation(format!("judgeserver_ip {}", event.judgeserver_ip))
+        })?;
 
         desired.events.push(DesiredEventPolicy {
-            event_key: crate::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(
-                &event.event_id,
-            )
-            .as_str()
-            .to_string(),
+            event_key:
+                crate::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(
+                    &event.event_id,
+                )
+                .as_str()
+                .to_string(),
             event_id: event.event_id,
             phase: event.phase,
             gamebox_network: IpNet::parse(&event.gamebox_cidr)
@@ -218,7 +221,9 @@ mod tests {
         assert!(!in_firewall_desired_set(&AwdEventStatus::Configuring));
         assert!(!in_firewall_desired_set(&AwdEventStatus::Finished));
         assert!(!in_firewall_desired_set(&AwdEventStatus::Archived));
-        assert!(!in_firewall_desired_set(&AwdEventStatus::VerificationFailed));
+        assert!(!in_firewall_desired_set(
+            &AwdEventStatus::VerificationFailed
+        ));
     }
 
     #[test]

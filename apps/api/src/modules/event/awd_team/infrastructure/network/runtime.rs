@@ -58,6 +58,9 @@ pub trait AwdNetworkRuntime: Send + Sync {
     async fn ensure_wireguard(&self, desired: WireGuardDesiredState) -> AwdResult<()>;
     async fn remove_wireguard(&self, interface: &str) -> AwdResult<()>;
     async fn revoke_peer(&self, peer: PeerIdentity) -> AwdResult<()>;
+    /// 把 peer（public_key + allowed-ips）加回接口（幂等）。Noop 下为 no-op。
+    /// Host 实现 = `wg set <iface> peer <pubkey> allowed-ips <ip>`（system::wireguard::add_peer）。
+    async fn add_peer(&self, peer: PeerIdentity, allowed_ips: &str) -> AwdResult<()>;
     async fn clear_event_connections(&self, event: EventNetworkIdentity) -> AwdResult<()>;
     async fn clear_team_connections(&self, team: TeamNetworkIdentity) -> AwdResult<()>;
     async fn inspect(&self, event: EventNetworkIdentity) -> AwdResult<NetworkObservedState>;
@@ -112,6 +115,16 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
         wireguard::remove_peer(self.runner(), &peer.interface, &peer.public_key).await
     }
 
+    async fn add_peer(&self, peer: PeerIdentity, allowed_ips: &str) -> AwdResult<()> {
+        wireguard::add_peer(
+            self.runner(),
+            &peer.interface,
+            &peer.public_key,
+            allowed_ips,
+        )
+        .await
+    }
+
     async fn clear_event_connections(&self, event: EventNetworkIdentity) -> AwdResult<()> {
         conntrack::flush_event_gamebox_traffic(self.runner(), &event.gamebox_cidr).await
     }
@@ -143,6 +156,9 @@ impl AwdNetworkRuntime for NoopNetworkRuntime {
         Ok(())
     }
     async fn revoke_peer(&self, _peer: PeerIdentity) -> AwdResult<()> {
+        Ok(())
+    }
+    async fn add_peer(&self, _peer: PeerIdentity, _allowed_ips: &str) -> AwdResult<()> {
         Ok(())
     }
     async fn clear_event_connections(&self, _event: EventNetworkIdentity) -> AwdResult<()> {

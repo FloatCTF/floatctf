@@ -44,6 +44,12 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             "题目位置（支持 {{WORK_DIR}} 等变量引用）",
         ),
         (
+            "GAMEBOXES_DIR",
+            "{{WORK_DIR}}/gameboxes".to_string(),
+            SettingValueType::String,
+            "GameBox 位置（支持 {{WORK_DIR}} 等变量引用）",
+        ),
+        (
             "HTTP_PREFIX",
             "http://".to_string(),
             SettingValueType::String,

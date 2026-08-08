@@ -80,7 +80,7 @@ pub async fn start_event(
 
     // P3-1：第一轮经 round_service 创建（幂等 find-or-create + 插入 RoundEnd(1) 任务
     // + COMMIT 后 reconcile + conntrack + judge dispatch）。
-    round_service::start_round(db, network, firewall, publisher, event_id).await?;
+    round_service::start_round(db, network, firewall, publisher, event_id, Some(1)).await?;
 
     Ok(())
 }
@@ -152,7 +152,9 @@ pub async fn pause_event(
                 Default::default(),
             )
             .await;
-            Err(AwdError::Network(format!("pause network reconcile failed: {e}")))
+            Err(AwdError::Network(format!(
+                "pause network reconcile failed: {e}"
+            )))
         }
     }
 }
@@ -239,7 +241,9 @@ pub async fn resume_event(
                 Default::default(),
             )
             .await;
-            Err(AwdError::Network(format!("resume network reconcile failed: {e}")))
+            Err(AwdError::Network(format!(
+                "resume network reconcile failed: {e}"
+            )))
         }
     }
 }

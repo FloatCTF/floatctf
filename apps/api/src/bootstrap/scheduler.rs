@@ -13,8 +13,7 @@ use crate::{
         infrastructure::firewall::FirewallRuntime,
         scheduler::{
             AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler,
-            AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler,
-            AwdTeamUnbanHandler,
+            AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler, AwdTeamUnbanHandler,
         },
     },
     scheduler::{

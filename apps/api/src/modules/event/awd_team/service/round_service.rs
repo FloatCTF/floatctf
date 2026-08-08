@@ -47,6 +47,8 @@ use crate::scheduler::TaskKey;
 pub struct RoundTaskPayload {
     pub event_id: Uuid,
     pub round_id: Option<Uuid>,
+    /// RoundStart 任务携带期望 round_number（幂等键维度，P3-3 防 retry 双 round）。
+    pub round_number: Option<i32>,
 }
 
 /// RoundStart 处理结果。
@@ -66,6 +68,7 @@ async fn schedule_round_task<C: ConnectionTrait + Send>(
     task_key: TaskKey,
     execute_at: chrono::DateTime<chrono::FixedOffset>,
     round_id: Option<Uuid>,
+    round_number: Option<i32>,
 ) -> Result<(), sea_orm::DbErr> {
     let now = chrono::Utc::now();
     scheduled_tasks::ActiveModel {
@@ -78,8 +81,12 @@ async fn schedule_round_task<C: ConnectionTrait + Send>(
         status: Set("pending".into()),
         execute_at: Set(Some(execute_at)),
         payload: Set(Some(
-            serde_json::to_value(RoundTaskPayload { event_id, round_id })
-                .map_err(|e| sea_orm::DbErr::Json(e.to_string()))?,
+            serde_json::to_value(RoundTaskPayload {
+                event_id,
+                round_id,
+                round_number,
+            })
+            .map_err(|e| sea_orm::DbErr::Json(e.to_string()))?,
         )),
         enabled: Set(true),
         protected: Set(true),
@@ -101,6 +108,7 @@ pub async fn start_round(
     firewall: &dyn FirewallRuntime,
     publisher: &dyn EventPublisher,
     event_id: Uuid,
+    expected_round_number: Option<i32>,
 ) -> AwdResult<RoundStarted> {
     // ── 事务内：DB 状态变更 ──
     let txn = db
@@ -149,11 +157,16 @@ pub async fn start_round(
             .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    // round number：latest + 1（或 1）
-    let latest = round_repo::find_latest_round(&txn, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-    let round_number = latest.map(|r| r.round_number + 1).unwrap_or(1);
+    // round number：任务携带期望值则用之（幂等键维度）；否则 latest + 1（或 1）
+    let round_number = match expected_round_number {
+        Some(n) if n >= 1 => n,
+        _ => {
+            let latest = round_repo::find_latest_round(&txn, event_id)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+            latest.map(|r| r.round_number + 1).unwrap_or(1)
+        }
+    };
 
     // 幂等：同 round_number 已存在 → 直接返回（retry 不重复创建）
     let existing = awd_rounds::Entity::find()
@@ -199,6 +212,7 @@ pub async fn start_round(
         TaskKey::AwdRoundEnd,
         round_end.fixed_offset(),
         Some(round.id),
+        None,
     )
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -334,6 +348,7 @@ pub async fn end_round(
         TaskKey::AwdRoundGraceEnd,
         grace_ends_at.fixed_offset(),
         Some(round_id),
+        None,
     )
     .await
     .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -399,6 +414,7 @@ pub async fn grace_end_round(
             TaskKey::AwdRoundStart,
             chrono::Utc::now().fixed_offset(),
             None,
+            Some(round.round_number + 1),
         )
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -514,6 +530,7 @@ pub async fn restore_round_scheduling(
                     TaskKey::AwdRoundEnd,
                     round.scheduled_end_at.fixed_offset(),
                     Some(round.id),
+                    None,
                 )
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -536,6 +553,7 @@ pub async fn restore_round_scheduling(
                         TaskKey::AwdRoundGraceEnd,
                         grace_end.fixed_offset(),
                         Some(round.id),
+                        None,
                     )
                     .await
                     .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -634,5 +652,6 @@ mod tests {
         let v = serde_json::json!({ "event_id": Uuid::new_v4() });
         let back: RoundTaskPayload = serde_json::from_value(v).unwrap();
         assert!(back.round_id.is_none());
+        assert!(back.round_number.is_none());
     }
 }

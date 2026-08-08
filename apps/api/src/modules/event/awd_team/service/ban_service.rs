@@ -43,11 +43,10 @@ pub async fn ban_team(
     banned_by: Option<Uuid>,
 ) -> AwdResult<Uuid> {
     // 1. DB desired ban
-    let active_round = crate::modules::event::awd_team::repo::round_repo::find_active_round(
-        db, event_id,
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?;
+    let active_round =
+        crate::modules::event::awd_team::repo::round_repo::find_active_round(db, event_id)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
     let ban = ban_repo::create_ban(
         db,
         event_id,
@@ -60,15 +59,19 @@ pub async fn ban_team(
     .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // 2. WG host 挂起（DB 保持 Active）
-    let removed = wireguard_service::suspend_team_peers_from_host(db, network, event_id, team_id)
-        .await?;
+    let removed =
+        wireguard_service::suspend_team_peers_from_host(db, network, event_id, team_id).await?;
     info!(
         "[Ban] Team {team_id} banned in event {event_id}: {removed} WG peer(s) suspended on host"
     );
 
     // 3. Firewall：banned set reconcile（全局，DB 是事实源）
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
 
     // 4. Conntrack 清理（该队 WG 子网）
     let team_net = crate::modules::event::awd_team::repo::gamebox_repo::find_team_network(
@@ -122,8 +125,12 @@ pub async fn unban_team(
     wireguard_service::restore_active_peers_to_host(db, network, event_id).await?;
 
     // 3. Firewall：banned set 移除该队 subnet（全局 reconcile）
-    firewall_service::reconcile_global(db, firewall, firewall_service::next_network_revision(db).await?)
-        .await?;
+    firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await?;
 
     // 4. Realtime（best-effort）
     let _ = publisher

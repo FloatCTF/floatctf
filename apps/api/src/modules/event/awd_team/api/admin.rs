@@ -233,14 +233,9 @@ pub async fn ban_team(
     if let Some(duration_secs) = body.duration_secs {
         if duration_secs > 0 {
             let execute_at = chrono::Utc::now() + chrono::Duration::seconds(duration_secs);
-            schedule_team_unban(
-                ctx.db.get_ref(),
-                event_id,
-                ban_id,
-                execute_at,
-            )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            schedule_team_unban(ctx.db.get_ref(), event_id, ban_id, execute_at)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
     }
 

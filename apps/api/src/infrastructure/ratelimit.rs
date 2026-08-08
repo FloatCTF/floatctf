@@ -69,12 +69,16 @@ impl RateLimiter {
         let window = std::time::Duration::from_secs(window_secs);
         let mut map = self.inner.lock().unwrap();
         let bucket = map.entry((scope, key.to_string())).or_default();
-        bucket.timestamps.retain(|t| now.duration_since(*t) < window);
+        bucket
+            .timestamps
+            .retain(|t| now.duration_since(*t) < window);
         if bucket.timestamps.len() >= limit as usize {
-            return Err(crate::modules::event::awd_team::AwdError::Forbidden(format!(
-                "rate limit exceeded for {scope:?} ({} per {}s)",
-                limit, window_secs
-            )));
+            return Err(crate::modules::event::awd_team::AwdError::Forbidden(
+                format!(
+                    "rate limit exceeded for {scope:?} ({} per {}s)",
+                    limit, window_secs
+                ),
+            ));
         }
         bucket.timestamps.push(now);
         Ok(())

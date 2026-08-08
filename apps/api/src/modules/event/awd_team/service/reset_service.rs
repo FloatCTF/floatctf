@@ -32,9 +32,15 @@ use crate::modules::event::awd_team::{
 /// 重置发起方（P4-1 显式化，废弃 admin 传 `Uuid::nil()` hack）。
 #[derive(Debug, Clone)]
 pub enum ResetActor {
-    Player { user_id: Uuid, team_id: Uuid },
+    Player {
+        user_id: Uuid,
+        team_id: Uuid,
+    },
     /// charge_team=true 时该次重置也计入队伍重置次数并可能扣分。
-    Admin { admin_id: Uuid, charge_team: bool },
+    Admin {
+        admin_id: Uuid,
+        charge_team: bool,
+    },
 }
 
 impl ResetActor {
@@ -113,7 +119,9 @@ pub async fn execute_reset(
     let used = team_reset_count(db, ctx.event_id, team_id).await?;
     let is_free = match &ctx.actor {
         ResetActor::Player { .. } => used < awd_event.free_reset_count as i64,
-        ResetActor::Admin { charge_team, .. } => !charge_team || used < awd_event.free_reset_count as i64,
+        ResetActor::Admin { charge_team, .. } => {
+            !charge_team || used < awd_event.free_reset_count as i64
+        }
     };
 
     // 6. Create reset record

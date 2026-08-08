@@ -131,21 +131,26 @@ pub async fn archive_event(
 
     // 6. P4-13 desired-state 清理：该赛事移出 managed active desired set → 全局 reconcile
     // （该赛事 sets/event chains 被清理）；若已无任何赛事 → 删除整个 floatctf_awd table。
-    let remaining = crate::modules::event::awd_team::service::firewall_service::build_desired_state(
-        db,
-        crate::modules::event::awd_team::service::firewall_service::current_network_revision(db)
+    let remaining =
+        crate::modules::event::awd_team::service::firewall_service::build_desired_state(
+            db,
+            crate::modules::event::awd_team::service::firewall_service::current_network_revision(
+                db,
+            )
             .await,
-    )
-    .await?;
-    let revision = crate::modules::event::awd_team::service::firewall_service::next_network_revision(db).await?;
-    if remaining.is_empty() {
-        crate::modules::event::awd_team::service::firewall_service::reconcile_empty(firewall, revision)
+        )
+        .await?;
+    let revision =
+        crate::modules::event::awd_team::service::firewall_service::next_network_revision(db)
             .await?;
+    if remaining.is_empty() {
+        crate::modules::event::awd_team::service::firewall_service::reconcile_empty(
+            firewall, revision,
+        )
+        .await?;
     } else {
         crate::modules::event::awd_team::service::firewall_service::reconcile_global(
-            db,
-            firewall,
-            revision,
+            db, firewall, revision,
         )
         .await?;
     }

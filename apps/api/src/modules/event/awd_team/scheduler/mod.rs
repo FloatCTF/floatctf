@@ -261,6 +261,7 @@ impl TaskHandler for AwdRoundStartHandler {
             self.firewall.as_ref(),
             self.publisher.as_ref(),
             event_id,
+            payload.round_number,
         )
         .await?;
 

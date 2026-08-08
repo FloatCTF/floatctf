@@ -64,6 +64,8 @@ pub struct AwdDependencies {
     pub firewall: Arc<dyn FirewallRuntime>,
     /// 进程内限流器（P5-10）。
     pub rate_limiter: Arc<crate::infrastructure::ratelimit::RateLimiter>,
+    /// 结构化审计（P5-11：管理员敏感操作）。
+    pub audit: crate::infrastructure::audit::AuditService,
 }
 
 impl AppState {

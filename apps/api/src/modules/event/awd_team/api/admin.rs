@@ -244,6 +244,18 @@ pub async fn ban_team(
         }
     }
 
+    // P5-11 审计
+    awd.audit
+        .record(
+            crate::infrastructure::audit::AuditAction::TeamBanned,
+            &format!("AWD team {team_id} banned in event {event_id}"),
+            serde_json::json!({ "event_id": event_id, "team_id": team_id }),
+            None,
+            Some(admin_id),
+            Some(&ctx.req),
+        )
+        .await;
+
     UniResponse::ok(ban_id.into()).into()
 }
 
@@ -305,6 +317,18 @@ pub async fn unban_team(
     .await
     .map_err(AppError::from)?;
 
+    // P5-11 审计
+    awd.audit
+        .record(
+            crate::infrastructure::audit::AuditAction::TeamUnbanned,
+            &format!("AWD team {team_id} unbanned in event {event_id}"),
+            serde_json::json!({ "event_id": event_id, "team_id": team_id }),
+            None,
+            Some(admin_id),
+            Some(&ctx.req),
+        )
+        .await;
+
     UniResponse::ok_none().into()
 }
 
@@ -315,6 +339,7 @@ pub async fn unban_team(
 pub async fn adjust_score(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<ScoreAdjustRequest>,
 ) -> UniResult<()> {
@@ -331,6 +356,18 @@ pub async fn adjust_score(
     )
     .await
     .map_err(AppError::from)?;
+
+    // P5-11 审计
+    awd.audit
+        .record(
+            crate::infrastructure::audit::AuditAction::ScoreAdjusted,
+            &format!("AWD score adjusted for team {} in event {}", body.team_id, event_id),
+            serde_json::json!({ "event_id": event_id, "team_id": body.team_id, "delta": body.delta }),
+            None,
+            Some(admin_id),
+            Some(&ctx.req),
+        )
+        .await;
 
     UniResponse::ok_none().into()
 }
@@ -443,6 +480,19 @@ pub async fn admin_reset_gamebox(
     )
     .await
     .map_err(AppError::from)?;
+
+    // P5-11 审计
+    awd.audit
+        .record(
+            crate::infrastructure::audit::AuditAction::GameboxReset,
+            &format!("admin reset gamebox {instance_id} in event {event_id}"),
+            serde_json::json!({ "event_id": event_id, "instance_id": instance_id }),
+            None,
+            Some(admin_id),
+            Some(&ctx.req),
+        )
+        .await;
+
     UniResponse::ok_none().into()
 }
 
@@ -639,6 +689,18 @@ pub async fn rotate_tokens(
         js_token_str,
     )
     .await?;
+
+    // P5-11 审计
+    awd.audit
+        .record(
+            crate::infrastructure::audit::AuditAction::TokenRotated,
+            &format!("AWD internal tokens rotated for event {event_id}"),
+            serde_json::json!({ "event_id": event_id, "key_version": new_key_version }),
+            None,
+            Some(admin_id),
+            Some(&ctx.req),
+        )
+        .await;
 
     UniResponse::ok_none().into()
 }

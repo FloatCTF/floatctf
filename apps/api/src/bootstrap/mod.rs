@@ -209,7 +209,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         docker.get_ref().clone(),
         rustfs.get_ref().clone(),
         log_service.clone(),
-        audit_service,
+        audit_service.clone(),
         publisher.clone(),
         task_scheduler_arc.clone(),
         EventModuleRegistry::new(),
@@ -226,6 +226,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         network: awd_network.clone(),
         firewall: awd_firewall.clone(),
         rate_limiter: Arc::new(crate::infrastructure::ratelimit::RateLimiter::new()),
+        audit: audit_service.clone(),
     });
 
     let ip = config.server.listen_ip.clone();

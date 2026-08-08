@@ -66,11 +66,32 @@ cargo check --workspace       → 0 error
 
 ## 环境门控待办（需 root/Docker 宿主执行）
 
-| 项 | 载体 | 前置 |
-|---|---|---|
-| P1-0 nftables 矩阵实测 | `sudo apps/api/scripts/nft_prototype.sh` | root + nf_tables |
-| Scenario B/C/D/G/H/I + Host Safety | CI-host-network / 手工 | Docker + WG + root |
-| Flag/Judge Docker smoke | `RUN_DOCKER_TESTS=1 apps/api/scripts/e2e_flag_judge.sh` | 补 `Dockerfile.awd-*` |
+> 本机无免密 root（uid 1000），以下项无法在本机验证，交付载体 + 前置条件如下。
+
+| # | 待办 | 对应计划项 | 载体 | 前置 |
+|---|---|---|---|---|
+| 1 | nftables 矩阵实测（Hardening/Attack/Ban/Internet-deny + Docker 共存） | P1-0 | `sudo apps/api/scripts/nft_prototype.sh` | root + nf_tables |
+| 2 | host hook/priority discovery 实测（验证 FLOATCTF_FORWARD_PRIORITY=1） | P1-1 | docs/awd-nftables-host-discovery.md §3 命令清单 | root |
+| 3 | **P2-6 真实网络矩阵 probe**（方案 A 挂起 WG peers / 方案 B canary namespace；precheck 不得给真实玩家提前攻击窗口） | P2-6 | CI-host-network 或手工 | Docker + WG + root |
+| 4 | **P2-7/P2-8 precheck flag/judge 隔离实测**（真实 flag issue + judge callback 链路，X-Precheck-Run 语义，不污染 awd_flag_issues/score） | P2-7/P2-8 | CI-host-network | 容器编排 + root |
+| 5 | Scenario A 完整比赛 nft policy transition 实测（DB 级已有：awd_scenarios::scenario_a） | P5-2 | CI-host-network | Docker + WG + root |
+| 6 | Scenario B Reset / C Ban（banned set 断言、四入口全拒） | P5-3 | CI-host-network | Docker + WG + root |
+| 7 | Scenario D Crash Recovery（任意状态 kill API 重启） | P5-4 | CI-host-network | Docker + root |
+| 8 | Scenario G Token Rotation / H Round Transition（幂等：恰一个 Grace、恰一个 next round） | P5-7 | CI-host-network | Docker + root |
+| 9 | Scenario I Docker Backend Compatibility（iptables backend 必跑，nftables backend 可选/nightly） | P5-8 | CI-host-network | root |
+| 10 | Host Safety（宿主 SSH/无关容器/firewalld/libvirt 不受影响；archive 只删 floatctf_awd） | P5-13 | CI-host-network | root |
+| 11 | Flag/Judge Docker smoke | — | `RUN_DOCKER_TESTS=1 apps/api/scripts/e2e_flag_judge.sh` | 补 `Dockerfile.awd-*` |
+
+## 本轮 plan 遗漏修复记录（2026-08-08）
+
+| 提交 | 修复项 |
+|---|---|
+| ae9cb60 | P4-9：resume 重建 round.end/grace_end 任务（卡死 bug）+ judge_callback 冻结门禁（铁律 #8） |
+| 686214c | token 轮换探活（验收 #16）+ recovery 范围扩展 Verified/Deploying/…（验收 #11） |
+| b0fc0f1 | **first-blood 并发丢失攻击分 bug**（PG 事务 abort）+ P5-9 三个并发断言 |
+
+> 本轮共确认并修复 **3 个真实代码 bug**（resume 卡死 / judge 冻结期写分 / first-blood abort），
+> 新增 5 个 DB-gated 回归测试（pause/resume 重建 + 3 并发 + 既有场景扩展）。
 
 ## 与计划的主要偏差（均已注释于代码）
 

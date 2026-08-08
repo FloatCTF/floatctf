@@ -237,9 +237,14 @@ impl AwdCrypto {
         stored_ciphertext: &[u8],
         stored_nonce: &[u8],
         event_id: Uuid,
+        key_version: i32,
     ) -> Result<bool, AwdError> {
         let aad = Self::build_aad(event_id, "internal_token");
-        let re_encrypted = self.encrypt_with_nonce(provided_token, &aad, stored_nonce, 1)?;
+        // P3-11：key_version 参与验证（原硬编码 1，token rotation 后版本漂移）。
+        // 说明：XChaCha20-Poly1305 密文不随 key_version 变化（它只是 blob 元数据），
+        // 但为保持版本语义一致与审计可溯，重加密必须使用存储时的版本。
+        let re_encrypted =
+            self.encrypt_with_nonce(provided_token, &aad, stored_nonce, key_version)?;
         if re_encrypted.ciphertext.len() != stored_ciphertext.len() {
             return Ok(false);
         }
@@ -441,7 +446,31 @@ mod tests {
         // Verify should succeed
         assert!(
             crypto
-                .is_valid_token(&token, &blob.ciphertext, &blob.nonce, event_id)
+                .is_valid_token(&token, &blob.ciphertext, &blob.nonce, event_id, 1)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_valid_token_uses_key_version() {
+        // P3-11：key_version 参与验证路径；存储版本与验证版本一致时通过。
+        let crypto = test_crypto();
+        let event_id = Uuid::new_v4();
+        let aad = AwdCrypto::build_aad(event_id, "internal_token");
+
+        let token = AwdCrypto::generate_token();
+        let blob = crypto.encrypt(&token, &aad, 2).unwrap();
+
+        assert!(
+            crypto
+                .is_valid_token(&token, &blob.ciphertext, &blob.nonce, event_id, 2)
+                .unwrap()
+        );
+        // 错误 token 用任何版本都拒绝
+        let wrong = AwdCrypto::generate_token();
+        assert!(
+            !crypto
+                .is_valid_token(&wrong, &blob.ciphertext, &blob.nonce, event_id, 2)
                 .unwrap()
         );
     }
@@ -459,7 +488,7 @@ mod tests {
         // Wrong token should fail
         assert!(
             !crypto
-                .is_valid_token(&wrong_token, &blob.ciphertext, &blob.nonce, event_id)
+                .is_valid_token(&wrong_token, &blob.ciphertext, &blob.nonce, event_id, 1)
                 .unwrap()
         );
     }
@@ -477,7 +506,7 @@ mod tests {
         // Wrong event_id changes AAD → ciphertext differs → verification fails
         assert!(
             !crypto
-                .is_valid_token(&token, &blob.ciphertext, &blob.nonce, wrong_event_id)
+                .is_valid_token(&token, &blob.ciphertext, &blob.nonce, wrong_event_id, 1)
                 .unwrap()
         );
     }

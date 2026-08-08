@@ -487,61 +487,174 @@ pub async fn archive_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/tokens/rotate
+///
+/// P3-10 完整编排（计划 §5.6）：
+/// 1. key_version + 1，新 token 用新版本加密（修复原实现硬编码 1 + 用外键当主键
+///    静默 0 行的历史 bug）；
+/// 2. DB 原子更新：token ciphertext + key_version + rotation audit（同一事务）；
+/// 3. 容器 rollout：recreate flagserver/judgeserver 容器（同固定 IP/网络，新 INTERNAL_TOKEN）。
+///
+/// 失败模型：DB 更新是原子 desired state；rollout 失败返回错误可重跑，
+/// 绝不允许"DB 已只认新 token 但运行中容器仍拿旧 token"的静默态。
 #[post("/events/{event_id}/awd/tokens/rotate")]
 pub async fn rotate_tokens(
-    _admin: SuperAdminJwtGuard,
+    admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     use crate::entity::awd_events;
     use crate::modules::event::awd_team::crypto::AwdCrypto;
 
     let event_id = path.into_inner();
+    let admin_id = admin.into_inner().id;
 
-    // Initialize crypto
+    // 1. 解析真实 awd_event（真实主键 + 当前 key_version + infra 信息）
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    let new_key_version = awd_event.key_version + 1;
+
     let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Generate new tokens
+    // 2. 生成并加密新 token（新 key_version）
     let fs_token = AwdCrypto::generate_token();
     let js_token = AwdCrypto::generate_token();
-
-    // Encrypt tokens
     let fs_aad = AwdCrypto::build_aad(event_id, "internal_token");
     let fs_blob = crypto
-        .encrypt(&fs_token, &fs_aad, 1)
+        .encrypt(&fs_token, &fs_aad, new_key_version)
         .map_err(|e| AppError::Internal(e.to_string()))?;
-
     let js_aad = AwdCrypto::build_aad(event_id, "internal_token");
     let js_blob = crypto
-        .encrypt(&js_token, &js_aad, 1)
+        .encrypt(&js_token, &js_aad, new_key_version)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Update the event with new encrypted tokens
+    // 3. DB 原子更新（真实主键）+ audit 同一事务
+    let txn = ctx.db.begin().await?;
     let mut active: awd_events::ActiveModel = awd_events::ActiveModel {
-        id: Set(event_id),
+        id: Set(awd_event.id),
+        key_version: Set(new_key_version),
+        flagserver_token_ciphertext: Set(Some(fs_blob.ciphertext)),
+        flagserver_token_nonce: Set(Some(fs_blob.nonce)),
+        judgeserver_token_ciphertext: Set(Some(js_blob.ciphertext)),
+        judgeserver_token_nonce: Set(Some(js_blob.nonce)),
         ..Default::default()
     };
-    active.flagserver_token_ciphertext = Set(Some(fs_blob.ciphertext));
-    active.flagserver_token_nonce = Set(Some(fs_blob.nonce));
-    active.judgeserver_token_ciphertext = Set(Some(js_blob.ciphertext));
-    active.judgeserver_token_nonce = Set(Some(js_blob.nonce));
-
     active
-        .update(ctx.db.get_ref())
+        .update(&txn)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-    // Create rotation audit record
     let rotation = crate::entity::awd_internal_token_rotations::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
         token_type: Set("all".to_string()),
+        rotated_by: Set(Some(admin_id)),
         ..Default::default()
     };
     rotation
-        .insert(ctx.db.get_ref())
+        .insert(&txn)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
+    txn.commit().await?;
+
+    // 4. 容器 rollout：recreate flagserver/judgeserver（同 IP/网络，新 token）
+    let network_name = awd_event
+        .docker_network_name
+        .clone()
+        .ok_or_else(|| AppError::Internal("Docker network not configured".into()))?;
+    let fs_token_str =
+        String::from_utf8(fs_token).map_err(|_| AppError::Internal("token not utf8".into()))?;
+    let js_token_str =
+        String::from_utf8(js_token).map_err(|_| AppError::Internal("token not utf8".into()))?;
+    rollout_infra_container(
+        ctx.db.get_ref(),
+        awd.containers.as_ref(),
+        &awd_event,
+        event_id,
+        "flagserver",
+        &awd_event.flagserver_ip,
+        &network_name,
+        ctx.config.awd.flagserver_image.clone(),
+        fs_token_str,
+    )
+    .await?;
+    rollout_infra_container(
+        ctx.db.get_ref(),
+        awd.containers.as_ref(),
+        &awd_event,
+        event_id,
+        "judgeserver",
+        &awd_event.judgeserver_ip,
+        &network_name,
+        ctx.config.awd.judgeserver_image.clone(),
+        js_token_str,
+    )
+    .await?;
+
+    UniResponse::ok_none().into()
+}
+
+/// 重建一个 infra 容器（stop → create，同 fixed_ip/网络，env 带新 token）。
+async fn rollout_infra_container(
+    db: &sea_orm::DatabaseConnection,
+    containers: &dyn fcmc::AwdContainerRuntime,
+    awd_event: &crate::entity::awd_events::Model,
+    event_id: Uuid,
+    kind: &str,
+    fixed_ip: &str,
+    network_name: &str,
+    image_ref: String,
+    token: String,
+) -> UniResult<()> {
+    let container_name = format!("fctf-{}-{}", kind, &event_id.to_string()[..8]);
+
+    if let Err(e) = containers.stop_container(&container_name).await {
+        // 容器不存在也继续 create（幂等 rollout）
+        tracing::info!("[Rotate] stop {}: {}", container_name, e);
+    }
+
+    containers
+        .create_infrastructure_container(fcmc::InfrastructureContainerSpec {
+            event_id,
+            container_name: container_name.clone(),
+            image_ref,
+            network_name: network_name.to_string(),
+            fixed_ip: fixed_ip.to_string(),
+            env: vec![
+                format!("EVENT_ID={event_id}"),
+                format!("INTERNAL_TOKEN={token}"),
+                format!("LISTEN_ADDR=0.0.0.0:8080"),
+            ],
+            cpu_millis: Some(500),
+            memory_bytes: Some(256 * 1024 * 1024),
+        })
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "token rotation DB committed but {kind} rollout failed: {e}（可重跑本端点）"
+            ))
+        })?;
+
+    // 更新 runtime resource 记录的 container_id（rollout 后容器 id 变化）
+    use crate::entity::awd_runtime_resources;
+    let updated = awd_runtime_resources::Entity::update_many()
+        .col_expr(
+            awd_runtime_resources::Column::ResourceId,
+            sea_orm::sea_query::Expr::value(container_name.clone()),
+        )
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(awd_runtime_resources::Column::ResourceType.eq(kind))
+        .exec(db)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated.rows_affected == 0 {
+        tracing::warn!("[Rotate] no awd_runtime_resources row for {kind} — recorded manually");
+    }
+
+    let _ = awd_event;
+    tracing::info!("[Rotate] {kind} container rolled out as {}", container_name);
     UniResponse::ok_none().into()
 }
 

@@ -118,7 +118,13 @@ impl FromRequest for AwdInternalAuth {
             ) {
                 if !ciphertext.is_empty()
                     && crypto
-                        .is_valid_token(&token_bytes, ciphertext, nonce, path_event_id)
+                        .is_valid_token(
+                            &token_bytes,
+                            ciphertext,
+                            nonce,
+                            path_event_id,
+                            awd_event.key_version,
+                        )
                         .map_err(|e| AuthError::CryptoError(e.to_string()))?
                 {
                     return Ok(AwdInternalAuth {
@@ -136,7 +142,13 @@ impl FromRequest for AwdInternalAuth {
             ) {
                 if !ciphertext.is_empty()
                     && crypto
-                        .is_valid_token(&token_bytes, ciphertext, nonce, path_event_id)
+                        .is_valid_token(
+                            &token_bytes,
+                            ciphertext,
+                            nonce,
+                            path_event_id,
+                            awd_event.key_version,
+                        )
                         .map_err(|e| AuthError::CryptoError(e.to_string()))?
                 {
                     return Ok(AwdInternalAuth {

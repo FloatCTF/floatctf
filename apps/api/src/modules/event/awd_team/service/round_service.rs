@@ -477,11 +477,7 @@ pub async fn restore_round_scheduling(
 
     let Some(round) = awd_rounds::Entity::find()
         .filter(awd_rounds::Column::EventId.eq(event_id))
-        .filter(awd_rounds::Column::Status.is_in([
-            RS::Active,
-            RS::Grace,
-            RS::Paused,
-        ]))
+        .filter(awd_rounds::Column::Status.is_in([RS::Active, RS::Grace, RS::Paused]))
         .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
@@ -490,23 +486,28 @@ pub async fn restore_round_scheduling(
     };
 
     let mut restored = 0usize;
-    let task_exists = |key: TaskKey| -> std::pin::Pin<Box<dyn std::future::Future<Output = AwdResult<bool>> + Send + '_>> {
+    let task_exists = |key: TaskKey| -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = AwdResult<bool>> + Send + '_>,
+    > {
         Box::pin(async move {
-        let found = scheduled_tasks::Entity::find()
-            .filter(scheduled_tasks::Column::GroupId.eq(event_id))
-            .filter(scheduled_tasks::Column::TaskKey.eq(key.to_string()))
-            .filter(scheduled_tasks::Column::Status.eq("pending"))
-            .one(db)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
-        Ok(found.is_some())
+            let found = scheduled_tasks::Entity::find()
+                .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+                .filter(scheduled_tasks::Column::TaskKey.eq(key.to_string()))
+                .filter(scheduled_tasks::Column::Status.eq("pending"))
+                .one(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+            Ok(found.is_some())
         })
     };
 
     match round.status {
         RS::Active => {
             if !task_exists(TaskKey::AwdRoundEnd).await? {
-                let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                let txn = db
+                    .begin()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
                 schedule_round_task(
                     &txn,
                     event_id,
@@ -516,14 +517,19 @@ pub async fn restore_round_scheduling(
                 )
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?;
-                txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
                 restored += 1;
             }
         }
         RS::Grace => {
             if let Some(grace_end) = round.grace_ends_at {
                 if !task_exists(TaskKey::AwdRoundGraceEnd).await? {
-                    let txn = db.begin().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                    let txn = db
+                        .begin()
+                        .await
+                        .map_err(|e| AwdError::Database(e.to_string()))?;
                     schedule_round_task(
                         &txn,
                         event_id,
@@ -533,7 +539,9 @@ pub async fn restore_round_scheduling(
                     )
                     .await
                     .map_err(|e| AwdError::Database(e.to_string()))?;
-                    txn.commit().await.map_err(|e| AwdError::Database(e.to_string()))?;
+                    txn.commit()
+                        .await
+                        .map_err(|e| AwdError::Database(e.to_string()))?;
                     restored += 1;
                 }
             }

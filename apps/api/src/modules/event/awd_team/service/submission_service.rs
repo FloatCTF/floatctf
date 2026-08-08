@@ -142,10 +142,15 @@ pub async fn process_submission(
                 .map_err(|e| AwdError::Database(format!("Victim loss scoring failed: {}", e)))?;
 
                 // 5. Try first-blood bonus (once per template per event)
+                //
+                // 用 ON CONFLICT DO NOTHING 幂等写入：裸 INSERT 的唯一冲突会把整个
+                // 事务置为 aborted（PostgreSQL 语义），随后 COMMIT 静默变 ROLLBACK——
+                // 败者的攻击分 + 受害者损失会被一起丢掉。DO NOTHING 则把「bonus 已被
+                // 别人抢先」当作正常结果，不影响同一事务里已成功的 attack/loss 写入。
                 let bonus_key =
                     IdempotencyKey::first_bonus(&event_id.to_string(), &template_id.to_string());
 
-                let bonus_result = score_repo::create_score_event(
+                let was_first_blood = score_repo::create_score_event_if_absent(
                     tx,
                     event_id,
                     Some(round_id),
@@ -158,20 +163,10 @@ pub async fn process_submission(
                     Some(template_id),
                     Some("first blood"),
                 )
-                .await;
-
-                let was_first_blood = match &bonus_result {
-                    Ok(_) => true,
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if msg.contains("duplicate") || msg.contains("unique") {
-                            false // already claimed by another team
-                        } else {
-                            return Err(AwdError::Database(msg));
-                        }
-                    }
-                };
-
+                .await
+                .map_err(|e| {
+                    AwdError::Database(format!("First blood bonus write failed: {}", e))
+                })?;
                 Ok(SubmissionResult {
                     attack_score_delta: break_points,
                     victim_loss_delta: loss_points,

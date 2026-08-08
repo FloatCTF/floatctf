@@ -13,7 +13,6 @@ use fcmc::{ChallengeMeta, DockerContainerRuntime};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::OnConflict,
 };
-use tempfile::NamedTempFile;
 
 #[derive(Debug, MultipartForm)]
 struct UploadForm {

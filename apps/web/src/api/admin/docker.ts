@@ -54,12 +54,6 @@ export const dockerAdminApi = {
         const res = await admin_api.get("/docker/containers", { params });
         return res.data;
     },
-    getContainer: async (
-        container_id: string,
-    ): Promise<UniResponse<ContainerInfo>> => {
-        const res = await admin_api.get(`/docker/containers/${container_id}`);
-        return res.data;
-    },
     stopContainer: async (container_id: string): Promise<UniResponse<null>> => {
         const res = await admin_api.post(
             `/docker/containers/${container_id}/stop`,

@@ -422,14 +422,14 @@ function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 		: `/admin/events/jeopardy/${event.event_id}`;
 
 	const dotColor =
-		state === "live"
+		state === "ongoing"
 			? "bg-[var(--fgColor-success)]"
 			: state === "upcoming"
 				? "bg-[var(--fgColor-accent)]"
 				: "bg-[var(--fgColor-muted)]";
 
 	let rightText: string;
-	if (state === "live") {
+	if (state === "ongoing") {
 		rightText = `剩 ${timeDelta(new Date(event.end_time).getTime())}`;
 	} else if (state === "upcoming") {
 		rightText = timeDelta(new Date(event.start_time).getTime());
@@ -484,9 +484,10 @@ function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 }
 
 const EVENT_STATE_ORDER: Record<EventState, number> = {
-	live: 0,
+	ongoing: 0,
 	upcoming: 1,
 	ended: 2,
+	unknown: 3,
 };
 
 function Competitions({

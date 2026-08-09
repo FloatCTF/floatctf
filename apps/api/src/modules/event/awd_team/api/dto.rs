@@ -324,6 +324,27 @@ pub struct GameBoxResponse {
     pub health_status: String,
 }
 
+/// 单个 GameBox 实例的 SSH 连接信息（IP + 用户名）。
+#[derive(Debug, Serialize)]
+pub struct SshInstanceInfo {
+    pub id: Uuid,
+    pub gamebox_ip: String,
+    pub username: String,
+    pub container_name: String,
+    pub health_status: String,
+}
+
+/// 队伍级 SSH 访问凭据（一队一密码，GameBox 领域模型 §22.1）。
+#[derive(Debug, Serialize)]
+pub struct SshAccessResponse {
+    /// SSH 端口（固定 22）。
+    pub port: u16,
+    /// 团队共享 SSH 密码（解密后明文）。
+    pub password: String,
+    /// 本队各实例的连接信息。
+    pub instances: Vec<SshInstanceInfo>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ScoreboardResponse {
     pub scores: Vec<super::super::domain::TeamScore>,

@@ -193,6 +193,81 @@ pub async fn submit_flag(
     .into()
 }
 
+/// GET /api/events/{event_id}/awd/ssh-config
+/// 返回本队 SSH 访问凭据：团队级密码（解密）+ 每实例用户名/IP/端口。
+/// 仅对已加入本赛事队伍的用户可见；凭据只属于本队（GameBox 模型 §22.1 一队一密码）。
+#[get("{event_id}/awd/ssh-config")]
+pub async fn get_ssh_config(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<Uuid>,
+) -> UniResult<super::dto::SshAccessResponse> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    use crate::entity::event_team_members;
+    let membership = event_team_members::Entity::find()
+        .filter(event_team_members::Column::EventId.eq(event_id))
+        .filter(event_team_members::Column::UserId.eq(user.id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+
+    use crate::entity::awd_team_networks;
+    let team_net = awd_team_networks::Entity::find()
+        .filter(awd_team_networks::Column::EventId.eq(event_id))
+        .filter(awd_team_networks::Column::TeamId.eq(membership.team_id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("Team network not configured".into()))?;
+
+    // 解密团队 SSH 密码（AAD = event_id + "ssh_password"，与 deploy 写入一致）。
+    let password =
+        crate::modules::event::awd_team::service::gamebox_service::decrypt_team_ssh_password(
+            awd.crypto.as_ref(),
+            event_id,
+            &team_net,
+        )
+        .await
+        .map_err(AppError::from)?;
+
+    let instances =
+        gamebox_repo::find_instances_by_team(ctx.db.get_ref(), event_id, membership.team_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let mut info = Vec::with_capacity(instances.len());
+    for inst in instances {
+        let resolved =
+            crate::modules::event::awd_team::service::gamebox_service::resolve_event_gamebox_spec(
+                ctx.db.get_ref(),
+                inst.event_gamebox_id,
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        info.push(super::dto::SshInstanceInfo {
+            id: inst.id,
+            gamebox_ip: inst.gamebox_ip.ip().to_string(),
+            username: resolved.revision.username.clone(),
+            container_name: inst.container_name,
+            health_status: inst.health_status,
+        });
+    }
+
+    UniResponse::ok(
+        super::dto::SshAccessResponse {
+            port: 22,
+            password,
+            instances: info,
+        }
+        .into(),
+    )
+    .into()
+}
+
 /// GET /api/events/{event_id}/awd/scores
 #[get("{event_id}/awd/scores")]
 pub async fn get_scores(

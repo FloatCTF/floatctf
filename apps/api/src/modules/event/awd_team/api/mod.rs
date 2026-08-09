@@ -68,6 +68,7 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(player::submit_flag)
         .service(player::get_scores)
         .service(player::get_wireguard_config)
+        .service(player::get_ssh_config)
         .service(player::event_stream);
 }
 

@@ -78,6 +78,9 @@ function RouteComponent() {
 					<RouterNavItem to="/service/events/awd/$id/wireguard" id={id}>
 						WireGuard
 					</RouterNavItem>
+					<RouterNavItem to="/service/events/awd/$id/ssh" id={id}>
+						SSH
+					</RouterNavItem>
 				</UnderlineNav>
 				<div className="mt-3">
 					<Outlet />

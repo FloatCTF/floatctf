@@ -31,11 +31,25 @@ function RouteComponent() {
 	});
 
 	if (q.isLoading) return <Spinner />;
+	if (q.isError) {
+		return (
+			<div>
+				<banner.BannerComponent />
+				<p className="text-sm opacity-80">
+					未获取到游戏盒列表：请先到 Overview 页加入队伍；若已加入且长时间为空，
+					说明赛事尚未部署或你的队伍创建于部署之后（需管理员重新 Deploy）。
+				</p>
+			</div>
+		);
+	}
 	const boxes = q.data?.data ?? [];
 
 	return (
 		<div>
 			<banner.BannerComponent />
+			<p className="text-sm opacity-80 mb-2">
+				游戏盒通过 SSH 访问（见 SSH 页凭据）；Reset 后实例重建但 IP/凭据不变。
+			</p>
 			<table className="w-full text-sm">
 				<thead>
 					<tr>
@@ -71,7 +85,8 @@ function RouteComponent() {
 					{boxes.length === 0 && (
 						<tr>
 							<td colSpan={5}>
-								No GameBoxes yet (deploy/join a team first).
+								暂无游戏盒：赛事尚未部署，或你的队伍创建于部署之后（需管理员重新
+								Deploy）。
 							</td>
 						</tr>
 					)}

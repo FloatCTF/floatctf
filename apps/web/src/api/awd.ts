@@ -520,4 +520,27 @@ export const awdPlayerApi = {
 		);
 		return res.data;
 	},
+	/**
+	 * 队伍级 SSH 访问凭据（GET /events/{eventId}/awd/ssh-config）。
+	 */
+	sshConfig: async (
+		eventId: string,
+	): Promise<UniResponse<SshAccessResponse>> => {
+		const res = await service_api.get(`/events/${eventId}/awd/ssh-config`);
+		return res.data;
+	},
+};
+
+export type SshInstanceInfo = {
+	id: string;
+	gamebox_ip: string;
+	username: string;
+	container_name: string;
+	health_status: string;
+};
+
+export type SshAccessResponse = {
+	port: number;
+	password: string;
+	instances: SshInstanceInfo[];
 };

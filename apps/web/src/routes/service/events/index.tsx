@@ -84,6 +84,7 @@ function RouteComponent() {
 		{
 			accessorKey: "status",
 			header: "Status",
+			field: "status",
 			renderCell: (row: EventInfo) => {
 				return (
 					<EventStatusBadge

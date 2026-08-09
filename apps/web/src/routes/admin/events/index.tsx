@@ -62,6 +62,7 @@ function RouteComponent() {
 		{
 			accessorKey: "status",
 			header: "Status",
+			field: "status",
 			renderCell: (row: Events) => {
 				return (
 					<EventStatusBadge startTime={row.start_time} endTime={row.end_time} />

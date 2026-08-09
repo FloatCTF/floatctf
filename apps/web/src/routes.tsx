@@ -8,6 +8,7 @@ import {
 	GearIcon,
 	GiftIcon,
 	GoalIcon,
+	KeyIcon,
 	ListUnorderedIcon,
 	LogIcon,
 	MegaphoneIcon,
@@ -60,6 +61,11 @@ export const admin_routes: NavRoute[] = [
 		label: "AWD GameBoxes",
 		path: "/admin/awd/gameboxes",
 		icon: <ContainerIcon />,
+	},
+	{
+		label: "AWD Networking",
+		path: "/admin/awd/network",
+		icon: <KeyIcon />,
 	},
 	{
 		label: "Announcements",

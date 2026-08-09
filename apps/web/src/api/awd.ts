@@ -3,7 +3,12 @@
  * Admin:  /api/admin/events/{eventId}/awd/...  (create: POST /api/admin/events/awd)
  * Player: /api/events/{eventId}/awd/...
  */
-import { type QueryParams, type UniResponse, admin_api, service_api } from "@/api/axios";
+import {
+	type QueryParams,
+	type UniResponse,
+	admin_api,
+	service_api,
+} from "@/api/axios";
 
 export type AwdGameBox = {
 	id: string;
@@ -97,9 +102,107 @@ export type WireGuardConfigResponse = {
 	config: string;
 };
 
+// ── AWD Network Control Plane（§4-§7 / §22-§24 / §64-§67 / §73）──
+
+/** 平台网络设置 + 容量预览（GET /admin/awd/network）。 */
+export type PlatformNetworkSettings = {
+	gamebox_pool: string;
+	gamebox_event_prefix: number;
+	gamebox_team_prefix: number;
+	wireguard_pool: string;
+	wireguard_event_prefix: number;
+	wireguard_team_prefix: number;
+	wireguard_port_min: number;
+	wireguard_port_max: number;
+	wireguard_public_endpoint: string | null;
+	updated_at: string;
+	// 容量预览（§67，来自 GET 计算）
+	gamebox_event_capacity: number;
+	gamebox_team_capacity_per_event: number;
+	gamebox_hosts_per_team: number;
+	wireguard_event_capacity: number;
+	wireguard_team_capacity_per_event: number;
+	wireguard_port_capacity: number;
+};
+
+/** PATCH /admin/awd/network 的请求体（全部可选，部分更新）。 */
+export type PlatformNetworkSettingsUpdate = {
+	gamebox_pool?: string;
+	gamebox_event_prefix?: number;
+	gamebox_team_prefix?: number;
+	wireguard_pool?: string;
+	wireguard_event_prefix?: number;
+	wireguard_team_prefix?: number;
+	wireguard_port_min?: number;
+	wireguard_port_max?: number;
+	wireguard_public_endpoint?: string | null;
+};
+
+/** PATCH 响应：返回更新的少量字段（含 note）。 */
+export type PlatformNetworkSettingsUpdateResponse = Partial<
+	Pick<
+		PlatformNetworkSettings,
+		| "gamebox_pool"
+		| "wireguard_pool"
+		| "wireguard_public_endpoint"
+		| "updated_at"
+	>
+> & { note?: string };
+
+/** Host 观测状态（§4.1，纯只读）。 */
+export type PlatformNetworkHealth = {
+	nftables: string;
+	wireguard: string;
+	docker: string;
+	firewall_runtime: string;
+	floatctf_table: string;
+	docker_firewall_backend: string | null;
+	firewalld: string;
+	ipv4_forwarding: string | null;
+	ipv6_policy: string;
+	capability_supported: boolean;
+	notes: string[];
+};
+
+/** 平台分配账本行（§7/§66）。 */
+export type PlatformNetworkAllocation = {
+	event_id: string;
+	event_title: string | null;
+	kind: string;
+	cidr: string;
+	allocated_at: string;
+	released_at: string | null;
+	active: boolean;
+};
+
+/** Event Network（§22/§64）：未分配时 GET 返回 404（data=null）。 */
+export type EventNetworkInfo = {
+	event_id: string;
+	allocation_mode: string;
+	gamebox_cidr: string;
+	wireguard_cidr: string;
+	infrastructure_subnet: string;
+	flagserver_ip: string;
+	judgeserver_ip: string;
+	wireguard_interface_name: string;
+	wireguard_listen_port: number;
+	docker_network_name: string;
+	locked: boolean;
+};
+
+/** PUT /events/{eventId}/awd/network 请求体（automatic 默认；manual 需两个 CIDR）。 */
+export type NetworkAllocationRequest = {
+	allocation_mode?: "automatic" | "manual";
+	gamebox_cidr?: string;
+	wireguard_cidr?: string;
+	wireguard_listen_port?: number;
+};
+
 /** Admin AWD lifecycle (SuperAdmin). */
 export const awdAdminApi = {
-	createEvent: async (body: Record<string, unknown>): Promise<UniResponse<string>> => {
+	createEvent: async (
+		body: Record<string, unknown>,
+	): Promise<UniResponse<string>> => {
 		const res = await admin_api.post("/events/awd", body);
 		return res.data;
 	},
@@ -193,16 +296,14 @@ export const awdAdminApi = {
 		const res = await admin_api.get(`/awd/gameboxes`, { params });
 		return res.data;
 	},
-	createGamebox: async (
-		body: {
-			name: string;
-			safe_name?: string;
-			category?: string;
-			description?: string;
-			hidden?: boolean;
-			config: GameBoxConfigPayload;
-		},
-	): Promise<UniResponse<GameBoxLibraryDto>> => {
+	createGamebox: async (body: {
+		name: string;
+		safe_name?: string;
+		category?: string;
+		description?: string;
+		hidden?: boolean;
+		config: GameBoxConfigPayload;
+	}): Promise<UniResponse<GameBoxLibraryDto>> => {
 		const res = await admin_api.post(`/awd/gameboxes`, body);
 		return res.data;
 	},
@@ -218,6 +319,58 @@ export const awdAdminApi = {
 	},
 	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
 		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
+		return res.data;
+	},
+	// ── 平台网络（Control Plane，§73）──
+	getPlatformNetwork: async (): Promise<
+		UniResponse<PlatformNetworkSettings>
+	> => {
+		const res = await admin_api.get(`/awd/network`);
+		return res.data;
+	},
+	updatePlatformNetwork: async (
+		body: PlatformNetworkSettingsUpdate,
+	): Promise<UniResponse<PlatformNetworkSettingsUpdateResponse>> => {
+		const res = await admin_api.patch(`/awd/network`, body);
+		return res.data;
+	},
+	/** §4.1 Host 观测状态（纯只读）。 */
+	getPlatformNetworkHealth: async (): Promise<
+		UniResponse<PlatformNetworkHealth>
+	> => {
+		const res = await admin_api.get(`/awd/network/health`);
+		return res.data;
+	},
+	/** §7/§66 平台分配账本（只读）。 */
+	getPlatformNetworkAllocations: async (): Promise<
+		UniResponse<PlatformNetworkAllocation[]>
+	> => {
+		const res = await admin_api.get(`/awd/network/allocations`);
+		return res.data;
+	},
+	// ── Event Network（§22/§64）──
+	/** 未分配时后端返回 404（data=null）。 */
+	getEventNetwork: async (
+		eventId: string,
+	): Promise<UniResponse<EventNetworkInfo>> => {
+		const res = await admin_api.get(`/events/${eventId}/awd/network`);
+		return res.data;
+	},
+	/** PUT 分配：无 body 即 automatic；manual 需 gamebox_cidr + wireguard_cidr。 */
+	allocateEventNetwork: async (
+		eventId: string,
+		body: NetworkAllocationRequest,
+	): Promise<UniResponse<null>> => {
+		const res = await admin_api.put(`/events/${eventId}/awd/network`, body);
+		return res.data;
+	},
+	/** §33/§93 重新分配（仅未锁定）。 */
+	reallocateEventNetwork: async (
+		eventId: string,
+	): Promise<UniResponse<null>> => {
+		const res = await admin_api.post(
+			`/events/${eventId}/awd/network/reallocate`,
+		);
 		return res.data;
 	},
 	// ── 赛事 GameBox 选择（EventGameBox）──
@@ -244,10 +397,7 @@ export const awdAdminApi = {
 			first_bonus?: number;
 		},
 	): Promise<UniResponse<EventGameBoxDto>> => {
-		const res = await admin_api.post(
-			`/events/${eventId}/awd/gameboxes`,
-			body,
-		);
+		const res = await admin_api.post(`/events/${eventId}/awd/gameboxes`, body);
 		return res.data;
 	},
 	updateEventGamebox: async (

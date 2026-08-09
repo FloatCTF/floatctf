@@ -11,6 +11,7 @@ import {
 	ListUnorderedIcon,
 	LogIcon,
 	MegaphoneIcon,
+	PackageIcon,
 	PasskeyFillIcon,
 	ServerIcon,
 	ShieldLockIcon,
@@ -72,6 +73,19 @@ export const adminNavigation: NavigationSection[] = [
 		],
 	},
 	{
+		id: "events",
+		label: "Events",
+		children: [
+			item("events.all", "All Events", "/admin/events", {
+				icon: <CalendarIcon />,
+				match: {
+					mode: "pattern",
+					pattern: /^\/admin\/events(?:\/(?:jeopardy|awd)\/[^/]+(?:\/.*)?)?$/,
+				},
+			}),
+		],
+	},
+	{
 		id: "content",
 		label: "Content",
 		children: [
@@ -97,48 +111,15 @@ export const adminNavigation: NavigationSection[] = [
 					),
 				],
 			},
+			item("content.gameboxes", "GameBoxes", "/admin/awd/gameboxes", {
+				icon: <PackageIcon />,
+			}),
+			item("content.instances", "Instances", "/admin/instances", {
+				icon: <ServerIcon />,
+			}),
 			item("content.weapons", "Weapons", "/admin/weapons", {
 				icon: <GiftIcon />,
 			}),
-		],
-	},
-	{
-		id: "competition",
-		label: "Competition",
-		children: [
-			{
-				type: "group",
-				id: "competition.events",
-				label: "Events",
-				icon: <CalendarIcon />,
-				children: [
-					item("competition.events.all", "All Events", "/admin/events", {
-						match: {
-							mode: "pattern",
-							pattern:
-								/^\/admin\/events(?:\/(?:jeopardy|awd)\/[^/]+(?:\/.*)?)?$/,
-						},
-					}),
-					{
-						type: "group",
-						id: "competition.events.awd",
-						label: "AWD",
-						children: [
-							item(
-								"competition.events.awd.gameboxes",
-								"GameBoxes",
-								"/admin/awd/gameboxes",
-							),
-							item(
-								"competition.events.awd.networking",
-								"Networking",
-								"/admin/awd/network",
-								{ icon: <KeyIcon /> },
-							),
-						],
-					},
-				],
-			},
 		],
 	},
 	{
@@ -157,9 +138,12 @@ export const adminNavigation: NavigationSection[] = [
 		id: "infrastructure",
 		label: "Infrastructure",
 		children: [
-			item("infrastructure.instances", "Instances", "/admin/instances", {
-				icon: <ServerIcon />,
-			}),
+			item(
+				"infrastructure.networking",
+				"AWD Networking",
+				"/admin/awd/network",
+				{ icon: <KeyIcon /> },
+			),
 			item("infrastructure.terminal", "Terminal", "/admin/terminal", {
 				icon: <TerminalIcon />,
 			}),

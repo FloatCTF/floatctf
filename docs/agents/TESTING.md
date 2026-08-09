@@ -13,6 +13,32 @@
 
 全部跑：`cargo test -p floatctf`（mise 任务 `mise run test` 跑 workspace + 前端）。
 
+## 后台登录接口测试凭证
+
+AI 在本地开发环境中测试后台登录接口时，使用以下账号：
+
+- 用户名：`sysadmin`
+- 密码：`FloatCTF@2025`
+
+> 该凭证仅用于本地开发与测试，禁止用于生产环境或写入测试日志。
+
+## 用户端接口测试账号
+
+AI 测试用户端接口时，不使用预置的固定账号，应先调用注册接口 `POST /api/users` 自行注册。示例：
+
+```bash
+curl -X POST http://localhost:9090/api/users \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "ai_test_user_2025",
+    "nickname": "AI 测试用户",
+    "password": "FloatCTF@Test2025",
+    "email": "ai-test-2025@example.com"
+  }'
+```
+
+注册成功后，使用相同的 `username` 和 `password` 调用 `POST /api/users/session` 登录。若示例用户名或邮箱已存在，应添加时间戳或随机后缀生成唯一值，不要依赖已有用户数据。
+
 ## 现有测试分布（参考示例）
 
 - `core/config.rs` — TOML 加载（无环境变量）、数据库 Secret 脱敏

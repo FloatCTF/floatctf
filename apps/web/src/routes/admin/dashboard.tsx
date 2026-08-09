@@ -473,7 +473,6 @@ function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 				<EventStatusBadge
 					startTime={event.start_time}
 					endTime={event.end_time}
-					showDot={false}
 				/>
 			)}
 			<span className="text-xs text-[var(--fgColor-muted)] w-24 text-right flex-shrink-0">

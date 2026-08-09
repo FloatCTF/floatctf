@@ -20,7 +20,7 @@ export function computeEventStatus(
 	return "ongoing";
 }
 
-/** 与 Logs 页 Level 徽章同款：Primer Label + variant */
+/** 与 Logs 页 Level 徽章同款：Primer Label + variant，纯文字无圆点 */
 const STATUS_VARIANT: Record<
 	EventStatus,
 	NonNullable<LabelProps["variant"]>
@@ -29,13 +29,6 @@ const STATUS_VARIANT: Record<
 	upcoming: "accent",
 	ended: "default",
 	unknown: "default",
-};
-
-const STATUS_DOT: Record<EventStatus, string> = {
-	ongoing: "bg-[var(--fgColor-success)]",
-	upcoming: "bg-[var(--fgColor-accent)]",
-	ended: "bg-[var(--fgColor-muted)]",
-	unknown: "bg-[var(--fgColor-muted)]",
 };
 
 export const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
@@ -48,21 +41,12 @@ export const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
 export function EventStatusBadge({
 	startTime,
 	endTime,
-	showDot = true,
 }: {
 	startTime: string;
 	endTime: string;
-	showDot?: boolean;
 }) {
 	const status = computeEventStatus(startTime, endTime);
 	return (
-		<Label variant={STATUS_VARIANT[status]}>
-			{showDot && (
-				<span
-					className={`w-2 h-2 rounded-full inline-block mr-1 ${STATUS_DOT[status]}`}
-				/>
-			)}
-			{EVENT_STATUS_LABEL[status]}
-		</Label>
+		<Label variant={STATUS_VARIANT[status]}>{EVENT_STATUS_LABEL[status]}</Label>
 	);
 }

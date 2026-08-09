@@ -94,7 +94,7 @@ pub async fn deploy_event(
             &awd_event,
             event_id,
             "flagserver",
-            &event_network.flagserver_ip.to_string(),
+            &event_network.flagserver_ip.ip().to_string(),
             &docker_network_name,
             awd_config.flagserver_image.clone(),
             &awd_event.flagserver_token_ciphertext,
@@ -108,7 +108,7 @@ pub async fn deploy_event(
             &awd_event,
             event_id,
             "judgeserver",
-            &event_network.judgeserver_ip.to_string(),
+            &event_network.judgeserver_ip.ip().to_string(),
             &docker_network_name,
             awd_config.judgeserver_image.clone(),
             &awd_event.judgeserver_token_ciphertext,
@@ -352,8 +352,8 @@ async fn ensure_teams_and_gameboxes(
         &other_networks,
         &event_network.gamebox_cidr.to_string(),
         &event_network.wireguard_cidr.to_string(),
-        &event_network.flagserver_ip.to_string(),
-        &event_network.judgeserver_ip.to_string(),
+        &event_network.flagserver_ip.ip().to_string(),
+        &event_network.judgeserver_ip.ip().to_string(),
     )?;
 
     // ── Team 子网：TeamNetworkAllocator（§36-39，稳定持久分配，不依赖顺序/名称）──

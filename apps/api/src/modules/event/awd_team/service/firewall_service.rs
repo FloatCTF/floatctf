@@ -96,6 +96,7 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
 
         let flagserver_ip: std::net::Ipv4Addr = event_network
             .flagserver_ip
+            .ip()
             .to_string()
             .parse()
             .map_err(|_| {
@@ -103,11 +104,12 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
             })?;
         let judgeserver_ip: std::net::Ipv4Addr = event_network
             .judgeserver_ip
+            .ip()
             .to_string()
             .parse()
             .map_err(|_| {
-            AwdError::Validation(format!("judgeserver_ip {}", event_network.judgeserver_ip))
-        })?;
+                AwdError::Validation(format!("judgeserver_ip {}", event_network.judgeserver_ip))
+            })?;
 
         desired.events.push(DesiredEventPolicy {
             event_key:

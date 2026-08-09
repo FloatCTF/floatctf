@@ -18,6 +18,7 @@ use actix_web::web;
 pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(admin::create_awd_event)
         .service(admin::get_awd_event)
+        .service(admin::configure_awd_event)
         .service(admin::start_awd_event)
         .service(admin::pause_awd_event)
         .service(admin::resume_awd_event)

@@ -9,8 +9,9 @@ use std::str::FromStr;
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::{DateTime, FixedOffset};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
+    DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,8 +20,8 @@ use zip::write::FileOptions;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenges, event_challenge_solves, event_challenges, event_team_members, event_teams,
-        event_users, event_writeup, events,
+        awd_events, challenges, event_challenge_solves, event_challenges, event_team_members,
+        event_teams, event_users, event_writeup, events,
         sea_orm_active_enums::{EventTeamMemberRole, EventType},
         users,
     },
@@ -150,15 +151,24 @@ pub async fn create_event(
     Ok(new_event.insert(db).await?)
 }
 
-pub async fn patch_event(
-    db: &DatabaseConnection,
+pub async fn patch_event<C>(
+    db: &C,
     event_id: Uuid,
     req: PatchEventRequest,
-) -> Result<events::Model, AppError> {
+) -> Result<events::Model, AppError>
+where
+    C: ConnectionTrait + TransactionTrait + Send,
+{
+    use sea_orm::sea_query::LockType;
+
+    let txn = db.begin().await?;
+    // 与 AWD Configure 共用 events → awd_events → scheduled_tasks 锁序。
     let event = events::Entity::find_by_id(event_id)
-        .one(db)
+        .lock(LockType::Update)
+        .one(&txn)
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    let schedule_may_change = req.start_time.is_some() || req.end_time.is_some();
     let mut m_event = event.into_active_model();
 
     if let Some(t) = req.r#type {
@@ -189,7 +199,45 @@ pub async fn patch_event(
         m_event.flag_prefix = Set(f.into());
     }
 
-    Ok(m_event.update(db).await?)
+    let updated = m_event.update(&txn).await?;
+    if updated.start_time >= updated.end_time {
+        return Err(AppError::Validation(
+            "event start_time must be before end_time".into(),
+        ));
+    }
+
+    if schedule_may_change {
+        let awd_configured = awd_events::Entity::find()
+            .filter(awd_events::Column::EventId.eq(event_id))
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .is_some();
+        if awd_configured {
+            let planned_start =
+                crate::modules::event::awd_team::scheduler::find_event_start_schedule(
+                    &txn, event_id,
+                )
+                .await?;
+            if planned_start.is_some_and(|start_at| start_at >= updated.end_time) {
+                return Err(AppError::Validation(
+                    "event end_time must be after the AWD planned_start_at".into(),
+                ));
+            }
+            let effective_start = planned_start.unwrap_or(updated.start_time);
+            crate::modules::event::awd_team::scheduler::replace_auto_precheck_schedule(
+                &txn,
+                event_id,
+                effective_start,
+                chrono::Utc::now(),
+            )
+            .await
+            .map_err(AppError::from)?;
+        }
+    }
+
+    txn.commit().await?;
+    Ok(updated)
 }
 
 pub async fn get_event(db: &DatabaseConnection, event_id: Uuid) -> Result<events::Model, AppError> {

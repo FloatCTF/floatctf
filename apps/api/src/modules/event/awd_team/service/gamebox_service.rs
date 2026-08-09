@@ -350,8 +350,8 @@ pub fn build_gamebox_runtime_spec(
         pids_limit: resolved.effective_pids_limit,
         healthcheck,
         extra_hosts: vec![
-            format!("flagserver:{}", event_network.flagserver_ip),
-            format!("judgeserver:{}", event_network.judgeserver_ip),
+            format!("flagserver:{}", event_network.flagserver_ip.ip()),
+            format!("judgeserver:{}", event_network.judgeserver_ip.ip()),
         ],
         labels: std::collections::HashMap::new(), // fcmc 内部按逻辑身份重打标签
     })

@@ -20,11 +20,29 @@ export type AwdEventStatus = {
 	reset_protection_secs: number;
 	judge_max_concurrency: number;
 	judge_default_timeout_secs: number;
-	round_retry_interval_secs: number;
+	judge_retry_interval_secs: number;
 	judge_grace_period_secs: number;
 	archive_retention_hours: number;
+	planned_start_at: string | null;
 	verified_at: string | null;
 	started_at: string | null;
+	updated_at: string;
+};
+
+export type AwdEventConfigInput = {
+	/** PATCH optimistic-lock version; omitted on first create. */
+	expected_updated_at?: string;
+	round_duration_secs: number;
+	free_reset_count: number;
+	extra_reset_penalty: number;
+	reset_protection_secs: number;
+	judge_max_concurrency: number;
+	judge_default_timeout_secs: number;
+	judge_retry_interval_secs: number;
+	judge_grace_period_secs: number;
+	archive_retention_hours: number;
+	planned_start_at?: string;
+	clear_planned_start?: boolean;
 };
 
 export type AwdGameBox = {
@@ -217,14 +235,23 @@ export type NetworkAllocationRequest = {
 
 /** Admin AWD lifecycle (SuperAdmin). */
 export const awdAdminApi = {
-	getStatus: async (eventId: string): Promise<UniResponse<AwdEventStatus | null>> => {
+	getStatus: async (
+		eventId: string,
+	): Promise<UniResponse<AwdEventStatus | null>> => {
 		const res = await admin_api.get(`/events/${eventId}/awd`);
 		return res.data;
 	},
 	createEvent: async (
-		body: Record<string, unknown>,
+		body: AwdEventConfigInput & { event_id: string },
 	): Promise<UniResponse<string>> => {
 		const res = await admin_api.post("/events/awd", body);
+		return res.data;
+	},
+	updateConfig: async (
+		eventId: string,
+		body: AwdEventConfigInput,
+	): Promise<UniResponse<AwdEventStatus>> => {
+		const res = await admin_api.patch(`/events/${eventId}/awd`, body);
 		return res.data;
 	},
 	deploy: async (eventId: string): Promise<UniResponse<null>> => {

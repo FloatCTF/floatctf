@@ -1,4 +1,10 @@
-import { Button, ButtonGroup, Spinner, TextInput, useConfirm } from "@primer/react";
+import {
+	Button,
+	ButtonGroup,
+	Spinner,
+	TextInput,
+	useConfirm,
+} from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -26,6 +32,7 @@ function RouteComponent() {
 	const onOk = (label: string) => () => {
 		banner.showBanner("success", `${label} ok`);
 		qc.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
+		qc.invalidateQueries({ queryKey: ["admin-awd-status", id] });
 		qc.invalidateQueries({ queryKey: ["event", id] });
 	};
 
@@ -78,7 +85,7 @@ function RouteComponent() {
 		mutationFn: () =>
 			adminApi.awd.adjustScore(id, {
 				team_id: adjTeam,
-				delta: parseInt(adjDelta, 10) || 0,
+				delta: Number.parseInt(adjDelta, 10) || 0,
 				reason: adjReason.trim() || "manual adjustment",
 			}),
 		onSuccess: () => {

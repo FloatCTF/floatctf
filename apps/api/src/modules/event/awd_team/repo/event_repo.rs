@@ -296,6 +296,7 @@ fn active_model_from_patch(
     if patch.clear_verified {
         active.verified_at = Set(None);
         active.verified_revision = Set(None);
+        active.verified_generation = Set(None);
     }
     if let Some(gen_val) = patch.verified_generation {
         active.verified_generation = Set(Some(gen_val));

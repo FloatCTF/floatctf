@@ -479,7 +479,7 @@ async fn dispatch_judge_for_round(
             db, event_id,
         )
         .await?;
-    let judgeserver_url = format!("http://{}:8082", event_network.judgeserver_ip);
+    let judgeserver_url = format!("http://{}:8082", event_network.judgeserver_ip.ip());
     judge_service::dispatch_batch(db, batch_id, &judgeserver_url, &token).await?;
     Ok(())
 }

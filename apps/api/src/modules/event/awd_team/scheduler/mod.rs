@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect,
 };
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -22,6 +23,7 @@ use uuid::Uuid;
 
 use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus};
 use crate::modules::event::awd_team::{
+    AwdError, AwdResult,
     crypto::{AwdCrypto, EncryptedBlob},
     domain::AwdEventStatusExt,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
@@ -63,6 +65,7 @@ pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     let exists = scheduled_tasks::Entity::find()
         .filter(scheduled_tasks::Column::GroupId.eq(event_id))
         .filter(scheduled_tasks::Column::TaskKey.eq(&task_key))
+        .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
         .one(db)
         .await?;
     if exists.is_some() {
@@ -94,8 +97,75 @@ pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     Ok(Some(task))
 }
 
+/// 按有效开赛时间重排自动预检。近期开赛（不足一小时）会删除 pending 预检，
+/// running 任务拒绝修改，避免已经被 worker 领取的旧任务继续执行。
+pub async fn replace_auto_precheck_schedule<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+    start_time: DateTime<FixedOffset>,
+    now: DateTime<Utc>,
+) -> AwdResult<()> {
+    use sea_orm::sea_query::LockType;
+
+    let task_key = TaskKey::AwdAutoPrecheck.to_string();
+    let active_tasks = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(&task_key))
+        .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
+        .lock(LockType::Update)
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if active_tasks.len() > 1 {
+        return Err(AwdError::Conflict(format!(
+            "multiple active automatic-precheck tasks exist for event {event_id}"
+        )));
+    }
+    let existing = active_tasks.into_iter().next();
+    if existing
+        .as_ref()
+        .is_some_and(|task| task.status == "running")
+    {
+        return Err(AwdError::Conflict(
+            "automatic precheck is already running and cannot be rescheduled".into(),
+        ));
+    }
+
+    match (existing, automatic_precheck_at(start_time, now)) {
+        (Some(task), Some(execute_at)) => {
+            scheduled_tasks::ActiveModel {
+                id: Set(task.id),
+                enabled: Set(true),
+                execute_at: Set(Some(execute_at)),
+                expires_at: Set(Some(start_time)),
+                error_msg: Set(None),
+                attempt_count: Set(0),
+                last_error: Set(None),
+                updated_at: Set(Utc::now().into()),
+                ..Default::default()
+            }
+            .update(db)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (Some(task), None) => {
+            scheduled_tasks::Entity::delete_by_id(task.id)
+                .exec(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (None, Some(_)) => {
+            schedule_auto_precheck(db, event_id, start_time, now)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
 /// Create the one-shot event-start task at `planned_start_at`（P2-12）。
-/// 幂等：同一 event 已存在 AwdEventStart 任务则跳过。
+/// 幂等：同一 event 已存在 active AwdEventStart 任务则跳过。
 /// 无 planned start 时间时返回 None（手动开始）。
 pub async fn schedule_event_start<C: ConnectionTrait + Send>(
     db: &C,
@@ -110,6 +180,7 @@ pub async fn schedule_event_start<C: ConnectionTrait + Send>(
     let exists = scheduled_tasks::Entity::find()
         .filter(scheduled_tasks::Column::GroupId.eq(event_id))
         .filter(scheduled_tasks::Column::TaskKey.eq(&task_key))
+        .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
         .one(db)
         .await?;
     if exists.is_some() {
@@ -142,6 +213,113 @@ pub async fn schedule_event_start<C: ConnectionTrait + Send>(
     Ok(Some(task))
 }
 
+/// 查询当前有效定时开赛时间；completed/failed 历史任务不会回显。
+pub async fn find_event_start_schedule<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+) -> Result<Option<DateTime<FixedOffset>>, sea_orm::DbErr> {
+    let tasks = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(TaskKey::AwdEventStart.to_string()))
+        .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
+        .filter(scheduled_tasks::Column::Enabled.eq(true))
+        .order_by_desc(scheduled_tasks::Column::UpdatedAt)
+        .all(db)
+        .await?;
+    if tasks.len() > 1 {
+        return Err(sea_orm::DbErr::Custom(format!(
+            "multiple active planned-start tasks exist for event {event_id}"
+        )));
+    }
+    Ok(tasks.into_iter().next().and_then(|task| task.execute_at))
+}
+
+/// 手动 Start 成功后取消尚未被 worker 领取的定时开赛/自动预检任务。
+pub async fn cancel_pending_event_lifecycle_schedules<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+) -> Result<u64, sea_orm::DbErr> {
+    let result = scheduled_tasks::Entity::delete_many()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.is_in([
+            TaskKey::AwdEventStart.to_string(),
+            TaskKey::AwdAutoPrecheck.to_string(),
+        ]))
+        .filter(scheduled_tasks::Column::Status.eq("pending"))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
+}
+
+/// Configure 页更新定时开赛任务。
+///
+/// 只能修改/删除 pending 任务；任务一旦被 scheduler claim 为 running，返回 Conflict，
+/// 避免 DB 显示已重排但旧 worker 仍按旧时间启动赛事。
+pub async fn replace_event_start_schedule<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+    planned_start_at: Option<DateTime<FixedOffset>>,
+) -> AwdResult<()> {
+    use sea_orm::sea_query::LockType;
+
+    let task_key = TaskKey::AwdEventStart.to_string();
+    let active_tasks = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(&task_key))
+        .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
+        .lock(LockType::Update)
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    if active_tasks.len() > 1 {
+        return Err(AwdError::Conflict(format!(
+            "multiple active planned-start tasks exist for event {event_id}"
+        )));
+    }
+    let existing = active_tasks.into_iter().next();
+    if existing
+        .as_ref()
+        .is_some_and(|task| task.status == "running")
+    {
+        return Err(AwdError::Conflict(
+            "planned start is already being executed and cannot be changed".into(),
+        ));
+    }
+
+    match (existing, planned_start_at) {
+        (Some(task), Some(start_at)) => {
+            scheduled_tasks::ActiveModel {
+                id: Set(task.id),
+                enabled: Set(true),
+                execute_at: Set(Some(start_at)),
+                expires_at: Set(Some(start_at + Duration::hours(6))),
+                error_msg: Set(None),
+                attempt_count: Set(0),
+                last_error: Set(None),
+                updated_at: Set(Utc::now().into()),
+                ..Default::default()
+            }
+            .update(db)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (Some(task), None) => {
+            scheduled_tasks::Entity::delete_by_id(task.id)
+                .exec(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (None, Some(start_at)) => {
+            schedule_event_start(db, event_id, Some(start_at))
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
 fn event_id_from_task(task: &scheduled_tasks::Model) -> anyhow::Result<Uuid> {
     let payload: RoundTaskPayload =
         serde_json::from_value(task.payload.clone().unwrap_or_default())?;
@@ -169,6 +347,22 @@ impl TaskHandler for AwdAutoPrecheckHandler {
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         let event_id = event_id_from_task(&task)?;
+        if let Some(event) = event_repo::find_by_event_id(self.db.get_ref(), event_id).await?
+            && matches!(
+                event.status,
+                AwdEventStatus::Running
+                    | AwdEventStatus::Paused
+                    | AwdEventStatus::NetworkError
+                    | AwdEventStatus::Finished
+                    | AwdEventStatus::Archived
+            )
+        {
+            info!(
+                "[AWD] Event {} already started ({:?}); skipping stale automatic precheck",
+                event_id, event.status
+            );
+            return Ok(());
+        }
         info!("[AWD] Running automatic precheck for event {}", event_id);
         crate::modules::event::awd_team::service::precheck_service::run_precheck(
             self.db.get_ref(),
@@ -206,6 +400,22 @@ impl TaskHandler for AwdEventStartHandler {
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         let event_id = event_id_from_task(&task)?;
+        if let Some(event) = event_repo::find_by_event_id(self.db.get_ref(), event_id).await?
+            && matches!(
+                event.status,
+                AwdEventStatus::Running
+                    | AwdEventStatus::Paused
+                    | AwdEventStatus::NetworkError
+                    | AwdEventStatus::Finished
+                    | AwdEventStatus::Archived
+            )
+        {
+            info!(
+                "[AWD] Event {} already started ({:?}); skipping stale scheduled start",
+                event_id, event.status
+            );
+            return Ok(());
+        }
         info!("[AWD] Starting scheduled event {}", event_id);
         event_service::start_event(
             self.db.get_ref(),

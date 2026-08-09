@@ -1,5 +1,7 @@
 //! AWD API data transfer objects.
 
+use std::collections::BTreeMap;
+
 use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,11 +29,14 @@ pub struct AwdEventStatusDto {
     pub reset_protection_secs: i32,
     pub judge_max_concurrency: i32,
     pub judge_default_timeout_secs: i32,
-    pub round_retry_interval_secs: i32,
+    pub judge_retry_interval_secs: i32,
     pub judge_grace_period_secs: i32,
     pub archive_retention_hours: i32,
+    /// `awd.event.start` 一次性任务的执行时间；None 表示手动开始。
+    pub planned_start_at: Option<DateTimeWithTimeZone>,
     pub verified_at: Option<DateTimeWithTimeZone>,
     pub started_at: Option<DateTimeWithTimeZone>,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 impl From<awd_events::Model> for AwdEventStatusDto {
@@ -46,11 +51,13 @@ impl From<awd_events::Model> for AwdEventStatusDto {
             reset_protection_secs: m.reset_protection_secs,
             judge_max_concurrency: m.judge_max_concurrency,
             judge_default_timeout_secs: m.judge_default_timeout_secs,
-            round_retry_interval_secs: m.judge_retry_interval_secs,
+            judge_retry_interval_secs: m.judge_retry_interval_secs,
             judge_grace_period_secs: m.judge_grace_period_secs,
             archive_retention_hours: m.archive_retention_hours,
+            planned_start_at: None,
             verified_at: m.verified_at,
             started_at: m.started_at,
+            updated_at: m.updated_at,
         }
     }
 }
@@ -60,15 +67,157 @@ impl From<awd_events::Model> for AwdEventStatusDto {
 #[derive(Debug, Deserialize)]
 pub struct CreateAwdEventRequest {
     pub event_id: Uuid,
-    #[serde(default = "default_round_duration")]
-    pub round_duration_secs: i32,
-    /// 计划开始时间（可选；设置后创建 awd.event.start 一次性任务，P2-12）。
-    #[serde(default)]
-    pub planned_start_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(flatten)]
+    pub config: AwdEventConfigRequest,
 }
 
-fn default_round_duration() -> i32 {
-    300
+/// Configure 页 AWD 专属参数。全部字段可选以支持 PATCH；首次保存缺省时使用
+/// 与数据库一致的默认值。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AwdEventConfigRequest {
+    /// PATCH 乐观锁版本；首次创建可省略。
+    pub expected_updated_at: Option<DateTimeWithTimeZone>,
+    pub round_duration_secs: Option<i32>,
+    pub free_reset_count: Option<i32>,
+    pub extra_reset_penalty: Option<i64>,
+    pub reset_protection_secs: Option<i32>,
+    pub judge_max_concurrency: Option<i32>,
+    pub judge_default_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
+    pub judge_grace_period_secs: Option<i32>,
+    pub archive_retention_hours: Option<i32>,
+    /// 计划开始时间；留空且 clear_planned_start=true 时删除已有任务。
+    pub planned_start_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(default)]
+    pub clear_planned_start: bool,
+    /// 捕获旧字段/拼写错误，避免 Serde 默认忽略后返回“成功但未生效”。
+    #[serde(flatten)]
+    unknown_fields: BTreeMap<String, serde_json::Value>,
+}
+
+impl AwdEventConfigRequest {
+    pub fn has_changes(&self) -> bool {
+        self.round_duration_secs.is_some()
+            || self.free_reset_count.is_some()
+            || self.extra_reset_penalty.is_some()
+            || self.reset_protection_secs.is_some()
+            || self.judge_max_concurrency.is_some()
+            || self.judge_default_timeout_secs.is_some()
+            || self.judge_retry_interval_secs.is_some()
+            || self.judge_grace_period_secs.is_some()
+            || self.archive_retention_hours.is_some()
+            || self.planned_start_at.is_some()
+            || self.clear_planned_start
+    }
+
+    pub fn validate(&self) -> crate::modules::event::awd_team::AwdResult<()> {
+        use crate::modules::event::awd_team::AwdError;
+
+        if !self.unknown_fields.is_empty() {
+            return Err(AwdError::Validation(format!(
+                "unknown AWD configuration fields: {}",
+                self.unknown_fields
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        if self.clear_planned_start && self.planned_start_at.is_some() {
+            return Err(AwdError::Validation(
+                "planned_start_at and clear_planned_start cannot be used together".into(),
+            ));
+        }
+        if let Some(start_at) = self.planned_start_at
+            && start_at <= chrono::Utc::now()
+        {
+            return Err(AwdError::Validation(
+                "planned_start_at must be in the future".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl From<AwdEventConfigRequest>
+    for crate::modules::event::awd_team::service::config_service::AwdEventConfigPatch
+{
+    fn from(value: AwdEventConfigRequest) -> Self {
+        Self {
+            expected_updated_at: value.expected_updated_at,
+            round_duration_secs: value.round_duration_secs,
+            free_reset_count: value.free_reset_count,
+            extra_reset_penalty: value.extra_reset_penalty,
+            reset_protection_secs: value.reset_protection_secs,
+            judge_max_concurrency: value.judge_max_concurrency,
+            judge_default_timeout_secs: value.judge_default_timeout_secs,
+            judge_retry_interval_secs: value.judge_retry_interval_secs,
+            judge_grace_period_secs: value.judge_grace_period_secs,
+            archive_retention_hours: value.archive_retention_hours,
+            planned_start_at: if value.clear_planned_start {
+                Some(None)
+            } else {
+                value.planned_start_at.map(Some)
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod config_request_tests {
+    use super::*;
+
+    #[test]
+    fn planned_start_set_and_clear_are_mutually_exclusive() {
+        let request = AwdEventConfigRequest {
+            planned_start_at: Some(
+                (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+            ),
+            clear_planned_start: true,
+            ..Default::default()
+        };
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn planned_start_must_be_in_the_future() {
+        let request = AwdEventConfigRequest {
+            planned_start_at: Some(
+                (chrono::Utc::now() - chrono::Duration::seconds(1)).fixed_offset(),
+            ),
+            ..Default::default()
+        };
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn expected_version_alone_is_not_a_change() {
+        let request = AwdEventConfigRequest {
+            expected_updated_at: Some(chrono::Utc::now().fixed_offset()),
+            ..Default::default()
+        };
+        assert!(!request.has_changes());
+    }
+
+    #[test]
+    fn rejects_legacy_or_misspelled_fields() {
+        let request: AwdEventConfigRequest = serde_json::from_value(serde_json::json!({
+            "round_retry_interval_secs": 5
+        }))
+        .expect("unknown fields are captured for a validation error");
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn flattened_create_request_accepts_known_config_fields() {
+        let request: CreateAwdEventRequest = serde_json::from_value(serde_json::json!({
+            "event_id": Uuid::new_v4(),
+            "round_duration_secs": 300
+        }))
+        .expect("known flattened config fields must deserialize");
+        assert_eq!(request.config.round_duration_secs, Some(300));
+        assert!(request.config.validate().is_ok());
+    }
 }
 
 #[derive(Debug, Deserialize)]

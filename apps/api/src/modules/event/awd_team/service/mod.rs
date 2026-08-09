@@ -2,6 +2,7 @@
 
 pub mod archive_service;
 pub mod ban_service;
+pub mod config_service;
 pub mod deploy_service;
 pub mod event_network_service;
 pub mod event_service;

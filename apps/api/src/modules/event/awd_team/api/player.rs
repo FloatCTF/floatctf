@@ -45,7 +45,7 @@ pub async fn get_my_gameboxes(
             team_id: i.team_id,
             event_gamebox_id: i.event_gamebox_id,
             status: format!("{:?}", i.status).to_lowercase(),
-            gamebox_ip: i.gamebox_ip.to_string(),
+            gamebox_ip: i.gamebox_ip.ip().to_string(),
             container_name: i.container_name,
             health_status: i.health_status,
         })
@@ -300,7 +300,7 @@ pub async fn get_wireguard_config(
         .await
         .map_err(AppError::from)?;
     let config = crate::modules::event::awd_team::service::wireguard_service::build_client_config(
-        &peer.assigned_ip.to_string(),
+        &peer.assigned_ip.ip().to_string(),
         &peer_privkey,
         &server_pubkey,
         &endpoint_host,

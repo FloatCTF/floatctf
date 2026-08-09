@@ -847,11 +847,13 @@ fn validate_event_network(net: &awd_event_networks::Model) -> Result<(), String>
     // flag/judge IP 在 infra 子网内且互不相同
     let fs_ip: std::net::Ipv4Addr = net
         .flagserver_ip
+        .ip()
         .to_string()
         .parse()
         .map_err(|_| format!("Invalid flagserver_ip: {}", net.flagserver_ip))?;
     let js_ip: std::net::Ipv4Addr = net
         .judgeserver_ip
+        .ip()
         .to_string()
         .parse()
         .map_err(|_| format!("Invalid judgeserver_ip: {}", net.judgeserver_ip))?;
@@ -904,8 +906,8 @@ fn compute_revision(net: &awd_event_networks::Model) -> String {
     hasher.update(net.wireguard_cidr.to_string().as_bytes());
     hasher.update(net.wireguard_interface_name.as_bytes());
     hasher.update(net.infrastructure_subnet.to_string().as_bytes());
-    hasher.update(net.flagserver_ip.to_string().as_bytes());
-    hasher.update(net.judgeserver_ip.to_string().as_bytes());
+    hasher.update(net.flagserver_ip.ip().to_string().as_bytes());
+    hasher.update(net.judgeserver_ip.ip().to_string().as_bytes());
     hex::encode(hasher.finalize())
 }
 

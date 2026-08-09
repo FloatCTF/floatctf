@@ -5,8 +5,7 @@ import { useEffect } from "react";
 import { AdminRouteGuard } from "../../route";
 
 /**
- * AWD 赛事入口页：GameBox = AWD 的题目模型（§46），没有 Challenges 概念，
- * 默认页直接落在 GameBoxes Tab。
+ * AWD 赛事入口页：Configure 是 AWD 参数与首次保存的唯一入口。
  */
 export const Route = createFileRoute("/admin/events/awd/$id/")({
 	component: RouteComponent,
@@ -19,7 +18,7 @@ function RouteComponent() {
 
 	useEffect(() => {
 		navigate({
-			to: "/admin/events/awd/$id/gameboxes",
+			to: "/admin/events/awd/$id/configure",
 			params: { id },
 			replace: true,
 		});

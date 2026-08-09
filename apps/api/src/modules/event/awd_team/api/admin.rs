@@ -5,7 +5,7 @@
 use actix_web::web;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-    TransactionTrait,
+    QuerySelect, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -14,20 +14,19 @@ use crate::{
     modules::event::awd_team::{
         domain::AwdEventStatusExt,
         repo::{ban_repo, event_repo, round_repo},
-        scheduler::{schedule_auto_precheck, schedule_event_start},
-        service::{event_service, score_service},
+        scheduler::{self, schedule_auto_precheck, schedule_event_start},
+        service::{config_service, event_service, score_service},
     },
 };
 
 use super::dto::*;
 
-use actix_web::{delete, get, post, put};
+use actix_web::{delete, get, patch, post, put};
 
 // ── Event Management ──
 
 /// GET /api/admin/events/{event_id}/awd
-/// 查询 AWD 赛事初始化状态；awd_events 行不存在时返回 data=null。
-/// 前端用它决定详情页展示「初始化 AWD 赛事」空状态卡片。
+/// 查询 AWD 配置；尚未在 Configure 页保存时返回 data=null。
 #[get("{event_id}/awd")]
 pub async fn get_awd_event(
     _admin: SuperAdminJwtGuard,
@@ -38,7 +37,16 @@ pub async fn get_awd_event(
     let m = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(AppError::from)?;
-    UniResponse::ok(m.map(AwdEventStatusDto::from)).into()
+    let dto = if let Some(model) = m {
+        let mut dto = AwdEventStatusDto::from(model);
+        dto.planned_start_at = scheduler::find_event_start_schedule(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(AppError::from)?;
+        Some(dto)
+    } else {
+        None
+    };
+    UniResponse::ok(dto).into()
 }
 
 /// POST /api/admin/events/awd
@@ -50,9 +58,24 @@ pub async fn create_awd_event(
 ) -> UniResult<Uuid> {
     use crate::modules::event::awd_team::crypto::AwdCrypto;
 
+    use sea_orm::sea_query::LockType;
+
     let b = body.into_inner();
+    b.config.validate().map_err(AppError::from)?;
+    let config_patch: config_service::AwdEventConfigPatch = b.config.clone().into();
+    config_patch.validate().map_err(AppError::from)?;
+    let planned_start_at = if b.config.clear_planned_start {
+        None
+    } else {
+        b.config.planned_start_at
+    };
+
+    // 锁住父 Event，使同一赛事的首次 Configure 串行化；重复请求明确返回 409，
+    // 不把 UNIQUE(event_id) 冲突误报成数据库 500。
+    let txn = ctx.db.begin().await?;
     let event = crate::entity::events::Entity::find_by_id(b.event_id)
-        .one(ctx.db.get_ref())
+        .lock(LockType::Update)
+        .one(&txn)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Event {} not found", b.event_id)))?;
     if event.r#type != crate::entity::sea_orm_active_enums::EventType::AwdTeam {
@@ -62,6 +85,19 @@ pub async fn create_awd_event(
         )));
     }
     let event_id = event.id;
+    if planned_start_at.is_some_and(|start_at| start_at >= event.end_time) {
+        return Err(AppError::Validation(
+            "planned_start_at must be before the event end_time".into(),
+        ));
+    }
+    if event_repo::find_by_event_id(&txn, event_id)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict(
+            "AWD event is already configured; use PATCH to update it".into(),
+        ));
+    }
 
     // Initialize crypto for token encryption
     let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
@@ -86,12 +122,48 @@ pub async fn create_awd_event(
         .encrypt(&js_token, &js_aad, 1)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // 网络字段不在创建时固化：Event Network 由赛事网络页分配
-    // （Draft 不强制占用，Configuring 才 reserve，§21/§49/§50）。
+    // 初始状态仍是 Draft；插入后在同一事务经 transition_event 正式进入 Configuring。
+    // 网络由 Event Network 页单独分配。
+    let awd_id = Uuid::new_v4();
     let model = crate::entity::awd_events::ActiveModel {
-        id: Set(Uuid::new_v4()),
+        id: Set(awd_id),
         event_id: Set(event_id),
-        round_duration_secs: Set(b.round_duration_secs),
+        round_duration_secs: Set(b
+            .config
+            .round_duration_secs
+            .unwrap_or(config_service::DEFAULT_ROUND_DURATION_SECS)),
+        free_reset_count: Set(b
+            .config
+            .free_reset_count
+            .unwrap_or(config_service::DEFAULT_FREE_RESET_COUNT)),
+        extra_reset_penalty: Set(b
+            .config
+            .extra_reset_penalty
+            .unwrap_or(config_service::DEFAULT_EXTRA_RESET_PENALTY)),
+        reset_protection_secs: Set(b
+            .config
+            .reset_protection_secs
+            .unwrap_or(config_service::DEFAULT_RESET_PROTECTION_SECS)),
+        judge_max_concurrency: Set(b
+            .config
+            .judge_max_concurrency
+            .unwrap_or(config_service::DEFAULT_JUDGE_MAX_CONCURRENCY)),
+        judge_default_timeout_secs: Set(b
+            .config
+            .judge_default_timeout_secs
+            .unwrap_or(config_service::DEFAULT_JUDGE_TIMEOUT_SECS)),
+        judge_retry_interval_secs: Set(b
+            .config
+            .judge_retry_interval_secs
+            .unwrap_or(config_service::DEFAULT_JUDGE_RETRY_INTERVAL_SECS)),
+        judge_grace_period_secs: Set(b
+            .config
+            .judge_grace_period_secs
+            .unwrap_or(config_service::DEFAULT_JUDGE_GRACE_PERIOD_SECS)),
+        archive_retention_hours: Set(b
+            .config
+            .archive_retention_hours
+            .unwrap_or(config_service::DEFAULT_ARCHIVE_RETENTION_HOURS)),
         event_secret_ciphertext: Set(secret_blob.ciphertext),
         event_secret_nonce: Set(secret_blob.nonce),
         flagserver_token_ciphertext: Set(Some(fs_blob.ciphertext)),
@@ -101,16 +173,62 @@ pub async fn create_awd_event(
         ..Default::default()
     };
 
-    let txn = ctx.db.begin().await?;
     model
         .insert(&txn)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    schedule_auto_precheck(&txn, event_id, event.start_time, chrono::Utc::now()).await?;
-    schedule_event_start(&txn, event_id, b.planned_start_at).await?;
+    event_repo::transition_event(
+        &txn,
+        awd_id,
+        crate::entity::sea_orm_active_enums::AwdEventStatus::Draft,
+        crate::entity::sea_orm_active_enums::AwdEventStatus::Configuring,
+        Default::default(),
+    )
+    .await
+    .map_err(AppError::from)?;
+    schedule_auto_precheck(
+        &txn,
+        event_id,
+        planned_start_at.unwrap_or(event.start_time),
+        chrono::Utc::now(),
+    )
+    .await?;
+    schedule_event_start(&txn, event_id, planned_start_at).await?;
     txn.commit().await?;
 
     UniResponse::ok(event_id.into()).into()
+}
+
+/// PATCH /api/admin/events/{event_id}/awd
+/// Configure 页修改 AWD runtime / reset / judge / archive 参数。
+#[patch("{event_id}/awd")]
+pub async fn configure_awd_event(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+    body: web::Json<AwdEventConfigRequest>,
+) -> UniResult<AwdEventStatusDto> {
+    let event_id = path.into_inner();
+    let request = body.into_inner();
+    request.validate().map_err(AppError::from)?;
+    if request.expected_updated_at.is_none() {
+        return Err(AppError::Validation(
+            "expected_updated_at is required when updating AWD configuration".into(),
+        ));
+    }
+    if !request.has_changes() {
+        return Err(AppError::Validation(
+            "at least one AWD configuration field must be provided".into(),
+        ));
+    }
+    let model = config_service::update_event_config(ctx.db.get_ref(), event_id, request.into())
+        .await
+        .map_err(AppError::from)?;
+    let mut dto = AwdEventStatusDto::from(model);
+    dto.planned_start_at = scheduler::find_event_start_schedule(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(Some(dto)).into()
 }
 
 /// POST /api/admin/events/{event_id}/awd/start
@@ -131,6 +249,15 @@ pub async fn start_awd_event(
     )
     .await
     .map_err(AppError::from)?;
+    if let Err(error) =
+        scheduler::cancel_pending_event_lifecycle_schedules(ctx.db.get_ref(), event_id).await
+    {
+        tracing::error!(
+            event_id = %event_id,
+            error = %error,
+            "manual AWD start succeeded but pending start-task cleanup failed"
+        );
+    }
     UniResponse::ok_none().into()
 }
 
@@ -659,7 +786,7 @@ pub async fn rotate_tokens(
         &awd_event,
         event_id,
         "flagserver",
-        &event_network.flagserver_ip.to_string(),
+        &event_network.flagserver_ip.ip().to_string(),
         &network_name,
         ctx.config.awd.flagserver_image.clone(),
         fs_token_str,
@@ -671,7 +798,7 @@ pub async fn rotate_tokens(
         &awd_event,
         event_id,
         "judgeserver",
-        &event_network.judgeserver_ip.to_string(),
+        &event_network.judgeserver_ip.ip().to_string(),
         &network_name,
         ctx.config.awd.judgeserver_image.clone(),
         js_token_str,
@@ -809,8 +936,8 @@ pub async fn get_event_network(
         gamebox_cidr: net.gamebox_cidr.to_string(),
         wireguard_cidr: net.wireguard_cidr.to_string(),
         infrastructure_subnet: net.infrastructure_subnet.to_string(),
-        flagserver_ip: net.flagserver_ip.to_string(),
-        judgeserver_ip: net.judgeserver_ip.to_string(),
+        flagserver_ip: net.flagserver_ip.ip().to_string(),
+        judgeserver_ip: net.judgeserver_ip.ip().to_string(),
         wireguard_interface_name: net.wireguard_interface_name,
         wireguard_listen_port: net.wireguard_listen_port,
         docker_network_name: net.docker_network_name,

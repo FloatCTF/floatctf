@@ -197,7 +197,7 @@ pub async fn execute_reset(
         instance.event_gamebox_id,
         instance.team_id,
         &instance.container_name,
-        &instance.gamebox_ip.to_string(),
+        &instance.gamebox_ip.ip().to_string(),
         &network_name,
         password,
         next_generation,

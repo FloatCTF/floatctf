@@ -252,7 +252,8 @@ pub struct WireGuardPortRange {
 
 impl WireGuardPortRange {
     pub fn new(min: u16, max: u16) -> Result<Self, AwdError> {
-        if min < 1 || max > 65535 || min > max {
+        // u16 天然上限 65535，无需再校验 max；min<1 排除端口 0。
+        if min < 1 || min > max {
             return Err(AwdError::Validation(format!(
                 "invalid WG port range {}-{}",
                 min, max

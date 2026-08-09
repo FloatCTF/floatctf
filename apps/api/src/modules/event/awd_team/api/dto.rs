@@ -1,7 +1,59 @@
 //! AWD API data transfer objects.
 
+use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::entity::awd_events;
+
+/// serde snake_case 序列化（AwdEventStatus/AwdPhase 无 Display）。
+fn snake_str<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|x| x.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// AWD 赛事初始化状态（GET /api/admin/events/{event_id}/awd）。
+/// 前端用它判断赛事是否已初始化（awd_events 行存在）以及当前生命周期状态。
+#[derive(Debug, Serialize)]
+pub struct AwdEventStatusDto {
+    pub event_id: Uuid,
+    pub status: String,
+    pub phase: String,
+    pub round_duration_secs: i32,
+    pub free_reset_count: i32,
+    pub extra_reset_penalty: i64,
+    pub reset_protection_secs: i32,
+    pub judge_max_concurrency: i32,
+    pub judge_default_timeout_secs: i32,
+    pub round_retry_interval_secs: i32,
+    pub judge_grace_period_secs: i32,
+    pub archive_retention_hours: i32,
+    pub verified_at: Option<DateTimeWithTimeZone>,
+    pub started_at: Option<DateTimeWithTimeZone>,
+}
+
+impl From<awd_events::Model> for AwdEventStatusDto {
+    fn from(m: awd_events::Model) -> Self {
+        Self {
+            event_id: m.event_id,
+            status: snake_str(&m.status),
+            phase: snake_str(&m.phase),
+            round_duration_secs: m.round_duration_secs,
+            free_reset_count: m.free_reset_count,
+            extra_reset_penalty: m.extra_reset_penalty,
+            reset_protection_secs: m.reset_protection_secs,
+            judge_max_concurrency: m.judge_max_concurrency,
+            judge_default_timeout_secs: m.judge_default_timeout_secs,
+            round_retry_interval_secs: m.judge_retry_interval_secs,
+            judge_grace_period_secs: m.judge_grace_period_secs,
+            archive_retention_hours: m.archive_retention_hours,
+            verified_at: m.verified_at,
+            started_at: m.started_at,
+        }
+    }
+}
 
 // ── Admin request DTOs ──
 

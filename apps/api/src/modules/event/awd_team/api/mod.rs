@@ -10,11 +10,14 @@ pub mod player;
 
 use actix_web::web;
 
-/// Register AWD admin routes under `/api/admin`.
+/// Register AWD admin routes **inside** `scope("/events")`.
 ///
 /// Final paths: `/api/admin/events/{event_id}/awd/...` and `POST /api/admin/events/awd`.
-pub fn admin_routes(cfg: &mut web::ServiceConfig) {
+/// 注意：必须与 common 的 /events scope 同组挂载（bootstrap routes.rs），
+/// 否则会被 common scope("/events") 吞掉（Actix 同前缀 scope 按注册顺序优先匹配）。
+pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(admin::create_awd_event)
+        .service(admin::get_awd_event)
         .service(admin::start_awd_event)
         .service(admin::pause_awd_event)
         .service(admin::resume_awd_event)
@@ -33,25 +36,31 @@ pub fn admin_routes(cfg: &mut web::ServiceConfig) {
         .service(admin::get_event_network)
         .service(admin::reallocate_network)
         .service(admin::get_event_scores)
-        // 平台 AWD Networking（§73）：settings / health / allocations
-        .service(network_admin::get_platform_network)
-        .service(network_admin::update_platform_network)
-        .service(network_admin::get_platform_network_health)
-        .service(network_admin::get_platform_network_allocations)
-        // GameBox 库 + 赛事 GameBox 管理（§46 术语：gamebox / revision / event_gamebox）
-        .service(gamebox_admin::list_gamebox_library)
-        .service(gamebox_admin::create_gamebox)
-        .service(gamebox_admin::edit_gamebox_revision)
-        .service(gamebox_admin::hide_gamebox)
+        // GameBox 赛事选择（§46 术语：gamebox / revision / event_gamebox）
         .service(gamebox_admin::list_event_gameboxes)
         .service(gamebox_admin::add_event_gamebox)
         .service(gamebox_admin::update_event_gamebox)
         .service(gamebox_admin::delete_event_gamebox);
 }
 
-/// Register AWD player routes under `/api`.
+/// Register AWD admin routes at the `/api/admin` top level (no events/ prefix).
+///
+/// Final paths: `/api/admin/awd/...`（平台 AWD Networking §73 + GameBox 库）。
+pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(network_admin::get_platform_network)
+        .service(network_admin::update_platform_network)
+        .service(network_admin::get_platform_network_health)
+        .service(network_admin::get_platform_network_allocations)
+        .service(gamebox_admin::list_gamebox_library)
+        .service(gamebox_admin::create_gamebox)
+        .service(gamebox_admin::edit_gamebox_revision)
+        .service(gamebox_admin::hide_gamebox);
+}
+
+/// Register AWD player routes **inside** `scope("/events")`.
 ///
 /// Final paths: `/api/events/{event_id}/awd/...`
+/// 同样必须与 common 的 /events scope 同组挂载（bootstrap routes.rs）。
 pub fn player_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(player::get_my_gameboxes)
         .service(player::reset_my_gamebox)

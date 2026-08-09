@@ -18,7 +18,7 @@ use super::dto::*;
 use actix_web::{get, post};
 
 /// GET /api/events/{event_id}/awd/gameboxes
-#[get("/events/{event_id}/awd/gameboxes")]
+#[get("{event_id}/awd/gameboxes")]
 pub async fn get_my_gameboxes(
     user: UserJwtGuard,
     ctx: ReqCtx,
@@ -55,7 +55,7 @@ pub async fn get_my_gameboxes(
 }
 
 /// POST /api/events/{event_id}/awd/gameboxes/{instance_id}/reset
-#[post("/events/{event_id}/awd/gameboxes/{instance_id}/reset")]
+#[post("{event_id}/awd/gameboxes/{instance_id}/reset")]
 pub async fn reset_my_gamebox(
     user: UserJwtGuard,
     ctx: ReqCtx,
@@ -102,7 +102,7 @@ pub async fn reset_my_gamebox(
 }
 
 /// POST /api/events/{event_id}/awd/submissions
-#[post("/events/{event_id}/awd/submissions")]
+#[post("{event_id}/awd/submissions")]
 pub async fn submit_flag(
     user: UserJwtGuard,
     ctx: ReqCtx,
@@ -194,7 +194,7 @@ pub async fn submit_flag(
 }
 
 /// GET /api/events/{event_id}/awd/scores
-#[get("/events/{event_id}/awd/scores")]
+#[get("{event_id}/awd/scores")]
 pub async fn get_scores(
     ctx: ReqCtx,
     path: web::Path<Uuid>,
@@ -221,7 +221,7 @@ pub async fn get_scores(
 // ── WireGuard endpoints ──
 
 /// GET /api/events/{event_id}/awd/wireguard/config
-#[get("/events/{event_id}/awd/wireguard/config")]
+#[get("{event_id}/awd/wireguard/config")]
 pub async fn get_wireguard_config(
     user: UserJwtGuard,
     ctx: ReqCtx,
@@ -317,7 +317,7 @@ pub async fn get_wireguard_config(
 /// Server-Sent Events from the in-process `BroadcastEventPublisher` hub.
 /// Clients filter by `event_id` in the envelope; reconnect + REST snapshot
 /// is the responsibility of the frontend (`useAwdEventStream`).
-#[get("/events/{event_id}/awd/stream")]
+#[get("{event_id}/awd/stream")]
 pub async fn event_stream(
     _user: UserJwtGuard,
     hub: web::Data<crate::infrastructure::realtime::BroadcastEventPublisher>,

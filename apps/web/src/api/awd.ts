@@ -10,6 +10,23 @@ import {
 	service_api,
 } from "@/api/axios";
 
+export type AwdEventStatus = {
+	event_id: string;
+	status: string;
+	phase: string;
+	round_duration_secs: number;
+	free_reset_count: number;
+	extra_reset_penalty: number;
+	reset_protection_secs: number;
+	judge_max_concurrency: number;
+	judge_default_timeout_secs: number;
+	round_retry_interval_secs: number;
+	judge_grace_period_secs: number;
+	archive_retention_hours: number;
+	verified_at: string | null;
+	started_at: string | null;
+};
+
 export type AwdGameBox = {
 	id: string;
 	team_id: string;
@@ -200,6 +217,10 @@ export type NetworkAllocationRequest = {
 
 /** Admin AWD lifecycle (SuperAdmin). */
 export const awdAdminApi = {
+	getStatus: async (eventId: string): Promise<UniResponse<AwdEventStatus | null>> => {
+		const res = await admin_api.get(`/events/${eventId}/awd`);
+		return res.data;
+	},
 	createEvent: async (
 		body: Record<string, unknown>,
 	): Promise<UniResponse<string>> => {

@@ -209,7 +209,7 @@ pub async fn hide_gamebox(
 
 /// GET /api/admin/events/{event_id}/awd/gameboxes
 /// 支持搜索（gamebox_name/gamebox_safe_name）+ 分页，同 event_challenges。
-#[get("/events/{event_id}/awd/gameboxes")]
+#[get("{event_id}/awd/gameboxes")]
 pub async fn list_event_gameboxes(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -315,7 +315,7 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
 
 /// POST /api/admin/events/{event_id}/awd/gameboxes —— 赛事选择 GameBox
 /// （默认 pin latest revision；host_offset 缺省自动分配；完成后 touch_configuration §37）
-#[post("/events/{event_id}/awd/gameboxes")]
+#[post("{event_id}/awd/gameboxes")]
 pub async fn add_event_gamebox(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -444,7 +444,7 @@ pub async fn add_event_gamebox(
 
 /// PATCH /api/admin/events/{event_id}/awd/gameboxes/{event_gamebox_id}
 /// （计分/资源/判题覆盖/pin revision 变更；已部署的 host_offset 禁改 §38；§37 touch_configuration）
-#[patch("/events/{event_id}/awd/gameboxes/{event_gamebox_id}")]
+#[patch("{event_id}/awd/gameboxes/{event_gamebox_id}")]
 pub async fn update_event_gamebox(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -534,7 +534,7 @@ pub async fn update_event_gamebox(
 
 /// DELETE /api/admin/events/{event_id}/awd/gameboxes/{event_gamebox_id}
 /// （移除赛事选择；被 Instance 引用时 DB RESTRICT 拒绝；§37 touch_configuration）
-#[delete("/events/{event_id}/awd/gameboxes/{event_gamebox_id}")]
+#[delete("{event_id}/awd/gameboxes/{event_gamebox_id}")]
 pub async fn delete_event_gamebox(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,

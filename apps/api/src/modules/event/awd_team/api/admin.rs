@@ -25,8 +25,24 @@ use actix_web::{delete, get, post, put};
 
 // ── Event Management ──
 
+/// GET /api/admin/events/{event_id}/awd
+/// 查询 AWD 赛事初始化状态；awd_events 行不存在时返回 data=null。
+/// 前端用它决定详情页展示「初始化 AWD 赛事」空状态卡片。
+#[get("{event_id}/awd")]
+pub async fn get_awd_event(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdEventStatusDto> {
+    let event_id = path.into_inner();
+    let m = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(m.map(AwdEventStatusDto::from)).into()
+}
+
 /// POST /api/admin/events/awd
-#[post("/events/awd")]
+#[post("awd")]
 pub async fn create_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -98,7 +114,7 @@ pub async fn create_awd_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/start
-#[post("/events/{event_id}/awd/start")]
+#[post("{event_id}/awd/start")]
 pub async fn start_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -119,7 +135,7 @@ pub async fn start_awd_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/pause
-#[post("/events/{event_id}/awd/pause")]
+#[post("{event_id}/awd/pause")]
 pub async fn pause_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -139,7 +155,7 @@ pub async fn pause_awd_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/resume
-#[post("/events/{event_id}/awd/resume")]
+#[post("{event_id}/awd/resume")]
 pub async fn resume_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -159,7 +175,7 @@ pub async fn resume_awd_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/finish
-#[post("/events/{event_id}/awd/finish")]
+#[post("{event_id}/awd/finish")]
 pub async fn finish_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -178,7 +194,7 @@ pub async fn finish_awd_event(
 ///
 /// P4-5 跨层闭环：DB ban → WG host 挂起（DB 保持 Active）→ banned set reconcile
 /// → conntrack 清理 → publish。duration_secs 设置时创建自动解封任务（P4-7）。
-#[post("/events/{event_id}/awd/teams/{team_id}/ban")]
+#[post("{event_id}/awd/teams/{team_id}/ban")]
 pub async fn ban_team(
     admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -262,7 +278,7 @@ async fn schedule_team_unban(
 }
 
 /// DELETE /api/admin/events/{event_id}/awd/teams/{team_id}/ban
-#[delete("/events/{event_id}/awd/teams/{team_id}/ban")]
+#[delete("{event_id}/awd/teams/{team_id}/ban")]
 pub async fn unban_team(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -303,7 +319,7 @@ pub async fn unban_team(
 // ── Score Adjustment ──
 
 /// POST /api/admin/events/{event_id}/awd/score/adjust
-#[post("/events/{event_id}/awd/score/adjust")]
+#[post("{event_id}/awd/score/adjust")]
 pub async fn adjust_score(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -345,7 +361,7 @@ pub async fn adjust_score(
 // ── Deployment ──
 
 /// POST /api/admin/events/{event_id}/awd/deploy
-#[post("/events/{event_id}/awd/deploy")]
+#[post("{event_id}/awd/deploy")]
 pub async fn deploy_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -368,7 +384,7 @@ pub async fn deploy_awd_event(
 }
 
 /// GET /api/admin/events/{event_id}/awd/scores
-#[get("/events/{event_id}/awd/scores")]
+#[get("{event_id}/awd/scores")]
 pub async fn get_event_scores(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -399,7 +415,7 @@ pub async fn get_event_scores(
 // ── Precheck ──
 
 /// POST /api/admin/events/{event_id}/awd/precheck
-#[post("/events/{event_id}/awd/precheck")]
+#[post("{event_id}/awd/precheck")]
 pub async fn run_precheck(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -424,7 +440,7 @@ pub async fn run_precheck(
 // ── Reset (admin) ──
 
 /// POST /api/admin/events/{event_id}/awd/gameboxes/{instance_id}/reset
-#[post("/events/{event_id}/awd/gameboxes/{instance_id}/reset")]
+#[post("{event_id}/awd/gameboxes/{instance_id}/reset")]
 pub async fn admin_reset_gamebox(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -467,7 +483,7 @@ pub async fn admin_reset_gamebox(
 // ── Missing admin endpoints from plan ──
 
 /// GET /api/admin/events/{event_id}/awd/prechecks
-#[get("/events/{event_id}/awd/prechecks")]
+#[get("{event_id}/awd/prechecks")]
 pub async fn get_prechecks(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -499,7 +515,7 @@ pub async fn get_prechecks(
 }
 
 /// GET /api/admin/events/{event_id}/awd/judge
-#[get("/events/{event_id}/awd/judge")]
+#[get("{event_id}/awd/judge")]
 pub async fn get_judge_batches(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -531,7 +547,7 @@ pub async fn get_judge_batches(
 }
 
 /// POST /api/admin/events/{event_id}/awd/archive
-#[post("/events/{event_id}/awd/archive")]
+#[post("{event_id}/awd/archive")]
 pub async fn archive_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -561,7 +577,7 @@ pub async fn archive_event(
 ///
 /// 失败模型：DB 更新是原子 desired state；rollout 失败返回错误可重跑，
 /// 绝不允许"DB 已只认新 token 但运行中容器仍拿旧 token"的静默态。
-#[post("/events/{event_id}/awd/tokens/rotate")]
+#[post("{event_id}/awd/tokens/rotate")]
 pub async fn rotate_tokens(
     admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -774,7 +790,7 @@ async fn rollout_infra_container(
 }
 
 /// GET /api/admin/events/{event_id}/awd/network —— 查看 Event Network（§64）
-#[get("/events/{event_id}/awd/network")]
+#[get("{event_id}/awd/network")]
 pub async fn get_event_network(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -804,7 +820,7 @@ pub async fn get_event_network(
 
 /// PUT /api/admin/events/{event_id}/awd/network —— 分配（automatic 默认 / manual，§23/§24）
 /// 幂等：已分配未锁定 → 直接返回；已锁定 → AWD_NETWORK_LOCKED。
-#[put("/events/{event_id}/awd/network")]
+#[put("{event_id}/awd/network")]
 pub async fn update_network(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
@@ -855,7 +871,7 @@ pub async fn update_network(
 }
 
 /// POST /api/admin/events/{event_id}/awd/network/reallocate —— §33/§93
-#[post("/events/{event_id}/awd/network/reallocate")]
+#[post("{event_id}/awd/network/reallocate")]
 pub async fn reallocate_network(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,

@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
-import { GenericTable, useMsgBanner } from "@/components";
+import { EventStatusBadge, GenericTable, useMsgBanner } from "@/components";
 import {
 	type EventTeamMembers,
 	type EventTeams,
@@ -81,6 +81,18 @@ function RouteComponent() {
 			},
 		},
 		{ accessorKey: "event.type", header: "Type", field: "event.type" },
+		{
+			accessorKey: "status",
+			header: "Status",
+			renderCell: (row: EventInfo) => {
+				return (
+					<EventStatusBadge
+						startTime={row.event.start_time}
+						endTime={row.event.end_time}
+					/>
+				);
+			},
+		},
 		{
 			accessorKey: "event.allow_join",
 			header: "Joinable",

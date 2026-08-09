@@ -1,4 +1,5 @@
 export * from "@/components/ActionSelect";
+export * from "@/components/EventStatusBadge";
 export * from "@/components/Header";
 export * from "@/components/MDPlusEditor";
 export * from "@/components/MsgBanner";

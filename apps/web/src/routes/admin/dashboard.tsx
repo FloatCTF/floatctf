@@ -18,6 +18,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { adminApi } from "@/api";
 import type { DashboardSummary } from "@/api/admin/dashboard";
 import { systemInformationQueryOptions } from "@/api/queries";
+import {
+	type EventStatus,
+	EventStatusBadge,
+	computeEventStatus,
+} from "@/components";
 import { AppLink } from "@/navigation";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { DatetimeToShow } from "@/util";
@@ -135,16 +140,13 @@ const AWD_PHASE_TONES: Record<string, Tone> = {
 	pause: "amber",
 };
 
-type EventState = "live" | "upcoming" | "ended";
+type EventState = EventStatus;
 
 function eventState(event: {
 	start_time: string;
 	end_time: string;
 }): EventState {
-	const now = Date.now();
-	if (now < new Date(event.start_time).getTime()) return "upcoming";
-	if (now <= new Date(event.end_time).getTime()) return "live";
-	return "ended";
+	return computeEventStatus(event.start_time, event.end_time);
 }
 
 function timeDelta(targetMs: number): string {
@@ -460,26 +462,19 @@ function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 					<Chip tone={AWD_STATUS_TONES[event.awd.status] ?? "neutral"}>
 						{event.awd.status}
 					</Chip>
-					<Chip tone={AWD_PHASE_TONES[event.awd.phase] ?? "neutral"}>
-						{event.awd.phase}
-					</Chip>
+					{(event.awd.status === "running" ||
+						event.awd.status === "paused") && (
+						<Chip tone={AWD_PHASE_TONES[event.awd.phase] ?? "neutral"}>
+							{event.awd.phase}
+						</Chip>
+					)}
 				</div>
 			) : (
-				<Chip
-					tone={
-						state === "live"
-							? "green"
-							: state === "upcoming"
-								? "blue"
-								: "neutral"
-					}
-				>
-					{state === "live"
-						? "进行中"
-						: state === "upcoming"
-							? "未开始"
-							: "已结束"}
-				</Chip>
+				<EventStatusBadge
+					startTime={event.start_time}
+					endTime={event.end_time}
+					showDot={false}
+				/>
 			)}
 			<span className="text-xs text-[var(--fgColor-muted)] w-24 text-right flex-shrink-0">
 				{rightText}
@@ -678,7 +673,7 @@ function RouteComponent() {
 	const containersQuery = useQuery({
 		queryKey: ["admin-dashboard", "docker-containers"],
 		queryFn: async () =>
-			(await adminApi.docker.fetchContainers({ limit: 200 })).data ?? [],
+			(await adminApi.docker.fetchContainers({ limit: 500 })).data ?? [],
 		staleTime: 60_000,
 	});
 
@@ -705,16 +700,16 @@ function RouteComponent() {
 
 			{summary && (
 				<>
-					<AttentionPanel
-						summary={summary}
-						disks={monitor.disks_info}
-						stoppedContainers={stoppedContainers}
-					/>
 					<StatBlocks
 						summary={summary}
 						runningContainers={monitor.docker_info.running_container_count}
 					/>
 					<Competitions events={summary.events} />
+					<AttentionPanel
+						summary={summary}
+						disks={monitor.disks_info}
+						stoppedContainers={stoppedContainers}
+					/>
 					<Activity summary={summary} />
 				</>
 			)}

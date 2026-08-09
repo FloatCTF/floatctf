@@ -10,7 +10,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
 
 import { adminApi } from "@/api";
-import { GenericTable } from "@/components";
+import { EventStatusBadge, GenericTable } from "@/components";
 import { EventType, type Events } from "@/entity";
 import { AppLink } from "@/navigation";
 import { AdminRouteGuard } from "@/routes/admin/route";
@@ -59,6 +59,15 @@ function RouteComponent() {
 		},
 		{ accessorKey: "type", header: "Type", field: "type", sortBy: true },
 		{ accessorKey: "title", header: "Title", field: "title" },
+		{
+			accessorKey: "status",
+			header: "Status",
+			renderCell: (row: Events) => {
+				return (
+					<EventStatusBadge startTime={row.start_time} endTime={row.end_time} />
+				);
+			},
+		},
 
 		{
 			accessorKey: "hidden",

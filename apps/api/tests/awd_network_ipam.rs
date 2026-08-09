@@ -82,6 +82,14 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
 }
 
 /// 删除自建 events 行：awd_events / awd_event_networks / awd_network_allocations /
+/// 清掉全部 ipam 测试残留（事件删除级联 allocations / event_networks）。
+async fn cleanup_all_ipam_events(db: &sea_orm::DatabaseConnection) {
+    let _ = events::Entity::delete_many()
+        .filter(events::Column::Title.like("awd-network-ipam-%"))
+        .exec(db)
+        .await;
+}
+
 /// awd_team_networks / event_teams 全部 ON DELETE CASCADE。
 async fn cleanup_event(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
     let _ = events::Entity::delete_many()
@@ -156,6 +164,7 @@ async fn platform_settings_reject_invalid_pools() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let original = network_settings_repo::get(&db)
         .await
         .expect("settings singleton");
@@ -242,6 +251,7 @@ async fn automatic_allocation_unique_per_event() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let e1 = seed_event(&db, "uniq-a").await;
     let e2 = seed_event(&db, "uniq-b").await;
 
@@ -287,6 +297,17 @@ async fn automatic_allocation_concurrent_no_duplicate() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
+
+    // 默认 wireguard 池 172.16.0.0/12 + /16 只有 16 个 slot；临时放大到 /24（4096）容纳 20 并发
+    let original = network_settings_repo::get(&db).await.expect("get settings");
+    let patch = network_settings_repo::NetworkSettingsPatch {
+        wireguard_event_prefix: Some(24),
+        ..Default::default()
+    };
+    network_settings_repo::update(&db, patch)
+        .await
+        .expect("enlarge wireguard pool");
 
     const N: usize = 20;
     let db = Arc::new(db);
@@ -323,6 +344,8 @@ async fn automatic_allocation_concurrent_no_duplicate() {
     for (event_id, _) in &nets {
         cleanup_event(&db, *event_id).await;
     }
+    restore_settings(&db, &original).await;
+    cleanup_all_ipam_events(&db).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -335,6 +358,7 @@ async fn manual_allocation_validation() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let e1 = seed_event(&db, "manual-a").await;
     let e2 = seed_event(&db, "manual-b").await;
     let e3 = seed_event(&db, "manual-c").await;
@@ -402,6 +426,7 @@ async fn reallocate_keeps_old_on_failure() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let original = network_settings_repo::get(&db)
         .await
         .expect("settings singleton");
@@ -475,6 +500,7 @@ async fn network_locked_after_deploy() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let event_id = seed_event(&db, "lock").await;
     let net = event_network_service::allocate_automatic(&db, event_id)
         .await
@@ -540,6 +566,7 @@ async fn team_subnet_stable_and_unique() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     configure_crypto_once();
 
     let event_id = seed_event(&db, "teamnet").await;
@@ -632,6 +659,7 @@ async fn archive_release_only_after_cleanup() {
         return;
     };
     let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
     let event_id = seed_event(&db, "release").await;
     event_network_service::allocate_automatic(&db, event_id)
         .await

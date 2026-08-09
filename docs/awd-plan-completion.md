@@ -139,3 +139,71 @@ GameBox（长期身份）
    String，INSERT 按 TEXT 绑定被 PG 拒绝，INET 迁移列为独立后续项。
 3. event_gameboxes（旧 Jeopardy-GameBox 关联）与 instances.gamebox_id 确认
    无业务调用者后删除（§32/§33）。
+
+# AWD Network Control Plane 重构（2026-08-09 追加）
+
+## 分层模型（§0/§110，禁止 Network Profile）
+
+```
+Platform AWD Networking（awd_network_settings，singleton id=1）
+        │ 提供资源池 / Host 能力 / 全局默认
+        ▼ allocate（独占，账本化）
+awd_network_allocations（kind: gamebox/wireguard，released_at）
+        │
+        ▼
+awd_event_networks（allocation_mode: automatic/manual，Deploy 后 locked_at 锁定）
+        │
+        ├─ awd_team_networks（subnet_index 稳定 slot，0=infra 保留，不复用已释放 slot）
+        │        └─ awd_wireguard_peers（assigned_ip /32）
+        │
+        └─ awd_event_gameboxes（host_offset）
+                 └─ awd_gamebox_instances（gamebox_ip = team subnet + host_offset）
+```
+
+## 数据库
+
+新增：awd_network_settings（平台池，§9）、awd_event_networks（赛事固化网络，§12）、
+awd_network_allocations（分配账本，§16）；awd_team_networks.subnet_index（§38）。
+网络列统一为 PostgreSQL 原生 CIDR/INET（§20 DoD #13）。
+
+删除：awd_events 的 gamebox_cidr / wireguard_cidr / wireguard_interface_name /
+wireguard_listen_port / flagserver_ip / judgeserver_ip / docker_network_id /
+docker_network_name（§15/§31 legacy 清理完成，§112 rg 验证 0 残留）；
+next_gamebox_host 已在 GameBox 重构删除。
+
+Migration：A（三张新表 + enums + text→inet/cidr IMPLICIT CAST）→ B（从 awd_events
+回填，旧数据即事实 + 冲突 STOP）→ C（存量列 CIDR/INET 类型化）→ D（删 legacy 字段）
+→ E（subnet_index）。merged.sql 现 27 个 migrations。
+
+## 技术要点与偏差
+
+1. **sqlx 无法解码 PG 原生 cidr/inet 返回值**（ColumnDecode 错误，2026-08-08 实证）：
+   启用 sea-orm `with-ipnetwork` feature + 实体列类型 ipnetwork::IpNetwork +
+   gen_entities.py post-process（cidr/inet 列 String→IpNetwork，db:gen 后自动执行）。
+   配合 `CREATE CAST (text AS inet/cidr) WITH INOUT AS IMPLICIT` 解决参数绑定。
+2. **IPAM 并发**（§18）：DB 事务 + pg_advisory_xact_lock（固定 key），automatic/manual/
+   reallocate 全走同一框架；overlap 校验覆盖 gamebox/wireguard × 全组合（§19）。
+3. **Manual 允许 pool 外 CIDR**（§92）：仍做全局 overlap + 宿主安全校验。
+4. **错误码**：AWD_GAMEBOX_POOL_EXHAUSTED / AWD_WIREGUARD_POOL_EXHAUSTED /
+   AWD_WG_PORT_POOL_EXHAUSTED / AWD_NETWORK_OVERLAP / AWD_NETWORK_LOCKED（§68）。
+5. **Docker network ID 属 Observed**（§14）：awd_runtime_resources 管理；
+   awd_event_networks.docker_network_name 是 desired 逻辑名（deterministic fctf-awd-<8hex>）。
+6. **WG 接口名**（§27）：deterministic `fawg_<8hex>`（13 字符 ≤ Linux 15）。
+7. **AWD_NETWORK_REVISION**（§82）：保留 settings key，唯一含义 = 全局 nft desired-state
+   apply 版本（≠ configuration_generation 业务配置版本）。
+8. 偏差：Precheck 真实数据面矩阵 probe（§63）仍环境门控（Phase 5 E2E / CI-host-network）；
+   IPv6 AWD bypass 阻断策略见 Phase 1（Docker IPv6 关闭 + v6 规则默认 drop）。
+
+## API（§73）
+
+平台：GET/PATCH /api/admin/awd/network（含容量预览 §67）、
+GET /api/admin/awd/network/health（§4.1 只读观测，无宿主防火墙操作）、
+GET /api/admin/awd/network/allocations（§7/§66 可见性，无删除）。
+赛事：GET/PUT /api/admin/events/{id}/awd/network、POST .../reallocate；
+Deploy 后 PATCH 返回 AWD_NETWORK_LOCKED（§34）。全部 Admin only（§72）。
+
+## 生命周期（§48-§56）
+
+Draft 无网络 → Configuring reserve（allocate）→ Deploying 必须已有锁定网络 →
+Deploy 时 locked_at 锁定 → Finished 保留 → Archive runtime cleanup 成功后才
+released_at（§56/§89），Event Network 行保留历史。Ban/Pause/Reset 不改分配（§85-§87）。

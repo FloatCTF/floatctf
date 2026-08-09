@@ -447,9 +447,8 @@ fn allocate_port(range: WireGuardPortRange, used: &[i32]) -> AwdResult2<i32> {
 /// 所有已占用 WG 端口（全部 Event Network 行，含已释放事件——端口不可复用需 host 校验）。
 async fn list_used_ports<C: ConnectionTrait + Send>(db: &C) -> Result<Vec<i32>, AwdError> {
     use crate::entity::awd_event_networks;
+    // 全列 select：sea-orm 1.1.20 按完整 Model 解码，select_only 会缺 id 列（ColumnNotFound）
     let rows = awd_event_networks::Entity::find()
-        .select_only()
-        .column(awd_event_networks::Column::WireguardListenPort)
         .all(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;

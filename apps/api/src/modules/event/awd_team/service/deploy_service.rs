@@ -640,7 +640,7 @@ fn random_password(len: usize) -> String {
 // ── P1-14：跨赛事 CIDR / IP 重叠校验（纯函数）──
 //
 // 调用方负责把 `events` / `networks` 过滤为**其他赛事**（不含当前赛事）：
-// - `events`：其他赛事的 awd_events 行（gamebox_cidr / wireguard_cidr）
+// - `events`：其他赛事的 awd_event_networks 行（gamebox_cidr / wireguard_cidr，§19 新数据源）
 // - `networks`：其他赛事已分配的队伍子网（awd_team_networks.gamebox_subnet / wireguard_subnet）
 // - 其余四个参数：当前赛事的配置
 //

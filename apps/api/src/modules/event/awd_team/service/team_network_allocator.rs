@@ -46,13 +46,8 @@ pub async fn ensure_team_networks(
         .all(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
-    let used_indexes: Vec<u64> = existing.iter().map(|t| t.subnet_index as u64).collect();
-
-    let allocator = TeamSubnetAllocator {
-        event_cidr: &gb_cidr,
-        team_prefix,
-        used_indexes: &used_indexes,
-    };
+    // 已分配过的 slot（含 released 行）→ 生命周期内不复用（§39）
+    let mut used_indexes: Vec<u64> = existing.iter().map(|t| t.subnet_index as u64).collect();
 
     let txn = db
         .begin()
@@ -66,13 +61,23 @@ pub async fn ensure_team_networks(
             continue;
         }
 
-        let index = allocator.next_free_index().ok_or_else(|| {
-            AwdError::PoolExhausted(format!(
-                "AWD_TEAM_SUBNET_EXHAUSTED: Event {event_id} 的 team 子网容量已满"
-            ))
-        })?;
-        let gb_subnet = allocator
-            .subnet_for_index(index)
+        // 每次循环基于「当前已用 slot」计算：新插入的 team 立即计入 used，
+        // 避免多个新 team 拿到同一 index（§38 稳定唯一）。块作用域结束借用。
+        let index = {
+            let allocator = TeamSubnetAllocator {
+                event_cidr: &gb_cidr,
+                team_prefix,
+                used_indexes: &used_indexes,
+            };
+            allocator.next_free_index().ok_or_else(|| {
+                AwdError::PoolExhausted(format!(
+                    "AWD_TEAM_SUBNET_EXHAUSTED: Event {event_id} 的 team 子网容量已满"
+                ))
+            })?
+        };
+        used_indexes.push(index);
+        let gb_subnet = gb_cidr
+            .nth_subnet(team_prefix, index)
             .ok_or_else(|| AwdError::Internal(format!("team subnet for index {index} 派生失败")))?;
         let wg_subnet = wg_cidr
             .nth_subnet(team_prefix, index)

@@ -16,7 +16,7 @@ import { useReactive } from "ahooks";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
-import { GenericTable } from "@/components";
+import { GenericTable, useMsgBanner } from "@/components";
 import type { Challenges } from "@/entity";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { DatetimeToShow, useSelectedRowIds } from "@/util";
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/admin/challenges")({
 });
 
 function RouteComponent() {
+	const banner = useMsgBanner({});
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
@@ -182,6 +183,7 @@ function RouteComponent() {
 }
 
 function ImportButton() {
+	const banner = useMsgBanner({});
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(null);
 	const [message, setMessage] = useState<null | {
@@ -290,6 +292,7 @@ export function CheckButton({
 	const [isOpen, setIsOpen] = useState(false);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const onDialogClose = useCallback(() => setIsOpen(false), []);
+	const banner = useMsgBanner({});
 
 	// 数据获取
 	const { data, isLoading } = useQuery({
@@ -307,12 +310,15 @@ export function CheckButton({
 			adminApi.challenges.buildChallenges(challenge_id_list),
 		onSuccess: (data) => {
 			setBuilding(false);
-			alert(data.data?.map((r) => r.message).join("\n"));
+			banner.showBanner(
+				"success",
+				data.data?.map((r) => r.message).join("\n") ?? "",
+			);
 			queryClient.invalidateQueries({ queryKey: ["ChallengeCheck"] });
 		},
 		onError: (e) => {
 			setBuilding(false);
-			alert(e.message);
+			banner.showBanner("critical", e.message);
 		},
 	});
 	// 列定义只生成一次

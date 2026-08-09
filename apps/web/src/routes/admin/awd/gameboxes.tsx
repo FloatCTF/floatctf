@@ -1,4 +1,4 @@
-import { ActionList, TextInput, Textarea } from "@primer/react";
+import { ActionList, TextInput, Textarea, useConfirm } from "@primer/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
@@ -68,6 +68,7 @@ export const extractConfig = (
 };
 
 function RouteComponent() {
+	const confirmDialog = useConfirm();
 	const queryClient = useQueryClient();
 	const banner = useMsgBanner({});
 	const onDone = () => {
@@ -281,10 +282,13 @@ function RouteComponent() {
 		<ActionList>
 			<ActionList.Item
 				variant="danger"
-				onSelect={() => {
-					if (window.confirm(`Hide GameBox ${row.name}?（被赛事引用时将被拒绝）`)) {
-						hide.mutate(row.id);
-					}
+				onSelect={async () => {
+					const ok = await confirmDialog({
+						title: `Hide GameBox ${row.name}？`,
+						content: "被赛事引用时将被拒绝。",
+						confirmButtonType: "danger",
+					});
+					if (ok) hide.mutate(row.id);
 				}}
 			>
 				Hide

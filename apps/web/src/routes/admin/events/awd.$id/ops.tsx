@@ -1,4 +1,4 @@
-import { Button, ButtonGroup, Spinner, TextInput } from "@primer/react";
+import { Button, ButtonGroup, Spinner, TextInput, useConfirm } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -14,6 +14,7 @@ export const Route = createFileRoute("/admin/events/awd/$id/ops")({
 
 function RouteComponent() {
 	const { id } = Route.useParams();
+	const confirmDialog = useConfirm();
 	const banner = useMsgBanner({});
 	const qc = useQueryClient();
 
@@ -140,13 +141,14 @@ function RouteComponent() {
 					<Button
 						variant="danger"
 						disabled={pending}
-						onClick={() => {
-							if (
-								window.confirm(
-									"确认轮换内部 Token？\n将 key_version+1、重新加密并重建 FlagServer/JudgeServer 容器。",
-								)
-							)
-								rotate.mutate();
+						onClick={async () => {
+							const ok = await confirmDialog({
+								title: "确认轮换内部 Token？",
+								content:
+									"将 key_version+1、重新加密并重建 FlagServer/JudgeServer 容器。",
+								confirmButtonType: "danger",
+							});
+							if (ok) rotate.mutate();
 						}}
 					>
 						Rotate Tokens

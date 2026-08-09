@@ -1,5 +1,5 @@
 import { PlayIcon, SquareIcon, TrashIcon } from "@primer/octicons-react";
-import { ActionList, IconButton } from "@primer/react";
+import { ActionList, IconButton, useConfirm } from "@primer/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -13,6 +13,7 @@ export const Route = createFileRoute("/admin/docker/")({
 });
 
 function RouteComponent() {
+	const confirmDialog = useConfirm();
     const queryClient = useQueryClient();
 
     const columns = [
@@ -69,10 +70,13 @@ function RouteComponent() {
             )}
             <ActionList.Item
                 variant="danger"
-                onClick={() => {
-                    if (confirm(`Delete container ${row.name}?`)) {
-                        deleteMutation.mutate(row.id);
-                    }
+                onClick={async () => {
+                    const ok = await confirmDialog({
+                        title: `Delete container ${row.name}?`,
+                        content: `容器 ${row.name} 将被删除，操作不可撤销。`,
+                        confirmButtonType: "danger",
+                    });
+                    if (ok) deleteMutation.mutate(row.id);
                 }}
             >
                 Delete

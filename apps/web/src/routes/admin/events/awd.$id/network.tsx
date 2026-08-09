@@ -1,5 +1,12 @@
 import { LockIcon, PackageIcon } from "@primer/octicons-react";
-import { Button, FormControl, Label, Spinner, TextInput } from "@primer/react";
+import {
+	Button,
+	FormControl,
+	Label,
+	Spinner,
+	TextInput,
+	useConfirm,
+} from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { AxiosError } from "axios";
@@ -30,6 +37,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 function RouteComponent() {
 	const { id } = Route.useParams();
 	const banner = useMsgBanner({});
+	const confirmDialog = useConfirm();
 	const qc = useQueryClient();
 
 	// 未分配时后端返回 404（data=null）→ 归一化为 null，区分“未分配”与真实错误
@@ -240,14 +248,14 @@ function RouteComponent() {
 						<Button
 							leadingVisual={PackageIcon}
 							disabled={reallocate.isPending}
-							onClick={() => {
-								if (
-									window.confirm(
-										"确认重新分配该 Event 的网络？\n将释放当前 CIDR 并重新从平台 pool 挑选（仅未锁定时可操作）。",
-									)
-								) {
-									reallocate.mutate();
-								}
+							onClick={async () => {
+								const ok = await confirmDialog({
+									title: "确认重新分配网络？",
+									content:
+										"将释放当前 CIDR 并重新从平台 pool 挑选（仅未锁定时可操作）。",
+									confirmButtonType: "danger",
+								});
+								if (ok) reallocate.mutate();
 							}}
 						>
 							{reallocate.isPending ? "Reallocating…" : "Reallocate"}

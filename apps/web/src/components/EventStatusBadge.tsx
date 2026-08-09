@@ -1,3 +1,5 @@
+import { Label, type LabelProps } from "@primer/react";
+
 export type EventStatus = "upcoming" | "ongoing" | "ended" | "unknown";
 
 /**
@@ -18,11 +20,15 @@ export function computeEventStatus(
 	return "ongoing";
 }
 
-const STATUS_STYLE: Record<EventStatus, string> = {
-	ongoing: "bg-[var(--bgColor-success)] text-[var(--fgColor-success)]",
-	upcoming: "bg-[var(--bgColor-accent)] text-[var(--fgColor-accent)]",
-	ended: "bg-[var(--bgColor-muted)] text-[var(--fgColor-muted)]",
-	unknown: "bg-[var(--bgColor-muted)] text-[var(--fgColor-muted)]",
+/** 与 Logs 页 Level 徽章同款：Primer Label + variant */
+const STATUS_VARIANT: Record<
+	EventStatus,
+	NonNullable<LabelProps["variant"]>
+> = {
+	ongoing: "success",
+	upcoming: "accent",
+	ended: "default",
+	unknown: "default",
 };
 
 const STATUS_DOT: Record<EventStatus, string> = {
@@ -50,15 +56,13 @@ export function EventStatusBadge({
 }) {
 	const status = computeEventStatus(startTime, endTime);
 	return (
-		<span
-			className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${STATUS_STYLE[status]}`}
-		>
+		<Label variant={STATUS_VARIANT[status]}>
 			{showDot && (
 				<span
-					className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`}
+					className={`w-2 h-2 rounded-full inline-block mr-1 ${STATUS_DOT[status]}`}
 				/>
 			)}
 			{EVENT_STATUS_LABEL[status]}
-		</span>
+		</Label>
 	);
 }

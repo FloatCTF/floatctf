@@ -9,6 +9,7 @@ export type {
 	CoordinatorNavigateOptions,
 } from "./navigation-types";
 export { adminNavigation, adminIgnoreRoutes } from "./admin-navigation";
+export { serviceNavigation } from "./service-navigation";
 export type {
 	ActiveNavigationPath,
 	AdminNavigationNode,

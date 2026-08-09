@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-router";
 
 import { HierarchicalSideBar, ServiceHeader } from "@/components";
-import { serviceNavigation } from "@/routes";
+import { serviceNavigation } from "@/navigation";
 import { useAuthStore } from "@/stores/AuthStore";
 
 export const Route = createFileRoute("/service")({

@@ -57,6 +57,8 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .service(operations::runtime_instances::get_instance),
     );
 
+    cfg.service(scope("/dashboard").service(operations::dashboard::get_dashboard_summary));
+
     cfg.service(
         scope("/scheduled_tasks")
             .service(operations::scheduled_tasks::create_scheduled_task)

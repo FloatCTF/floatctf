@@ -1,5 +1,6 @@
 //! Platform operations: system, docker, DB console, logs, tasks, runtime instances.
 
+pub mod dashboard;
 pub mod database;
 pub mod docker;
 pub mod logs;

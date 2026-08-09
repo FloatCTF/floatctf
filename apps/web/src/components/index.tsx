@@ -7,3 +7,4 @@ export * from "@/components/SideBar";
 export * from "@/components/Table";
 export * from "@/components/MsgInlineBanner";
 export * from "@/components/FilterBar";
+export * from "@/components/SubmitWriteup";

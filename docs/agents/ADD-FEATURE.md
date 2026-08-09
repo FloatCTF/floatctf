@@ -87,7 +87,7 @@ state.publisher.publish(RealtimeEvent::new(entity_id, "score.changed", json!({..
 > 新增**数据页面**前必读 [DATA-FETCHING.md](./DATA-FETCHING.md)：缓存分级、keepPreviousData、queryKey 失效等硬性规则。
 
 1. `src/entity/*.ts` 由 `db:gen` 生成，新表自动有类型；**不要手改**；改 Schema 后同步页面字段并用 `pnpm exec tsc --noEmit` 校验
-2. 页面组件：参考现有相似页面；数据请求用 TanStack Query（`useQuery`），路由用 TanStack Router
+2. 页面组件：**先找同域参照页，仿照其结构、布局与交互**（赛事详情参照 `service/events/jeopardy.$id/*`、管理列表参照 `admin/challenges.tsx`）；优先复用 `components/` 现有组件（GenericTable、EventStatusBadge、SubmitWriteup、MsgBanner、AppLink、FilterBar 等），禁止自创视觉风格或重复实现；数据请求用 TanStack Query（`useQuery`），路由用 TanStack Router
 3. 数据页面性能基线（详见 DATA-FETCHING.md）：用 useQuery、低频数据覆盖 `staleTime`、列表加 `keepPreviousData`、mutation 成功后 invalidate 对应 key、实时数据用 `refetchInterval`/`useAwdEventStream`
 4. 管理端页面若有 API 权限要求，使用 admin 守卫
 5. 前端类型与后端 DTO 不一致时，以后端为准（必要时同步改 TS 接口）

@@ -5,6 +5,7 @@ pub mod auth;
 pub mod dto;
 pub mod gamebox_admin;
 pub mod internal;
+pub mod network_admin;
 pub mod player;
 
 use actix_web::web;
@@ -32,6 +33,11 @@ pub fn admin_routes(cfg: &mut web::ServiceConfig) {
         .service(admin::get_event_network)
         .service(admin::reallocate_network)
         .service(admin::get_event_scores)
+        // 平台 AWD Networking（§73）：settings / health / allocations
+        .service(network_admin::get_platform_network)
+        .service(network_admin::update_platform_network)
+        .service(network_admin::get_platform_network_health)
+        .service(network_admin::get_platform_network_allocations)
         // GameBox 库 + 赛事 GameBox 管理（§46 术语：gamebox / revision / event_gamebox）
         .service(gamebox_admin::list_gamebox_library)
         .service(gamebox_admin::create_gamebox)

@@ -18,12 +18,13 @@ export { weaponsAdminApi } from "./weapons";
 export { logsAdminApi } from "./logs";
 export { downloadAdminApi } from "./download";
 export { discussionAdminApi } from "./discussions";
+export { dashboardAdminApi } from "./dashboard";
 export { superAdminApi } from "./super_admin";
 export {
-    dockerAdminApi,
-    type FloatDockerContainer,
-    type ContainerInfo,
-    type PortInfo,
-    type ImageInfo,
-    type NetworkInfo,
+	dockerAdminApi,
+	type FloatDockerContainer,
+	type ContainerInfo,
+	type PortInfo,
+	type ImageInfo,
+	type NetworkInfo,
 } from "./docker";

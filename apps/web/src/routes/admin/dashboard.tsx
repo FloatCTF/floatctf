@@ -1,21 +1,22 @@
 import {
+	AlertIcon,
 	CalendarIcon,
-	ClockIcon,
-	CommentDiscussionIcon,
+	CheckCircleIcon,
 	ContainerIcon,
-	GiftIcon,
-	MegaphoneIcon,
+	DatabaseIcon,
+	LogIcon,
 	PackageIcon,
 	PeopleIcon,
 	ServerIcon,
 	TrophyIcon,
+	XCircleIcon,
 } from "@primer/octicons-react";
 import { Avatar, ProgressBar, Spinner } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { adminApi } from "@/api";
-import { type QueryParams, type UniResponse } from "@/api/axios";
+import type { DashboardSummary } from "@/api/admin/dashboard";
 import { systemInformationQueryOptions } from "@/api/queries";
 import { AppLink } from "@/navigation";
 import { AdminRouteGuard } from "@/routes/admin/route";
@@ -79,448 +80,647 @@ export type DockerInformation = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 平台统计卡片：每个列表接口用 limit=1 拿 meta.total 计数，整卡可点击跳转。
+// Primer 风格基础件（颜色走 @primer/css light 变量，暗色主题可复用）
 // ─────────────────────────────────────────────────────────────────────────────
 
-type CountFetcher = (params: QueryParams) => Promise<UniResponse<unknown[]>>;
+const CARD =
+	"border border-[var(--borderColor-default)] rounded-md bg-[var(--bgColor-default)]";
 
-type StatCard = {
-	key: string;
-	label: string;
-	href: string;
-	icon: React.ReactNode;
-	fetch: CountFetcher;
+type Tone = "neutral" | "blue" | "green" | "amber" | "red";
+
+const CHIP_TONES: Record<Tone, string> = {
+	neutral: "bg-[var(--bgColor-muted)] text-[var(--fgColor-muted)]",
+	blue: "bg-[var(--bgColor-accent)] text-[var(--fgColor-accent)]",
+	green: "bg-[var(--bgColor-success)] text-[var(--fgColor-success)]",
+	amber: "bg-[var(--bgColor-attention)] text-[var(--fgColor-attention)]",
+	red: "bg-[var(--bgColor-danger)] text-[var(--fgColor-danger)]",
 };
 
-const STAT_CARDS: StatCard[] = [
-	{
-		key: "users",
-		label: "Users",
-		href: "/admin/users",
-		icon: <PeopleIcon />,
-		fetch: (params) => adminApi.users.fetch(params),
-	},
-	{
-		key: "events",
-		label: "Events",
-		href: "/admin/events",
-		icon: <CalendarIcon />,
-		fetch: (params) => adminApi.events.fetch(params),
-	},
-	{
-		key: "challenges",
-		label: "Challenges",
-		href: "/admin/challenges",
-		icon: <TrophyIcon />,
-		fetch: (params) => adminApi.challenges.fetch(params),
-	},
-	{
-		key: "weapons",
-		label: "Weapons",
-		href: "/admin/weapons",
-		icon: <GiftIcon />,
-		fetch: (params) => adminApi.weapons.fetch(params),
-	},
-	{
-		key: "announcements",
-		label: "Announcements",
-		href: "/admin/announcements",
-		icon: <MegaphoneIcon />,
-		fetch: (params) => adminApi.announcements.fetch(params),
-	},
-	{
-		key: "discussions",
-		label: "Discussions",
-		href: "/admin/discussions",
-		icon: <CommentDiscussionIcon />,
-		fetch: (params) => adminApi.discussions.fetch(params),
-	},
-	{
-		key: "instances",
-		label: "Instances",
-		href: "/admin/instances",
-		icon: <ServerIcon />,
-		fetch: (params) => adminApi.instances.fetch(params),
-	},
-	{
-		key: "gameboxes",
-		label: "AWD GameBoxes",
-		href: "/admin/awd/gameboxes",
-		icon: <PackageIcon />,
-		fetch: (params) => adminApi.awd.listGameboxes(params),
-	},
-	{
-		key: "scheduled-tasks",
-		label: "Scheduled Tasks",
-		href: "/admin/scheduled_tasks",
-		icon: <ClockIcon />,
-		fetch: (params) => adminApi.scheduled_tasks.fetch(params),
-	},
-];
-
-function StatCardView({
-	label,
-	href,
-	icon,
-	value,
-	loading,
+function Chip({
+	tone = "neutral",
+	children,
 }: {
-	label: string;
-	href: string;
-	icon: React.ReactNode;
-	value: number | undefined;
-	loading: boolean;
+	tone?: Tone;
+	children: React.ReactNode;
 }) {
 	return (
-		<AppLink
-			to={href}
-			className="border border-gray-300 rounded-lg p-3 flex flex-col gap-1 hover:border-gray-500 hover:shadow-sm transition-colors"
+		<span
+			className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${CHIP_TONES[tone]}`}
 		>
-			<div className="flex items-center gap-2 text-sm text-gray-600">
-				<span className="text-gray-500 flex-shrink-0">{icon}</span>
-				<span className="truncate">{label}</span>
-			</div>
-			<div className="text-2xl font-semibold tabular-nums">
-				{loading ? "–" : value}
-			</div>
-		</AppLink>
+			{children}
+		</span>
 	);
 }
 
-function CountCard({ card }: { card: StatCard }) {
-	const { data, isLoading } = useQuery({
-		queryKey: ["admin-dashboard", "count", card.key],
-		queryFn: async () => {
-			const res = await card.fetch({ limit: 1, page: 1 });
-			return res.meta?.total ?? res.data?.length ?? 0;
-		},
-		staleTime: 60_000,
-	});
+const AWD_STATUS_TONES: Record<string, Tone> = {
+	running: "green",
+	paused: "amber",
+	verified: "blue",
+	deploying: "blue",
+	deployed: "blue",
+	prechecking: "blue",
+	draft: "neutral",
+	configuring: "neutral",
+	deploy_failed: "red",
+	network_error: "red",
+	verification_failed: "red",
+	start_blocked: "red",
+	finished: "neutral",
+	archived: "neutral",
+};
+
+const AWD_PHASE_TONES: Record<string, Tone> = {
+	attack: "red",
+	hardening: "blue",
+	pause: "amber",
+};
+
+type EventState = "live" | "upcoming" | "ended";
+
+function eventState(event: {
+	start_time: string;
+	end_time: string;
+}): EventState {
+	const now = Date.now();
+	if (now < new Date(event.start_time).getTime()) return "upcoming";
+	if (now <= new Date(event.end_time).getTime()) return "live";
+	return "ended";
+}
+
+function timeDelta(targetMs: number): string {
+	const diff = targetMs - Date.now();
+	const abs = Math.abs(diff);
+	if (abs < 60_000) return diff >= 0 ? "即将开始" : "刚刚";
+	const mins = Math.floor(abs / 60_000);
+	if (mins < 60) return diff >= 0 ? `${mins} 分钟后` : `${mins} 分钟前`;
+	const hours = Math.floor(mins / 60);
+	if (hours < 48) return diff >= 0 ? `${hours} 小时后` : `${hours} 小时前`;
+	return diff >= 0
+		? `${Math.floor(hours / 24)} 天后`
+		: `${Math.floor(hours / 24)} 天前`;
+}
+
+function AvatarOrInitial({
+	nickname,
+	avatar,
+	size = 20,
+}: {
+	nickname: string;
+	avatar?: string | null;
+	size?: number;
+}) {
+	if (avatar) {
+		return <Avatar src={avatar} size={size} />;
+	}
 	return (
-		<StatCardView
-			label={card.label}
-			href={card.href}
-			icon={card.icon}
-			value={data}
-			loading={isLoading}
-		/>
+		<div
+			className="flex items-center justify-center rounded-full bg-[var(--bgColor-muted)] text-[var(--fgColor-muted)] font-medium flex-shrink-0"
+			style={{ width: size, height: size, fontSize: Math.round(size * 0.5) }}
+		>
+			{(nickname || "?").slice(0, 1).toUpperCase()}
+		</div>
+	);
+}
+
+function Empty() {
+	return (
+		<div className="text-xs text-[var(--fgColor-muted)] px-3 py-3">
+			暂无数据
+		</div>
 	);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 最近动态面板
+// 需要处理的事项
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SKELETON_ROWS = ["row-1", "row-2", "row-3"];
+function AttentionPanel({
+	summary,
+	disks,
+	stoppedContainers,
+}: {
+	summary: DashboardSummary;
+	disks: DiskInformation[];
+	stoppedContainers: number;
+}) {
+	const items: Array<{ key: string; tone: Tone; node: React.ReactNode }> = [];
 
-function LoadingRows() {
+	for (const alert of summary.attention.awd_alerts) {
+		items.push({
+			key: `awd-${alert.event_id}`,
+			tone: "red",
+			node: (
+				<>
+					<AlertIcon />
+					<span>
+						AWD 赛事
+						<AppLink
+							to={`/admin/events/awd/${alert.event_id}`}
+							className="font-medium underline decoration-dotted underline-offset-2"
+						>
+							「{alert.title}」
+						</AppLink>
+						处于异常状态：<span className="font-medium">{alert.status}</span>
+					</span>
+				</>
+			),
+		});
+	}
+	for (const task of summary.attention.failed_tasks) {
+		items.push({
+			key: `task-${task.task_key}`,
+			tone: "red",
+			node: (
+				<>
+					<XCircleIcon />
+					<span>
+						定时任务失败：
+						<AppLink
+							to="/admin/scheduled_tasks"
+							className="font-medium underline decoration-dotted underline-offset-2"
+						>
+							{task.task_name}
+						</AppLink>
+						<span className="opacity-70">
+							（{task.error_msg ?? task.task_key}，第 {task.attempt_count}/
+							{task.max_attempts} 次）
+						</span>
+					</span>
+				</>
+			),
+		});
+	}
+	if (summary.attention.error_logs_24h > 0) {
+		items.push({
+			key: "error-logs",
+			tone: "amber",
+			node: (
+				<>
+					<LogIcon />
+					<span>
+						<AppLink
+							to="/admin/logs"
+							className="font-medium underline decoration-dotted underline-offset-2"
+						>
+							{summary.attention.error_logs_24h} 条 ERROR 日志
+						</AppLink>
+						（近 24 小时）
+					</span>
+				</>
+			),
+		});
+	}
+	for (const disk of disks.filter((d) => d.usage_percent >= 90)) {
+		items.push({
+			key: "error-logs",
+			tone: "amber",
+			node: (
+				<>
+					<DatabaseIcon />
+					<span>
+						磁盘 {disk.mount_point} 使用率{" "}
+						<span className="font-medium">
+							{Math.round(disk.usage_percent)}%
+						</span>
+					</span>
+				</>
+			),
+		});
+	}
+	if (stoppedContainers > 0) {
+		items.push({
+			key: "error-logs",
+			tone: "amber",
+			node: (
+				<>
+					<ContainerIcon />
+					<span>
+						<AppLink
+							to="/admin/docker"
+							className="font-medium underline decoration-dotted underline-offset-2"
+						>
+							{stoppedContainers} 个容器未运行
+						</AppLink>
+					</span>
+				</>
+			),
+		});
+	}
+
+	if (items.length === 0) {
+		return (
+			<div className={`${CARD} p-3 flex items-center gap-2`}>
+				<CheckCircleIcon className="text-[var(--fgColor-success)]" />
+				<span className="font-medium text-sm">一切正常</span>
+				<span className="text-xs text-[var(--fgColor-muted)]">
+					无异常赛事、失败任务或资源告警
+				</span>
+			</div>
+		);
+	}
 	return (
-		<div className="space-y-2 py-1">
-			{SKELETON_ROWS.map((key) => (
-				<div key={key} className="h-5 bg-gray-100 rounded animate-pulse" />
+		<div className={`${CARD} p-1.5`}>
+			{items.map((item, index) => (
+				<div
+					key={item.key}
+					className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-sm ${
+						item.tone === "red"
+							? "text-[var(--fgColor-danger)]"
+							: "text-[var(--fgColor-attention)]"
+					}`}
+				>
+					{item.node}
+				</div>
 			))}
 		</div>
 	);
 }
 
-function EmptyRows() {
-	return <div className="text-xs text-gray-400 py-2">暂无数据</div>;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// 平台规模统计块（Primer repo 风格）
+// ─────────────────────────────────────────────────────────────────────────────
 
-function Panel({
-	title,
-	href,
-	children,
+function StatBlocks({
+	summary,
+	runningContainers,
 }: {
-	title: string;
-	href: string;
-	children: React.ReactNode;
+	summary: DashboardSummary;
+	runningContainers: number;
 }) {
+	const blocks = [
+		{
+			label: "Users",
+			value: summary.stats.users,
+			href: "/admin/users",
+			icon: <PeopleIcon />,
+		},
+		{
+			label: "Events",
+			value: summary.stats.events,
+			href: "/admin/events",
+			icon: <CalendarIcon />,
+		},
+		{
+			label: "Challenges",
+			value: summary.stats.challenges,
+			href: "/admin/challenges",
+			icon: <TrophyIcon />,
+		},
+		{
+			label: "Instances",
+			value: summary.stats.instances,
+			href: "/admin/instances",
+			icon: <ServerIcon />,
+		},
+		{
+			label: "AWD GameBoxes",
+			value: summary.stats.gameboxes,
+			href: "/admin/awd/gameboxes",
+			icon: <PackageIcon />,
+		},
+		{
+			label: "Docker Running",
+			value: runningContainers,
+			href: "/admin/docker",
+			icon: <ContainerIcon />,
+		},
+	];
 	return (
-		<div className="border border-gray-300 rounded-lg p-3">
-			<div className="flex items-center justify-between mb-2">
-				<h2 className="text-base font-semibold">{title}</h2>
-				<AppLink to={href} className="text-xs text-blue-600 hover:underline">
-					View all →
+		<div
+			className={`${CARD} flex flex-wrap divide-x divide-[var(--borderColor-default)]`}
+		>
+			{blocks.map((block) => (
+				<AppLink
+					key={block.label}
+					to={block.href}
+					className="flex-1 min-w-[150px] px-4 py-3 hover:bg-[var(--bgColor-muted)] flex items-center gap-2.5"
+				>
+					<span className="text-[var(--fgColor-muted)]">{block.icon}</span>
+					<span className="text-lg font-semibold tabular-nums">
+						{block.value}
+					</span>
+					<span className="text-xs text-[var(--fgColor-muted)]">
+						{block.label}
+					</span>
 				</AppLink>
-			</div>
-			{children}
+			))}
 		</div>
 	);
 }
 
-function RecentUsers() {
-	const { data, isLoading } = useQuery({
-		queryKey: ["admin-dashboard", "recent", "users"],
-		queryFn: async () =>
-			(await adminApi.users.fetch({ limit: 5, page: 1 })).data ?? [],
-		staleTime: 60_000,
-	});
+// ─────────────────────────────────────────────────────────────────────────────
+// 赛事列表（进行中 > 即将开始 > 已结束）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
+	const state = eventState(event);
+	const isAwd = event.event_type === "awd_team";
+	const href = isAwd
+		? `/admin/events/awd/${event.event_id}`
+		: `/admin/events/jeopardy/${event.event_id}`;
+
+	const dotColor =
+		state === "live"
+			? "bg-[var(--fgColor-success)]"
+			: state === "upcoming"
+				? "bg-[var(--fgColor-accent)]"
+				: "bg-[var(--fgColor-muted)]";
+
+	let rightText: string;
+	if (state === "live") {
+		rightText = `剩 ${timeDelta(new Date(event.end_time).getTime())}`;
+	} else if (state === "upcoming") {
+		rightText = timeDelta(new Date(event.start_time).getTime());
+	} else {
+		rightText = `结束 ${timeDelta(new Date(event.end_time).getTime())}`;
+	}
+
 	return (
-		<Panel title="Recent Users" href="/admin/users">
-			{isLoading ? (
-				<LoadingRows />
-			) : data === undefined || data.length === 0 ? (
-				<EmptyRows />
+		<AppLink
+			to={href}
+			className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-[var(--bgColor-muted)]"
+		>
+			<span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+			<div className="flex-1 min-w-0">
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="font-medium truncate">{event.title}</span>
+					{event.hidden && (
+						<span className="text-xs text-[var(--fgColor-muted)] flex-shrink-0">
+							hidden
+						</span>
+					)}
+					{isAwd && <Chip tone="blue">AWD</Chip>}
+				</div>
+				<div className="text-xs text-[var(--fgColor-muted)]">
+					{DatetimeToShow(event.start_time)} → {DatetimeToShow(event.end_time)}
+				</div>
+			</div>
+			{isAwd && event.awd ? (
+				<div className="flex items-center gap-1.5 flex-shrink-0">
+					<Chip tone={AWD_STATUS_TONES[event.awd.status] ?? "neutral"}>
+						{event.awd.status}
+					</Chip>
+					<Chip tone={AWD_PHASE_TONES[event.awd.phase] ?? "neutral"}>
+						{event.awd.phase}
+					</Chip>
+				</div>
 			) : (
-				data.map((user) => (
-					<div
-						key={user.id}
-						className="flex items-center gap-2 justify-between py-1"
-					>
-						<div className="flex items-center gap-2 min-w-0">
-							{user.avatar ? (
-								<Avatar src={user.avatar} size={20} />
-							) : (
-								<div
-									className="flex items-center justify-center rounded-full bg-gray-200 text-gray-500 font-medium flex-shrink-0"
-									style={{ width: 20, height: 20, fontSize: 10 }}
-								>
-									{(user.nickname ?? user.username ?? "?")
-										.slice(0, 1)
-										.toUpperCase()}
-								</div>
-							)}
-							<span className="truncate font-medium">
-								{user.nickname || user.username}
-							</span>
-						</div>
-						<time className="text-xs text-gray-500 flex-shrink-0">
-							{DatetimeToShow(user.created_at)}
-						</time>
-					</div>
-				))
+				<Chip
+					tone={
+						state === "live"
+							? "green"
+							: state === "upcoming"
+								? "blue"
+								: "neutral"
+					}
+				>
+					{state === "live"
+						? "进行中"
+						: state === "upcoming"
+							? "未开始"
+							: "已结束"}
+				</Chip>
 			)}
-		</Panel>
+			<span className="text-xs text-[var(--fgColor-muted)] w-24 text-right flex-shrink-0">
+				{rightText}
+			</span>
+		</AppLink>
 	);
 }
 
-function RecentEvents() {
-	const { data, isLoading } = useQuery({
-		queryKey: ["admin-dashboard", "recent", "events"],
-		queryFn: async () =>
-			(await adminApi.events.fetch({ limit: 5, page: 1 })).data ?? [],
-		staleTime: 60_000,
+const EVENT_STATE_ORDER: Record<EventState, number> = {
+	live: 0,
+	upcoming: 1,
+	ended: 2,
+};
+
+function Competitions({
+	events,
+}: {
+	events: DashboardSummary["events"];
+}) {
+	const sorted = [...events].sort((a, b) => {
+		const stateDiff =
+			EVENT_STATE_ORDER[eventState(a)] - EVENT_STATE_ORDER[eventState(b)];
+		if (stateDiff !== 0) return stateDiff;
+		return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
 	});
 	return (
-		<Panel title="Recent Events" href="/admin/events">
-			{isLoading ? (
-				<LoadingRows />
-			) : data === undefined || data.length === 0 ? (
-				<EmptyRows />
-			) : (
-				data.map((event) => (
-					<div key={event.id} className="py-1">
-						<div className="flex items-center justify-between gap-2">
-							<span className="truncate font-medium">{event.title}</span>
-							<span
-								className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
-									event.type === "awd_team"
-										? "bg-purple-100 text-purple-700"
-										: "bg-blue-100 text-blue-700"
-								}`}
-							>
-								{event.type === "awd_team" ? "AWD" : "Jeopardy"}
-							</span>
-						</div>
-						<div className="text-xs text-gray-500">
-							{DatetimeToShow(event.start_time)} →{" "}
-							{DatetimeToShow(event.end_time)}
-						</div>
-					</div>
-				))
-			)}
-		</Panel>
+		<div className={CARD}>
+			<div className="px-3 py-2 border-b border-[var(--borderColor-default)] flex items-center justify-between">
+				<h2 className="text-sm font-semibold">Competitions</h2>
+				<AppLink
+					to="/admin/events"
+					className="text-xs text-[var(--accent-fg)] hover:underline"
+				>
+					All events →
+				</AppLink>
+			</div>
+			<div className="p-1.5">
+				{sorted.length === 0 ? (
+					<Empty />
+				) : (
+					sorted.map((event) => <EventRow key={event.event_id} event={event} />)
+				)}
+			</div>
+		</div>
 	);
 }
 
-function RecentChallenges() {
-	const { data, isLoading } = useQuery({
-		queryKey: ["admin-dashboard", "recent", "challenges"],
-		queryFn: async () =>
-			(await adminApi.challenges.fetch({ limit: 5, page: 1 })).data ?? [],
-		staleTime: 60_000,
-	});
+// ─────────────────────────────────────────────────────────────────────────────
+// 近期活动
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Activity({
+	summary,
+}: {
+	summary: DashboardSummary;
+}) {
 	return (
-		<Panel title="Recent Challenges" href="/admin/challenges">
-			{isLoading ? (
-				<LoadingRows />
-			) : data === undefined || data.length === 0 ? (
-				<EmptyRows />
-			) : (
-				data.map((challenge) => (
-					<div
-						key={challenge.id}
-						className="flex items-center justify-between gap-2 py-1"
-					>
-						<div className="flex items-center gap-2 min-w-0">
-							<span className="text-gray-500 flex-shrink-0">
-								<TrophyIcon size={14} />
-							</span>
-							<span className="truncate font-medium">{challenge.name}</span>
-						</div>
-						<div className="flex items-center gap-2 flex-shrink-0">
-							{challenge.category && (
-								<span className="text-xs text-gray-500">
-									{challenge.category}
+		<div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+			<div className={CARD}>
+				<div className="px-3 py-2 border-b border-[var(--borderColor-default)]">
+					<h2 className="text-sm font-semibold">Recent Solves</h2>
+				</div>
+				{summary.activity.recent_solves.length === 0 ? (
+					<Empty />
+				) : (
+					summary.activity.recent_solves.map((solve) => (
+						<div
+							key={`${solve.nickname}-${solve.challenge_name}-${solve.solved_at}`}
+							className="flex items-center gap-2 px-3 py-1.5 text-sm"
+						>
+							<AvatarOrInitial
+								nickname={solve.nickname}
+								avatar={solve.avatar}
+							/>
+							<span className="truncate min-w-0">
+								<span className="font-medium">{solve.nickname}</span> 解出{" "}
+								<span className="text-[var(--accent-fg)]">
+									{solve.challenge_name}
 								</span>
-							)}
-							<span className="text-xs text-gray-400">
-								{DatetimeToShow(challenge.updated_at)}
+							</span>
+							<span className="ml-auto text-xs text-[var(--fgColor-muted)] whitespace-nowrap">
+								{timeDelta(new Date(solve.solved_at).getTime())}
 							</span>
 						</div>
-					</div>
-				))
-			)}
-		</Panel>
+					))
+				)}
+			</div>
+			<div className={CARD}>
+				<div className="px-3 py-2 border-b border-[var(--borderColor-default)] flex items-center justify-between">
+					<h2 className="text-sm font-semibold">Recent Signups</h2>
+					<AppLink
+						to="/admin/users"
+						className="text-xs text-[var(--accent-fg)] hover:underline"
+					>
+						All users →
+					</AppLink>
+				</div>
+				{summary.activity.recent_signups.length === 0 ? (
+					<Empty />
+				) : (
+					summary.activity.recent_signups.map((user) => (
+						<div
+							key={`${user.username}-${user.created_at}`}
+							className="flex items-center gap-2 px-3 py-1.5 text-sm"
+						>
+							<AvatarOrInitial nickname={user.nickname} avatar={user.avatar} />
+							<span className="truncate min-w-0">
+								<span className="font-medium">{user.nickname}</span>{" "}
+								<span className="text-[var(--fgColor-muted)]">
+									@{user.username}
+								</span>
+							</span>
+							<span className="ml-auto text-xs text-[var(--fgColor-muted)] whitespace-nowrap">
+								{timeDelta(new Date(user.created_at).getTime())}
+							</span>
+						</div>
+					))
+				)}
+			</div>
+		</div>
 	);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 宿主与基础设施（压缩展示）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Infrastructure({ data }: { data: SystemInformation }) {
+	const memPercent = Math.round((data.used_memory * 100) / data.total_memory);
+	return (
+		<div className={CARD}>
+			<div className="px-3 py-2 border-b border-[var(--borderColor-default)]">
+				<h2 className="text-sm font-semibold">Host &amp; Infrastructure</h2>
+			</div>
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3">
+				<div className="space-y-3">
+					<div>
+						<div className="flex justify-between text-xs text-[var(--fgColor-muted)] mb-1">
+							<span>Memory</span>
+							<span>
+								{(data.used_memory / 1024 ** 3).toFixed(1)} /{" "}
+								{(data.total_memory / 1024 ** 3).toFixed(1)} GB
+							</span>
+						</div>
+						<ProgressBar progress={memPercent} />
+					</div>
+					{data.disks_info.map((disk) => (
+						<div key={disk.mount_point}>
+							<div className="flex justify-between text-xs text-[var(--fgColor-muted)] mb-1">
+								<span className="truncate mr-2">{disk.mount_point}</span>
+								<span>{Math.round(disk.usage_percent)}%</span>
+							</div>
+							<ProgressBar progress={Math.round(disk.usage_percent)} />
+						</div>
+					))}
+				</div>
+				<div className="text-sm space-y-1 text-[var(--fgColor-muted)]">
+					<div>
+						Docker：{data.docker_info.running_container_count} 运行 /{" "}
+						{data.docker_info.image_count} 镜像，共{" "}
+						{(data.docker_info.total_disk / 1024 ** 3).toFixed(1)} GB
+					</div>
+					<div>
+						OS：{data.name} {data.os_version}
+					</div>
+					<div>Kernel：{data.kernel_version}</div>
+					<div>CPU：{data.nb_cpu} cores</div>
+					<div>Uptime：{Math.floor(data.uptime / 3600)} h</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 页面
+// ─────────────────────────────────────────────────────────────────────────────
 
 function RouteComponent() {
 	const {
 		data: d,
-		isLoading,
-		isError,
+		isLoading: monitorLoading,
+		isError: monitorError,
 	} = useQuery({
 		...systemInformationQueryOptions(),
 		refetchInterval: 1000 * 60,
 	});
-	const data = d?.data;
-	if (isLoading) {
+	const monitor = d?.data;
+
+	const summaryQuery = useQuery({
+		queryKey: ["admin-dashboard", "summary"],
+		queryFn: async () => (await adminApi.dashboard.summary()).data ?? null,
+		staleTime: 60_000,
+		refetchInterval: 60_000,
+	});
+	const containersQuery = useQuery({
+		queryKey: ["admin-dashboard", "docker-containers"],
+		queryFn: async () =>
+			(await adminApi.docker.fetchContainers({ limit: 200 })).data ?? [],
+		staleTime: 60_000,
+	});
+
+	if (monitorLoading) {
 		return <Spinner size="large" />;
 	}
-	if (isError || !data) {
+	if (monitorError || !monitor) {
 		return <div>Error loading system info</div>;
 	}
 
+	const summary = summaryQuery.data;
+	const stoppedContainers = containersQuery.data
+		? containersQuery.data.filter((c) => c.status !== "Running").length
+		: 0;
+
 	return (
 		<div className="grid gap-3 p-3">
-			<div>
+			<div className="flex items-baseline justify-between">
 				<h1 className="text-lg font-semibold">Dashboard</h1>
-				<p className="text-xs text-gray-500 mt-0.5">
-					Host {data.host_name} · {data.name} {data.os_version} · Uptime{" "}
-					{Math.floor(data.uptime / 3600)}h · 每分钟刷新
-				</p>
+				<span className="text-xs text-[var(--fgColor-muted)]">
+					{monitor.host_name} · 数据每分钟刷新
+				</span>
 			</div>
 
-			{/* 平台统计 */}
-			<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-				{STAT_CARDS.map((card) => (
-					<CountCard key={card.key} card={card} />
-				))}
-				<StatCardView
-					label="Docker Containers"
-					href="/admin/docker"
-					icon={<ContainerIcon />}
-					value={data.docker_info.running_container_count}
-					loading={false}
-				/>
-			</div>
-
-			{/* 最近动态 */}
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-				<RecentUsers />
-				<RecentEvents />
-				<RecentChallenges />
-			</div>
-
-			{/* 宿主与基础设施 */}
-			<h2 className="text-base font-semibold">Host &amp; Infrastructure</h2>
-			<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-				{/* System Info */}
-				<div className="border border-gray-300 rounded-lg p-3">
-					<h2 className="text-base font-semibold mb-1">System Overview</h2>
-					<div>
-						OS: {data.name} {data.os_version}
-					</div>
-					<div>Kernel: {data.kernel_version}</div>
-					<div>Host: {data.host_name}</div>
-					<div>Uptime: {Math.floor(data.uptime / 3600)} h</div>
-					<div>CPU cores: {data.nb_cpu}</div>
-				</div>
-
-				{/* Resources (Memory + Disks stacked) */}
-				<div className="space-y-2">
-					{/* Memory */}
-					<div className="border border-gray-300 rounded-lg p-3">
-						<h2 className="text-base font-semibold mb-1">Memory</h2>
-						<div className="mb-1">
-							{(data.used_memory / 1024 ** 3).toFixed(1)} /{" "}
-							{(data.total_memory / 1024 ** 3).toFixed(1)} GB
-							<ProgressBar
-								progress={Math.round(
-									(data.used_memory * 100) / data.total_memory,
-								)}
-								className="mt-1"
-							/>
-						</div>
-						<div>
-							Swap: {(data.used_swap / 1024 ** 3).toFixed(1)} /{" "}
-							{(data.total_swap / 1024 ** 3).toFixed(1)} GB
-							<ProgressBar
-								progress={
-									data.total_swap
-										? Math.round((data.used_swap * 100) / data.total_swap)
-										: 0
-								}
-								className="mt-1"
-							/>
-						</div>
-					</div>
-
-					{/* Disks */}
-					<div className="border border-gray-300 rounded-lg p-3">
-						<h2 className="text-base font-semibold mb-1">Disks</h2>
-						{data.disks_info.map((disk) => (
-							<div key={disk.mount_point} className="mb-1">
-								<span className="font-medium mr-2">{disk.mount_point}</span>
-								{disk.used_space.toFixed(1)} / {disk.total_space.toFixed(1)} GB
-								({Math.round(disk.usage_percent)}%)
-								<ProgressBar
-									progress={Math.round(disk.usage_percent)}
-									className="mt-1"
-								/>
-							</div>
-						))}
-					</div>
-				</div>
-			</div>
-
-			{/* Network */}
-			{data.network_interfaces?.length > 0 && (
-				<div className="border border-gray-300 rounded-lg p-3">
-					<h2 className="text-base font-semibold mb-1">Network Interfaces</h2>
-					{data.network_interfaces
-						.filter((iface) => iface.ip_addresses.length > 0)
-						.map((iface) => (
-							<div key={iface.name} className="mb-1">
-								<span className="font-medium mr-2">{iface.name}</span>
-								{iface.ip_addresses.join(", ")}
-								<br />
-								Rx: {(iface.received / 1024 / 1024).toFixed(2)} MB, Tx:{" "}
-								{(iface.transmitted / 1024 / 1024).toFixed(2)} MB
-							</div>
-						))}
-				</div>
+			{summary && (
+				<>
+					<AttentionPanel
+						summary={summary}
+						disks={monitor.disks_info}
+						stoppedContainers={stoppedContainers}
+					/>
+					<StatBlocks
+						summary={summary}
+						runningContainers={monitor.docker_info.running_container_count}
+					/>
+					<Competitions events={summary.events} />
+					<Activity summary={summary} />
+				</>
 			)}
+			{!summary && summaryQuery.isLoading && <Spinner size="medium" />}
 
-			{/* Docker */}
-			<div className="border border-gray-300 rounded-lg p-3">
-				<h2 className="text-base font-semibold mb-1">Docker</h2>
-				<div>Images: {data.docker_info.image_count}</div>
-				<div>
-					Running containers: {data.docker_info.running_container_count}
-				</div>
-				<div>
-					Disk used: {(data.docker_info.total_disk / 1024 ** 3).toFixed(1)} GB
-				</div>
-				{data.docker_info.images.slice(0, 5).map((img) => (
-					<div key={img.id} className="ml-2">
-						• {img.repo_tags[0] ?? img.id.slice(0, 12)} –{" "}
-						{(img.size / 1024 ** 2).toFixed(1)} MB
-					</div>
-				))}
-			</div>
+			<Infrastructure data={monitor} />
 		</div>
 	);
 }

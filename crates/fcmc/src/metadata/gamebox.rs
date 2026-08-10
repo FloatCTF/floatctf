@@ -1,148 +1,575 @@
-//! GameBox metadata — pure data structures and TOML parsing.
+//! GameBox portable package manifest (`meta.toml`).
+//!
+//! Contract (strict `deny_unknown_fields`):
+//!
+//! ```toml
+//! name = "TTT1"
+//! version = "1.0.0"
+//! author = "your_email"
+//! category = "web"
+//! description = "hello floatctf"
+//! # optional safe_name = "ttt1"
+//!
+//! [gamebox]
+//! username = "floatctf"
+//!
+//! [[gamebox.healthchecks]]
+//! type = "http"
+//! port = 80
+//! path = "/"
+//! expected_status = 200
+//!
+//! [[gamebox.healthchecks]]
+//! type = "tcp"
+//! port = 3306
+//!
+//! [judge]
+//! script = "judge/check.py"
+//!
+//! [gamebox.recommended_resources]
+//! cpu_millis = 1000
+//! memory_bytes = 536870912
+//! pids_limit = 100
+//! ```
+//!
+//! Removed from the portable manifest (platform / event concerns):
+//! `image_tag`, `image_ref`, scoring fields, Docker-style healthcheck, `services`,
+//! `schema_version`, and the old `[gamebox.resources]` key.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 // ---------------------------------------------------------------------------
-// Configuration types
+// Errors
 // ---------------------------------------------------------------------------
 
-/// Resource limits for a GameBox container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceConfig {
-    /// CPU limit in CPU millis (e.g. 1000 = 1 CPU).
-    #[serde(default = "default_cpu_millis")]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum GameBoxMetaError {
+    #[error("manifest parse error: {0}")]
+    Parse(String),
+
+    #[error("unknown or legacy field in manifest: {0}")]
+    UnknownField(String),
+
+    #[error("name must be non-empty")]
+    EmptyName,
+
+    #[error("author must be non-empty")]
+    EmptyAuthor,
+
+    #[error("category must be non-empty")]
+    EmptyCategory,
+
+    #[error("username must be non-empty")]
+    EmptyUsername,
+
+    #[error("invalid version '{version}': {reason}")]
+    InvalidVersion { version: String, reason: String },
+
+    #[error("SemVer build metadata is not allowed in package version: '{0}'")]
+    VersionBuildMetadata(String),
+
+    #[error("invalid safe_name '{0}': must match ^[a-z0-9][a-z0-9_-]*$")]
+    InvalidSafeName(String),
+
+    #[error("safe_name is required (could not derive a valid slug from name)")]
+    SafeNameRequired,
+
+    #[error("invalid healthcheck port {0}: must be 1..=65535")]
+    InvalidHealthcheckPort(u16),
+
+    #[error("HTTP healthcheck path must start with '/': '{0}'")]
+    InvalidHealthcheckPath(String),
+
+    #[error("invalid HTTP expected_status {0}: must be 100..=599")]
+    InvalidExpectedStatus(u16),
+
+    #[error("duplicate healthcheck entry")]
+    DuplicateHealthcheck,
+
+    #[error("invalid judge script path '{0}': {1}")]
+    InvalidJudgePath(String, String),
+
+    #[error("recommended_resources.{0} must be > 0")]
+    InvalidResource(String),
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Top-level GameBox package manifest (`meta.toml`).
+///
+/// Also exported as [`GameBoxManifest`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GameBoxMeta {
+    pub name: String,
+    /// Author package version (SemVer, no build metadata). Becomes the image tag suffix.
+    pub version: String,
+    pub author: String,
+    pub category: String,
+    pub description: String,
+    /// Optional stable slug. When omitted, derived via [`derive_safe_name`].
+    #[serde(default)]
+    pub safe_name: Option<String>,
+    pub gamebox: GameBoxSection,
+    /// Optional trusted judge script reference (never part of Docker build context).
+    #[serde(default)]
+    pub judge: Option<JudgeManifest>,
+}
+
+/// Alias preferred by some callers / plan docs.
+pub type GameBoxManifest = GameBoxMeta;
+
+/// `[gamebox]` section.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GameBoxSection {
+    /// Unprivileged user inside the container.
+    pub username: String,
+    /// Readiness probes (HTTP / TCP). Not Docker CMD healthchecks.
+    #[serde(default)]
+    pub healthchecks: Vec<GameBoxHealthcheck>,
+    /// Soft resource recommendation (EventGameBox may override).
+    #[serde(default)]
+    pub recommended_resources: Option<RecommendedResources>,
+}
+
+/// Back-compat alias — prefer [`GameBoxSection`].
+pub type GameBoxConfig = GameBoxSection;
+
+/// Tagged healthcheck union (`type = "http" | "tcp"`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum GameBoxHealthcheck {
+    Http {
+        port: u16,
+        path: String,
+        /// Defaults to 200; materialised in [`GameBoxMeta::normalize`].
+        #[serde(default = "default_expected_status")]
+        expected_status: u16,
+    },
+    Tcp {
+        port: u16,
+    },
+}
+
+fn default_expected_status() -> u16 {
+    200
+}
+
+/// `[judge]` section — path to a trusted check script under the package.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct JudgeManifest {
+    /// Relative path that must start with `judge/` (e.g. `judge/check.py`).
+    pub script: String,
+}
+
+/// Soft resource recommendation for operators / EventGameBox prefills.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecommendedResources {
     pub cpu_millis: i64,
-    /// Memory limit in bytes (default 512MB).
-    #[serde(default = "default_memory_bytes")]
     pub memory_bytes: i64,
-    /// PID limit (default 100).
-    #[serde(default = "default_pids_limit")]
     pub pids_limit: i64,
 }
 
-impl Default for ResourceConfig {
+impl Default for RecommendedResources {
     fn default() -> Self {
         Self {
-            cpu_millis: default_cpu_millis(),
-            memory_bytes: default_memory_bytes(),
-            pids_limit: default_pids_limit(),
+            cpu_millis: 1000,
+            memory_bytes: 536_870_912,
+            pids_limit: 100,
         }
     }
 }
 
-fn default_cpu_millis() -> i64 {
-    1000
-}
-fn default_memory_bytes() -> i64 {
-    536_870_912
-} // 512 MB
-fn default_pids_limit() -> i64 {
-    100
-}
-
-/// Custom healthcheck configuration that overrides the image's built-in one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthcheckConfig {
-    /// Command to run for health check (e.g. `["CMD-SHELL", "pgrep sshd"]`).
-    pub test: Vec<String>,
-    /// Interval between checks in seconds.
-    #[serde(default = "default_healthcheck_interval")]
-    pub interval_secs: u64,
-    /// Timeout per check in seconds.
-    #[serde(default = "default_healthcheck_timeout")]
-    pub timeout_secs: u64,
-    /// Number of retries before marking unhealthy.
-    #[serde(default = "default_healthcheck_retries")]
-    pub retries: u64,
-    /// Start period before health checks begin.
-    #[serde(default = "default_healthcheck_start_period")]
-    pub start_period_secs: u64,
-}
-
-fn default_healthcheck_interval() -> u64 {
-    30
-}
-fn default_healthcheck_timeout() -> u64 {
-    10
-}
-fn default_healthcheck_retries() -> u64 {
-    3
-}
-fn default_healthcheck_start_period() -> u64 {
-    60
-}
-
-/// Judge check configuration for a GameBox template.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeCheckConfig {
-    /// Judge script filename (e.g. "check.py").
-    pub script_name: String,
-    /// Inline script content.
-    pub script_content: String,
-    /// JSON-encoded arguments template. `{target_ip}` is replaced at runtime.
-    #[serde(default)]
-    pub args_json: Option<String>,
-    /// Per-template timeout override (seconds). Falls back to event default.
-    pub timeout_secs: Option<i64>,
-    /// Per-template retry interval override.
-    pub retry_interval_secs: Option<i64>,
-}
-
 // ---------------------------------------------------------------------------
-// Top-level GameBox config
+// Canonical normalized spec (stable JSON for spec_digest)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameBoxMeta {
+/// Canonical, fully-materialised view used for `spec_json` / digest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NormalizedGameBoxSpec {
     pub name: String,
+    pub version: String,
     pub author: String,
     pub category: String,
     pub description: String,
-    pub gamebox: GameBoxConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameBoxConfig {
-    /// The unprivileged user inside the container.
+    pub safe_name: String,
     pub username: String,
-    /// Docker image reference (tag or digest).
-    pub image_tag: String,
-
-    /// Points awarded to the attacker per successful submission.
-    #[serde(default = "default_score")]
-    pub break_points: i64,
-    /// Points awarded to the defender when judge check passes.
-    #[serde(default = "default_score")]
-    pub fix_points: i64,
-    /// Points deducted from the defender when judge check fails.
-    #[serde(default = "default_score")]
-    pub down_points: i64,
-    /// One-time bonus for the first successful attack on this template.
-    #[serde(default = "default_first_bonus")]
-    pub first_bonus: i64,
-
-    /// Resource limits.
-    #[serde(default)]
-    pub resources: ResourceConfig,
-
-    /// Healthcheck override.
-    pub healthcheck: Option<HealthcheckConfig>,
-
-    /// Judge configuration.
-    pub judge: Option<JudgeCheckConfig>,
+    pub healthchecks: Vec<NormalizedHealthcheck>,
+    pub recommended_resources: RecommendedResources,
+    pub judge_script: Option<String>,
 }
 
-fn default_score() -> i64 {
-    100
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum NormalizedHealthcheck {
+    Http {
+        port: u16,
+        path: String,
+        expected_status: u16,
+    },
+    Tcp {
+        port: u16,
+    },
 }
-fn default_first_bonus() -> i64 {
-    20
+
+// ---------------------------------------------------------------------------
+// Safe name helpers
+// ---------------------------------------------------------------------------
+
+/// Validate an explicit `safe_name`: `^[a-z0-9][a-z0-9_-]*$`.
+pub fn validate_safe_name(s: &str) -> Result<(), GameBoxMetaError> {
+    if s.is_empty() {
+        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
+    }
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
+    }
+    for c in chars {
+        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+            return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
+        }
+    }
+    Ok(())
 }
+
+/// Derive a Docker-repo-safe slug from a human `name`.
+///
+/// Rules:
+/// - lowercase ASCII
+/// - whitespace → `-`
+/// - unsupported punctuation → `-`
+/// - collapse repeated separators
+/// - trim leading/trailing separators
+/// - empty / non-ASCII-only → `None` (caller must require explicit `safe_name`)
+pub fn derive_safe_name(name: &str) -> Option<String> {
+    let mut out = String::with_capacity(name.len());
+    let mut last_sep = false;
+    let mut saw_alnum = false;
+
+    for c in name.chars() {
+        let mapped = if c.is_ascii_alphanumeric() {
+            saw_alnum = true;
+            Some(c.to_ascii_lowercase())
+        } else if c.is_ascii_whitespace() || c == '_' || c == '-' || c == '.' {
+            Some('-')
+        } else if c.is_ascii() {
+            // other ASCII punctuation → separator
+            Some('-')
+        } else {
+            // non-ASCII: drop (no pinyin); may leave empty
+            None
+        };
+
+        if let Some(ch) = mapped {
+            if ch == '-' {
+                if !out.is_empty() && !last_sep {
+                    out.push('-');
+                    last_sep = true;
+                }
+            } else {
+                out.push(ch);
+                last_sep = false;
+            }
+        }
+    }
+
+    while out.ends_with('-') || out.ends_with('_') {
+        out.pop();
+    }
+
+    if !saw_alnum || out.is_empty() {
+        return None;
+    }
+
+    // Must start with [a-z0-9]
+    if validate_safe_name(&out).is_ok() {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Judge path helper
+// ---------------------------------------------------------------------------
+
+/// Validate a judge script path: relative, starts with `judge/`, no `..`, not absolute.
+pub fn validate_judge_path(path: &str) -> Result<(), GameBoxMetaError> {
+    if path.is_empty() {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "empty path".into(),
+        ));
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "must be relative".into(),
+        ));
+    }
+    // Windows drive / UNC
+    if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "must be relative".into(),
+        ));
+    }
+    if !path.starts_with("judge/") {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "must start with 'judge/'".into(),
+        ));
+    }
+    if path.contains("..") {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "must not contain '..'".into(),
+        ));
+    }
+    if path.ends_with('/') || path == "judge/" {
+        return Err(GameBoxMetaError::InvalidJudgePath(
+            path.to_string(),
+            "must point to a file".into(),
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Version helper
+// ---------------------------------------------------------------------------
+
+/// Parse package version as SemVer **without** build metadata (`+…` rejected).
+/// Prerelease (`1.0.0-rc.1`) is allowed.
+pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaError> {
+    if version.contains('+') {
+        return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
+    }
+    match semver::Version::parse(version) {
+        Ok(v) => {
+            // Double-check: semver crate accepts build metadata after `+`.
+            if !v.build.is_empty() {
+                return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
+            }
+            Ok(v)
+        }
+        Err(e) => Err(GameBoxMetaError::InvalidVersion {
+            version: version.to_string(),
+            reason: e.to_string(),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Image ref helper (platform prefix + identity)
+// ---------------------------------------------------------------------------
+
+/// Build the canonical GameBox image reference.
+///
+/// ```text
+/// {registry_prefix}/gameboxes/{safe_name}:{version}
+/// ```
+///
+/// `registry_prefix` comes from **platform config**, never from `meta.toml`.
+/// CLI default when none is supplied: `"floatctf"`.
+pub fn build_gamebox_image_ref(registry_prefix: &str, safe_name: &str, version: &str) -> String {
+    let prefix = registry_prefix.trim_end_matches('/');
+    format!("{prefix}/gameboxes/{safe_name}:{version}")
+}
+
+// ---------------------------------------------------------------------------
+// GameBoxMeta impl
+// ---------------------------------------------------------------------------
 
 impl GameBoxMeta {
-    /// Parse a GameBoxMeta from a TOML string.
-    pub fn from_toml_str(toml: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(toml)
+    /// Parse TOML only (no semantic validation). Unknown fields fail via
+    /// `deny_unknown_fields`.
+    pub fn from_toml_str(toml_str: &str) -> Result<Self, GameBoxMetaError> {
+        toml::from_str(toml_str).map_err(|e| {
+            let msg = e.to_string();
+            // Surface unknown-field errors with a clearer variant when possible.
+            if msg.contains("unknown field") {
+                GameBoxMetaError::UnknownField(msg)
+            } else {
+                GameBoxMetaError::Parse(msg)
+            }
+        })
+    }
+
+    /// Parse + semantic validation.
+    pub fn parse_and_validate(toml_str: &str) -> Result<Self, GameBoxMetaError> {
+        let meta = Self::from_toml_str(toml_str)?;
+        meta.validate()?;
+        Ok(meta)
+    }
+
+    /// Resolve `safe_name`: explicit value, or derived from `name`.
+    pub fn resolved_safe_name(&self) -> Result<String, GameBoxMetaError> {
+        if let Some(ref s) = self.safe_name {
+            validate_safe_name(s)?;
+            return Ok(s.clone());
+        }
+        derive_safe_name(&self.name).ok_or(GameBoxMetaError::SafeNameRequired)
+    }
+
+    /// Semantic validation (ports, paths, version, safe_name, judge, resources, dupes).
+    pub fn validate(&self) -> Result<(), GameBoxMetaError> {
+        if self.name.trim().is_empty() {
+            return Err(GameBoxMetaError::EmptyName);
+        }
+        if self.author.trim().is_empty() {
+            return Err(GameBoxMetaError::EmptyAuthor);
+        }
+        if self.category.trim().is_empty() {
+            return Err(GameBoxMetaError::EmptyCategory);
+        }
+        if self.gamebox.username.trim().is_empty() {
+            return Err(GameBoxMetaError::EmptyUsername);
+        }
+
+        validate_version(&self.version)?;
+        let _ = self.resolved_safe_name()?;
+
+        // Healthchecks
+        let mut seen = std::collections::HashSet::new();
+        for hc in &self.gamebox.healthchecks {
+            match hc {
+                GameBoxHealthcheck::Http {
+                    port,
+                    path,
+                    expected_status,
+                } => {
+                    if *port == 0 {
+                        return Err(GameBoxMetaError::InvalidHealthcheckPort(*port));
+                    }
+                    if !path.starts_with('/') {
+                        return Err(GameBoxMetaError::InvalidHealthcheckPath(path.clone()));
+                    }
+                    if !(100..=599).contains(expected_status) {
+                        return Err(GameBoxMetaError::InvalidExpectedStatus(*expected_status));
+                    }
+                    let key = NormalizedHealthcheck::Http {
+                        port: *port,
+                        path: path.clone(),
+                        expected_status: *expected_status,
+                    };
+                    if !seen.insert(format!("{key:?}")) {
+                        return Err(GameBoxMetaError::DuplicateHealthcheck);
+                    }
+                }
+                GameBoxHealthcheck::Tcp { port } => {
+                    if *port == 0 {
+                        return Err(GameBoxMetaError::InvalidHealthcheckPort(*port));
+                    }
+                    let key = format!("Tcp({port})");
+                    if !seen.insert(key) {
+                        return Err(GameBoxMetaError::DuplicateHealthcheck);
+                    }
+                }
+            }
+        }
+
+        if let Some(ref judge) = self.judge {
+            validate_judge_path(&judge.script)?;
+        }
+
+        if let Some(ref res) = self.gamebox.recommended_resources {
+            if res.cpu_millis <= 0 {
+                return Err(GameBoxMetaError::InvalidResource("cpu_millis".into()));
+            }
+            if res.memory_bytes <= 0 {
+                return Err(GameBoxMetaError::InvalidResource("memory_bytes".into()));
+            }
+            if res.pids_limit <= 0 {
+                return Err(GameBoxMetaError::InvalidResource("pids_limit".into()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Produce a canonical, fully-materialised spec (sorted healthchecks, defaults filled).
+    ///
+    /// Callers should `validate()` first; this method also validates.
+    pub fn normalize(&self) -> Result<NormalizedGameBoxSpec, GameBoxMetaError> {
+        self.validate()?;
+        let safe_name = self.resolved_safe_name()?;
+
+        let mut healthchecks: Vec<NormalizedHealthcheck> = self
+            .gamebox
+            .healthchecks
+            .iter()
+            .map(|hc| match hc {
+                GameBoxHealthcheck::Http {
+                    port,
+                    path,
+                    expected_status,
+                } => NormalizedHealthcheck::Http {
+                    port: *port,
+                    path: path.clone(),
+                    expected_status: *expected_status,
+                },
+                GameBoxHealthcheck::Tcp { port } => NormalizedHealthcheck::Tcp { port: *port },
+            })
+            .collect();
+
+        // Canonical order: type (Http < Tcp via Ord on tag… we implement via sort_by_key)
+        healthchecks.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            match (a, b) {
+                (
+                    NormalizedHealthcheck::Http {
+                        port: pa,
+                        path: a_path,
+                        ..
+                    },
+                    NormalizedHealthcheck::Http {
+                        port: pb,
+                        path: b_path,
+                        ..
+                    },
+                ) => pa.cmp(pb).then_with(|| a_path.cmp(b_path)),
+                (
+                    NormalizedHealthcheck::Tcp { port: pa },
+                    NormalizedHealthcheck::Tcp { port: pb },
+                ) => pa.cmp(pb),
+                (NormalizedHealthcheck::Http { .. }, NormalizedHealthcheck::Tcp { .. }) => {
+                    Ordering::Less
+                }
+                (NormalizedHealthcheck::Tcp { .. }, NormalizedHealthcheck::Http { .. }) => {
+                    Ordering::Greater
+                }
+            }
+        });
+
+        let recommended_resources = self
+            .gamebox
+            .recommended_resources
+            .clone()
+            .unwrap_or_default();
+
+        Ok(NormalizedGameBoxSpec {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            author: self.author.clone(),
+            category: self.category.clone(),
+            description: self.description.clone(),
+            safe_name,
+            username: self.gamebox.username.clone(),
+            healthchecks,
+            recommended_resources,
+            judge_script: self.judge.as_ref().map(|j| j.script.clone()),
+        })
     }
 }
 
@@ -150,117 +577,258 @@ impl GameBoxMeta {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_new_integer_score_fields() {
-        let toml_str = r#"
-name = "test"
-author = "test"
-category = "Web"
-description = "test"
+    const MINIMAL: &str = r#"
+name = "TTT1"
+version = "1.0.0"
+author = "you@example.com"
+category = "web"
+description = "hello"
 
 [gamebox]
-username = "ctf"
-image_tag = "test:latest"
+username = "floatctf"
+"#;
+
+    #[test]
+    fn parse_minimal() {
+        let meta = GameBoxMeta::parse_and_validate(MINIMAL).unwrap();
+        assert_eq!(meta.name, "TTT1");
+        assert_eq!(meta.version, "1.0.0");
+        assert_eq!(meta.resolved_safe_name().unwrap(), "ttt1");
+        assert!(meta.gamebox.healthchecks.is_empty());
+        assert!(meta.judge.is_none());
+    }
+
+    #[test]
+    fn reject_image_tag() {
+        let toml = format!("{MINIMAL}\nimage_tag = \"x\"\n");
+        // image_tag at top level
+        let err = GameBoxMeta::from_toml_str(&toml).unwrap_err();
+        assert!(matches!(
+            err,
+            GameBoxMetaError::UnknownField(_) | GameBoxMetaError::Parse(_)
+        ));
+    }
+
+    #[test]
+    fn reject_legacy_scoring_in_gamebox() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
 break_points = 100
-fix_points = 50
-down_points = 200
-first_bonus = 20
 "#;
-        let meta = GameBoxMeta::from_toml_str(toml_str).expect("parse new format");
-        assert_eq!(meta.gamebox.break_points, 100);
-        assert_eq!(meta.gamebox.fix_points, 50);
-        assert_eq!(meta.gamebox.down_points, 200);
-        assert_eq!(meta.gamebox.first_bonus, 20);
+        assert!(GameBoxMeta::from_toml_str(toml).is_err());
     }
 
     #[test]
-    fn test_reject_fractional_score() {
-        let toml_str = r#"
-name = "test"
-author = "test"
-category = "Web"
-description = "test"
+    fn reject_old_resources_key() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
 
 [gamebox]
-username = "ctf"
-image_tag = "test:latest"
-break_points = 100.5
-fix_points = 50
-down_points = 200
-first_bonus = 20
+username = "u"
+
+[gamebox.resources]
+cpu_millis = 1
 "#;
-        let result = GameBoxMeta::from_toml_str(toml_str);
-        assert!(result.is_err(), "fractional scores must be rejected");
+        assert!(GameBoxMeta::from_toml_str(toml).is_err());
     }
 
     #[test]
-    fn test_default_resource_limits() {
-        let toml_str = r#"
-name = "test"
-author = "test"
-category = "Web"
-description = "test"
+    fn reject_build_metadata_version() {
+        let toml = r#"
+name = "t"
+version = "1.0.0+build.1"
+author = "a"
+category = "web"
+description = "d"
 
 [gamebox]
-username = "ctf"
-image_tag = "test:latest"
-break_points = 100
-fix_points = 50
-down_points = 200
-first_bonus = 20
+username = "u"
 "#;
-        let meta = GameBoxMeta::from_toml_str(toml_str).expect("parse with defaults");
-        assert_eq!(meta.gamebox.resources.cpu_millis, 1000);
-        assert_eq!(meta.gamebox.resources.memory_bytes, 536_870_912);
-        assert_eq!(meta.gamebox.resources.pids_limit, 100);
+        let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+        assert!(matches!(err, GameBoxMetaError::VersionBuildMetadata(_)));
     }
 
     #[test]
-    fn test_parse_with_judge_config() {
-        let toml_str = r#"
-name = "test"
-author = "test"
-category = "Web"
-description = "test"
+    fn allow_prerelease_version() {
+        let toml = r#"
+name = "t"
+version = "1.0.0-rc.1"
+author = "a"
+category = "web"
+description = "d"
 
 [gamebox]
-username = "ctf"
-image_tag = "test:latest"
-break_points = 100
-fix_points = 50
-down_points = 200
-first_bonus = 20
-
-[gamebox.judge]
-script_name = "check.py"
-script_content = "print('ok')"
-args_json = '{"target": "{target_ip}"}'
-timeout_secs = 15
+username = "u"
 "#;
-        let meta = GameBoxMeta::from_toml_str(toml_str).expect("parse with judge");
-        let judge = meta.gamebox.judge.expect("judge config present");
-        assert_eq!(judge.script_name, "check.py");
-        assert_eq!(judge.script_content, "print('ok')");
-        assert_eq!(judge.timeout_secs, Some(15));
+        GameBoxMeta::parse_and_validate(toml).unwrap();
     }
 
     #[test]
-    fn test_serialize_uses_new_field_names() {
-        let config = GameBoxConfig {
-            username: "ctf".into(),
-            image_tag: "test:latest".into(),
-            break_points: 100,
-            fix_points: 50,
-            down_points: 200,
-            first_bonus: 20,
-            resources: ResourceConfig::default(),
-            healthcheck: None,
-            judge: None,
-        };
-        let json = serde_json::to_string(&config).expect("serialize");
-        assert!(json.contains("\"break_points\""));
-        assert!(!json.contains("\"break_point\""));
-        assert!(json.contains("\"first_bonus\""));
-        assert!(!json.contains("\"first_bouns\""));
+    fn healthcheck_http_default_status_materialized() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+"#;
+        let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
+        let norm = meta.normalize().unwrap();
+        match &norm.healthchecks[0] {
+            NormalizedHealthcheck::Http {
+                expected_status, ..
+            } => assert_eq!(*expected_status, 200),
+            _ => panic!("expected http"),
+        }
+    }
+
+    #[test]
+    fn tcp_rejects_path_field() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+path = "/"
+"#;
+        assert!(GameBoxMeta::from_toml_str(toml).is_err());
+    }
+
+    #[test]
+    fn normalize_sorts_healthchecks() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 8080
+path = "/health"
+expected_status = 200
+"#;
+        let a = GameBoxMeta::parse_and_validate(toml)
+            .unwrap()
+            .normalize()
+            .unwrap();
+        // reverse order input should normalize identically
+        let toml_rev = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 8080
+path = "/health"
+expected_status = 200
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+"#;
+        let b = GameBoxMeta::parse_and_validate(toml_rev)
+            .unwrap()
+            .normalize()
+            .unwrap();
+        let ja = serde_json::to_string(&a).unwrap();
+        let jb = serde_json::to_string(&b).unwrap();
+        assert_eq!(ja, jb);
+        assert!(matches!(
+            a.healthchecks[0],
+            NormalizedHealthcheck::Http { port: 80, .. }
+        ));
+        assert!(matches!(
+            a.healthchecks[2],
+            NormalizedHealthcheck::Tcp { port: 3306 }
+        ));
+    }
+
+    #[test]
+    fn derive_safe_name_cases() {
+        assert_eq!(
+            derive_safe_name("Easy Web 01").as_deref(),
+            Some("easy-web-01")
+        );
+        assert_eq!(derive_safe_name("easy---web").as_deref(), Some("easy-web"));
+        assert_eq!(derive_safe_name("  Hello  ").as_deref(), Some("hello"));
+        // Mixed ASCII + CJK keeps the ASCII slug; pure non-ASCII → None.
+        assert_eq!(derive_safe_name("SQL注入").as_deref(), Some("sql"));
+        assert_eq!(derive_safe_name("注入题目"), None);
+        assert_eq!(derive_safe_name("!!!"), None);
+    }
+
+    #[test]
+    fn image_ref_helper() {
+        assert_eq!(
+            build_gamebox_image_ref("floatctf", "ttt1", "1.0.0"),
+            "floatctf/gameboxes/ttt1:1.0.0"
+        );
+        assert_eq!(
+            build_gamebox_image_ref("registry.example.com", "easy-web", "2.1.0"),
+            "registry.example.com/gameboxes/easy-web:2.1.0"
+        );
+    }
+
+    #[test]
+    fn judge_path_rules() {
+        assert!(validate_judge_path("judge/check.py").is_ok());
+        assert!(validate_judge_path("/judge/check.py").is_err());
+        assert!(validate_judge_path("judge/../x.py").is_err());
+        assert!(validate_judge_path("scripts/check.py").is_err());
+        assert!(validate_judge_path("judge/").is_err());
     }
 }

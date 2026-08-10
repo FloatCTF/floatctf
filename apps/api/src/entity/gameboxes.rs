@@ -19,38 +19,25 @@ pub struct Model {
     pub hidden: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub source_toml: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub image_ref: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub image_digest: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub username: Option<String>,
-    pub default_cpu_millis: Option<i64>,
-    pub default_memory_bytes: Option<i64>,
-    pub default_pids_limit: Option<i64>,
-    #[sea_orm(column_type = "JsonBinary", nullable)]
-    pub healthcheck_json: Option<Json>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub judge_script_name: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub judge_script_content: Option<String>,
-    #[sea_orm(column_type = "JsonBinary", nullable)]
-    pub judge_args_json: Option<Json>,
-    pub default_judge_timeout_secs: Option<i32>,
-    pub default_judge_retry_interval_secs: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
     AwdEventGameboxes,
+    #[sea_orm(has_many = "super::gamebox_revisions::Entity")]
+    GameboxRevisions,
 }
 
 impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdEventGameboxes.def()
+    }
+}
+
+impl Related<super::gamebox_revisions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::GameboxRevisions.def()
     }
 }
 

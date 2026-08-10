@@ -79,54 +79,29 @@ impl DockerContainerRuntime {
             .await
     }
 
-    /// Build a Docker image from a build context directory (tar streamed to the daemon).
+    /// Challenge-compatible thin wrapper around [`crate::runtime::ImageRuntime::build_image`].
+    ///
+    /// Prefer the typed `ImageBuildRequest` API via `ImageRuntime` for new call sites
+    /// (this inherent method shadows the trait method on the concrete type).
     pub async fn build_image(
         &self,
         image_tag: &str,
         context_path: &std::path::Path,
     ) -> anyhow::Result<()> {
-        use bollard::{body_full, query_parameters::BuildImageOptionsBuilder, secret::BuildInfo};
-        use std::fs::File;
-        use std::io::Read;
-        use tar::Builder;
-        use tempfile::NamedTempFile;
-        use tokio_util::bytes::Bytes;
-        use tracing::error;
+        use crate::runtime::image::{ImageBuildRequest, ImageRuntime};
+        use std::time::Duration;
 
-        let options = BuildImageOptionsBuilder::default().t(image_tag).build();
-
-        let tmp = NamedTempFile::new()?;
-        {
-            let file = File::create(tmp.path())?;
-            let mut tar_builder = Builder::new(file);
-            tar_builder.append_dir_all(".", context_path)?;
-            tar_builder.finish()?;
-        }
-
-        let mut buf = Vec::new();
-        File::open(tmp.path())?.read_to_end(&mut buf)?;
-
-        let body = body_full(Bytes::from(buf));
-
-        let mut build_stream = self.docker.build_image(options, None, Some(body));
-
-        let mut infos = Vec::new();
-        while let Some(update) = build_stream.next().await {
-            let info: BuildInfo = update?;
-
-            if let Some(ref stream_msg) = info.stream {
-                infos.push(stream_msg.trim().to_owned());
-            }
-            if let Some(ref err) = info.error {
-                error!("ERROR: {}", err);
-            }
-        }
-
-        for msg in infos {
-            info!("{}", msg);
-        }
-
-        Ok(())
+        let req = ImageBuildRequest {
+            context_dir: context_path.to_path_buf(),
+            dockerfile: "Dockerfile".into(),
+            target_ref: image_tag.to_string(),
+            labels: Default::default(),
+            timeout: Duration::from_secs(600),
+        };
+        ImageRuntime::build_image(self, req)
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
     }
 }
 

@@ -7,17 +7,4 @@ export type Gameboxes = {
   hidden: boolean;
   created_at: string;
   updated_at: string;
-  source_toml?: string;
-  image_ref?: string;
-  image_digest?: string;
-  username?: string;
-  default_cpu_millis?: string;
-  default_memory_bytes?: string;
-  default_pids_limit?: string;
-  healthcheck_json?: string;
-  judge_script_name?: string;
-  judge_script_content?: string;
-  judge_args_json?: string;
-  default_judge_timeout_secs?: string;
-  default_judge_retry_interval_secs?: string;
 };

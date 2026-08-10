@@ -24,3 +24,4 @@ tar = "0.4"
 tempfile = "3.23.0"
 futures-util = "0.3.31"
 tracing = "0.1" # 核心 tracing
+semver = "1"

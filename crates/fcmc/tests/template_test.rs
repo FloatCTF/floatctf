@@ -62,6 +62,7 @@ fn gamebox_template_generates_files() {
     assert!(dir.join("src").exists());
     assert!(dir.join("src/Dockerfile").exists());
     assert!(dir.join("src/index.php").exists());
+    assert!(dir.join("judge/check.py").exists());
 }
 
 #[test]
@@ -73,9 +74,16 @@ fn gamebox_template_meta_is_parseable() {
 
     let meta_path = tmp.path().join("gb-roundtrip").join("meta.toml");
     let content = std::fs::read_to_string(meta_path).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     assert_eq!(meta.name, "gb-roundtrip");
+    assert_eq!(meta.version, "1.0.0");
     assert_eq!(meta.gamebox.username, "floatctf");
+    assert!(meta.judge.is_some());
+    assert!(!meta.gamebox.healthchecks.is_empty());
+    // No legacy fields
+    let raw = std::fs::read_to_string(tmp.path().join("gb-roundtrip/meta.toml")).unwrap();
+    assert!(!raw.contains("image_tag"));
+    assert!(!raw.contains("break_points"));
 }
 
 #[test]
@@ -91,6 +99,7 @@ fn gamebox_basic_template_generates_files() {
     assert!(dir.join("src").exists());
     assert!(dir.join("src/Dockerfile").exists());
     assert!(dir.join("src/entrypoint.sh").exists());
+    assert!(dir.join("judge/check.py").exists());
 }
 
 #[test]
@@ -102,8 +111,9 @@ fn gamebox_basic_template_meta_is_parseable() {
 
     let meta_path = tmp.path().join("gb-basic-rt").join("meta.toml");
     let content = std::fs::read_to_string(meta_path).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     assert_eq!(meta.name, "awd-base");
+    assert_eq!(meta.safe_name.as_deref(), Some("awd-base"));
 }
 
 #[test]

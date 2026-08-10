@@ -53,7 +53,7 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(network_admin::get_platform_network_health)
         .service(network_admin::get_platform_network_allocations)
         .service(gamebox_admin::list_gamebox_library)
-        .service(gamebox_admin::create_gamebox)
+        .service(gamebox_admin::import_gamebox)
         .service(gamebox_admin::update_gamebox)
         .service(gamebox_admin::hide_gamebox);
 }

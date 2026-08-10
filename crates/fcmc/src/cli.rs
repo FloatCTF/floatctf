@@ -40,6 +40,10 @@ pub enum Commands {
         /// 构建模板类型: challenge (c) | gamebox (g)
         #[arg(short, long, default_value = "challenge")]
         format: GenFormat,
+        /// 镜像 tag（gamebox 推荐显式传入；缺省为 floatctf/gameboxes/<safe_name>:<version>）
+        /// Challenge 仍从 meta.toml [docker].image_tag 读取，此参数对 challenge 无效。
+        #[arg(short = 't', long = "tag")]
+        tag: Option<String>,
     },
     /// 生成新的题目模板
     Gen {

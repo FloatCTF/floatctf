@@ -1,129 +1,60 @@
-//! GameBox library service + 单一 runtime spec resolver（§49/§50）。
+//! GameBox library service + 单一 runtime spec resolver。
 //!
 //! 本服务承载：
-//!   1. 全局 GameBox 库：创建 GameBox（身份 + 配置一次写入）、编辑（原地覆盖，单版本同 Challenges）、
-//!      safe_name 校验/去重。
-//!   2. `resolve_event_gamebox_spec` —— Deploy / Reset / Recovery / Precheck 唯一共享的
-//!      effective config 解析入口（GameBox 默认值 + EventGameBox 允许覆盖）。
-//!   3. `build_gamebox_runtime_spec` —— 从 resolved spec 组装 fcmc::GameBoxSpec
-//!      （image@digest、labels 绑定 logical identity、healthcheck 生效）。
+//!   1. 全局 GameBox 身份：identity 元数据更新、safe_name 校验。
+//!   2. `resolve_event_gamebox_spec` —— Deploy / Reset / Recovery / Precheck / Judge
+//!      唯一共享的 effective config 解析入口（pinned Revision + EventGameBox 覆盖）。
+//!   3. `build_gamebox_runtime_spec` —— 从 resolved spec 组装 fcmc::GameBoxSpec。
+//!
+//! 镜像 pin 规则：
+//!   prefer `revision.image_repo_digest` if Some, else `image_id` (LocalOnly),
+//!   else fall back to `image_ref` (tag). Ready revisions must have at least one pin.
 
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gameboxes,
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gamebox_revisions,
+    gameboxes,
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
-    crypto::AwdCrypto,
     domain::{slugify, validate_safe_name},
-    repo::{event_gamebox_repo, gamebox_lib_repo},
+    repo::{
+        event_gamebox_repo, gamebox_lib_repo,
+        gamebox_revision_repo::{self, BUILD_STATUS_READY},
+    },
 };
 
 // ---------------------------------------------------------------------------
-// GameBox 库：配置与 canonical spec
+// GameBox 身份
 // ---------------------------------------------------------------------------
 
-/// 管理员编辑 GameBox 时提供的运行时配置（单版本，直接覆盖 gameboxes 配置列）。
-#[derive(Debug, Clone, Default)]
-pub struct GameBoxConfig {
-    pub source_toml: String,
-    pub image_ref: String,
-    pub image_digest: Option<String>,
-    pub username: String,
-    pub cpu_millis: i64,
-    pub memory_bytes: i64,
-    pub pids_limit: i64,
-    pub healthcheck: Option<serde_json::Value>,
-    pub judge_script_name: Option<String>,
-    pub judge_script_content: Option<String>,
-    pub judge_args_json: Option<serde_json::Value>,
-    pub judge_timeout_secs: Option<i32>,
-    pub judge_retry_interval_secs: Option<i32>,
-}
-
-pub fn validate_config(config: &GameBoxConfig) -> AwdResult<()> {
-    if config.image_ref.trim().is_empty() {
-        return Err(AwdError::Validation("image_ref 不能为空".into()));
-    }
-    if config.username.trim().is_empty() {
-        return Err(AwdError::Validation("username 不能为空".into()));
-    }
-    if config.cpu_millis <= 0 || config.memory_bytes <= 0 || config.pids_limit <= 0 {
-        return Err(AwdError::Validation("资源限制必须为正数".into()));
-    }
-    Ok(())
-}
-
-fn to_repo_fields(config: &GameBoxConfig) -> gamebox_lib_repo::GameBoxConfigFields {
-    gamebox_lib_repo::GameBoxConfigFields {
-        source_toml: config.source_toml.clone(),
-        image_ref: config.image_ref.clone(),
-        image_digest: config.image_digest.clone(),
-        username: config.username.clone(),
-        default_cpu_millis: config.cpu_millis,
-        default_memory_bytes: config.memory_bytes,
-        default_pids_limit: config.pids_limit,
-        healthcheck_json: config.healthcheck.clone(),
-        judge_script_name: config.judge_script_name.clone(),
-        judge_script_content: config.judge_script_content.clone(),
-        judge_args_json: config.judge_args_json.clone(),
-        default_judge_timeout_secs: config.judge_timeout_secs,
-        default_judge_retry_interval_secs: config.judge_retry_interval_secs,
-    }
-}
-
-/// 创建 GameBox（新题入库：身份 + 单版本配置一次写入）。
-pub async fn create_gamebox(
-    db: &DatabaseConnection,
-    name: String,
-    safe_name: String,
-    category: String,
-    description: String,
-    hidden: bool,
-    config: GameBoxConfig,
-) -> AwdResult<gameboxes::Model> {
-    validate_safe_name(&safe_name).map_err(AwdError::Validation)?;
-    validate_config(&config)?;
-
-    if gamebox_lib_repo::find_gamebox_by_safe_name(db, &safe_name)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .is_some()
-    {
-        return Err(AwdError::Conflict(format!("safe_name 已存在: {safe_name}")));
-    }
-
-    gamebox_lib_repo::create_gamebox(
-        db,
-        name,
-        safe_name,
-        category,
-        description,
-        hidden,
-        to_repo_fields(&config),
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))
-}
-
-/// 编辑 GameBox：原地覆盖当前配置（单版本，同 Challenges 编辑语义）。
-/// 进行中的赛事解析的是 EventGameBox 复制时的默认值 + 覆盖，不受本次编辑影响；
-/// 新选择/重新部署的赛事使用新配置。
-pub async fn update_gamebox(
+/// 更新 GameBox 身份元数据（name/category/description/hidden）。不含镜像/配置。
+pub async fn update_gamebox_identity(
     db: &DatabaseConnection,
     gamebox_id: Uuid,
-    config: GameBoxConfig,
+    name: Option<String>,
+    category: Option<String>,
+    description: Option<String>,
+    hidden: Option<bool>,
 ) -> AwdResult<gameboxes::Model> {
-    validate_config(&config)?;
-    gamebox_lib_repo::update_gamebox_config(db, gamebox_id, to_repo_fields(&config))
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
+    gamebox_lib_repo::update_gamebox_identity(
+        db,
+        gamebox_id,
+        gamebox_lib_repo::GameBoxIdentityPatch {
+            name,
+            category,
+            description,
+            hidden,
+        },
+    )
+    .await
+    .map_err(|e| AwdError::Database(e.to_string()))?
+    .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
 }
 
-/// safe_name 生成 + 去重（展示名 → 唯一 safe_name）。
+/// safe_name 生成 + 去重（仅用于 admin 手动创建身份场景；import 不走 -2 后缀）。
 pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> AwdResult<String> {
     let base = slugify(display_name);
     let base = if base.is_empty() {
@@ -147,53 +78,79 @@ pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> Aw
     Ok(candidate)
 }
 
+/// Validate an explicit safe_name (no auto-suffix).
+pub fn validate_identity_safe_name(safe_name: &str) -> AwdResult<()> {
+    validate_safe_name(safe_name).map_err(AwdError::Validation)
+}
+
 // ---------------------------------------------------------------------------
-// 单一 resolver（§49/§50）
+// 单一 resolver
 // ---------------------------------------------------------------------------
 
-/// EventGameBox + GameBox identity 的 effective runtime spec。
-/// 所有 Deploy / Reset / Recovery / Precheck 必须经它解析，禁止各自拼配置。
+/// EventGameBox + GameBox identity + pinned Revision 的 effective runtime spec。
+/// 所有 Deploy / Reset / Recovery / Precheck / Judge 必须经它解析。
 #[derive(Debug, Clone)]
 pub struct ResolvedGameBoxRuntimeSpec {
     pub event_gamebox: awd_event_gameboxes::Model,
     pub gamebox: gameboxes::Model,
-    /// 解析后的镜像引用（GameBox 配置必填，取不到即 resolve 失败）。
-    pub image_ref: String,
-    pub image_digest: Option<String>,
-    /// 解析后的 SSH 用户名（GameBox 配置必填）。
+    pub revision: gamebox_revisions::Model,
+    /// SSH 用户名（来自 pinned revision）。
     pub username: String,
     pub effective_cpu_millis: i64,
     pub effective_memory_bytes: i64,
     pub effective_pids_limit: i64,
-    pub effective_healthcheck_json: Option<serde_json::Value>,
+    /// Application readiness probes (HTTP/TCP list). NOT Docker HealthcheckSpec.
+    pub effective_healthchecks_json: serde_json::Value,
     pub effective_judge_timeout_secs: Option<i32>,
     pub effective_judge_retry_interval_secs: Option<i32>,
 }
 
-/// image@digest（digest 已 pin 时），否则退回 image_ref（§8）。
-pub fn pinned_image_ref(image_ref: &str, image_digest: &Option<String>) -> String {
-    match image_digest {
-        Some(d) if !d.is_empty() => format!("{image_ref}@{d}"),
-        _ => image_ref.to_string(),
+/// Runtime image pin:
+/// `image_repo_digest` (full `repo@sha256:…`) > `image_id` (LocalOnly `sha256:…`) > `image_ref` tag.
+pub fn effective_image_ref_from_revision(revision: &gamebox_revisions::Model) -> AwdResult<String> {
+    if let Some(ref d) = revision.image_repo_digest {
+        if !d.is_empty() {
+            return Ok(d.clone());
+        }
     }
+    if let Some(ref id) = revision.image_id {
+        if !id.is_empty() {
+            return Ok(id.clone());
+        }
+    }
+    if let Some(ref r) = revision.image_ref {
+        if !r.is_empty() {
+            // Tag-only is a last resort; ready revisions should have id or digest.
+            if revision.build_status == BUILD_STATUS_READY {
+                return Err(AwdError::Validation(format!(
+                    "ready revision {} has no image pin (image_repo_digest/image_id)",
+                    revision.id
+                )));
+            }
+            return Ok(r.clone());
+        }
+    }
+    Err(AwdError::Validation(format!(
+        "revision {} has no usable image reference",
+        revision.id
+    )))
 }
 
 impl ResolvedGameBoxRuntimeSpec {
-    pub fn effective_image_ref(&self) -> String {
-        pinned_image_ref(&self.image_ref, &self.image_digest)
+    pub fn effective_image_ref(&self) -> AwdResult<String> {
+        effective_image_ref_from_revision(&self.revision)
     }
 
-    pub fn effective_healthcheck(&self) -> Result<Option<fcmc::HealthcheckConfig>, AwdError> {
-        match &self.effective_healthcheck_json {
-            None => Ok(None),
-            Some(v) => serde_json::from_value(v.clone())
-                .map(Some)
-                .map_err(|e| AwdError::Validation(format!("healthcheck JSON 非法: {e}"))),
-        }
+    pub fn judge_script_content(&self) -> Option<&str> {
+        self.revision.judge_script_content.as_deref()
+    }
+
+    pub fn judge_args_json(&self) -> Option<&serde_json::Value> {
+        self.revision.judge_args_json.as_ref()
     }
 }
 
-/// 从 EventGameBox 解析 effective runtime spec（GameBox 单版本配置 + 赛事覆盖）。
+/// 从 EventGameBox 解析 effective runtime spec（pinned Revision + 赛事覆盖）。
 pub async fn resolve_event_gamebox_spec(
     db: &DatabaseConnection,
     event_gamebox_id: Uuid,
@@ -202,44 +159,55 @@ pub async fn resolve_event_gamebox_spec(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("EventGameBox not found".into()))?;
+
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox identity not found".into()))?;
-    let image_ref = gamebox.image_ref.clone().ok_or_else(|| {
-        AwdError::Validation(format!("GameBox {} 未配置 image_ref", gamebox.name))
-    })?;
-    let username = gamebox
-        .username
+
+    let revision = gamebox_revision_repo::find_by_id(db, eg.gamebox_revision_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("GameBox revision not found".into()))?;
+
+    if revision.build_status != BUILD_STATUS_READY {
+        return Err(AwdError::Validation(format!(
+            "GameBox revision {} is not ready (status={})",
+            revision.id, revision.build_status
+        )));
+    }
+
+    // Ensure at least one image pin exists.
+    let _ = effective_image_ref_from_revision(&revision)?;
+
+    let effective_healthchecks_json = eg
+        .healthcheck_override_json
         .clone()
-        .ok_or_else(|| AwdError::Validation(format!("GameBox {} 未配置 username", gamebox.name)))?;
+        .unwrap_or_else(|| revision.healthchecks_json.clone());
 
     Ok(ResolvedGameBoxRuntimeSpec {
+        username: revision.username.clone(),
         effective_cpu_millis: eg.cpu_millis,
         effective_memory_bytes: eg.memory_bytes,
         effective_pids_limit: eg.pids_limit,
-        effective_healthcheck_json: eg
-            .healthcheck_override_json
-            .clone()
-            .or_else(|| gamebox.healthcheck_json.clone()),
-        effective_judge_timeout_secs: eg.judge_timeout_secs.or(gamebox.default_judge_timeout_secs),
+        effective_healthchecks_json,
+        effective_judge_timeout_secs: eg.judge_timeout_secs.or(revision.judge_timeout_secs),
         effective_judge_retry_interval_secs: eg
             .judge_retry_interval_secs
-            .or(gamebox.default_judge_retry_interval_secs),
+            .or(revision.judge_retry_interval_secs),
         event_gamebox: eg,
-        image_ref,
-        image_digest: gamebox.image_digest.clone(),
-        username,
         gamebox,
+        revision,
     })
 }
 
 // ---------------------------------------------------------------------------
-// 共享 fcmc spec 构建（Deploy / Reset 同一路径，§50）
+// 共享 fcmc spec 构建（Deploy / Reset 同一路径）
 // ---------------------------------------------------------------------------
 
-/// 从 resolved spec 组装 fcmc::GameBoxSpec。纯函数（DB/加密已由调用方完成）。
-/// Deploy（新建 instance）与 Reset（复用 instance）共用此路径（§50）。
+/// 从 resolved spec 组装 fcmc::GameBoxSpec。
+/// Docker-level healthcheck 不从新 manifest 写入（始终 None）；
+/// Application healthchecks 由 readiness probe 服务单独使用。
 #[allow(clippy::too_many_arguments)]
 pub fn build_gamebox_runtime_spec(
     resolved: &ResolvedGameBoxRuntimeSpec,
@@ -254,7 +222,6 @@ pub fn build_gamebox_runtime_spec(
     password: String,
     runtime_generation: i64,
 ) -> AwdResult<fcmc::GameBoxSpec> {
-    let healthcheck = resolved.effective_healthcheck()?;
     Ok(fcmc::GameBoxSpec {
         event_id: awd_event.event_id,
         team_id,
@@ -262,7 +229,7 @@ pub fn build_gamebox_runtime_spec(
         instance_id,
         runtime_generation,
         container_name: container_name.to_string(),
-        image_ref: resolved.effective_image_ref(),
+        image_ref: resolved.effective_image_ref()?,
         network_name: network_name.to_string(),
         fixed_ip: gamebox_ip.to_string(),
         username: resolved.username.clone(),
@@ -270,18 +237,19 @@ pub fn build_gamebox_runtime_spec(
         cpu_millis: resolved.effective_cpu_millis,
         memory_bytes: resolved.effective_memory_bytes,
         pids_limit: resolved.effective_pids_limit,
-        healthcheck,
+        // Docker HC not from new package manifest (HTTP/TCP app probes are separate).
+        healthcheck: None,
         extra_hosts: vec![
             format!("flagserver:{}", event_network.flagserver_ip.ip()),
             format!("judgeserver:{}", event_network.judgeserver_ip.ip()),
         ],
-        labels: std::collections::HashMap::new(), // fcmc 内部按逻辑身份重打标签
+        labels: std::collections::HashMap::new(),
     })
 }
 
-/// 解密队伍 SSH 密码（team-level 凭据，§22.1：产品契约为一队一个密码）。
+/// 解密队伍 SSH 密码（team-level 凭据：一队一个密码）。
 pub async fn decrypt_team_ssh_password(
-    crypto: &AwdCrypto,
+    crypto: &crate::modules::event::awd_team::crypto::AwdCrypto,
     event_id: Uuid,
     team_net: &awd_team_networks::Model,
 ) -> AwdResult<String> {
@@ -291,7 +259,8 @@ pub async fn decrypt_team_ssh_password(
         nonce: team_net.ssh_password_nonce.clone(),
         key_version: team_net.key_version,
     };
-    let aad = AwdCrypto::build_aad(event_id, "ssh_password");
+    let aad =
+        crate::modules::event::awd_team::crypto::AwdCrypto::build_aad(event_id, "ssh_password");
     let bytes = crypto
         .decrypt(&blob, &aad)
         .map_err(|e| AwdError::Crypto(e.to_string()))?;
@@ -305,61 +274,78 @@ pub async fn decrypt_team_ssh_password(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::prelude::DateTimeWithTimeZone;
 
-    fn base_config() -> GameBoxConfig {
-        GameBoxConfig {
+    fn dummy_revision(
+        repo_digest: Option<&str>,
+        image_id: Option<&str>,
+        image_ref: Option<&str>,
+        status: &str,
+    ) -> gamebox_revisions::Model {
+        gamebox_revisions::Model {
+            id: Uuid::nil(),
+            gamebox_id: Uuid::nil(),
+            version: "1.0.0".into(),
+            revision_number: 1,
             source_toml: String::new(),
-            image_ref: "registry/easy-web:v1".into(),
-            image_digest: None,
+            spec_json: serde_json::json!({}),
+            spec_digest: "a".into(),
+            package_digest: "b".into(),
+            image_ref: image_ref.map(str::to_string),
+            image_id: image_id.map(str::to_string),
+            image_repo_digest: repo_digest.map(str::to_string),
             username: "ctf".into(),
-            cpu_millis: 1000,
-            memory_bytes: 512 * 1024 * 1024,
-            pids_limit: 100,
-            healthcheck: None,
+            recommended_cpu_millis: 1000,
+            recommended_memory_bytes: 512 * 1024 * 1024,
+            recommended_pids_limit: 100,
+            healthchecks_json: serde_json::json!([]),
             judge_script_name: None,
             judge_script_content: None,
             judge_args_json: None,
             judge_timeout_secs: None,
             judge_retry_interval_secs: None,
+            build_status: status.into(),
+            build_error: None,
+            created_at: DateTimeWithTimeZone::from(chrono::Utc::now()),
         }
     }
 
     #[test]
-    fn effective_image_ref_pins_digest() {
-        assert_eq!(
-            pinned_image_ref("registry/easy-web:v1", &Some("sha256:abc123".into())),
-            "registry/easy-web:v1@sha256:abc123"
-        );
-        // digest 为空 → 退回 tag（§8.1 legacy 允许 NULL，生产前必须 pin）
-        assert_eq!(
-            pinned_image_ref("registry/easy-web:v1", &None),
-            "registry/easy-web:v1"
+    fn pinned_image_prefers_repo_digest() {
+        let r = dummy_revision(
+            Some("floatctf/gameboxes/ttt1@sha256:abc"),
+            Some("sha256:local"),
+            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            BUILD_STATUS_READY,
         );
         assert_eq!(
-            pinned_image_ref("registry/easy-web:v1", &Some(String::new())),
-            "registry/easy-web:v1"
+            effective_image_ref_from_revision(&r).unwrap(),
+            "floatctf/gameboxes/ttt1@sha256:abc"
         );
     }
 
     #[test]
-    fn validate_config_rejects_empty() {
-        let mut c = base_config();
-        c.image_ref = "".into();
-        assert!(validate_config(&c).is_err());
-        let mut c2 = base_config();
-        c2.memory_bytes = 0;
-        assert!(validate_config(&c2).is_err());
+    fn pinned_image_falls_back_to_image_id_local_only() {
+        let r = dummy_revision(
+            None,
+            Some("sha256:localid"),
+            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            BUILD_STATUS_READY,
+        );
+        assert_eq!(
+            effective_image_ref_from_revision(&r).unwrap(),
+            "sha256:localid"
+        );
     }
 
     #[test]
-    fn repo_fields_roundtrip_preserves_config() {
-        let c = base_config();
-        let f = to_repo_fields(&c);
-        assert_eq!(f.image_ref, c.image_ref);
-        assert_eq!(f.username, c.username);
-        assert_eq!(f.default_cpu_millis, c.cpu_millis);
-        assert_eq!(f.default_memory_bytes, c.memory_bytes);
-        assert_eq!(f.default_pids_limit, c.pids_limit);
-        assert_eq!(f.default_judge_timeout_secs, c.judge_timeout_secs);
+    fn ready_without_pin_errors() {
+        let r = dummy_revision(
+            None,
+            None,
+            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            BUILD_STATUS_READY,
+        );
+        assert!(effective_image_ref_from_revision(&r).is_err());
     }
 }

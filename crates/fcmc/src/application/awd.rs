@@ -2,12 +2,16 @@
 //!
 //! High-level operations for managing AWD event networks, infrastructure
 //! containers, and GameBox instances.
+//!
+//! Note: GameBox package manifests no longer carry `image_tag` / Docker healthchecks /
+//! scoring. Callers (platform API) must supply the resolved image ref and runtime
+//! resource limits from GameBoxRevision / EventGameBox.
 
 use anyhow::{Context, Result};
 use bollard::Docker;
 use uuid::Uuid;
 
-use crate::metadata::GameBoxMeta;
+use crate::runtime::HealthcheckSpec;
 use crate::runtime::awd::{
     AwdContainerRuntime, DockerRuntime, EventNetworkSpec, GameBoxResetSpec, GameBoxSpec,
 };
@@ -52,7 +56,11 @@ impl AwdApp {
         Ok(handle.network_id)
     }
 
-    /// Create a GameBox from metadata.
+    /// Create a GameBox container from an already-resolved runtime spec.
+    ///
+    /// `image_ref` must be the platform-resolved reference (preferably
+    /// `repo@sha256:…` from a Ready GameBoxRevision). Username still typically
+    /// comes from the package manifest; resources come from EventGameBox.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_gamebox(
         &self,
@@ -61,11 +69,16 @@ impl AwdApp {
         event_gamebox_id: Uuid,
         instance_id: Uuid,
         runtime_generation: i64,
-        meta: &GameBoxMeta,
         container_name: String,
+        image_ref: String,
         network_name: String,
         fixed_ip: String,
+        username: String,
         password: String,
+        cpu_millis: i64,
+        memory_bytes: i64,
+        pids_limit: i64,
+        healthcheck: Option<HealthcheckSpec>,
     ) -> Result<String> {
         let spec = GameBoxSpec {
             event_id,
@@ -74,15 +87,15 @@ impl AwdApp {
             instance_id,
             runtime_generation,
             container_name,
-            image_ref: meta.gamebox.image_tag.clone(),
+            image_ref,
             network_name,
             fixed_ip,
-            username: meta.gamebox.username.clone(),
+            username,
             password,
-            cpu_millis: meta.gamebox.resources.cpu_millis,
-            memory_bytes: meta.gamebox.resources.memory_bytes,
-            pids_limit: meta.gamebox.resources.pids_limit,
-            healthcheck: meta.gamebox.healthcheck.clone(),
+            cpu_millis,
+            memory_bytes,
+            pids_limit,
+            healthcheck,
             extra_hosts: vec![],
             labels: crate::runtime::awd::awd_labels(
                 event_id,

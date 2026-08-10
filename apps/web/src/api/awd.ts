@@ -56,6 +56,27 @@ export type AwdGameBox = {
 	health_status: string;
 };
 
+export type GameBoxRevisionSummaryDto = {
+	id: string;
+	version: string;
+	revision_number: number;
+	build_status: string;
+	package_digest: string;
+	image_ref: string | null;
+	image_id: string | null;
+	image_repo_digest: string | null;
+	username: string;
+	recommended_cpu_millis: number;
+	recommended_memory_bytes: number;
+	recommended_pids_limit: number;
+	healthchecks_json: unknown;
+	judge_script_name: string | null;
+	judge_timeout_secs: number | null;
+	judge_retry_interval_secs: number | null;
+	build_error: string | null;
+	created_at: string;
+};
+
 export type GameBoxLibraryDto = {
 	id: string;
 	name: string;
@@ -63,27 +84,33 @@ export type GameBoxLibraryDto = {
 	category: string;
 	description: string;
 	hidden: boolean;
-	// 单版本配置直接挂库行（同 Challenges 列表行携带配置）
-	source_toml: string;
+	latest_revision: GameBoxRevisionSummaryDto | null;
+	// projected from latest_revision for list convenience
 	image_ref: string | null;
-	image_digest: string | null;
+	image_repo_digest: string | null;
 	username: string | null;
 	cpu_millis: number | null;
 	memory_bytes: number | null;
 	pids_limit: number | null;
-	healthcheck_json: Record<string, unknown> | null;
-	judge_script_name: string | null;
-	judge_script_content: string | null;
-	judge_args_json: Record<string, unknown> | null;
-	judge_timeout_secs: number | null;
-	judge_retry_interval_secs: number | null;
+	healthchecks_json: unknown | null;
+	build_status: string | null;
+	version: string | null;
+	package_digest: string | null;
+};
+
+export type ImportGameBoxResponse = {
+	gamebox: GameBoxLibraryDto;
+	revision: GameBoxRevisionSummaryDto;
+	already_exists: boolean;
 };
 
 export type EventGameBoxDto = {
 	id: string;
 	gamebox_id: string;
+	gamebox_revision_id: string;
 	gamebox_name: string;
 	gamebox_safe_name: string;
+	revision_version: string;
 	host_offset: number;
 	enabled: boolean;
 	hidden: boolean;
@@ -100,20 +127,12 @@ export type EventGameBoxDto = {
 	created_at: string;
 };
 
+/** @deprecated Manual create-with-config removed; use package import. */
 export type GameBoxConfigPayload = {
-	source_toml?: string;
-	image_ref: string;
-	image_digest?: string | null;
-	username?: string;
-	cpu_millis?: number;
-	memory_bytes?: number;
-	pids_limit?: number;
-	healthcheck?: Record<string, unknown> | null;
-	judge_script_name?: string | null;
-	judge_script_content?: string | null;
-	judge_args?: Record<string, unknown> | null;
-	judge_timeout_secs?: number | null;
-	judge_retry_interval_secs?: number | null;
+	name?: string;
+	category?: string;
+	description?: string;
+	hidden?: boolean;
 };
 
 export type AwdScoreRow = {
@@ -328,28 +347,32 @@ export const awdAdminApi = {
 		);
 		return res.data;
 	},
-	// ── GameBox 库（全局身份 + 单版本配置，同 Challenges 语义）──
-	// 支持 Challenges 同款搜索/分页：?page=&limit=&filter=name:xx&category:yy
+	// ── GameBox 库（identity + revisions；package import）──
 	listGameboxes: async (
 		params: QueryParams = {},
 	): Promise<UniResponse<GameBoxLibraryDto[]>> => {
 		const res = await admin_api.get(`/awd/gameboxes`, { params });
 		return res.data;
 	},
-	createGamebox: async (body: {
-		name: string;
-		safe_name?: string;
-		category?: string;
-		description?: string;
-		hidden?: boolean;
-		config: GameBoxConfigPayload;
-	}): Promise<UniResponse<GameBoxLibraryDto>> => {
-		const res = await admin_api.post(`/awd/gameboxes`, body);
+	/** POST multipart field `package_zip` — synchronous build. */
+	importGamebox: async (
+		file: File | Blob,
+	): Promise<UniResponse<ImportGameBoxResponse>> => {
+		const form = new FormData();
+		form.append("package_zip", file);
+		const res = await admin_api.post(`/awd/gameboxes/import`, form, {
+			headers: { "Content-Type": "multipart/form-data" },
+		});
 		return res.data;
 	},
 	updateGamebox: async (
 		gameboxId: string,
-		body: { config: GameBoxConfigPayload },
+		body: {
+			name?: string;
+			category?: string;
+			description?: string;
+			hidden?: boolean;
+		},
 	): Promise<UniResponse<GameBoxLibraryDto>> => {
 		const res = await admin_api.patch(`/awd/gameboxes/${gameboxId}`, body);
 		return res.data;
@@ -423,7 +446,9 @@ export const awdAdminApi = {
 	addEventGamebox: async (
 		eventId: string,
 		body: {
-			gamebox_id: string;
+			gamebox_revision_id?: string;
+			gamebox_id?: string;
+			version?: string;
 			host_offset?: number;
 			hidden?: boolean;
 			break_points?: number;

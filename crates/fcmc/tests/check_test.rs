@@ -39,14 +39,21 @@ port = "80/tcp"
 
 const VALID_GAMEBOX: &str = r#"
 name = "gb"
+version = "1.0.0"
 author = "test@example.com"
-category = "Web"
+category = "web"
 description = "desc"
 
 [gamebox]
 username = "ctf"
-image_tag = "test/gamebox:v1"
 "#;
+
+/// Valid gamebox package layout: meta + src/Dockerfile (+ optional judge).
+fn setup_valid_gamebox_pkg(dir: &std::path::Path, meta: &str) {
+    write_meta(dir, meta);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/Dockerfile"), "FROM scratch\n").unwrap();
+}
 
 // ─── check_challenge ────────────────────────────────────────────────
 
@@ -142,7 +149,7 @@ fn challenge_missing_meta_file_errors() {
 #[test]
 fn gamebox_valid_passes() {
     let tmp = tempfile::TempDir::new().unwrap();
-    write_meta(tmp.path(), VALID_GAMEBOX);
+    setup_valid_gamebox_pkg(tmp.path(), VALID_GAMEBOX);
 
     let result = check_gamebox(tmp.path()).unwrap();
     assert!(
@@ -151,30 +158,96 @@ fn gamebox_valid_passes() {
         result.messages
     );
     assert!(has_level(&result, CheckLevel::Ok, "解析结果"));
+    assert!(has_level(&result, CheckLevel::Ok, "Dockerfile"));
+}
+
+#[test]
+fn gamebox_missing_dockerfile_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    write_meta(tmp.path(), VALID_GAMEBOX);
+
+    let result = check_gamebox(tmp.path()).unwrap();
+    assert!(!result.passed, "missing Dockerfile must fail");
+    assert!(has_level(&result, CheckLevel::Err, "Dockerfile"));
 }
 
 #[test]
 fn gamebox_zero_cpu_fails() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let toml = format!("{}\n\n[gamebox.resources]\ncpu_millis = 0\n", VALID_GAMEBOX);
-    write_meta(tmp.path(), &toml);
+    let toml = format!(
+        "{}\n\n[gamebox.recommended_resources]\ncpu_millis = 0\nmemory_bytes = 1\npids_limit = 1\n",
+        VALID_GAMEBOX
+    );
+    setup_valid_gamebox_pkg(tmp.path(), &toml);
 
     let result = check_gamebox(tmp.path()).unwrap();
     assert!(!result.passed, "zero cpu_millis must fail");
-    assert!(has_level(&result, CheckLevel::Err, "资源配置"));
+    assert!(has_level(&result, CheckLevel::Err, "解析结果"));
 }
 
 #[test]
 fn gamebox_zero_memory_fails() {
     let tmp = tempfile::TempDir::new().unwrap();
     let toml = format!(
-        "{}\n\n[gamebox.resources]\nmemory_bytes = 0\n",
+        "{}\n\n[gamebox.recommended_resources]\ncpu_millis = 1\nmemory_bytes = 0\npids_limit = 1\n",
         VALID_GAMEBOX
     );
-    write_meta(tmp.path(), &toml);
+    setup_valid_gamebox_pkg(tmp.path(), &toml);
 
     let result = check_gamebox(tmp.path()).unwrap();
     assert!(!result.passed, "zero memory_bytes must fail");
+}
+
+#[test]
+fn gamebox_judge_script_missing_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = format!(
+        "{}\n\n[judge]\nscript = \"judge/check.py\"\n",
+        VALID_GAMEBOX
+    );
+    setup_valid_gamebox_pkg(tmp.path(), &toml);
+
+    let result = check_gamebox(tmp.path()).unwrap();
+    assert!(!result.passed, "missing judge script must fail");
+    assert!(has_level(&result, CheckLevel::Err, "Judge"));
+}
+
+#[test]
+fn gamebox_judge_script_present_passes() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = format!(
+        "{}\n\n[judge]\nscript = \"judge/check.py\"\n",
+        VALID_GAMEBOX
+    );
+    setup_valid_gamebox_pkg(tmp.path(), &toml);
+    std::fs::create_dir_all(tmp.path().join("judge")).unwrap();
+    std::fs::write(tmp.path().join("judge/check.py"), "print('ok')\n").unwrap();
+
+    let result = check_gamebox(tmp.path()).unwrap();
+    assert!(
+        result.passed,
+        "gamebox with judge script must pass: {:?}",
+        result.messages
+    );
+    assert!(has_level(&result, CheckLevel::Ok, "Judge"));
+}
+
+#[test]
+fn gamebox_legacy_image_tag_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = r#"
+name = "gb"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "ctf"
+image_tag = "x:y"
+"#;
+    setup_valid_gamebox_pkg(tmp.path(), toml);
+    let result = check_gamebox(tmp.path()).unwrap();
+    assert!(!result.passed);
 }
 
 #[test]

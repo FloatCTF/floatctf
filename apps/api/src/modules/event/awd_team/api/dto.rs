@@ -6,7 +6,7 @@ use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entity::{awd_events, gameboxes};
+use crate::entity::{awd_events, gamebox_revisions, gameboxes};
 
 /// serde snake_case 序列化（AwdEventStatus/AwdPhase 无 Display）。
 fn snake_str<T: serde::Serialize>(v: &T) -> String {
@@ -408,104 +408,33 @@ pub struct JudgeBatchDto {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// GameBox 领域（§46 术语统一：gamebox / gamebox_revision / event_gamebox / gamebox_instance）
+// GameBox 领域（gamebox identity / gamebox_revision / event_gamebox / instance）
 // ════════════════════════════════════════════════════════════════════════════
 
-/// 管理员编辑 GameBox 时的运行时配置（= Revision 内容）。
+/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 仅身份元数据（不含镜像/配置）
 #[derive(Debug, Deserialize)]
-pub struct GameBoxConfigPayload {
+pub struct UpdateGameBoxIdentityRequest {
     #[serde(default)]
-    pub source_toml: String,
-    pub image_ref: String,
+    pub name: Option<String>,
     #[serde(default)]
-    pub image_digest: Option<String>,
-    #[serde(default = "default_gb_username")]
-    pub username: String,
-    #[serde(default = "default_gb_cpu")]
-    pub cpu_millis: i64,
-    #[serde(default = "default_gb_memory")]
-    pub memory_bytes: i64,
-    #[serde(default = "default_gb_pids")]
-    pub pids_limit: i64,
+    pub category: Option<String>,
     #[serde(default)]
-    pub healthcheck: Option<serde_json::Value>,
+    pub description: Option<String>,
     #[serde(default)]
-    pub judge_script_name: Option<String>,
-    #[serde(default)]
-    pub judge_script_content: Option<String>,
-    #[serde(default)]
-    pub judge_args: Option<serde_json::Value>,
-    #[serde(default)]
-    pub judge_timeout_secs: Option<i32>,
-    #[serde(default)]
-    pub judge_retry_interval_secs: Option<i32>,
+    pub hidden: Option<bool>,
 }
 
-fn default_gb_username() -> String {
-    "ctf".into()
-}
-fn default_gb_cpu() -> i64 {
-    1000
-}
-fn default_gb_memory() -> i64 {
-    512 * 1024 * 1024
-}
-fn default_gb_pids() -> i64 {
-    100
-}
-
-impl GameBoxConfigPayload {
-    pub fn into_config(
-        self,
-    ) -> crate::modules::event::awd_team::service::gamebox_service::GameBoxConfig {
-        crate::modules::event::awd_team::service::gamebox_service::GameBoxConfig {
-            source_toml: self.source_toml,
-            image_ref: self.image_ref,
-            image_digest: self.image_digest,
-            username: self.username,
-            cpu_millis: self.cpu_millis,
-            memory_bytes: self.memory_bytes,
-            pids_limit: self.pids_limit,
-            healthcheck: self.healthcheck,
-            judge_script_name: self.judge_script_name,
-            judge_script_content: self.judge_script_content,
-            judge_args_json: self.judge_args,
-            judge_timeout_secs: self.judge_timeout_secs,
-            judge_retry_interval_secs: self.judge_retry_interval_secs,
-        }
-    }
-}
-
-/// POST /api/admin/awd/gameboxes
-#[derive(Debug, Deserialize)]
-pub struct CreateGameBoxRequest {
-    pub name: String,
-    /// 可选；缺省由 name slug 生成（自动去重）。
-    #[serde(default)]
-    pub safe_name: Option<String>,
-    #[serde(default = "default_category")]
-    pub category: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub hidden: bool,
-    pub config: GameBoxConfigPayload,
-}
-
-fn default_category() -> String {
-    "other".into()
-}
-
-/// POST /api/admin/awd/gameboxes/{gamebox_id}（编辑 → 原地覆盖单版本配置）
-#[derive(Debug, Deserialize)]
-pub struct UpdateGameBoxRequest {
-    pub config: GameBoxConfigPayload,
-}
-
-/// POST /api/admin/events/{event_id}/awd/gameboxes（赛事选择）
+/// POST /api/admin/events/{event_id}/awd/gameboxes（赛事选择，pin ready revision）
 #[derive(Debug, Deserialize)]
 pub struct AddEventGameBoxRequest {
-    pub gamebox_id: Uuid,
+    /// 二选一：直接 pin revision，或 gamebox_id + 可选 version（默认最新 ready）。
+    #[serde(default)]
+    pub gamebox_revision_id: Option<Uuid>,
+    #[serde(default)]
+    pub gamebox_id: Option<Uuid>,
+    /// 与 gamebox_id 联用：指定 version；缺省取最新 ready revision。
+    #[serde(default)]
+    pub version: Option<String>,
     /// 可选：确定性 IP 偏移（2..254）；缺省自动分配未占用值。
     #[serde(default)]
     pub host_offset: Option<i16>,
@@ -570,7 +499,55 @@ pub struct UpdateEventGameBoxRequest {
 
 // ── 响应 DTO ──
 
-/// GameBox 库行 = 身份 + 单版本配置（同 Challenges 列表行直接携带配置）。
+/// 列表/摘要用的 revision 摘要（不含 judge_script_content）。
+#[derive(Debug, Serialize, Clone)]
+pub struct GameBoxRevisionSummaryDto {
+    pub id: Uuid,
+    pub version: String,
+    pub revision_number: i32,
+    pub build_status: String,
+    pub package_digest: String,
+    pub image_ref: Option<String>,
+    pub image_id: Option<String>,
+    pub image_repo_digest: Option<String>,
+    pub username: String,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    pub healthchecks_json: serde_json::Value,
+    pub judge_script_name: Option<String>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
+    pub build_error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
+}
+
+impl From<&gamebox_revisions::Model> for GameBoxRevisionSummaryDto {
+    fn from(r: &gamebox_revisions::Model) -> Self {
+        Self {
+            id: r.id,
+            version: r.version.clone(),
+            revision_number: r.revision_number,
+            build_status: r.build_status.clone(),
+            package_digest: r.package_digest.clone(),
+            image_ref: r.image_ref.clone(),
+            image_id: r.image_id.clone(),
+            image_repo_digest: r.image_repo_digest.clone(),
+            username: r.username.clone(),
+            recommended_cpu_millis: r.recommended_cpu_millis,
+            recommended_memory_bytes: r.recommended_memory_bytes,
+            recommended_pids_limit: r.recommended_pids_limit,
+            healthchecks_json: r.healthchecks_json.clone(),
+            judge_script_name: r.judge_script_name.clone(),
+            judge_timeout_secs: r.judge_timeout_secs,
+            judge_retry_interval_secs: r.judge_retry_interval_secs,
+            build_error: r.build_error.clone(),
+            created_at: r.created_at,
+        }
+    }
+}
+
+/// GameBox 库行 = 身份 + 最新/ready revision 摘要。
 #[derive(Debug, Serialize)]
 pub struct GameBoxLibraryDto {
     pub id: Uuid,
@@ -579,23 +556,27 @@ pub struct GameBoxLibraryDto {
     pub category: String,
     pub description: String,
     pub hidden: bool,
-    pub source_toml: String,
+    /// 最新 ready revision 摘要（无 ready 时可能为最新任意状态，或 None）。
+    pub latest_revision: Option<GameBoxRevisionSummaryDto>,
+    // 兼容旧前端字段：从 latest_revision 投影（无则 null）
     pub image_ref: Option<String>,
-    pub image_digest: Option<String>,
+    pub image_repo_digest: Option<String>,
     pub username: Option<String>,
     pub cpu_millis: Option<i64>,
     pub memory_bytes: Option<i64>,
     pub pids_limit: Option<i64>,
-    pub healthcheck_json: Option<serde_json::Value>,
-    pub judge_script_name: Option<String>,
-    pub judge_script_content: Option<String>,
-    pub judge_args_json: Option<serde_json::Value>,
-    pub judge_timeout_secs: Option<i32>,
-    pub judge_retry_interval_secs: Option<i32>,
+    pub healthchecks_json: Option<serde_json::Value>,
+    pub build_status: Option<String>,
+    pub version: Option<String>,
+    pub package_digest: Option<String>,
 }
 
-impl From<&gameboxes::Model> for GameBoxLibraryDto {
-    fn from(g: &gameboxes::Model) -> Self {
+impl GameBoxLibraryDto {
+    pub fn from_identity_and_revision(
+        g: &gameboxes::Model,
+        rev: Option<&gamebox_revisions::Model>,
+    ) -> Self {
+        let summary = rev.map(GameBoxRevisionSummaryDto::from);
         Self {
             id: g.id,
             name: g.name.clone(),
@@ -603,29 +584,37 @@ impl From<&gameboxes::Model> for GameBoxLibraryDto {
             category: g.category.clone(),
             description: g.description.clone(),
             hidden: g.hidden,
-            source_toml: g.source_toml.clone().unwrap_or_default(),
-            image_ref: g.image_ref.clone(),
-            image_digest: g.image_digest.clone(),
-            username: g.username.clone(),
-            cpu_millis: g.default_cpu_millis,
-            memory_bytes: g.default_memory_bytes,
-            pids_limit: g.default_pids_limit,
-            healthcheck_json: g.healthcheck_json.clone(),
-            judge_script_name: g.judge_script_name.clone(),
-            judge_script_content: g.judge_script_content.clone(),
-            judge_args_json: g.judge_args_json.clone(),
-            judge_timeout_secs: g.default_judge_timeout_secs,
-            judge_retry_interval_secs: g.default_judge_retry_interval_secs,
+            image_ref: summary.as_ref().and_then(|s| s.image_ref.clone()),
+            image_repo_digest: summary.as_ref().and_then(|s| s.image_repo_digest.clone()),
+            username: summary.as_ref().map(|s| s.username.clone()),
+            cpu_millis: summary.as_ref().map(|s| s.recommended_cpu_millis),
+            memory_bytes: summary.as_ref().map(|s| s.recommended_memory_bytes),
+            pids_limit: summary.as_ref().map(|s| s.recommended_pids_limit),
+            healthchecks_json: summary.as_ref().map(|s| s.healthchecks_json.clone()),
+            build_status: summary.as_ref().map(|s| s.build_status.clone()),
+            version: summary.as_ref().map(|s| s.version.clone()),
+            package_digest: summary.as_ref().map(|s| s.package_digest.clone()),
+            latest_revision: summary,
         }
     }
+}
+
+/// POST /api/admin/awd/gameboxes/import 响应
+#[derive(Debug, Serialize)]
+pub struct ImportGameBoxResponse {
+    pub gamebox: GameBoxLibraryDto,
+    pub revision: GameBoxRevisionSummaryDto,
+    pub already_exists: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct EventGameBoxDto {
     pub id: Uuid,
     pub gamebox_id: Uuid,
+    pub gamebox_revision_id: Uuid,
     pub gamebox_name: String,
     pub gamebox_safe_name: String,
+    pub revision_version: String,
     pub host_offset: i16,
     pub enabled: bool,
     pub hidden: bool,

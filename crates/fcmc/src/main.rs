@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
                 generate::generate_gamebox(&name, &output, template).await?;
             }
         },
-        Commands::Build { path, format } => {
+        Commands::Build { path, format, tag } => {
             let dir = path.unwrap_or_else(|| ".".to_string());
             let dir = PathBuf::from(&dir);
 
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
                     build::build_challenge(&dir).await?;
                 }
                 GenFormat::Gamebox => {
-                    build::build_gamebox(&dir).await?;
+                    build::build_gamebox(&dir, tag.as_deref()).await?;
                 }
             }
         }

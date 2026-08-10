@@ -41,6 +41,7 @@ pub mod event_teams;
 pub mod event_users;
 pub mod event_writeup;
 pub mod events;
+pub mod gamebox_revisions;
 pub mod gameboxes;
 pub mod instances;
 pub mod logs;

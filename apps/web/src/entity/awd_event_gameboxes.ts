@@ -18,4 +18,5 @@ export type AwdEventGameboxes = {
   first_bonus: number;
   created_at: string;
   updated_at: string;
+  gamebox_revision_id: string;
 };

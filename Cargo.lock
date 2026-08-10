@@ -1893,6 +1893,7 @@ dependencies = [
  "clap",
  "colored",
  "futures-util",
+ "semver",
  "serde",
  "serde_json",
  "tar",

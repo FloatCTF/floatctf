@@ -4,7 +4,10 @@
 //! Run with: cargo test --test docker_runtime -- --ignored
 
 use bollard::Docker;
-use fcmc::{ChallengeMeta, ContainerRuntime, DockerContainerRuntime, GameBoxMeta, NetworkSpec};
+use fcmc::{
+    ChallengeMeta, ContainerRuntime, DockerContainerRuntime, GameBoxMeta, NetworkSpec,
+    RecommendedResources,
+};
 use std::path::Path;
 
 #[tokio::test]
@@ -72,13 +75,25 @@ async fn docker_create_network_and_container() {
 #[ignore = "requires Docker"]
 async fn docker_gamebox_create_and_start() {
     let content = std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta.toml")).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     let docker = Docker::connect_with_local_defaults().unwrap();
     let rt = DockerContainerRuntime::new(docker);
 
+    // Image ref is platform-resolved (not in meta). Integration test uses a placeholder tag.
+    let image_ref = fcmc::build_gamebox_image_ref(
+        "floatctf",
+        &meta.resolved_safe_name().unwrap(),
+        &meta.version,
+    );
+    let res = meta
+        .gamebox
+        .recommended_resources
+        .clone()
+        .unwrap_or_else(RecommendedResources::default);
+
     let spec = fcmc::ContainerSpec {
         name: "fcmc-test-gamebox".into(),
-        image: meta.gamebox.image_tag.clone(),
+        image: image_ref,
         env: vec![
             format!("CTF_USER={}", meta.gamebox.username),
             "CTF_PASSWORD=testpass".into(),
@@ -96,9 +111,9 @@ async fn docker_gamebox_create_and_start() {
         port_bindings: vec![],
         auto_remove: true,
         resources: fcmc::ResourceLimits {
-            cpu_millis: Some(meta.gamebox.resources.cpu_millis),
-            memory_bytes: Some(meta.gamebox.resources.memory_bytes),
-            pids_limit: Some(meta.gamebox.resources.pids_limit),
+            cpu_millis: Some(res.cpu_millis),
+            memory_bytes: Some(res.memory_bytes),
+            pids_limit: Some(res.pids_limit),
             cap_drop: vec![
                 "NET_ADMIN".to_string(),
                 "NET_RAW".to_string(),

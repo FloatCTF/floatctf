@@ -29,9 +29,10 @@ fn cli_check_with_path() {
 fn cli_build_default() {
     let args = Args::try_parse_from(["fcmc", "build"]).unwrap();
     match args.command {
-        Commands::Build { path, format } => {
+        Commands::Build { path, format, tag } => {
             assert!(path.is_none());
             assert_eq!(format, GenFormat::Challenge);
+            assert!(tag.is_none());
         }
         _ => panic!("expected Build command"),
     }
@@ -41,8 +42,29 @@ fn cli_build_default() {
 fn cli_build_with_format() {
     let args = Args::try_parse_from(["fcmc", "build", "-f", "gamebox"]).unwrap();
     match args.command {
-        Commands::Build { format, .. } => {
+        Commands::Build { format, tag, .. } => {
             assert_eq!(format, GenFormat::Gamebox);
+            assert!(tag.is_none());
+        }
+        _ => panic!("expected Build command"),
+    }
+}
+
+#[test]
+fn cli_build_with_tag() {
+    let args = Args::try_parse_from([
+        "fcmc",
+        "build",
+        "-f",
+        "gamebox",
+        "-t",
+        "myreg/gameboxes/x:1.0.0",
+    ])
+    .unwrap();
+    match args.command {
+        Commands::Build { format, tag, .. } => {
+            assert_eq!(format, GenFormat::Gamebox);
+            assert_eq!(tag.as_deref(), Some("myreg/gameboxes/x:1.0.0"));
         }
         _ => panic!("expected Build command"),
     }

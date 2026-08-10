@@ -1,6 +1,10 @@
 //! Metadata parsing and validation tests.
 
-use fcmc::{ChallengeMeta, GameBoxMeta};
+use fcmc::{
+    ChallengeMeta, GameBoxHealthcheck, GameBoxMeta, GameBoxMetaError, NormalizedHealthcheck,
+    build_gamebox_image_ref, derive_safe_name, pick_repo_digest, split_image_ref,
+    validate_judge_path, validate_safe_name, validate_version,
+};
 use std::path::Path;
 
 // ─── ChallengeMeta Tests ────────────────────────────────────────────
@@ -116,77 +120,360 @@ is_nc = true
     assert_eq!(docker.is_nc, Some(true));
 }
 
-// ─── GameBoxMeta Tests ──────────────────────────────────────────────
+// ─── GameBoxMeta Tests (§106) ───────────────────────────────────────
 
 #[test]
 fn gamebox_parse_valid() {
     let content = std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta.toml")).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     assert_eq!(meta.name, "test-gamebox");
+    assert_eq!(meta.version, "1.0.0");
     assert_eq!(meta.gamebox.username, "ctf");
-    assert_eq!(meta.gamebox.image_tag, "test/gamebox:v1");
-    assert_eq!(meta.gamebox.break_points, 100);
-    assert_eq!(meta.gamebox.fix_points, 100);
-    assert_eq!(meta.gamebox.down_points, 200);
-    assert_eq!(meta.gamebox.first_bonus, 20);
+    assert_eq!(meta.safe_name.as_deref(), Some("test-gamebox"));
+    assert_eq!(meta.gamebox.healthchecks.len(), 1);
+    let res = meta.gamebox.recommended_resources.as_ref().unwrap();
+    assert_eq!(res.cpu_millis, 1000);
+    assert_eq!(res.memory_bytes, 536_870_912);
+    assert_eq!(res.pids_limit, 100);
 }
 
 #[test]
-fn gamebox_parse_with_healthcheck() {
+fn gamebox_parse_minimal_omitted_safe_name() {
+    let content =
+        std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta_minimal.toml")).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    assert!(meta.safe_name.is_none());
+    assert_eq!(meta.resolved_safe_name().unwrap(), "test-gamebox-minimal");
+    assert!(meta.gamebox.recommended_resources.is_none());
+    assert!(meta.judge.is_none());
+}
+
+#[test]
+fn gamebox_parse_with_healthchecks() {
     let content = std::fs::read_to_string(Path::new(
         "tests/fixtures/gamebox/meta_with_healthcheck.toml",
     ))
     .unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
-    let hc = meta.gamebox.healthcheck.unwrap();
-    assert_eq!(hc.test, vec!["CMD-SHELL", "pgrep sshd"]);
-    assert_eq!(hc.interval_secs, 30);
-    assert_eq!(hc.timeout_secs, 10);
-    assert_eq!(hc.retries, 3);
-    assert_eq!(hc.start_period_secs, 60);
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    assert_eq!(meta.gamebox.healthchecks.len(), 2);
+    match &meta.gamebox.healthchecks[0] {
+        GameBoxHealthcheck::Http {
+            port,
+            path,
+            expected_status,
+        } => {
+            assert_eq!(*port, 80);
+            assert_eq!(path, "/");
+            assert_eq!(*expected_status, 200);
+        }
+        _ => panic!("expected http"),
+    }
+    match &meta.gamebox.healthchecks[1] {
+        GameBoxHealthcheck::Tcp { port } => assert_eq!(*port, 3306),
+        _ => panic!("expected tcp"),
+    }
 }
 
 #[test]
 fn gamebox_parse_with_judge() {
     let content =
         std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta_with_judge.toml")).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
-    let judge = meta.gamebox.judge.unwrap();
-    assert_eq!(judge.script_name, "check.py");
-    assert_eq!(judge.script_content, "print('ok')");
-    assert_eq!(
-        judge.args_json.as_deref(),
-        Some(r#"{"target": "{target_ip}"}"#)
-    );
-    assert_eq!(judge.timeout_secs, Some(15));
-    assert_eq!(judge.retry_interval_secs, Some(5));
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    let judge = meta.judge.as_ref().unwrap();
+    assert_eq!(judge.script, "judge/check.py");
+    // expected_status defaulted on HTTP
+    match &meta.gamebox.healthchecks[0] {
+        GameBoxHealthcheck::Http {
+            expected_status, ..
+        } => assert_eq!(*expected_status, 200),
+        _ => panic!("expected http"),
+    }
 }
 
 #[test]
-fn gamebox_default_resource_limits() {
-    let content =
-        std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta_minimal.toml")).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
-    assert_eq!(meta.gamebox.resources.cpu_millis, 1000);
-    assert_eq!(meta.gamebox.resources.memory_bytes, 536_870_912);
-    assert_eq!(meta.gamebox.resources.pids_limit, 100);
+fn gamebox_explicit_valid_safe_name() {
+    let toml = r#"
+name = "Easy Web"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+safe_name = "easy-web-01"
+
+[gamebox]
+username = "u"
+"#;
+    let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
+    assert_eq!(meta.resolved_safe_name().unwrap(), "easy-web-01");
 }
 
 #[test]
-fn gamebox_default_score_values() {
+fn gamebox_invalid_safe_name() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+safe_name = "Easy Web"
+
+[gamebox]
+username = "u"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidSafeName(_)));
+}
+
+#[test]
+fn gamebox_valid_version_and_prerelease() {
+    for v in ["1.0.0", "1.2.3", "2.0.0-rc.1"] {
+        let toml = format!(
+            r#"
+name = "t"
+version = "{v}"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+"#
+        );
+        GameBoxMeta::parse_and_validate(&toml).unwrap();
+    }
+}
+
+#[test]
+fn gamebox_invalid_version() {
+    let toml = r#"
+name = "t"
+version = "not-a-version"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidVersion { .. }));
+}
+
+#[test]
+fn gamebox_reject_build_metadata() {
+    let toml = r#"
+name = "t"
+version = "1.0.0+build.1"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::VersionBuildMetadata(_)));
+}
+
+#[test]
+fn gamebox_http_invalid_path() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "no-slash"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidHealthcheckPath(_)));
+}
+
+#[test]
+fn gamebox_http_invalid_port_zero() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "http"
+port = 0
+path = "/"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidHealthcheckPort(0)));
+}
+
+#[test]
+fn gamebox_tcp_rejects_http_only_fields() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+path = "/"
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
+
+    let toml2 = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+expected_status = 200
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml2).is_err());
+}
+
+#[test]
+fn gamebox_duplicate_healthchecks() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::DuplicateHealthcheck));
+}
+
+#[test]
+fn gamebox_missing_judge_ok() {
     let content =
         std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta_minimal.toml")).unwrap();
-    let meta = GameBoxMeta::from_toml_str(&content).unwrap();
-    assert_eq!(meta.gamebox.break_points, 100);
-    assert_eq!(meta.gamebox.fix_points, 100);
-    assert_eq!(meta.gamebox.down_points, 100);
-    assert_eq!(meta.gamebox.first_bonus, 20);
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    assert!(meta.judge.is_none());
+}
+
+#[test]
+fn gamebox_invalid_judge_path() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[judge]
+script = "scripts/check.py"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidJudgePath(_, _)));
+}
+
+#[test]
+fn gamebox_reject_legacy_image_tag() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+image_tag = "test:v1"
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
+}
+
+#[test]
+fn gamebox_reject_legacy_scoring() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+break_points = 100
+fix_points = 50
+down_points = 200
+first_bonus = 20
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
+}
+
+#[test]
+fn gamebox_reject_schema_version() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+schema_version = 1
+[gamebox]
+username = "u"
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
+}
+
+#[test]
+fn gamebox_reject_services() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.services]]
+port = 80
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
+}
+
+#[test]
+fn gamebox_reject_old_resources_key() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[gamebox.resources]
+cpu_millis = 1000
+"#;
+    assert!(GameBoxMeta::from_toml_str(toml).is_err());
 }
 
 #[test]
 fn gamebox_missing_gamebox_section() {
     let toml = r#"
 name = "test"
+version = "1.0.0"
 author = "test"
 category = "Web"
 description = "test"
@@ -199,19 +486,19 @@ description = "test"
 fn gamebox_missing_username() {
     let toml = r#"
 name = "test"
+version = "1.0.0"
 author = "test"
 category = "Web"
 description = "test"
 
 [gamebox]
-image_tag = "test:v1"
 "#;
     let result = GameBoxMeta::from_toml_str(toml);
     assert!(result.is_err());
 }
 
 #[test]
-fn gamebox_missing_image_tag() {
+fn gamebox_missing_version() {
     let toml = r#"
 name = "test"
 author = "test"
@@ -226,40 +513,157 @@ username = "ctf"
 }
 
 #[test]
-fn gamebox_reject_fractional_score() {
-    let toml = r#"
-name = "test"
-author = "test"
-category = "Web"
-description = "test"
-
+fn gamebox_normalize_stability() {
+    let a = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
 [gamebox]
-username = "ctf"
-image_tag = "test:v1"
-break_points = 100.5
+username = "u"
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
 "#;
-    let result = GameBoxMeta::from_toml_str(toml);
-    assert!(result.is_err(), "fractional scores must be rejected");
+    let b = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 3306
+"#;
+    let na = GameBoxMeta::parse_and_validate(a)
+        .unwrap()
+        .normalize()
+        .unwrap();
+    let nb = GameBoxMeta::parse_and_validate(b)
+        .unwrap()
+        .normalize()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&na).unwrap(),
+        serde_json::to_string(&nb).unwrap()
+    );
+    assert!(matches!(
+        &na.healthchecks[0],
+        NormalizedHealthcheck::Http {
+            port: 80,
+            expected_status: 200,
+            ..
+        }
+    ));
+}
+
+// ─── safe_name (§107) ───────────────────────────────────────────────
+
+#[test]
+fn safe_name_derive_cases() {
+    assert_eq!(
+        derive_safe_name("Easy Web 01").as_deref(),
+        Some("easy-web-01")
+    );
+    assert_eq!(derive_safe_name("easy---web").as_deref(), Some("easy-web"));
+    assert_eq!(derive_safe_name("  Hello  ").as_deref(), Some("hello"));
+    assert_eq!(derive_safe_name("foo_bar").as_deref(), Some("foo-bar"));
+    // Mixed ASCII + CJK → ASCII slug; pure non-ASCII → None (SAFE_NAME_REQUIRED).
+    assert_eq!(derive_safe_name("SQL注入").as_deref(), Some("sql"));
+    assert_eq!(derive_safe_name("注入题目"), None);
+    assert_eq!(derive_safe_name("!!!"), None);
+    assert_eq!(derive_safe_name(""), None);
 }
 
 #[test]
-fn gamebox_serialize_uses_new_field_names() {
-    let config = fcmc::GameBoxConfig {
-        username: "ctf".into(),
-        image_tag: "test:v1".into(),
-        break_points: 100,
-        fix_points: 50,
-        down_points: 200,
-        first_bonus: 20,
-        resources: fcmc::ResourceConfig::default(),
-        healthcheck: None,
-        judge: None,
-    };
-    let json = serde_json::to_string(&config).unwrap();
-    assert!(json.contains("\"break_points\""));
-    assert!(!json.contains("\"break_point\""));
-    assert!(json.contains("\"first_bonus\""));
-    assert!(!json.contains("\"first_bouns\""));
+fn safe_name_validate() {
+    assert!(validate_safe_name("easy-web-01").is_ok());
+    assert!(validate_safe_name("a").is_ok());
+    assert!(validate_safe_name("9x").is_ok());
+    assert!(validate_safe_name("Easy").is_err());
+    assert!(validate_safe_name("-bad").is_err());
+    assert!(validate_safe_name("has space").is_err());
+    assert!(validate_safe_name("").is_err());
+}
+
+#[test]
+fn safe_name_non_ascii_only_requires_explicit() {
+    let toml = r#"
+name = "注入题目"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+[gamebox]
+username = "u"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::SafeNameRequired));
+}
+
+// ─── Image ref (§108) ───────────────────────────────────────────────
+
+#[test]
+fn image_ref_helper_cases() {
+    assert_eq!(
+        build_gamebox_image_ref("floatctf", "ttt1", "1.0.0"),
+        "floatctf/gameboxes/ttt1:1.0.0"
+    );
+    assert_eq!(
+        build_gamebox_image_ref("registry.example.com", "easy-web", "2.1.0"),
+        "registry.example.com/gameboxes/easy-web:2.1.0"
+    );
+}
+
+#[test]
+fn split_and_pick_repo_digest() {
+    assert_eq!(
+        split_image_ref("registry.example.com:5000/foo/bar:1.0"),
+        (
+            "registry.example.com:5000/foo/bar".into(),
+            Some("1.0".into())
+        )
+    );
+    let digests = vec![
+        "other@sha256:1".into(),
+        "registry.example.com:5000/foo/bar@sha256:abc".into(),
+    ];
+    assert_eq!(
+        pick_repo_digest(&digests, "registry.example.com:5000/foo/bar:1.0").as_deref(),
+        Some("registry.example.com:5000/foo/bar@sha256:abc")
+    );
+}
+
+// ─── Helpers unit ───────────────────────────────────────────────────
+
+#[test]
+fn version_helper() {
+    assert!(validate_version("1.0.0").is_ok());
+    assert!(validate_version("1.0.0-rc.1").is_ok());
+    assert!(matches!(
+        validate_version("1.0.0+meta"),
+        Err(GameBoxMetaError::VersionBuildMetadata(_))
+    ));
+}
+
+#[test]
+fn judge_path_helper() {
+    assert!(validate_judge_path("judge/check.py").is_ok());
+    assert!(validate_judge_path("/abs").is_err());
+    assert!(validate_judge_path("judge/../x").is_err());
+    assert!(validate_judge_path("other/x.py").is_err());
 }
 
 // ─── ContainerFilter Tests ──────────────────────────────────────────
@@ -286,8 +690,6 @@ fn container_filter_multiple_labels() {
 #[test]
 fn container_filter_with_name() {
     let f = fcmc::ContainerFilter::default().with_label("key", "val");
-    // Note: ContainerFilter doesn't have a with_name method in current code,
-    // but we test the label filter works
     let map = f.to_bollard_filters();
     assert!(map.contains_key("label"));
 }

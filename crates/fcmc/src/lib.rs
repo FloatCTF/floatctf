@@ -1,8 +1,8 @@
 //! fcmc — FloatCTF container / metadata crate.
 //!
-//! - `metadata` — Challenge / GameBox YAML and config shapes
-//! - `runtime` — Docker container lifecycle + AWD Specs
-//! - `image` — reserved for image build helpers (see `main` CLI)
+//! - `metadata` — Challenge / GameBox package manifests
+//! - `runtime` — Docker container lifecycle, image build/push/pull, AWD Specs
+//! - `application` — CLI orchestration (check / build / gen)
 
 pub mod application;
 pub mod metadata;
@@ -21,14 +21,22 @@ pub use runtime::{
     IMMEDIATE_STOP_TIMEOUT, NetworkSpec, PortBinding, ResourceLimits,
 };
 
+// ── Image runtime ──
+pub use runtime::{
+    ImageBuildRequest, ImageBuildResult, ImageError, ImageInspect, ImageRuntime, RegistryAuth,
+    image_repository, pick_repo_digest, split_image_ref,
+};
+
 // ── CLI types (re-exported for testing) ──
 pub mod cli;
 pub use cli::{Args, Commands, GenFormat};
 
 // ── Metadata ──
 pub use metadata::{
-    ChallengeMeta, DockerMeta, FlagMeta, GameBoxConfig, GameBoxMeta, HealthcheckConfig,
-    JudgeCheckConfig, ResourceConfig,
+    ChallengeMeta, DockerMeta, FlagMeta, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest,
+    GameBoxMeta, GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedGameBoxSpec,
+    NormalizedHealthcheck, RecommendedResources, build_gamebox_image_ref, derive_safe_name,
+    validate_judge_path, validate_safe_name, validate_version,
 };
 
 // ── Re-export runtime model types for external use ──

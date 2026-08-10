@@ -182,6 +182,31 @@ pub async fn run_precheck(
 
     if event_gameboxes.is_empty() {
         errors.push(("gameboxes".to_string(), "No EventGameBox configured".into()));
+    } else {
+        // Pin readiness: every EventGameBox must resolve a ready revision + image pin.
+        // Also validate healthchecks_json shape (application probes, not Docker HC).
+        for eg in &event_gameboxes {
+            match crate::modules::event::awd_team::service::gamebox_service::resolve_event_gamebox_spec(
+                db, eg.id,
+            )
+            .await
+            {
+                Ok(resolved) => {
+                    if let Err(e) = crate::modules::event::awd_team::service::healthcheck_probe::parse_healthchecks(
+                        &resolved.effective_healthchecks_json,
+                    ) {
+                        errors.push((
+                            "gamebox_healthchecks".into(),
+                            format!("EventGameBox {}: {e}", eg.id),
+                        ));
+                    }
+                }
+                Err(e) => errors.push((
+                    "gamebox_revision".into(),
+                    format!("EventGameBox {} resolve failed: {e}", eg.id),
+                )),
+            }
+        }
     }
 
     // ── Check 4: Docker network observed 记录存在（§14 Observed → runtime resources）──

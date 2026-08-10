@@ -38,6 +38,7 @@ export * from "./event_teams";
 export * from "./event_users";
 export * from "./event_writeup";
 export * from "./events";
+export * from "./gamebox_revisions";
 export * from "./gameboxes";
 export * from "./instances";
 export * from "./logs";

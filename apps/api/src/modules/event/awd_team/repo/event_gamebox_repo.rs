@@ -1,10 +1,10 @@
-//! EventGameBox repository — 某场 AWD 赛事选择的 GameBox + 赛事计分配置。
+//! EventGameBox repository — 某场 AWD 赛事选择的 GameBox + 钉住的 Revision + 计分配置。
 //!
-//! 关键不变式（§11/§12/§13）：
+//! 关键不变式：
 //!   - Event 内一个 GameBox 只能有一个选择（UNIQUE(event_id, gamebox_id)）
-//!   - 单版本：运行时配置跟随全局 GameBox，赛事选择时复制默认值后可再覆盖
-//!   - host_offset 决定 instance_ip = team.gamebox_subnet + host_offset，部署后禁改
-//!   - 计分属于 Event × GameBox（break_points 等），与全局 GameBox 无关
+//!   - `gamebox_revision_id` NOT NULL：Deploy/Reset/Recovery/Judge 只读 pinned revision
+//!   - host_offset 决定 instance_ip，部署后禁改
+//!   - 计分属于 Event × GameBox，与全局 GameBox 无关
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -12,7 +12,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::entity::{awd_event_gameboxes, gameboxes};
+use crate::entity::{awd_event_gameboxes, gamebox_revisions, gameboxes};
 
 pub async fn find_event_gameboxes_by_event(
     db: &DatabaseConnection,
@@ -32,7 +32,7 @@ pub async fn find_event_gamebox_by_id(
     awd_event_gameboxes::Entity::find_by_id(id).one(db).await
 }
 
-/// 某 Event 对某 GameBox 的选择（§12 UNIQUE(event_id, gamebox_id)）。
+/// 某 Event 对某 GameBox 的选择（UNIQUE(event_id, gamebox_id)）。
 pub async fn find_event_gamebox(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -53,10 +53,20 @@ pub async fn find_gamebox_identity(
     gameboxes::Entity::find_by_id(gamebox_id).one(db).await
 }
 
-/// EventGameBox + GameBox identity 组合视图（列表/详情 API 用）。
+pub async fn find_revision(
+    db: &DatabaseConnection,
+    revision_id: Uuid,
+) -> Result<Option<gamebox_revisions::Model>, sea_orm::DbErr> {
+    gamebox_revisions::Entity::find_by_id(revision_id)
+        .one(db)
+        .await
+}
+
+/// EventGameBox + GameBox identity + pinned Revision 组合视图。
 pub struct EventGameBoxDetail {
     pub event_gamebox: awd_event_gameboxes::Model,
     pub gamebox: gameboxes::Model,
+    pub revision: gamebox_revisions::Model,
 }
 
 pub async fn find_event_gameboxes_detail(
@@ -69,20 +79,26 @@ pub async fn find_event_gameboxes_detail(
             Some(g) => g,
             None => continue,
         };
+        let revision = match find_revision(db, eg.gamebox_revision_id).await? {
+            Some(r) => r,
+            None => continue,
+        };
         out.push(EventGameBoxDetail {
             event_gamebox: eg,
             gamebox,
+            revision,
         });
     }
     Ok(out)
 }
 
-/// 创建 EventGameBox（赛事选择）。调用方负责：host_offset 分配、configuration_generation 联动。
+/// 创建 EventGameBox（赛事选择，必须 pin 一个 ready revision）。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_event_gamebox(
     db: &DatabaseConnection,
     event_id: Uuid,
     gamebox_id: Uuid,
+    gamebox_revision_id: Uuid,
     host_offset: i16,
     enabled: bool,
     hidden: bool,
@@ -103,6 +119,7 @@ pub async fn create_event_gamebox(
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
         gamebox_id: Set(gamebox_id),
+        gamebox_revision_id: Set(gamebox_revision_id),
         host_offset: Set(host_offset),
         enabled: Set(enabled),
         hidden: Set(hidden),
@@ -119,14 +136,13 @@ pub async fn create_event_gamebox(
         first_bonus: Set(first_bonus),
         created_at: Set(now),
         updated_at: Set(now),
-        ..Default::default()
     }
     .insert(db)
     .await
 }
 
 /// 更新 EventGameBox（计分/资源/判题覆盖）。调用方负责：
-/// 已部署的 host_offset 禁止修改（§38）；变更后必须 touch_configuration（§37）。
+/// 已部署的 host_offset 禁止修改；变更后必须 touch_configuration。
 pub struct EventGameBoxPatch {
     pub enabled: Option<bool>,
     pub hidden: Option<bool>,

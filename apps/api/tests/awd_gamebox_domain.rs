@@ -1,27 +1,22 @@
-//! GameBox 单版本领域回归测试（DB-gated，启动时幂等清理风格）。
+//! GameBox identity + Revision 领域回归测试（DB-gated）。
 //!
-//! 覆盖（单版本语义，同 Challenges）：
-//!   - 编辑 = 原地覆盖当前配置（update_gamebox），不存在 Revision 概念
-//!   - 赛事选择复制 GameBox 当前配置为默认值，计分按 Event 独立
-//!   - Reset 保持 logical identity（id/event_gamebox_id/team_id/IP/credential 不变，
-//!     current_container 更换、runtime_generation +1），镜像来自 GameBox 当前配置
-//!
-//! execute_reset/update_gamebox 接收具体 &DatabaseConnection，无法注入事务，
-//! 故在每次测试开头清理本文件的唯一前缀 seed（容忍上次崩溃残留），不污染 dev 库。
+//! 覆盖：
+//!   - 身份元数据更新不改 revision
+//!   - 赛事选择 pin ready revision；计分按 Event 独立
+//!   - Reset 保持 logical identity，镜像来自 pinned revision
 
 use std::sync::{Arc, Mutex};
 
-/// 本文件 3 个 DB-gated 测试共享 cleanup 前缀，必须串行执行（cargo test 默认并发跑用例，
-/// 并发清理会互相删掉对方刚 seed 的行）。数据库测试互斥即可，无性能要求。
+/// 本文件 DB-gated 测试共享 cleanup 前缀，必须串行执行。
 static TEST_SERIAL: Mutex<()> = Mutex::new(());
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_rounds,
-    awd_team_networks, event_teams, events, gameboxes, sea_orm_active_enums,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus, RoundStatus},
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_team_networks,
+    event_teams, events, gamebox_revisions, gameboxes, sea_orm_active_enums,
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus},
 };
 
 fn db_url() -> String {
@@ -39,14 +34,13 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
     }
 }
 
-/// 幂等清理本文件的 seed（events 级联清 per-event 行；gameboxes 是全局表需按前缀删）。
-/// 每个测试开头调用，容忍上次崩溃残留；名称前缀唯一，不影响其它测试/真实数据。
 async fn cleanup_domain_fixtures(db: &sea_orm::DatabaseConnection) {
     events::Entity::delete_many()
         .filter(events::Column::Title.like("awd-gb-domain-%"))
         .exec(db)
         .await
         .expect("cleanup events");
+    // Revisions cascade from gameboxes
     gameboxes::Entity::delete_many()
         .filter(
             gameboxes::Column::SafeName
@@ -59,7 +53,6 @@ async fn cleanup_domain_fixtures(db: &sea_orm::DatabaseConnection) {
         .expect("cleanup gameboxes");
 }
 
-/// 创建 events + awd_events（Running）双表 seed。
 async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     events::ActiveModel {
@@ -98,7 +91,6 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
     .await
     .expect("insert awd_events");
 
-    // Event Network（新模型）
     awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -174,44 +166,95 @@ async fn seed_team_network(
     net_id
 }
 
-/// GameBox identity + 单版本配置（image_ref 可指定）。
-async fn seed_gamebox(db: &sea_orm::DatabaseConnection, tag: &str, image_ref: &str) -> Uuid {
+/// Seed GameBox identity + ready revision with given image pin.
+/// Returns (gamebox_id, revision_id).
+async fn seed_gamebox_with_revision(
+    db: &sea_orm::DatabaseConnection,
+    tag: &str,
+    image_pin: &str,
+) -> (Uuid, Uuid) {
     let now = chrono::Utc::now();
     let gb_id = Uuid::new_v4();
+    let rev_id = Uuid::new_v4();
+    let safe = format!("gb-{tag}-{}", &gb_id.to_string()[..8]);
+
     gameboxes::ActiveModel {
         id: Set(gb_id),
         name: Set(format!("gb-{tag}")),
-        safe_name: Set(format!("gb-{tag}-{}", &gb_id.to_string()[..8])),
+        safe_name: Set(safe),
         category: Set("other".into()),
         description: Set(String::new()),
         hidden: Set(false),
-        source_toml: Set(Some(String::new())),
-        image_ref: Set(Some(image_ref.into())),
-        image_digest: Set(None),
-        username: Set(Some("ctf".into())),
-        default_cpu_millis: Set(Some(1000)),
-        default_memory_bytes: Set(Some(512 * 1024 * 1024)),
-        default_pids_limit: Set(Some(100)),
-        healthcheck_json: Set(None),
-        judge_script_name: Set(None),
-        judge_script_content: Set(Some("#!/bin/sh\nexit 0".into())),
-        judge_args_json: Set(None),
-        default_judge_timeout_secs: Set(None),
-        default_judge_retry_interval_secs: Set(None),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
-        ..Default::default()
     }
     .insert(db)
     .await
     .expect("insert gamebox");
-    gb_id
+
+    // LocalOnly pin via image_id when pin looks like sha256:, else store as image_ref + image_id.
+    let (image_ref, image_id, image_repo_digest) = if image_pin.contains("@sha256:") {
+        (
+            Some(image_pin.split('@').next().unwrap().to_string() + ":1.0.0"),
+            None,
+            Some(image_pin.to_string()),
+        )
+    } else if image_pin.starts_with("sha256:") {
+        (
+            Some(format!("floatctf/gameboxes/{tag}:1.0.0")),
+            Some(image_pin.to_string()),
+            None,
+        )
+    } else {
+        // Tag form: store as image_id too so ready pin validation passes (LocalOnly style).
+        (
+            Some(image_pin.to_string()),
+            Some(format!(
+                "sha256:fake{}",
+                &gb_id.to_string().replace('-', "")[..12]
+            )),
+            None,
+        )
+    };
+
+    gamebox_revisions::ActiveModel {
+        id: Set(rev_id),
+        gamebox_id: Set(gb_id),
+        version: Set("1.0.0".into()),
+        revision_number: Set(1),
+        source_toml: Set(String::new()),
+        spec_json: Set(serde_json::json!({"name": tag})),
+        spec_digest: Set("specdigest".into()),
+        package_digest: Set("pkgdigest".into()),
+        image_ref: Set(image_ref),
+        image_id: Set(image_id),
+        image_repo_digest: Set(image_repo_digest),
+        username: Set("ctf".into()),
+        recommended_cpu_millis: Set(1000),
+        recommended_memory_bytes: Set(512 * 1024 * 1024),
+        recommended_pids_limit: Set(100),
+        healthchecks_json: Set(serde_json::json!([])),
+        judge_script_name: Set(None),
+        judge_script_content: Set(Some("#!/bin/sh\nexit 0".into())),
+        judge_args_json: Set(None),
+        judge_timeout_secs: Set(None),
+        judge_retry_interval_secs: Set(None),
+        build_status: Set("ready".into()),
+        build_error: Set(None),
+        created_at: Set(now.into()),
+    }
+    .insert(db)
+    .await
+    .expect("insert revision");
+
+    (gb_id, rev_id)
 }
 
 async fn seed_event_gamebox(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
     gamebox_id: Uuid,
+    revision_id: Uuid,
     host_offset: i16,
     break_points: i64,
 ) -> Uuid {
@@ -221,6 +264,7 @@ async fn seed_event_gamebox(
         id: Set(eg_id),
         event_id: Set(event_id),
         gamebox_id: Set(gamebox_id),
+        gamebox_revision_id: Set(revision_id),
         host_offset: Set(host_offset),
         enabled: Set(true),
         hidden: Set(false),
@@ -237,7 +281,6 @@ async fn seed_event_gamebox(
         first_bonus: Set(20),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
-        ..Default::default()
     }
     .insert(db)
     .await
@@ -246,7 +289,7 @@ async fn seed_event_gamebox(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Mock AwdContainerRuntime（记录 reset 时收到的 spec）
+// Mock AwdContainerRuntime
 // ────────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
@@ -323,81 +366,53 @@ fn configure_crypto_once() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 编辑 = 原地覆盖单版本配置（无 Revision 概念）
+// 身份元数据更新（不改 revision）
 // ────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn update_gamebox_overwrites_config_in_place() {
+async fn update_identity_does_not_touch_revision() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {
         return;
     };
     cleanup_domain_fixtures(&db).await;
-    use floatctf::modules::event::awd_team::{
-        repo::gamebox_lib_repo, service::gamebox_service::GameBoxConfig,
-    };
 
-    let gb_id = seed_gamebox(&db, "edit", "img:v1").await;
+    let (gb_id, rev_id) = seed_gamebox_with_revision(&db, "edit", "img:v1").await;
 
-    let mut cfg = GameBoxConfig {
-        source_toml: String::new(),
-        image_ref: "img:v2".into(),
-        image_digest: None,
-        username: "ctf".into(),
-        cpu_millis: 2000,
-        memory_bytes: 1024 * 1024 * 1024,
-        pids_limit: 100,
-        healthcheck: None,
-        judge_script_name: None,
-        judge_script_content: Some("#!/bin/sh\nexit 1".into()),
-        judge_args_json: None,
-        judge_timeout_secs: Some(60),
-        judge_retry_interval_secs: None,
-    };
+    let updated =
+        floatctf::modules::event::awd_team::service::gamebox_service::update_gamebox_identity(
+            &db,
+            gb_id,
+            Some("new-name".into()),
+            Some("pwn".into()),
+            Some("desc".into()),
+            Some(true),
+        )
+        .await
+        .expect("update identity");
+    assert_eq!(updated.name, "new-name");
+    assert_eq!(updated.category, "pwn");
+    assert!(updated.hidden);
 
-    // 编辑 → 原地覆盖（单版本，无 digest 去重）
-    let updated = floatctf::modules::event::awd_team::service::gamebox_service::update_gamebox(
-        &db,
-        gb_id,
-        cfg.clone(),
-    )
-    .await
-    .expect("update succeeds");
-    assert_eq!(updated.image_ref.as_deref(), Some("img:v2"), "镜像覆盖");
-    assert_eq!(updated.default_cpu_millis, Some(2000));
-    assert_eq!(
-        updated.judge_script_content.as_deref(),
-        Some("#!/bin/sh\nexit 1")
-    );
-    assert_eq!(updated.default_judge_timeout_secs, Some(60));
+    let rev = gamebox_revisions::Entity::find_by_id(rev_id)
+        .one(&db)
+        .await
+        .expect("db")
+        .expect("rev");
+    assert_eq!(rev.version, "1.0.0");
+    assert_eq!(rev.build_status, "ready");
+    // image pin unchanged
+    assert!(rev.image_id.is_some() || rev.image_repo_digest.is_some());
 
-    // 再次编辑 → 仍是同一行覆盖，无版本累积
-    cfg.image_ref = "img:v3".into();
-    let updated2 = floatctf::modules::event::awd_team::service::gamebox_service::update_gamebox(
-        &db, gb_id, cfg,
-    )
-    .await
-    .expect("update again");
-    assert_eq!(updated2.image_ref.as_deref(), Some("img:v3"));
-    assert_eq!(
-        gamebox_lib_repo::list_gameboxes(&db, true)
-            .await
-            .expect("list")
-            .into_iter()
-            .filter(|g| g.id == gb_id)
-            .count(),
-        1,
-        "单版本：没有产生任何额外行"
-    );
     cleanup_domain_fixtures(&db).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 赛事选择复制当前配置；计分按 Event 独立
+// 赛事选择 pin revision；计分按 Event 独立
 // ────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn event_scores_are_independent_with_single_version_config() {
+async fn event_scores_are_independent_with_pinned_revision() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {
         return;
@@ -405,37 +420,40 @@ async fn event_scores_are_independent_with_single_version_config() {
     cleanup_domain_fixtures(&db).await;
     use floatctf::modules::event::awd_team::service::gamebox_service;
 
-    let gb_id = seed_gamebox(&db, "score", "img:v1").await;
+    let (gb_id, rev_id) = seed_gamebox_with_revision(&db, "score", "img:v1").await;
     let event_a = seed_running_event(&db, "score-a").await;
     let event_b = seed_running_event(&db, "score-b").await;
 
-    let eg_a = seed_event_gamebox(&db, event_a, gb_id, 10, 100).await;
-    let eg_b = seed_event_gamebox(&db, event_b, gb_id, 10, 200).await;
+    let eg_a = seed_event_gamebox(&db, event_a, gb_id, rev_id, 10, 100).await;
+    let eg_b = seed_event_gamebox(&db, event_b, gb_id, rev_id, 10, 200).await;
 
-    // 两个 Event 解析同一 GameBox 当前配置，但计分各自独立
     let ra = gamebox_service::resolve_event_gamebox_spec(&db, eg_a)
         .await
         .expect("resolve A");
     let rb = gamebox_service::resolve_event_gamebox_spec(&db, eg_b)
         .await
         .expect("resolve B");
-    assert_eq!(ra.image_ref, "img:v1");
-    assert_eq!(rb.image_ref, "img:v1", "同 GameBox 单版本配置一致");
+    assert_eq!(ra.revision.id, rev_id);
+    assert_eq!(rb.revision.id, rev_id, "同 GameBox pin 同一 revision");
     assert_eq!(ra.event_gamebox.break_points, 100);
     assert_eq!(
         rb.event_gamebox.break_points, 200,
         "同 GameBox 在不同 Event 计分独立"
     );
-    assert_eq!(ra.gamebox.id, gb_id, "解析返回 GameBox identity");
+    assert_eq!(ra.gamebox.id, gb_id);
+    // effective image is pin (image_id LocalOnly style)
+    let img = ra.effective_image_ref().expect("pin");
+    assert!(img.starts_with("sha256:") || img.contains("@sha256:"));
+
     cleanup_domain_fixtures(&db).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Reset 保持 logical identity + runtime_generation+1，镜像来自 GameBox 当前配置
+// Reset 保持 identity + 使用 pinned revision 镜像
 // ────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn reset_keeps_identity_bumps_generation_and_uses_current_config() {
+async fn reset_keeps_identity_and_uses_pinned_revision_image() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {
         return;
@@ -450,7 +468,6 @@ async fn reset_keeps_identity_bumps_generation_and_uses_current_config() {
     let team_id = seed_team(&db, event_id, "reset").await;
     let _net_id = seed_team_network(&db, event_id, team_id, "10.42.1.0/24").await;
 
-    // Player user（awd_reset_records.requested_by FK → users）
     let user_id = Uuid::new_v4();
     let uname = format!("user-reset-{}", &user_id.to_string().replace('-', "")[..8]);
     floatctf::entity::users::ActiveModel {
@@ -467,10 +484,9 @@ async fn reset_keeps_identity_bumps_generation_and_uses_current_config() {
     .await
     .expect("insert user");
 
-    let gb_id = seed_gamebox(&db, "reset", "img:v1").await;
-    let eg_id = seed_event_gamebox(&db, event_id, gb_id, 10, 100).await;
+    let (gb_id, rev_id) = seed_gamebox_with_revision(&db, "reset", "img:v1").await;
+    let eg_id = seed_event_gamebox(&db, event_id, gb_id, rev_id, 10, 100).await;
 
-    // Instance：generation=1, container=C1, Ready
     let instance_id = Uuid::new_v4();
     let now = chrono::Utc::now();
     awd_gamebox_instances::ActiveModel {
@@ -506,32 +522,34 @@ async fn reset_keeps_identity_bumps_generation_and_uses_current_config() {
     .await;
     result.expect("reset succeeds");
 
-    // logical identity 不变；container 更换；generation +1
     let inst = floatctf::entity::awd_gamebox_instances::Entity::find_by_id(instance_id)
         .one(&db)
         .await
         .expect("reload")
         .expect("exists");
     assert_eq!(inst.id, instance_id);
-    assert_eq!(inst.event_gamebox_id, eg_id, "event_gamebox_id 不变");
-    assert_eq!(inst.team_id, team_id, "team_id 不变");
-    assert_eq!(inst.gamebox_ip.to_string(), "10.42.1.10/32", "IP 不变");
-    assert_eq!(inst.runtime_generation, 2, "runtime_generation +1");
+    assert_eq!(inst.event_gamebox_id, eg_id);
+    assert_eq!(inst.team_id, team_id);
+    assert_eq!(inst.gamebox_ip.to_string(), "10.42.1.10/32");
+    assert_eq!(inst.runtime_generation, 2);
     let new_cid = inst.current_container_id.as_deref().expect("new container");
-    assert_ne!(new_cid, "cid-old", "current container 更换（C1 != C2）");
-    assert!(new_cid.starts_with("cid-new-"), "容器 ID 来自 mock reset");
+    assert_ne!(new_cid, "cid-old");
+    assert!(new_cid.starts_with("cid-new-"));
     assert_eq!(inst.status, GameboxStatus::Ready);
 
-    // 镜像来自 GameBox 当前配置（单版本）
     let recorded = runtime.last_reset_spec.lock().unwrap().clone();
     let spec = recorded.expect("reset spec recorded");
-    assert_eq!(spec.image_ref, "img:v1", "Reset 使用 GameBox 当前配置镜像");
-    assert_eq!(spec.runtime_generation, 2, "fcmc spec 携带新 generation");
+    // Pinned image is image_id (LocalOnly style fake sha256)
+    assert!(
+        spec.image_ref.starts_with("sha256:") || spec.image_ref.contains("@sha256:"),
+        "Reset 使用 pinned revision 镜像, got {}",
+        spec.image_ref
+    );
+    assert_eq!(spec.runtime_generation, 2);
     assert_eq!(spec.fixed_ip, "10.42.1.10");
     assert_eq!(spec.username, "ctf");
     assert_eq!(*runtime.reset_count.lock().unwrap(), 1);
 
-    // 结尾清理（含本 run 的 user seed，避免残留）
     floatctf::entity::users::Entity::delete_many()
         .filter(floatctf::entity::users::Column::Username.eq(uname))
         .exec(&db)

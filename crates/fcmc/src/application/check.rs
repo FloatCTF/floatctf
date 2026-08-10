@@ -129,7 +129,12 @@ pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
     Ok(CheckResult { passed, messages })
 }
 
-/// Check a GameBoxMeta configuration directory.
+/// Check a GameBox package directory (new portable manifest).
+///
+/// Validates:
+/// - `meta.toml` parse + semantic rules (version, safe_name, healthchecks, judge path, …)
+/// - `src/Dockerfile` exists
+/// - If `[judge]` is set, the script file exists under the package root
 pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
     let meta_path = dir.join("meta.toml");
     let mut messages = Vec::new();
@@ -143,7 +148,7 @@ pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
 
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
-    match toml::from_str::<GameBoxMeta>(&content) {
+    match GameBoxMeta::parse_and_validate(&content) {
         Ok(cfg) => {
             messages.push(CheckMessage {
                 level: CheckLevel::Ok,
@@ -151,30 +156,111 @@ pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
                 message: "配置文件解析成功".into(),
             });
 
-            // Validate resources
-            if cfg.gamebox.resources.cpu_millis <= 0 {
+            // safe_name
+            match cfg.resolved_safe_name() {
+                Ok(s) => messages.push(CheckMessage {
+                    level: CheckLevel::Ok,
+                    section: "safe_name".into(),
+                    message: format!("safe_name = {s}"),
+                }),
+                Err(e) => {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Err,
+                        section: "safe_name".into(),
+                        message: e.to_string(),
+                    });
+                    passed = false;
+                }
+            }
+
+            // version
+            messages.push(CheckMessage {
+                level: CheckLevel::Ok,
+                section: "version".into(),
+                message: format!("version = {}", cfg.version),
+            });
+
+            // recommended resources
+            if let Some(ref res) = cfg.gamebox.recommended_resources {
+                if res.cpu_millis <= 0 || res.memory_bytes <= 0 || res.pids_limit <= 0 {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Err,
+                        section: "资源配置".into(),
+                        message: "recommended_resources 字段必须大于 0".into(),
+                    });
+                    passed = false;
+                } else {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Ok,
+                        section: "资源配置".into(),
+                        message: format!(
+                            "cpu_millis={}, memory_bytes={}, pids_limit={}",
+                            res.cpu_millis, res.memory_bytes, res.pids_limit
+                        ),
+                    });
+                }
+            } else {
+                messages.push(CheckMessage {
+                    level: CheckLevel::Warn,
+                    section: "资源配置".into(),
+                    message: "未配置 recommended_resources（将使用默认值）".into(),
+                });
+            }
+
+            // healthchecks
+            messages.push(CheckMessage {
+                level: CheckLevel::Ok,
+                section: "healthchecks".into(),
+                message: format!("{} 条 readiness 探针", cfg.gamebox.healthchecks.len()),
+            });
+
+            // src/Dockerfile required
+            let dockerfile = dir.join("src").join("Dockerfile");
+            if dockerfile.exists() {
+                messages.push(CheckMessage {
+                    level: CheckLevel::Ok,
+                    section: "Dockerfile".into(),
+                    message: format!("存在: {:?}", dockerfile),
+                });
+            } else {
                 messages.push(CheckMessage {
                     level: CheckLevel::Err,
-                    section: "资源配置".into(),
-                    message: "cpu_millis 必须大于 0".into(),
+                    section: "Dockerfile".into(),
+                    message: format!("缺少 src/Dockerfile: {:?}", dockerfile),
                 });
                 passed = false;
             }
 
-            if cfg.gamebox.resources.memory_bytes <= 0 {
+            // judge script file
+            if let Some(ref judge) = cfg.judge {
+                let script_path = dir.join(&judge.script);
+                if script_path.exists() {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Ok,
+                        section: "Judge".into(),
+                        message: format!("脚本存在: {:?}", script_path),
+                    });
+                } else {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Err,
+                        section: "Judge".into(),
+                        message: format!("脚本不存在: {:?}", script_path),
+                    });
+                    passed = false;
+                }
+            } else {
                 messages.push(CheckMessage {
-                    level: CheckLevel::Err,
-                    section: "资源配置".into(),
-                    message: "memory_bytes 必须大于 0".into(),
+                    level: CheckLevel::Warn,
+                    section: "Judge".into(),
+                    message: "未配置 [judge]".into(),
                 });
-                passed = false;
             }
         }
         Err(e) => {
             messages.push(CheckMessage {
                 level: CheckLevel::Err,
                 section: "解析结果".into(),
-                message: format!("配置文件解析失败: {}", e),
+                message: format!("配置文件解析/校验失败: {}", e),
             });
             passed = false;
         }

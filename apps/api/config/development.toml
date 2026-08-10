@@ -36,6 +36,17 @@ network_runtime = "noop"
 flagserver_image = "floatctf/awd-flagserver:latest"
 judgeserver_image = "floatctf/awd-judgeserver:latest"
 
+# GameBox package import / image pipeline.
+# push = false → LocalOnly：本地 build+inspect 后以 image_id 为 pin，不要求 registry。
+[registry]
+image_prefix = "floatctf"
+push = false
+# username = ""
+# password = ""
+# server_address = ""
+insecure = false
+build_timeout_secs = 600
+
 [realtime]
 # redis_url = "redis://127.0.0.1:6379"
 # redis_channel = "floatctf:realtime"

@@ -8,8 +8,6 @@ use bollard::Docker;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::metadata::HealthcheckConfig;
-
 // Re-export model types for convenience
 pub use super::model::{
     ContainerHandle, ContainerSpec, ContainerState, HealthcheckSpec, NetworkHandle,
@@ -58,7 +56,9 @@ pub struct GameBoxSpec {
     pub cpu_millis: i64,
     pub memory_bytes: i64,
     pub pids_limit: i64,
-    pub healthcheck: Option<HealthcheckConfig>,
+    /// Docker-level healthcheck (CMD/CMD-SHELL). Manifest HTTP/TCP readiness
+    /// probes are a separate concern and are NOT stored here.
+    pub healthcheck: Option<HealthcheckSpec>,
     pub extra_hosts: Vec<String>,
     pub labels: HashMap<String, String>,
 }
@@ -245,10 +245,7 @@ impl AwdContainerRuntime for DockerRuntime {
     }
 
     async fn create_gamebox(&self, spec: GameBoxSpec) -> anyhow::Result<ContainerHandle> {
-        use super::{
-            ContainerRuntime, ContainerSpec, DockerContainerRuntime, HealthcheckSpec,
-            ResourceLimits,
-        };
+        use super::{ContainerRuntime, ContainerSpec, DockerContainerRuntime, ResourceLimits};
 
         let labels = awd_labels(
             spec.event_id,
@@ -258,14 +255,6 @@ impl AwdContainerRuntime for DockerRuntime {
             spec.runtime_generation,
             "gamebox",
         );
-
-        let healthcheck = spec.healthcheck.as_ref().map(|hc| HealthcheckSpec {
-            test: hc.test.clone(),
-            interval_secs: hc.interval_secs as i64,
-            timeout_secs: hc.timeout_secs as i64,
-            retries: hc.retries as i64,
-            start_period_secs: hc.start_period_secs as i64,
-        });
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
         let handle = rt
@@ -294,7 +283,7 @@ impl AwdContainerRuntime for DockerRuntime {
                     extra_hosts: spec.extra_hosts,
                 },
                 network_mode: None,
-                healthcheck,
+                healthcheck: spec.healthcheck,
             })
             .await?;
 

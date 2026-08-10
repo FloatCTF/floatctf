@@ -5,10 +5,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use bollard::Docker;
 
-use crate::metadata::{ChallengeMeta, GameBoxMeta};
-use crate::runtime::DockerContainerRuntime;
+use crate::metadata::{ChallengeMeta, GameBoxMeta, build_gamebox_image_ref};
+use crate::runtime::{DockerContainerRuntime, ImageBuildRequest, ImageRuntime};
 
-/// Build a Challenge Docker image.
+/// Default registry prefix used by the CLI when no `-t/--tag` is supplied for gamebox builds.
+/// Platform imports must pass an explicit tag from config — never hardcode this in API code.
+pub const DEFAULT_CLI_REGISTRY_PREFIX: &str = "floatctf";
+
+/// Build a Challenge Docker image (tag still comes from `meta.toml` `[docker].image_tag`).
 pub async fn build_challenge(dir: &Path) -> Result<()> {
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
@@ -28,31 +32,63 @@ pub async fn build_challenge(dir: &Path) -> Result<()> {
     }
 
     let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
-
     let rt = DockerContainerRuntime::new(docker);
+
+    // Inherent wrapper (challenge-compat) — tag still comes from meta.toml.
     rt.build_image(&image_tag, &src_dir).await?;
 
     Ok(())
 }
 
 /// Build a GameBox Docker image.
-pub async fn build_gamebox(dir: &Path) -> Result<()> {
+///
+/// Image tag is **no longer** in `meta.toml`. Resolution order:
+/// 1. Explicit `tag` argument (CLI `-t/--tag` or caller-supplied)
+/// 2. Constructed via [`build_gamebox_image_ref`] with
+///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
+///
+/// Platform/API imports must always supply an explicit tag from platform config.
+pub async fn build_gamebox(dir: &Path, tag: Option<&str>) -> Result<()> {
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
-    let cfg: GameBoxMeta = toml::from_str(&content).context("Failed to parse meta.toml")?;
+    let cfg = GameBoxMeta::parse_and_validate(&content).context("Invalid gamebox meta.toml")?;
 
-    let image_tag = cfg.gamebox.image_tag.clone();
+    let image_tag = match tag {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => {
+            let safe = cfg
+                .resolved_safe_name()
+                .context("Cannot derive safe_name for default image tag")?;
+            build_gamebox_image_ref(DEFAULT_CLI_REGISTRY_PREFIX, &safe, &cfg.version)
+        }
+    };
 
     let src_dir = dir.join("src");
     if !src_dir.exists() {
         anyhow::bail!("Source directory not found: {:?}", src_dir);
     }
+    if !src_dir.join("Dockerfile").exists() {
+        anyhow::bail!("Dockerfile not found: {:?}", src_dir.join("Dockerfile"));
+    }
 
     let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
-
     let rt = DockerContainerRuntime::new(docker);
-    rt.build_image(&image_tag, &src_dir).await?;
+
+    // Note: only `src/` is the build context — `judge/` is intentionally excluded.
+    // Use ImageRuntime UFCS so the typed request API is used (inherent build_image
+    // is the (&str, &Path) challenge-compat wrapper).
+    let req = ImageBuildRequest::new(&src_dir, image_tag);
+    let result = ImageRuntime::build_image(&rt, req)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    tracing::info!(
+        target: "fcmc::build",
+        image_id = %result.image_id,
+        target_ref = %result.target_ref,
+        "gamebox image built"
+    );
 
     Ok(())
 }

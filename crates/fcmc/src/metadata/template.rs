@@ -113,7 +113,66 @@ CMD [ "apache2-foreground" ]
     Ok(())
 }
 
-/// Generate a GameBox template directory.
+fn gamebox_meta_toml(name: &str) -> String {
+    format!(
+        r#"name = "{name}"
+version = "1.0.0"
+author = "your_email"
+category = "web"
+description = "hello floatctf"
+# optional: safe_name = "{slug}"
+
+[gamebox]
+username = "floatctf"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[judge]
+script = "judge/check.py"
+
+[gamebox.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
+"#,
+        name = name,
+        slug = name.to_lowercase().replace(' ', "-"),
+    )
+}
+
+fn write_judge_check_py(judge_dir: &std::path::Path) -> Result<()> {
+    use std::fs;
+    fs::create_dir_all(judge_dir).context("Failed to create judge directory")?;
+    fs::write(
+        judge_dir.join("check.py"),
+        r#"#!/usr/bin/env python3
+"""GameBox functional check (judge).
+
+Trusted by the platform; never baked into the Docker image.
+Exit 0 = service OK, non-zero = down / broken.
+"""
+import sys
+
+
+def main() -> int:
+    # TODO: probe the target (env/args provided by judgeserver)
+    print("ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+"#,
+    )
+    .context("Failed to write judge/check.py")?;
+    Ok(())
+}
+
+/// Generate a GameBox template directory (new portable package format).
 pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
@@ -124,30 +183,10 @@ pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
     let src_dir = gamebox_dir.join("src");
     fs::create_dir_all(&src_dir).context("Failed to create src directory")?;
 
-    // meta.toml
-    let meta_content = format!(
-        r#"name = "{}"
-author = "your_email"
-category = "Web"
-description = "hello floatctf"
+    fs::write(gamebox_dir.join("meta.toml"), gamebox_meta_toml(name))
+        .context("Failed to write meta.toml")?;
 
-
-[gamebox]
-username = "floatctf"
-image_tag = "floatctf/hello-floatctf:gamebox-web_v1.0"
-break_points = 100  # points awarded to attacker each round
-fix_points = 100    # points for successful defense (judge up)
-down_points = 200   # points deducted for failed defense (judge down)
-first_bonus = 20    # one-time first-blood bonus
-
-[gamebox.resources]
-cpu_millis = 1000
-memory_bytes = 536870912
-pids_limit = 100
-"#,
-        name
-    );
-    fs::write(gamebox_dir.join("meta.toml"), meta_content).context("Failed to write meta.toml")?;
+    write_judge_check_py(&gamebox_dir.join("judge"))?;
 
     // Dockerfile
     fs::write(
@@ -193,7 +232,7 @@ if (isset($url)) {
     Ok(())
 }
 
-/// Generate a basic GameBox template directory (AWD base).
+/// Generate a basic GameBox template directory (AWD base image sources).
 pub fn generate_gamebox_basic_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
@@ -204,30 +243,41 @@ pub fn generate_gamebox_basic_template(name: &str, output_dir: &str) -> Result<(
     let src_dir = gamebox_dir.join("src");
     fs::create_dir_all(&src_dir).context("Failed to create src directory")?;
 
-    // meta.toml
+    // meta.toml — fixed identity for the awd-base package
     fs::write(
         gamebox_dir.join("meta.toml"),
         r#"name = "awd-base"
+version = "1.0.0"
 author = "fb0sh@outlook.com"
-category = "Web"
+category = "web"
 description = "awd-base"
-
+safe_name = "awd-base"
 
 [gamebox]
 username = "floatctf"
-image_tag = "floatctf/awd-base:gamebox-web_v1.0.0"
-break_points = 100  # points awarded to attacker each round
-fix_points = 100    # points for successful defense (judge up)
-down_points = 200   # points deducted for failed defense (judge down)
-first_bonus = 20    # one-time first-blood bonus
 
-[gamebox.resources]
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 22
+
+[judge]
+script = "judge/check.py"
+
+[gamebox.recommended_resources]
 cpu_millis = 1000
 memory_bytes = 536870912
 pids_limit = 100
 "#,
     )
     .context("Failed to write meta.toml")?;
+
+    write_judge_check_py(&gamebox_dir.join("judge"))?;
 
     // entrypoint.sh
     fs::write(

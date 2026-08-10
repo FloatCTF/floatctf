@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub cors: CorsConfig,
     pub paths: PathConfig,
     pub awd: AwdStaticConfig,
+    /// Container image registry settings for GameBox package builds.
+    pub registry: RegistryConfig,
     pub features: FeatureFlags,
     pub realtime: RealtimeConfig,
     pub logging: LoggingConfig,
@@ -45,6 +47,25 @@ pub struct DatabaseConfig {
 pub struct DockerConfig {
     /// Reserved for future host/socket override; currently uses bollard defaults.
     pub use_defaults: bool,
+}
+
+/// Registry / image push settings for GameBox package import pipeline.
+///
+/// `push = false` is explicit **LocalOnly** mode: after local build+inspect, mark
+/// ready with `image_id`; `image_repo_digest` may be NULL; runtime pins `image_id`.
+/// When `push = true`, push is required and ready is only marked after RepoDigest.
+#[derive(Debug, Clone)]
+pub struct RegistryConfig {
+    /// Image name prefix → `{image_prefix}/gameboxes/{safe}:{ver}`.
+    pub image_prefix: String,
+    /// When false: LocalOnly (no registry push). When true: must push + resolve digest.
+    pub push: bool,
+    pub username: Option<String>,
+    pub password: Option<Secret>,
+    pub server_address: Option<String>,
+    /// Reserved/document; bollard may not honor yet.
+    pub insecure: bool,
+    pub build_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +141,8 @@ struct TomlConfig {
     features: FeaturesToml,
     #[serde(default)]
     awd: AwdToml,
+    #[serde(default)]
+    registry: RegistryToml,
     #[serde(default)]
     realtime: RealtimeToml,
     #[serde(default)]
@@ -234,6 +257,47 @@ impl Default for AwdToml {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct RegistryToml {
+    #[serde(default = "default_image_prefix")]
+    image_prefix: String,
+    /// Default false = LocalOnly (dev-friendly).
+    #[serde(default)]
+    push: bool,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    server_address: Option<String>,
+    #[serde(default)]
+    insecure: bool,
+    #[serde(default = "default_build_timeout_secs")]
+    build_timeout_secs: u64,
+}
+
+impl Default for RegistryToml {
+    fn default() -> Self {
+        Self {
+            image_prefix: default_image_prefix(),
+            push: false,
+            username: None,
+            password: None,
+            server_address: None,
+            insecure: false,
+            build_timeout_secs: default_build_timeout_secs(),
+        }
+    }
+}
+
+fn default_image_prefix() -> String {
+    "floatctf".to_string()
+}
+
+fn default_build_timeout_secs() -> u64 {
+    600
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct RealtimeToml {
     #[serde(default)]
@@ -310,6 +374,15 @@ impl AppConfig {
                 flagserver_image: file.awd.flagserver_image,
                 judgeserver_image: file.awd.judgeserver_image,
             },
+            registry: RegistryConfig {
+                image_prefix: file.registry.image_prefix,
+                push: file.registry.push,
+                username: non_empty(file.registry.username),
+                password: non_empty(file.registry.password).map(Secret::new),
+                server_address: non_empty(file.registry.server_address),
+                insecure: file.registry.insecure,
+                build_timeout_secs: file.registry.build_timeout_secs,
+            },
             features: FeatureFlags {
                 enable_unsafe_sql_admin: file.features.unsafe_sql_admin,
                 enable_web_terminal: file.features.web_terminal,
@@ -336,6 +409,9 @@ impl AppConfig {
             cors_origins = ?self.cors.allowed_origins,
             enable_unsafe_sql_admin = self.features.enable_unsafe_sql_admin,
             enable_web_terminal = self.features.enable_web_terminal,
+            registry_image_prefix = %self.registry.image_prefix,
+            registry_push = self.registry.push,
+            registry_build_timeout_secs = self.registry.build_timeout_secs,
             database_url = "Secret(***)",
             jwt_secret = "Secret(***)",
             "AppConfig loaded from TOML"

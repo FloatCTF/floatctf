@@ -35,6 +35,8 @@ description = "Challenge description" # modify
 
 [flag]
 type = "dynamic"
+# type = "static"
+# value = "flag{{}}"
 
 [docker]
 port = 80

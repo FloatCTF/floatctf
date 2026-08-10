@@ -67,22 +67,25 @@ pub async fn add_challenge(
             // 已存在，直接放进结果
             event_challenges_list.push(existing);
         } else {
-            // 不存在，执行插入
-            let points = {
-                match toml::from_str::<toml::Value>(&challenge.toml_str) {
-                    Ok(value) => value
-                        .get("points")
-                        .and_then(|v| v.as_float())
-                        .unwrap_or(0.0) as f64,
-                    Err(_err) => {
-                        println!("Error parsing TOML: {}", _err);
-                        100 as f64
-                    }
-                }
-            };
+            // 钉住 challenge 的 latest ready revision（§21：Event 固定版本，不随后续发布升级）
+            let revision = crate::modules::challenge::build::revision_repo::find_latest_ready(
+                ctx.db.get_ref(),
+                challenge.id,
+            )
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| {
+                AppError::BadRequest(format!(
+                    "challenge '{}' has no ready revision; import a package first",
+                    challenge.name
+                ))
+            })?;
+
+            let points = 100.0;
             let new_event_challenge = event_challenges::ActiveModel {
                 event_id: Set(event.id),
                 challenge_id: Set(challenge.id),
+                challenge_revision_id: Set(revision.id),
                 points: Set(points),
                 ..Default::default()
             };

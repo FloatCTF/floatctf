@@ -1,24 +1,30 @@
 //! Application service coordinating instance persistence and container lifecycle.
+//!
+//! v2: instances are pinned to an immutable `challenge_revisions` row. Launch
+//! resolves the image pin (RepoDigest > image_id), port and flag semantics from
+//! the revision — never from a mutable `challenges.toml_str`.
 
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use bollard::Docker;
 use chrono::Utc;
-use fcmc::ChallengeMeta;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, ModelTrait};
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, instances, sea_orm_active_enums::InstanceStatus, users},
+    entity::{
+        challenge_revisions, challenges, instances, sea_orm_active_enums::InstanceStatus, users,
+    },
     infrastructure::settings::get_setting,
 };
 
+use crate::modules::challenge::build::revision_repo;
 use crate::modules::event::jeopardy::{
     domain::{CleanupFailure, CleanupReport},
     infrastructure::{
-        container_runtime::{DockerInstanceRuntime, InstanceRuntime},
+        container_runtime::{ChallengeRuntimeSpec, DockerInstanceRuntime, InstanceRuntime},
         instance_repository as repo,
     },
 };
@@ -39,12 +45,14 @@ impl InstanceService {
         Self::new(db, runtime)
     }
 
-    /// Launch a challenge instance for `user_id` (Jeopardy path).
+    /// Launch a challenge instance pinned to `revision_id` for `user_id`.
     ///
-    /// Order: start container (if docker challenge) → insert Running row → schedule auto-destroy.
+    /// Order: ensure pinned image → start container (if docker challenge) →
+    /// insert Running row (with `challenge_revision_id`) → schedule auto-destroy.
     pub async fn launch(
         &self,
         challenge_id: Uuid,
+        revision_id: Uuid,
         identifier: String,
         user_id: Uuid,
         r#ref: String,
@@ -55,30 +63,72 @@ impl InstanceService {
             .await?
             .ok_or_else(|| anyhow!("no such challenge: {}", challenge_id))?;
 
-        let cm = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .context("failed to parse challenge toml_str")?;
+        // 钉住的 Revision 决定一切 runtime 契约（§91：Instance 不得自行查 latest）
+        let revision = challenge_revisions::Entity::find_by_id(revision_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("no such revision: {}", revision_id))?;
+        if revision.challenge_id != challenge_id {
+            return Err(anyhow!(
+                "revision {} does not belong to challenge {}",
+                revision_id,
+                challenge_id
+            ));
+        }
+        if revision.build_status != revision_repo::BUILD_STATUS_READY {
+            return Err(anyhow!(
+                "revision {} is not ready (build_status={})",
+                revision_id,
+                revision.build_status
+            ));
+        }
 
-        let flag = if cm.flag.value.is_empty() {
-            Self::gen_flag(&self.db, flag_prefix).await
-        } else {
-            cm.flag.value.clone()
+        // Flag semantics（explicit tagged union）
+        let flag = match revision.flag_type.as_str() {
+            "dynamic" => Self::gen_flag(&self.db, flag_prefix).await,
+            "static" => revision
+                .static_flag_value
+                .clone()
+                .ok_or_else(|| anyhow!("static revision {} has no flag value", revision_id))?,
+            other => {
+                return Err(anyhow!(
+                    "unknown flag_type '{other}' on revision {revision_id}"
+                ));
+            }
+        };
+
+        // Docker runtime spec（non-docker 题目无容器）
+        let runtime_spec = match revision.container_port {
+            Some(port) => {
+                let pin =
+                    revision_repo::effective_image_ref(&revision).map_err(|e| anyhow!("{e}"))?;
+                Some(ChallengeRuntimeSpec {
+                    image_ref: pin,
+                    container_port: port as u16,
+                    // dynamic → FLAG env；static → 镜像内置，不注入
+                    flag: if revision.flag_type == "dynamic" {
+                        Some(flag.clone())
+                    } else {
+                        None
+                    },
+                    cpu_millis: revision.recommended_cpu_millis,
+                    memory_bytes: revision.recommended_memory_bytes,
+                    pids_limit: revision.recommended_pids_limit,
+                })
+            }
+            None => None,
         };
 
         let node_ip = get_setting(&self.db, "NODE_IP").await?;
         let http_prefix = get_setting(&self.db, "HTTP_PREFIX").await?;
 
-        let content = match &cm.docker {
-            Some(d) => {
-                let port = self.runtime.launch(&cm, &identifier, &flag).await?;
-                match d.is_nc {
-                    Some(true) => format!("nc {} {}", node_ip, port),
-                    _ => {
-                        let url = format!("{}{}:{}", http_prefix, node_ip, port);
-                        format!(
-                            "<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\" download >{url}</a>",
-                        )
-                    }
-                }
+        let content = match &runtime_spec {
+            Some(spec) => {
+                let port = self.runtime.launch(spec, &identifier).await?;
+                let url = format!("{}{}:{}", http_prefix, node_ip, port);
+                format!(
+                    "<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\" download >{url}</a>"
+                )
             }
             None => "".into(),
         };
@@ -94,6 +144,7 @@ impl InstanceService {
             content: Set(content.into()),
             user_id: Set(user_id),
             challenge_id: Set(challenge_id.into()),
+            challenge_revision_id: Set(Some(revision_id.into())),
             r#ref: Set(r#ref),
             destroy_at: Set(destroy_at.clone().into()),
             identifier: Set(identifier),
@@ -198,16 +249,31 @@ impl InstanceService {
         }
     }
 
+    /// Decide whether the instance had a docker runtime from its pinned revision.
     async fn remove_runtime_if_needed(&self, instance: &instances::Model) -> anyhow::Result<()> {
-        let challenge = instance
-            .find_related(challenges::Entity)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow!("challenge not found for instance {}", instance.id))?;
-        let metadata = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .context("failed to parse challenge metadata")?;
+        let is_docker = match instance.challenge_revision_id {
+            Some(rev_id) => {
+                let rev = challenge_revisions::Entity::find_by_id(rev_id)
+                    .one(&self.db)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow!("revision {} not found for instance {}", rev_id, instance.id)
+                    })?;
+                rev.container_port.is_some()
+            }
+            None => {
+                // 历史行：回退到 challenge 最新 ready revision（旧数据迁移路径）
+                let Some(challenge_id) = instance.challenge_id else {
+                    return Ok(());
+                };
+                match revision_repo::find_latest_ready(&self.db, challenge_id).await? {
+                    Some(rev) => rev.container_port.is_some(),
+                    None => false,
+                }
+            }
+        };
 
-        if metadata.docker.is_some() {
+        if is_docker {
             self.runtime.stop_and_remove(&instance.identifier).await?;
         }
         Ok(())

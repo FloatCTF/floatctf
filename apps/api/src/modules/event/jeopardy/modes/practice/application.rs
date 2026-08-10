@@ -97,10 +97,18 @@ impl JeopardyPracticeServices {
             let challenge_id_prefix = common::get_uuid_prefix(&challenge_id);
             format!("JP-{}-{}", user_id_prefix, challenge_id_prefix)
         };
+        // Practice 无 Event pin：钉住 challenge 的 latest ready revision
+        let revision = crate::modules::challenge::build::revision_repo::find_latest_ready(
+            db.get_ref(),
+            challenge_id,
+        )
+        .await?
+        .ok_or_else(|| anyhow!("challenge has no ready revision; import a package first"))?;
         common::launch_instance(
             db,
             docker,
             challenge_id,
+            revision.id,
             identifier,
             user_id,
             policy.instance_ref_label().into(),

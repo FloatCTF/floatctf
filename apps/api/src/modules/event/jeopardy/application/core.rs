@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        event_challenge_solves, event_instances, event_team_members, instances,
+        event_challenge_solves, event_challenges, event_instances, event_team_members, instances,
         sea_orm_active_enums::InstanceStatus,
     },
     modules::event::jeopardy::{
@@ -189,10 +189,23 @@ pub async fn jeopardy_launch(
         }
     };
 
+    // 钉住的 Revision：Event Challenge pin（§21/§91）——Instance 不得自行查 latest
+    let event_challenge = event_challenges::Entity::find()
+        .filter(
+            event_challenges::Column::EventId
+                .eq(event_id)
+                .and(event_challenges::Column::ChallengeId.eq(challenge_id)),
+        )
+        .one(db)
+        .await?
+        .ok_or(anyhow!("challenge is not in this event"))?;
+    let pinned_revision_id = event_challenge.challenge_revision_id;
+
     let res_instance = common::launch_instance(
         &ctx.db,
         &ctx.docker,
         challenge_id,
+        pinned_revision_id,
         identifier,
         user.id,
         ref_label.into(),

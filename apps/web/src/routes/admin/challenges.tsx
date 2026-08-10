@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useReactive } from "ahooks";
+import type { AxiosError } from "axios";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
@@ -37,17 +38,17 @@ function RouteComponent() {
 			sortBy: true,
 		},
 		{
-			accessorKey: "latest_version",
-			header: "Latest Version",
-			field: "latest_version",
+			accessorKey: "version",
+			header: "Version",
+			field: "version",
 			renderCell: (row: ChallengesListItem) => {
 				return (
 					<span>
-						{row.latest_version ?? "—"}{" "}
-						{row.latest_build_status === "ready" ? (
+						{row.version ?? "—"}{" "}
+						{row.build_status === "ready" ? (
 							<CheckIcon />
-						) : row.latest_build_status ? (
-							<span className="text-red-500">{row.latest_build_status}</span>
+						) : row.build_status ? (
+							<span className="text-red-500">{row.build_status}</span>
 						) : null}
 					</span>
 				);
@@ -216,9 +217,13 @@ function ImportButton() {
 			// 3 秒后清理提示
 			setTimeout(() => setMessage(null), 3000);
 		},
-		onError: () => {
-			setMessage({ type: "error", text: "上传失败，请重试" });
-			setTimeout(() => setMessage(null), 3000);
+		onError: (e) => {
+			const msg =
+				(e as AxiosError<{ message: string }>)?.response?.data?.message ||
+				(e as Error).message ||
+				"上传失败，请重试";
+			setMessage({ type: "error", text: msg });
+			setTimeout(() => setMessage(null), 6000);
 		},
 	});
 
@@ -294,19 +299,6 @@ export type BuildChallengeResult = {
 };
 export type ImportChallengeResponse = {
 	challenge: ChallengesListItem;
-	revision: {
-		id: string;
-		challenge_id: string;
-		revision_number: number;
-		version: string;
-		build_status: string;
-		build_error?: string;
-		flag_type: string;
-		container_port?: number;
-		image_ref?: string;
-		image_repo_digest?: string;
-	};
-	already_exists: boolean;
 };
 
 export function CheckButton({

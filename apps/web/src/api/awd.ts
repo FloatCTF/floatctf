@@ -56,27 +56,6 @@ export type AwdGameBox = {
 	health_status: string;
 };
 
-export type GameBoxRevisionSummaryDto = {
-	id: string;
-	version: string;
-	revision_number: number;
-	build_status: string;
-	package_digest: string;
-	image_ref: string | null;
-	image_id: string | null;
-	image_repo_digest: string | null;
-	username: string;
-	recommended_cpu_millis: number;
-	recommended_memory_bytes: number;
-	recommended_pids_limit: number;
-	healthchecks_json: unknown;
-	judge_script_name: string | null;
-	judge_timeout_secs: number | null;
-	judge_retry_interval_secs: number | null;
-	build_error: string | null;
-	created_at: string;
-};
-
 export type GameBoxLibraryDto = {
 	id: string;
 	name: string;
@@ -84,8 +63,9 @@ export type GameBoxLibraryDto = {
 	category: string;
 	description: string;
 	hidden: boolean;
-	latest_revision: GameBoxRevisionSummaryDto | null;
-	// projected from latest_revision for list convenience
+	version: string | null;
+	build_status: string | null;
+	package_digest: string | null;
 	image_ref: string | null;
 	image_repo_digest: string | null;
 	username: string | null;
@@ -93,24 +73,18 @@ export type GameBoxLibraryDto = {
 	memory_bytes: number | null;
 	pids_limit: number | null;
 	healthchecks_json: unknown | null;
-	build_status: string | null;
-	version: string | null;
-	package_digest: string | null;
 };
 
 export type ImportGameBoxResponse = {
 	gamebox: GameBoxLibraryDto;
-	revision: GameBoxRevisionSummaryDto;
-	already_exists: boolean;
 };
 
 export type EventGameBoxDto = {
 	id: string;
 	gamebox_id: string;
-	gamebox_revision_id: string;
 	gamebox_name: string;
 	gamebox_safe_name: string;
-	revision_version: string;
+	gamebox_version: string | null;
 	host_offset: number;
 	enabled: boolean;
 	hidden: boolean;
@@ -446,9 +420,7 @@ export const awdAdminApi = {
 	addEventGamebox: async (
 		eventId: string,
 		body: {
-			gamebox_revision_id?: string;
-			gamebox_id?: string;
-			version?: string;
+			gamebox_id: string;
 			host_offset?: number;
 			hidden?: boolean;
 			break_points?: number;

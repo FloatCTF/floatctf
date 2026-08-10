@@ -29,8 +29,6 @@ export const Route = createFileRoute("/admin/events/jeopardy/$id/")({
 export type EventChallenge = {
 	event_id: string;
 	challenge_id: string;
-	/** 钉住的不可变 ChallengeRevision（后端 event_challenges.challenge_revision_id）。 */
-	challenge_revision_id: string;
 	hidden: boolean;
 	points: number;
 };

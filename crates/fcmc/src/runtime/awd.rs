@@ -215,6 +215,11 @@ impl AwdContainerRuntime for DockerRuntime {
         let mem = spec.memory_bytes.unwrap_or(256 * 1024 * 1024);
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        use super::image::ImageRuntime;
+        ImageRuntime::ensure_image(&rt, &spec.image_ref, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure infra image {}: {e}", spec.image_ref))?;
+
         let handle = rt
             .create_and_start(ContainerSpec {
                 name: spec.container_name.clone(),
@@ -245,6 +250,7 @@ impl AwdContainerRuntime for DockerRuntime {
     }
 
     async fn create_gamebox(&self, spec: GameBoxSpec) -> anyhow::Result<ContainerHandle> {
+        use super::image::ImageRuntime;
         use super::{ContainerRuntime, ContainerSpec, DockerContainerRuntime, ResourceLimits};
 
         let labels = awd_labels(
@@ -257,6 +263,12 @@ impl AwdContainerRuntime for DockerRuntime {
         );
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        // Ensure pinned image is present locally (inspect; pull by digest/tag if missing).
+        // Never rebuild from package — Runtime only uses the immutable pin from Revision.
+        ImageRuntime::ensure_image(&rt, &spec.image_ref, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure gamebox image {}: {e}", spec.image_ref))?;
+
         let handle = rt
             .create_and_start(ContainerSpec {
                 name: spec.container_name.clone(),

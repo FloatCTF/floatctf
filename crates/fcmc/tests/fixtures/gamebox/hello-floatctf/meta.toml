@@ -1,0 +1,27 @@
+name = "hello-floatctf"
+version = "1.0.0"
+author = "your_email"
+category = "web"
+description = "hello floatctf portable GameBox package"
+safe_name = "hello-floatctf"
+
+[gamebox]
+username = "floatctf"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[[gamebox.healthchecks]]
+type = "tcp"
+port = 22
+
+[judge]
+script = "judge/check.py"
+
+[gamebox.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100

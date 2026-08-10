@@ -24,17 +24,16 @@ fn has_level(
 
 const VALID_CHALLENGE: &str = r#"
 name = "test"
+version = "1.0.0"
 author = "test@example.com"
 category = "Web"
 description = "desc"
 
 [flag]
-value = "flag{test}"
-env_var = "FLAG"
+type = "dynamic"
 
 [docker]
-image_tag = "test/challenge:v1"
-port = "80/tcp"
+port = 80
 "#;
 
 const VALID_GAMEBOX: &str = r#"
@@ -82,18 +81,17 @@ fn challenge_with_existing_attachment_passes() {
     std::fs::write(tmp.path().join("attachment/src.zip"), b"zip").unwrap();
     let toml = r#"
 name = "test"
+version = "1.0.0"
 author = "test@example.com"
 category = "Web"
 description = "desc"
 attachment = "attachment/src.zip"
 
 [flag]
-value = "flag{test}"
-env_var = "FLAG"
+type = "dynamic"
 
 [docker]
-image_tag = "test/challenge:v1"
-port = "80/tcp"
+port = 80
 "#;
     write_meta(tmp.path(), toml);
 
@@ -107,18 +105,17 @@ fn challenge_missing_attachment_fails() {
     let tmp = tempfile::TempDir::new().unwrap();
     let toml = r#"
 name = "test"
+version = "1.0.0"
 author = "test@example.com"
 category = "Web"
 description = "desc"
 attachment = "attachment/not-exists.zip"
 
 [flag]
-value = "flag{test}"
-env_var = "FLAG"
+type = "dynamic"
 
 [docker]
-image_tag = "test/challenge:v1"
-port = "80/tcp"
+port = 80
 "#;
     write_meta(tmp.path(), toml);
 
@@ -142,6 +139,106 @@ fn challenge_missing_meta_file_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let err = check_challenge(tmp.path()).unwrap_err();
     assert!(err.to_string().contains("meta.toml"));
+}
+
+#[test]
+fn challenge_docker_port_zero_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = r#"
+name = "test"
+version = "1.0.0"
+author = "test@example.com"
+category = "Web"
+description = "desc"
+
+[flag]
+type = "dynamic"
+
+[docker]
+port = 0
+"#;
+    write_meta(tmp.path(), toml);
+
+    let result = check_challenge(tmp.path()).unwrap();
+    assert!(!result.passed, "port 0 must fail");
+    assert!(has_level(&result, CheckLevel::Err, "解析结果"));
+}
+
+#[test]
+fn challenge_zero_resource_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = r#"
+name = "test"
+version = "1.0.0"
+author = "test@example.com"
+category = "Web"
+description = "desc"
+
+[flag]
+type = "dynamic"
+
+[docker]
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 0
+memory_bytes = 268435456
+pids_limit = 100
+"#;
+    write_meta(tmp.path(), toml);
+
+    let result = check_challenge(tmp.path()).unwrap();
+    assert!(!result.passed, "zero cpu_millis must fail");
+    assert!(has_level(&result, CheckLevel::Err, "解析结果"));
+}
+
+#[test]
+fn challenge_with_resources_reports_ok() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = r#"
+name = "test"
+version = "1.0.0"
+author = "test@example.com"
+category = "Web"
+description = "desc"
+
+[flag]
+type = "dynamic"
+
+[docker]
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 500
+memory_bytes = 268435456
+pids_limit = 100
+"#;
+    write_meta(tmp.path(), toml);
+
+    let result = check_challenge(tmp.path()).unwrap();
+    assert!(result.passed);
+    assert!(has_level(&result, CheckLevel::Ok, "资源配置"));
+}
+
+#[test]
+fn challenge_legacy_image_tag_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let toml = r#"
+name = "test"
+version = "1.0.0"
+author = "test@example.com"
+category = "Web"
+description = "desc"
+image_tag = "x:v1"
+
+[flag]
+type = "dynamic"
+"#;
+    write_meta(tmp.path(), toml);
+
+    let result = check_challenge(tmp.path()).unwrap();
+    assert!(!result.passed, "legacy image_tag must fail");
+    assert!(has_level(&result, CheckLevel::Err, "解析结果"));
 }
 
 // ─── check_gamebox ──────────────────────────────────────────────────

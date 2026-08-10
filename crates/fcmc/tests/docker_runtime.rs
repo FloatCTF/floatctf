@@ -5,8 +5,8 @@
 
 use bollard::Docker;
 use fcmc::{
-    ChallengeMeta, ContainerRuntime, DockerContainerRuntime, GameBoxMeta, NetworkSpec,
-    RecommendedResources,
+    ArtifactKind, ChallengeMeta, ContainerRuntime, DockerContainerRuntime, GameBoxMeta,
+    NetworkSpec, RecommendedResources, build_artifact_image_ref,
 };
 use std::path::Path;
 
@@ -14,20 +14,30 @@ use std::path::Path;
 #[ignore = "requires Docker"]
 async fn docker_create_and_start_challenge() {
     let content = std::fs::read_to_string(Path::new("tests/fixtures/challenge/meta.toml")).unwrap();
-    let cm = ChallengeMeta::from_toml_str(&content).unwrap();
+    let cm = ChallengeMeta::parse_and_validate(&content).unwrap();
     let docker = Docker::connect_with_local_defaults().unwrap();
     let rt = DockerContainerRuntime::new(docker.clone());
+
+    // Image ref is platform-resolved (not in meta): floatctf/challenges/<safe>:<version>.
+    let image_ref = build_artifact_image_ref(
+        ArtifactKind::Challenge,
+        "floatctf",
+        &cm.resolved_safe_name().unwrap(),
+        &cm.version,
+    );
+    let docker_meta = cm.docker.as_ref().unwrap();
 
     let flag = "flag{docker-test}";
     let spec = fcmc::ContainerSpec {
         name: "fcmc-test-challenge".into(),
-        image: cm.docker.as_ref().unwrap().image_tag.clone(),
-        env: vec![format!("{}={}", cm.flag.env_var, flag)],
+        image: image_ref,
+        // v1 fixture is dynamic → platform injects FLAG env.
+        env: vec![format!("FLAG={flag}")],
         labels: Default::default(),
         network_name: None,
         fixed_ip: None,
         port_bindings: vec![fcmc::PortBinding {
-            container_port: cm.docker.as_ref().unwrap().port.clone(),
+            container_port: format!("{}/tcp", docker_meta.port),
             host_ip: Some("0.0.0.0".into()),
             host_port: None,
         }],

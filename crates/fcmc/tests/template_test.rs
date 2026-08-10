@@ -18,23 +18,105 @@ fn challenge_template_generates_files() {
     assert!(dir.join("src").exists());
     assert!(dir.join("src/Dockerfile").exists());
     assert!(dir.join("src/flag").exists());
-    assert!(dir.join("src/flag.sh").exists());
+    assert!(
+        !dir.join("src/flag.sh").exists(),
+        "flag.sh must not be scaffolded"
+    );
     assert!(dir.join("src/entrypoint.sh").exists());
     assert!(dir.join("src/index.php").exists());
     assert!(dir.join("attachment").exists());
 }
 
 #[test]
-fn challenge_template_meta_is_parseable() {
+fn challenge_template_meta_is_v1_and_roundtrips() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
     template::generate_challenge_template("roundtrip-test", output).unwrap();
 
     let meta_path = tmp.path().join("roundtrip-test").join("meta.toml");
-    let content = std::fs::read_to_string(meta_path).unwrap();
-    let meta = ChallengeMeta::from_toml_str(&content).unwrap();
+    let content = std::fs::read_to_string(&meta_path).unwrap();
+
+    // v1 manifest markers
+    assert!(content.contains("version = \"1.0.0\""));
+    assert!(content.contains("[flag]"));
+    assert!(content.contains("type = \"dynamic\""));
+    assert!(content.contains("[docker]"));
+    assert!(content.contains("port = 80"));
+    // no legacy fields
+    assert!(!content.contains("image_tag"));
+    assert!(!content.contains("env_var"));
+    assert!(!content.contains("flag.sh"));
+
+    // parses + validates as a v1 manifest and round-trips
+    let meta = ChallengeMeta::parse_and_validate(&content).unwrap();
     assert_eq!(meta.name, "roundtrip-test");
+    assert_eq!(meta.version, "1.0.0");
+    assert!(matches!(meta.flag, fcmc::ChallengeFlagConfig::Dynamic));
+    let docker = meta.docker.unwrap();
+    assert_eq!(docker.port, 80);
+    let res = docker.recommended_resources.unwrap();
+    assert_eq!(res.cpu_millis, 500);
+    assert_eq!(res.memory_bytes, 268_435_456);
+    assert_eq!(res.pids_limit, 100);
+}
+
+/// The generated entrypoint must write FLAG into the flag file and `unset` it
+/// in the SAME shell before `exec` — otherwise the app process could read the
+/// real flag via getenv / /proc/<pid>/environ.
+///
+/// The real script writes to `/flag` (container root path); a plain non-root
+/// dev shell cannot write there, so we run a tempdir-scoped copy with the
+/// target rewritten to `./flag` — this still exercises the shell-scoping
+/// contract (write before unset before exec).
+#[cfg(unix)]
+#[test]
+fn entrypoint_script_flag_contract() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    template::generate_challenge_template("envtest", tmp.path().to_str().unwrap()).unwrap();
+    let src = tmp.path().join("envtest/src");
+
+    let script = std::fs::read_to_string(src.join("entrypoint.sh")).unwrap();
+    let scoped = script.replace("> /flag", "> ./flag");
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("entrypoint.sh"), scoped).unwrap();
+    std::fs::write(dir.path().join("flag"), "flag{dynamic_placeholder}\n").unwrap();
+
+    let out = std::process::Command::new("sh")
+        .arg("entrypoint.sh")
+        .arg("env")
+        .current_dir(dir.path())
+        .env("FLAG", "flag{secret-secret}")
+        .output()
+        .expect("sh must be available (linux dev)");
+
+    assert!(out.status.success(), "entrypoint.sh must exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        !stdout.contains("flag{secret-secret}"),
+        "FLAG leaked into exec'd process env:\n{stdout}"
+    );
+
+    let flag = std::fs::read_to_string(dir.path().join("flag")).unwrap();
+    assert_eq!(
+        flag, "flag{secret-secret}\n",
+        "flag write must have happened in the same shell before exec"
+    );
+}
+
+/// Verbatim contract markers in the generated script: write to `/flag`, then
+/// `unset FLAG`, then `exec "$@"` — in order, one shell, no subshell helper.
+#[test]
+fn entrypoint_script_contract_markers() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    template::generate_challenge_template("markers", tmp.path().to_str().unwrap()).unwrap();
+    let script = std::fs::read_to_string(tmp.path().join("markers/src/entrypoint.sh")).unwrap();
+
+    let write_pos = script.find("> /flag").expect("script must write to /flag");
+    let unset_pos = script.find("unset FLAG").expect("script must unset FLAG");
+    let exec_pos = script.find("exec \"$@\"").expect("script must exec $@");
+    assert!(write_pos < unset_pos && unset_pos < exec_pos);
+    assert!(!script.contains("flag.sh"), "no legacy flag.sh helper");
 }
 
 #[test]

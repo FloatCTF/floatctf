@@ -60,7 +60,7 @@ function RouteComponent() {
             "AWD 跨层封禁（WG 挂起 + 防火墙 banned set + 连接清理）\n封禁时长（秒），留空为永久封禁；\n例如：3600 = 1 小时后自动解封",
         );
         if (input === null) return; // 取消
-        const n = parseInt(input, 10);
+        const n = Number.parseInt(input, 10);
         bannedEventTeam.mutate({
             eventId: id,
             teamId,

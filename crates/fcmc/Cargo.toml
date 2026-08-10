@@ -1,6 +1,6 @@
 [package]
 name = "fcmc"
-version = "0.9.4"
+version = "1.0.0"
 edition.workspace = true
 description = "A CLI tool to check whether CTF challenge meta.toml configs are valid, and optionally test Docker setup"
 license = "MIT"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,14 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 
 API_DIR = PROJECT_ROOT / "apps" / "api"
 ENTITY_DIR = API_DIR / "src" / "entity"
+
+# Infrastructure metadata tables managed outside the domain model.
+# Never generate SeaORM entities / Web types for these.
+# sea-orm-cli default also ignores seaql_migrations; keep both explicit.
+EXCLUDED_TABLES = (
+    "schema_migrations",
+    "seaql_migrations",
+)
 
 
 # ==============================================================================
@@ -199,6 +208,8 @@ def generate_entities(database_url: str) -> None:
 
     ENTITY_DIR.mkdir(parents=True, exist_ok=True)
 
+    ignore_tables = ",".join(EXCLUDED_TABLES)
+
     command = [
         sea_orm_cli,
         "generate",
@@ -211,6 +222,9 @@ def generate_entities(database_url: str) -> None:
         "both",
         "--enum-extra-attributes",
         'serde(rename_all = "snake_case")',
+        # Official filter: infrastructure metadata is not a domain entity.
+        "--ignore-tables",
+        ignore_tables,
     ]
 
     print("=" * 96)
@@ -222,8 +236,11 @@ def generate_entities(database_url: str) -> None:
         "  sea-orm-cli generate entity "
         "-o src/entity "
         "--with-serde both "
-        '--enum-extra-attributes \'serde(rename_all = "snake_case")\''
+        '--enum-extra-attributes \'serde(rename_all = "snake_case")\' '
+        f"--ignore-tables {ignore_tables}"
     )
+    print()
+    print(f"Excluded tables: {', '.join(EXCLUDED_TABLES)}")
     print()
 
     try:
@@ -238,6 +255,8 @@ def generate_entities(database_url: str) -> None:
             f"sea-orm-cli failed with exit code {exc.returncode}",
             exc.returncode,
         )
+
+    assert_excluded_entities_absent()
 
 
 # ==============================================================================
@@ -286,15 +305,65 @@ def postprocess_ip_columns() -> None:
             out.append(line)
         text = "".join(out)
         if "IpNetwork" in text and "use ipnetwork::IpNetwork" not in text:
-            # 在 use 段末尾（第一个空行前）补 import
+            # Deterministic import placement to keep db:gen:rs idempotent:
+            # after last `use super::...`, else before the first other `use`.
             lines = text.splitlines(keepends=True)
-            insert_at = 0
+            last_super: int | None = None
+            first_use: int | None = None
             for i, ln in enumerate(lines):
-                if ln.startswith("use ") and not ln.startswith("use super"):
-                    insert_at = i + 1
+                if not ln.startswith("use "):
+                    continue
+                if first_use is None:
+                    first_use = i
+                if ln.startswith("use super::"):
+                    last_super = i
+            if last_super is not None:
+                insert_at = last_super + 1
+            elif first_use is not None:
+                insert_at = first_use
+            else:
+                insert_at = 0
             lines.insert(insert_at, "use ipnetwork::IpNetwork;\n")
             text = "".join(lines)
         entity_file.write_text(text, encoding="utf-8")
+
+
+def assert_excluded_entities_absent() -> None:
+    """
+    Fail hard if an infrastructure metadata table leaked into entity output.
+    """
+
+    leaked: list[str] = []
+
+    for table in EXCLUDED_TABLES:
+        entity_file = ENTITY_DIR / f"{table}.rs"
+        if entity_file.exists():
+            leaked.append(str(entity_file))
+
+        mod_rs = ENTITY_DIR / "mod.rs"
+        if mod_rs.is_file():
+            mod_text = mod_rs.read_text(encoding="utf-8")
+            if re_search_mod(table, mod_text):
+                leaked.append(f"{mod_rs} mentions {table}")
+
+        prelude_rs = ENTITY_DIR / "prelude.rs"
+        if prelude_rs.is_file():
+            prelude_text = prelude_rs.read_text(encoding="utf-8")
+            if table in prelude_text:
+                leaked.append(f"{prelude_rs} mentions {table}")
+
+    if leaked:
+        details = "\n  - ".join(leaked)
+        die(
+            "excluded infrastructure table leaked into SeaORM entities:\n"
+            f"  - {details}\n\n"
+            f"EXCLUDED_TABLES = {list(EXCLUDED_TABLES)}"
+        )
+
+
+def re_search_mod(table: str, mod_text: str) -> bool:
+    # Match `pub mod schema_migrations;` / `schema_migrations::Entity` only.
+    return re.search(rf"\b{re.escape(table)}\b", mod_text) is not None
 
 # ==============================================================================
 # Main

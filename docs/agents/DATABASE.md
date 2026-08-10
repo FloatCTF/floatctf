@@ -130,11 +130,17 @@ mise run db:gen   # = db:gen:rs（Rust 实体）+ db:gen:ts（Web TS 类型）
 - 数据库运行中且含最新 Schema（apply 之后）
 - **sea-orm-cli 必须为 1.1.20**（`cargo install sea-orm-cli --version 1.1.20 --locked`）
   - 2.0.1 生成的 `rs_type = "Enum"` 与运行时 1.1.20 不兼容 → 全项目编译失败（E0425）
-- 生成脚本会**删除并重建** `apps/api/src/entity/`，所以**不要手改实体文件**；`apps/web/src/entity/*.ts` 同样会被覆盖（如 settings.ts 曾有手加字段被冲掉——先 `git stash`/记录再重新生成）
+- 生成脚本会**删除并重建** `apps/api/src/entity/` 与 `apps/web/src/entity/`，所以**不要手改生成文件**
+
+边界约定：
+- `public.schema_migrations` 是 migration 基础设施表，**不是**领域实体；`scripts/gen_entities.py` 通过 sea-orm-cli `--ignore-tables`（`EXCLUDED_TABLES`）排除，不得进入 Rust/Web entity
+- `apps/web/src/entity/*` 只表示 **DB 列**；API 计算字段（如 settings 的 `resolved_value`）放在 manual DTO（`apps/web/src/api/admin/settings.ts` 的 `SettingsDto`），**不要**写回生成文件
+- `db:gen` 必须可重复、确定性、不需要 `git restore`
 
 生成后检查：
-- `git diff apps/api/src/entity/` 确认新列/新表出现、无关表未被误改
+- `git diff apps/api/src/entity/ apps/web/src/entity/` 确认新列/新表出现、无关表未被误改
 - `cargo check -p floatctf` 确认代码与实体一致
+- 理想情况下二次 `mise run db:gen` 后 working tree 仍干净
 
 ### 6. 验证
 

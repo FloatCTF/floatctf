@@ -29,10 +29,16 @@ fn cli_check_with_path() {
 fn cli_build_default() {
     let args = Args::try_parse_from(["fcmc", "build"]).unwrap();
     match args.command {
-        Commands::Build { path, format, tag } => {
+        Commands::Build {
+            path,
+            format,
+            tag,
+            proxy,
+        } => {
             assert!(path.is_none());
             assert_eq!(format, GenFormat::Challenge);
             assert!(tag.is_none());
+            assert!(proxy.is_none());
         }
         _ => panic!("expected Build command"),
     }

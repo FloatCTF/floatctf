@@ -44,6 +44,11 @@ pub enum Commands {
         /// Challenge 默认 <prefix>/challenges/<safe_name>:<version>。
         #[arg(short = 't', long = "tag")]
         tag: Option<String>,
+        /// 构建代理 [ip:]port（缺省 ip 用 host.docker.internal）。设置后注入
+        /// --add-host=host.docker.internal:host-gateway 与 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY；
+        /// 未设置则不注入。
+        #[arg(long)]
+        proxy: Option<String>,
     },
     /// 生成新的题目模板
     Gen {

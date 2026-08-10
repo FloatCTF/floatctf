@@ -297,6 +297,7 @@ pub async fn import_challenge_package(
         labels,
         timeout: Duration::from_secs(registry.build_timeout_secs),
         verbose: false,
+        build_proxy: None,
     };
 
     let build_outcome = run_build_and_pin(&runtime, registry, &build_req, &image_ref, &temp_tag)

@@ -98,6 +98,7 @@ impl DockerContainerRuntime {
             labels: Default::default(),
             timeout: Duration::from_secs(600),
             verbose: false,
+            build_proxy: None,
         };
         ImageRuntime::build_image(self, req)
             .await
@@ -276,6 +277,15 @@ impl ContainerRuntime for DockerContainerRuntime {
                 .unwrap_or_default(),
             created_at: info.created,
             published_ports,
+            // bollard 0.19：IP 位于 NetworkSettings.Networks[].ip_address（顶层字段已废弃）。
+            ip_address: info
+                .network_settings
+                .as_ref()
+                .and_then(|n| n.networks.as_ref())
+                .and_then(|nets| {
+                    nets.iter()
+                        .find_map(|(_, ep)| ep.ip_address.clone().filter(|ip| !ip.is_empty()))
+                }),
         })
     }
 

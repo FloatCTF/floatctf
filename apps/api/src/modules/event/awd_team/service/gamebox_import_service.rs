@@ -259,6 +259,7 @@ pub async fn import_gamebox_package(
         labels,
         timeout: Duration::from_secs(registry.build_timeout_secs),
         verbose: false,
+        build_proxy: None,
     };
 
     let build_outcome =

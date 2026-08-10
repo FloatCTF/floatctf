@@ -22,7 +22,9 @@ pub const DEFAULT_CLI_REGISTRY_PREFIX: &str = "floatctf";
 ///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
 ///
 /// Only `src/` is the build context — `meta.toml` and `attachment/` are excluded.
-pub async fn build_challenge(dir: &Path, tag: Option<&str>) -> Result<()> {
+///
+/// `proxy` accepts `[ip:]port`（缺省 ip 用 `host.docker.internal`）；`None` 时不注入代理。
+pub async fn build_challenge(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -> Result<()> {
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
@@ -58,7 +60,11 @@ pub async fn build_challenge(dir: &Path, tag: Option<&str>) -> Result<()> {
     println!("[fcmc] 开始构建挑战镜像");
     println!("  context: {:?}", src_dir);
     println!("  target : {}", image_tag);
-    let req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
+    let mut req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
+    if let Some(proxy) = resolve_build_proxy(proxy) {
+        println!("  proxy  : {}", proxy);
+        req = req.with_proxy(proxy);
+    }
     let result = ImageRuntime::build_image(&rt, req)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -85,7 +91,9 @@ pub async fn build_challenge(dir: &Path, tag: Option<&str>) -> Result<()> {
 ///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
 ///
 /// Platform/API imports must always supply an explicit tag from platform config.
-pub async fn build_gamebox(dir: &Path, tag: Option<&str>) -> Result<()> {
+///
+/// `proxy` accepts `[ip:]port`（缺省 ip 用 `host.docker.internal`）；`None` 时不注入代理。
+pub async fn build_gamebox(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -> Result<()> {
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
@@ -118,7 +126,11 @@ pub async fn build_gamebox(dir: &Path, tag: Option<&str>) -> Result<()> {
     println!("[fcmc] 开始构建 GameBox 镜像");
     println!("  context: {:?}", src_dir);
     println!("  target : {}", image_tag);
-    let req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
+    let mut req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
+    if let Some(proxy) = resolve_build_proxy(proxy) {
+        println!("  proxy  : {}", proxy);
+        req = req.with_proxy(proxy);
+    }
     let result = ImageRuntime::build_image(&rt, req)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -135,4 +147,15 @@ pub async fn build_gamebox(dir: &Path, tag: Option<&str>) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Resolve the CLI `--proxy [ip:]port` argument: without an ip, default to
+/// `host.docker.internal`. Returns `None` when the flag is absent.
+fn resolve_build_proxy(proxy: Option<&str>) -> Option<String> {
+    let p = proxy.map(str::trim).filter(|p| !p.is_empty())?;
+    Some(if p.contains(':') {
+        p.to_string()
+    } else {
+        format!("host.docker.internal:{p}")
+    })
 }

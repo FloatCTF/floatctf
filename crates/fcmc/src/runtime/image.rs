@@ -29,6 +29,10 @@ pub struct ImageBuildRequest {
     /// Stream the Docker daemon build log to stdout (CLI 交互用；平台/API 导入保持 false，
     /// 仅走 tracing，避免把构建日志灌进服务端 stdout)。
     pub verbose: bool,
+    /// 可选构建代理（已解析为 `host:port`，如 `host.docker.internal:7890`）。
+    /// 设置后给 docker build 注入 `--add-host=host.docker.internal:host-gateway` 与
+    /// `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` build args；`None` 则不注入。
+    pub build_proxy: Option<String>,
 }
 
 impl ImageBuildRequest {
@@ -40,12 +44,19 @@ impl ImageBuildRequest {
             labels: HashMap::new(),
             timeout: Duration::from_secs(600),
             verbose: false,
+            build_proxy: None,
         }
     }
 
     /// Enable streaming the Docker build log to stdout.
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
+        self
+    }
+
+    /// Set a build proxy (`host:port`) for docker build (add-host + HTTP(S)/ALL proxy args).
+    pub fn with_proxy(mut self, proxy: impl Into<String>) -> Self {
+        self.build_proxy = Some(proxy.into());
         self
     }
 }
@@ -250,6 +261,17 @@ impl ImageRuntime for DockerContainerRuntime {
 
         if !req.labels.is_empty() {
             builder = builder.labels(&req.labels);
+        }
+
+        // --proxy：注入 host-gateway 与 HTTP(S)/ALL_PROXY build args（供 apt/curl 等走代理）。
+        if let Some(ref proxy) = req.build_proxy {
+            builder = builder.extrahosts("host.docker.internal:host-gateway");
+            let build_args = HashMap::from([
+                ("HTTP_PROXY".to_string(), format!("http://{proxy}")),
+                ("HTTPS_PROXY".to_string(), format!("http://{proxy}")),
+                ("ALL_PROXY".to_string(), format!("socks5://{proxy}")),
+            ]);
+            builder = builder.buildargs(&build_args);
         }
         let options = builder.build();
 

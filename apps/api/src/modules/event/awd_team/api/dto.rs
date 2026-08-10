@@ -318,6 +318,8 @@ pub struct GameBoxResponse {
     pub id: Uuid,
     pub team_id: Uuid,
     pub event_gamebox_id: Uuid,
+    /// GameBox 身份名（从 EventGameBox → GameBox identity 批量解析）。
+    pub gamebox_name: String,
     pub status: String,
     pub gamebox_ip: String,
     pub container_name: String,

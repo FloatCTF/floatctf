@@ -38,12 +38,39 @@ pub async fn get_my_gameboxes(
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
+    // 批量解析 EventGameBox → GameBox 身份名（对应 Jeopardy 的 Challenge 列）。
+    use crate::entity::{awd_event_gameboxes, gameboxes};
+    use sea_orm::QueryFilter;
+    use std::collections::HashMap;
+    let eg_list = awd_event_gameboxes::Entity::find()
+        .filter(awd_event_gameboxes::Column::EventId.eq(event_id))
+        .all(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let eg_map: HashMap<Uuid, Uuid> = eg_list.iter().map(|e| (e.id, e.gamebox_id)).collect();
+    let gb_ids: Vec<Uuid> = eg_map.values().copied().collect();
+    let gb_list = if gb_ids.is_empty() {
+        vec![]
+    } else {
+        gameboxes::Entity::find()
+            .filter(gameboxes::Column::Id.is_in(gb_ids))
+            .all(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+    };
+    let name_map: HashMap<Uuid, String> = gb_list.iter().map(|g| (g.id, g.name.clone())).collect();
+
     let response: Vec<GameBoxResponse> = instances
         .into_iter()
         .map(|i| GameBoxResponse {
             id: i.id,
             team_id: i.team_id,
             event_gamebox_id: i.event_gamebox_id,
+            gamebox_name: eg_map
+                .get(&i.event_gamebox_id)
+                .and_then(|gbid| name_map.get(gbid))
+                .cloned()
+                .unwrap_or_default(),
             status: format!("{:?}", i.status).to_lowercase(),
             gamebox_ip: i.gamebox_ip.ip().to_string(),
             container_name: i.container_name,

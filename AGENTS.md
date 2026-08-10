@@ -6,6 +6,10 @@
 
 基于 Rust（Actix Web + SeaORM + PostgreSQL + RustFS）与 React 的 CTF 实训/竞赛平台（Jeopardy + AWD 双赛制），monorepo 结构：`apps/api`（后端）、`apps/web`（前端）、`crates/`（共享与独立服务）。
 
+## HANDOFF.md（会话交接记忆）
+
+若项目根目录存在 `HANDOFF.md`，说明上一会话/开发者留下了交接记忆：**先完整读取并记住其中的内容（上下文、决策、未完成事项、约束），再开始任何任务**；工作过程中若有新增的关键决策/进展，也及时同步写回该文件，供下次会话延续。该文件是开发者私有的会话记忆，已被 gitignore，不会提交共享。
+
 ## 必读文档
 
 | 文档 | 用途 |

@@ -8,6 +8,7 @@ dist/
 /app
 /tmp
 /chore
+/HANDOFF.md
 /var
 /.codegraph/
 # migrate.sh 的 flock 锁文件（临时）

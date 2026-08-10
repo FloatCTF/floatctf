@@ -22,10 +22,10 @@
 
 严格按 [DATABASE.md](./DATABASE.md)：
 
-1. `mise run db:migration:new <feature-name>` 生成时间戳迁移文件
+1. `mise run db:migration:new <feature-name>` 生成时间戳迁移文件（文件内**不要**写 BEGIN/COMMIT，事务由 migrate.sh 管理）
 2. 写幂等 SQL（`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`），**补中文 `COMMENT ON TABLE/COLUMN`**（注释是硬性要求，管理员后台依赖它）
-3. `mise run db:migration:merge` 重新生成 merged.sql
-4. 应用到开发库（见 DATABASE.md 第 3 步）
+3. `mise run db:migration:validate` 校验 → `mise run db:migration:apply` 应用到开发库（开发库已 baseline；每次迁移独立事务 + schema_migrations 记录）
+4. `mise run db:migration:merge` 重新生成 merged.sql（fresh DB bootstrap 用）
 5. `mise run db:gen` 重新生成 Rust 实体 + TS 类型（前提：sea-orm-cli 为 1.1.20）
 
 > 新表才需要建 entity；新列会自动进入已生成实体。**改完 Schema 后必须 `db:gen`，否则编译或运行时三处不一致。**

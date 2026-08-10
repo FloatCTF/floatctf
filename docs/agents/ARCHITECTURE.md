@@ -156,8 +156,9 @@ POST /api/events/{id}/challenges/{cid}/submit
 mise run install                  # 安装依赖
 mise run infra:up / down / logs   # 基础设施（Postgres/RustFS/Nginx）
 mise run dev:api / dev:web / dev  # 启动开发服务
-mise run db:migration:new <名称>  # 新建 SQL 迁移
-mise run db:migration:merge       # 重新生成 merged.sql
+mise run db:migration:new <名称>  # 新建 SQL 迁移（文件内无 BEGIN/COMMIT）
+mise run db:migration:apply       # 应用未执行迁移（开发库已 baseline）
+mise run db:migration:merge       # 合并迁移 → merged.sql（fresh DB bootstrap）
 mise run db:gen                   # 从 DB 重新生成 Rust 实体 + TS 类型
 mise run fmt / lint / test / check / build
 ```

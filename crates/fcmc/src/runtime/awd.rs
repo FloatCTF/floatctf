@@ -274,8 +274,8 @@ impl AwdContainerRuntime for DockerRuntime {
                 name: spec.container_name.clone(),
                 image: spec.image_ref,
                 env: vec![
-                    format!("CTF_USER={}", spec.username),
-                    format!("CTF_PASSWORD={}", spec.password),
+                    format!("GAMEBOX_USERNAME={}", spec.username),
+                    format!("GAMEBOX_USERPASS={}", spec.password),
                 ],
                 labels,
                 network_name: Some(spec.network_name),

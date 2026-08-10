@@ -104,6 +104,8 @@ pub struct ContainerState {
     pub created_at: Option<String>,
     /// Published host ports: container_port -> host_port
     pub published_ports: HashMap<String, u16>,
+    /// Container IP on its Docker network (default bridge when no custom network).
+    pub ip_address: Option<String>,
 }
 
 /// Filter for listing containers.

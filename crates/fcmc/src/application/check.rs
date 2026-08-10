@@ -459,3 +459,125 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
 
     Ok(())
 }
+
+/// Runtime check for a GameBox: start a test container and print the SSH
+/// credentials (docker IP + user + password) so the user can connect and test.
+/// Keeps the container alive until Enter (or Ctrl+C), then stops and removes it.
+///
+/// Image ref is derived via `build_artifact_image_ref(GameBox, "floatctf", …)`;
+/// SSH credentials are passed as `GAMEBOX_USERNAME` / `GAMEBOX_USERPASS` env
+/// (the entrypoint contract from examples/test_g).
+pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
+    use crate::runtime::{
+        ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,
+        ResourceLimits,
+    };
+    use bollard::Docker;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let meta_path = dir.join("meta.toml");
+    let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
+    let cfg = GameBoxMeta::parse_and_validate(&content).context("Invalid gamebox meta.toml")?;
+
+    let safe_name = cfg
+        .resolved_safe_name()
+        .context("Cannot resolve safe_name for runtime image ref")?;
+    let image_ref =
+        build_artifact_image_ref(ArtifactKind::GameBox, "floatctf", &safe_name, &cfg.version);
+
+    let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
+
+    let rt = DockerContainerRuntime::new(docker.clone());
+    let container_name = format!("fcmc_check_gb_{safe_name}");
+
+    // 本地缺镜像时自动拉取。
+    rt.ensure_image(&image_ref, None).await?;
+
+    // 测试凭据：username 来自 meta.toml [gamebox]，密码随机生成并打印给用户。
+    let username = cfg.gamebox.username.clone();
+    let password = {
+        let u = uuid::Uuid::new_v4().simple().to_string();
+        format!("Fc{}", &u[..12])
+    };
+
+    let handle = rt
+        .create_and_start(ContainerSpec {
+            name: container_name.clone(),
+            image: image_ref,
+            env: vec![
+                format!("GAMEBOX_USERNAME={username}"),
+                format!("GAMEBOX_USERPASS={password}"),
+            ],
+            labels: Default::default(),
+            network_name: None,
+            fixed_ip: None,
+            port_bindings: vec![
+                PortBinding {
+                    container_port: "80/tcp".into(),
+                    host_ip: Some("0.0.0.0".into()),
+                    host_port: None,
+                },
+                PortBinding {
+                    container_port: "22/tcp".into(),
+                    host_ip: Some("0.0.0.0".into()),
+                    host_port: None,
+                },
+            ],
+            auto_remove: true,
+            resources: ResourceLimits::default(),
+            network_mode: None,
+            healthcheck: None,
+        })
+        .await?;
+
+    // Wait briefly for sshd/apache to come up.
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+    let state = rt.inspect_container(&handle.container_id).await?;
+    if !state.running {
+        anyhow::bail!("Container {} is not running", container_name);
+    }
+
+    // 输出 Docker IP + SSH 凭据，保持容器存活直到用户测试完成。
+    let ip = state
+        .ip_address
+        .clone()
+        .unwrap_or_else(|| "<unknown>".into());
+    println!(
+        "\n  {} 容器已启动: {} ({})",
+        "OK".green(),
+        state.container_name,
+        state.container_id
+    );
+    println!("  {} Docker IP: {}", "OK".green(), ip);
+    println!("  {} SSH 用户: {}", "OK".green(), username);
+    println!("  {} SSH 密码: {}", "OK".green(), password);
+    println!("  {} SSH 连接: ssh {}@{}", "OK".green(), username, ip);
+    let mut ports: Vec<(&String, &u16)> = state.published_ports.iter().collect();
+    ports.sort();
+    for (container_port, host_port) in ports {
+        println!(
+            "  {} 端口映射: 127.0.0.1:{} -> 容器内 {}",
+            "OK".green(),
+            host_port,
+            container_port
+        );
+    }
+    println!("\n  测试完成后按 {} 停止并删除容器 …\n", "Enter".bold());
+
+    // 等待 Enter 或 Ctrl+C（两者都走同一清理路径）。
+    let mut line = String::new();
+    let mut stdin = BufReader::new(tokio::io::stdin());
+    tokio::select! {
+        _ = stdin.read_line(&mut line) => {}
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n  收到 Ctrl+C，停止并删除容器 …");
+        }
+    }
+
+    rt.stop_and_remove(&handle.container_id, std::time::Duration::from_secs(5))
+        .await?;
+    println!("  {} 容器已停止并删除", "OK".green());
+
+    Ok(())
+}

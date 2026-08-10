@@ -105,8 +105,8 @@ async fn docker_gamebox_create_and_start() {
         name: "fcmc-test-gamebox".into(),
         image: image_ref,
         env: vec![
-            format!("CTF_USER={}", meta.gamebox.username),
-            "CTF_PASSWORD=testpass".into(),
+            format!("GAMEBOX_USERNAME={}", meta.gamebox.username),
+            "GAMEBOX_USERPASS=testpass".into(),
         ],
         labels: fcmc::awd_labels(
             uuid::Uuid::new_v4(),

@@ -179,17 +179,102 @@ pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
 
     write_judge_check_py(&gamebox_dir.join("judge"))?;
 
-    // Dockerfile
+    // Dockerfile — 自包含：php:8.2-apache + openssh-server，SSH 凭据来自 env 契约
+    // (GAMEBOX_USERNAME / GAMEBOX_USERPASS，对齐 examples/test_g)。
     fs::write(
         src_dir.join("Dockerfile"),
-        r#"FROM floatctf/awd-base:gamebox-web_v1.0.0
+        r#"FROM php:8.2-apache-bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd \
+    && printf '%s\n' \
+        'PasswordAuthentication yes' \
+        'PermitRootLogin no' \
+        > /etc/ssh/sshd_config.d/floatctf.conf
 
 COPY index.php /var/www/html/index.php
+COPY entrypoint.sh /entrypoint.sh
 
-RUN chown -R floatctf:floatctf /var/www/html
+RUN chmod 0755 /entrypoint.sh
+
+WORKDIR /var/www/html
+
+EXPOSE 22 80
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["apache2-foreground"]
 "#,
     )
     .context("Failed to write Dockerfile")?;
+
+    // entrypoint.sh — GameBox 运行时契约：GAMEBOX_USERNAME / GAMEBOX_USERPASS
+    fs::write(
+        src_dir.join("entrypoint.sh"),
+        r#"#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# --------------------------------------------------
+# FloatCTF GameBox Runtime Contract
+# --------------------------------------------------
+
+: "${GAMEBOX_USERNAME:?GAMEBOX_USERNAME is required}"
+: "${GAMEBOX_USERPASS:?GAMEBOX_USERPASS is required}"
+
+# username 必须是普通 Linux 用户名。
+if [[ ! "$GAMEBOX_USERNAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    echo "[FloatCTF] invalid GAMEBOX_USERNAME" >&2
+    exit 1
+fi
+
+# --------------------------------------------------
+# Initialize SSH
+# --------------------------------------------------
+
+mkdir -p /run/sshd
+
+# 首次启动容器时生成 SSH host keys。
+ssh-keygen -A >/dev/null 2>&1
+
+# 如果用户不存在则创建。
+if ! id "$GAMEBOX_USERNAME" >/dev/null 2>&1; then
+    useradd \
+        --create-home \
+        --shell /bin/bash \
+        "$GAMEBOX_USERNAME"
+fi
+
+# 设置 GameBox 登录密码。
+printf '%s:%s\n' \
+    "$GAMEBOX_USERNAME" \
+    "$GAMEBOX_USERPASS" \
+    | chpasswd
+
+# --------------------------------------------------
+# Remove credentials from child process environment
+# --------------------------------------------------
+
+unset GAMEBOX_USERPASS
+unset GAMEBOX_USERNAME
+
+# --------------------------------------------------
+# Start SSH
+# --------------------------------------------------
+
+/usr/sbin/sshd
+
+# --------------------------------------------------
+# Start challenge service
+# --------------------------------------------------
+
+exec "$@"
+"#,
+    )
+    .context("Failed to write entrypoint.sh")?;
 
     // index.php
     fs::write(
@@ -277,14 +362,14 @@ pids_limit = 100
 set -e
 
 # 1. 动态同步账户 (根据 Bollard 传来的 ENV)
-USERNAME=${CTF_USER:-"floatctf"}
+USERNAME=${GAMEBOX_USERNAME:-"floatctf"}
 if [ "$USERNAME" != "floatctf" ]; then
     usermod -l "$USERNAME" floatctf || useradd -m -s /bin/bash "$USERNAME"
 fi
 
 # 2. 设置密码
-if [ -n "$CTF_PASSWORD" ]; then
-    echo "$USERNAME:$CTF_PASSWORD" | chpasswd
+if [ -n "$GAMEBOX_USERPASS" ]; then
+    echo "$USERNAME:$GAMEBOX_USERPASS" | chpasswd
 fi
 
 # 3. 权限修正 (AWD 灵魂操作)

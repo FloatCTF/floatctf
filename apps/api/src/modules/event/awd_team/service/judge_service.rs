@@ -257,17 +257,17 @@ pub async fn dispatch_batch(
         })?;
 
         let script_content = resolved
-            .revision
+            .gamebox
             .judge_script_content
             .as_deref()
             .filter(|content| !content.trim().is_empty())
             .ok_or_else(|| {
                 AwdError::Validation(format!(
-                    "Revision {} has no judge script content",
-                    resolved.revision.id
+                    "GameBox {} has no judge script content",
+                    resolved.gamebox.name
                 ))
             })?;
-        let script_args_json = serialize_script_args(resolved.revision.judge_args_json.as_ref())?;
+        let script_args_json = serialize_script_args(resolved.gamebox.judge_args_json.as_ref())?;
         let timeout_secs = resolved
             .effective_judge_timeout_secs
             .unwrap_or(awd_event.judge_default_timeout_secs);

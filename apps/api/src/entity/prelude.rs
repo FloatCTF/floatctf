@@ -39,7 +39,6 @@ pub use super::event_teams::Entity as EventTeams;
 pub use super::event_users::Entity as EventUsers;
 pub use super::event_writeup::Entity as EventWriteup;
 pub use super::events::Entity as Events;
-pub use super::gamebox_revisions::Entity as GameboxRevisions;
 pub use super::gameboxes::Entity as Gameboxes;
 pub use super::instances::Entity as Instances;
 pub use super::logs::Entity as Logs;

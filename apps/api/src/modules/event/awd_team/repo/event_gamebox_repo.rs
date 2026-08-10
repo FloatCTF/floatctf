@@ -1,8 +1,8 @@
-//! EventGameBox repository — 某场 AWD 赛事选择的 GameBox Revision + 赛事计分配置。
+//! EventGameBox repository — 某场 AWD 赛事选择的 GameBox + 赛事计分配置。
 //!
 //! 关键不变式（§11/§12/§13）：
 //!   - Event 内一个 GameBox 只能有一个选择（UNIQUE(event_id, gamebox_id)）
-//!   - pin 具体 revision（gamebox_revision_id），禁止存 latest
+//!   - 单版本：运行时配置跟随全局 GameBox，赛事选择时复制默认值后可再覆盖
 //!   - host_offset 决定 instance_ip = team.gamebox_subnet + host_offset，部署后禁改
 //!   - 计分属于 Event × GameBox（break_points 等），与全局 GameBox 无关
 
@@ -12,7 +12,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::entity::{awd_event_gameboxes, gamebox_revisions, gameboxes};
+use crate::entity::{awd_event_gameboxes, gameboxes};
 
 pub async fn find_event_gameboxes_by_event(
     db: &DatabaseConnection,
@@ -45,16 +45,6 @@ pub async fn find_event_gamebox(
         .await
 }
 
-/// 获取 EventGameBox 的 pin Revision（§35：具体 UUID，不可变）。
-pub async fn find_pinned_revision(
-    db: &DatabaseConnection,
-    event_gamebox: &awd_event_gameboxes::Model,
-) -> Result<Option<gamebox_revisions::Model>, sea_orm::DbErr> {
-    gamebox_revisions::Entity::find_by_id(event_gamebox.gamebox_revision_id)
-        .one(db)
-        .await
-}
-
 /// 获取 EventGameBox 关联的全局 GameBox identity（显示名等）。
 pub async fn find_gamebox_identity(
     db: &DatabaseConnection,
@@ -63,10 +53,9 @@ pub async fn find_gamebox_identity(
     gameboxes::Entity::find_by_id(gamebox_id).one(db).await
 }
 
-/// EventGameBox + pin Revision + GameBox identity 组合视图（列表/详情 API 用）。
+/// EventGameBox + GameBox identity 组合视图（列表/详情 API 用）。
 pub struct EventGameBoxDetail {
     pub event_gamebox: awd_event_gameboxes::Model,
-    pub revision: gamebox_revisions::Model,
     pub gamebox: gameboxes::Model,
 }
 
@@ -76,17 +65,12 @@ pub async fn find_event_gameboxes_detail(
 ) -> Result<Vec<EventGameBoxDetail>, sea_orm::DbErr> {
     let mut out = Vec::new();
     for eg in find_event_gameboxes_by_event(db, event_id).await? {
-        let revision = match find_pinned_revision(db, &eg).await? {
-            Some(r) => r,
-            None => continue, // 理论上不会发生（FK 保证）
-        };
         let gamebox = match find_gamebox_identity(db, eg.gamebox_id).await? {
             Some(g) => g,
             None => continue,
         };
         out.push(EventGameBoxDetail {
             event_gamebox: eg,
-            revision,
             gamebox,
         });
     }
@@ -99,7 +83,6 @@ pub async fn create_event_gamebox(
     db: &DatabaseConnection,
     event_id: Uuid,
     gamebox_id: Uuid,
-    gamebox_revision_id: Uuid,
     host_offset: i16,
     enabled: bool,
     hidden: bool,
@@ -120,7 +103,6 @@ pub async fn create_event_gamebox(
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
         gamebox_id: Set(gamebox_id),
-        gamebox_revision_id: Set(gamebox_revision_id),
         host_offset: Set(host_offset),
         enabled: Set(enabled),
         hidden: Set(hidden),
@@ -143,10 +125,9 @@ pub async fn create_event_gamebox(
     .await
 }
 
-/// 更新 EventGameBox（计分/资源/判题覆盖/pin revision 变更）。调用方负责：
+/// 更新 EventGameBox（计分/资源/判题覆盖）。调用方负责：
 /// 已部署的 host_offset 禁止修改（§38）；变更后必须 touch_configuration（§37）。
 pub struct EventGameBoxPatch {
-    pub gamebox_revision_id: Option<Uuid>,
     pub enabled: Option<bool>,
     pub hidden: Option<bool>,
     pub cpu_millis: Option<i64>,
@@ -176,9 +157,6 @@ pub async fn update_event_gamebox(
         updated_at: Set(chrono::Utc::now().into()),
         ..Default::default()
     };
-    if let Some(v) = patch.gamebox_revision_id {
-        active.gamebox_revision_id = Set(v);
-    }
     if let Some(v) = patch.enabled {
         active.enabled = Set(v);
     }

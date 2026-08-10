@@ -1,22 +1,18 @@
 //! GameBox library service + 单一 runtime spec resolver（§49/§50）。
 //!
 //! 本服务承载：
-//!   1. 全局 GameBox 库：创建 GameBox（自动 Revision 1）、编辑（→ Revision N+1，§36）、
-//!      safe_name 校验/去重、spec_digest 幂等（canonical spec 未变不建新 revision）。
+//!   1. 全局 GameBox 库：创建 GameBox（身份 + 配置一次写入）、编辑（原地覆盖，单版本同 Challenges）、
+//!      safe_name 校验/去重。
 //!   2. `resolve_event_gamebox_spec` —— Deploy / Reset / Recovery / Precheck 唯一共享的
-//!      effective config 解析入口（Revision 默认值 + EventGameBox 允许覆盖）。
+//!      effective config 解析入口（GameBox 默认值 + EventGameBox 允许覆盖）。
 //!   3. `build_gamebox_runtime_spec` —— 从 resolved spec 组装 fcmc::GameBoxSpec
 //!      （image@digest、labels 绑定 logical identity、healthcheck 生效）。
 
-use std::collections::BTreeMap;
-
 use sea_orm::DatabaseConnection;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gamebox_revisions,
-    gameboxes,
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gameboxes,
 };
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
@@ -29,7 +25,7 @@ use crate::modules::event::awd_team::{
 // GameBox 库：配置与 canonical spec
 // ---------------------------------------------------------------------------
 
-/// 管理员编辑 GameBox 时提供的运行时配置（= Revision 内容）。
+/// 管理员编辑 GameBox 时提供的运行时配置（单版本，直接覆盖 gameboxes 配置列）。
 #[derive(Debug, Clone, Default)]
 pub struct GameBoxConfig {
     pub source_toml: String,
@@ -47,56 +43,6 @@ pub struct GameBoxConfig {
     pub judge_retry_interval_secs: Option<i32>,
 }
 
-/// canonical spec：BTreeMap 保证键序确定 → JSON 序列化确定 → digest 稳定（§7）。
-pub fn canonical_spec(config: &GameBoxConfig) -> serde_json::Value {
-    let mut m = BTreeMap::new();
-    m.insert("image_ref".to_string(), serde_json::json!(config.image_ref));
-    if let Some(d) = &config.image_digest {
-        m.insert("image_digest".to_string(), serde_json::json!(d));
-    }
-    m.insert("username".to_string(), serde_json::json!(config.username));
-    m.insert(
-        "cpu_millis".to_string(),
-        serde_json::json!(config.cpu_millis),
-    );
-    m.insert(
-        "memory_bytes".to_string(),
-        serde_json::json!(config.memory_bytes),
-    );
-    m.insert(
-        "pids_limit".to_string(),
-        serde_json::json!(config.pids_limit),
-    );
-    if let Some(h) = &config.healthcheck {
-        m.insert("healthcheck".to_string(), h.clone());
-    }
-    if let Some(n) = &config.judge_script_name {
-        m.insert("judge_script_name".to_string(), serde_json::json!(n));
-    }
-    if let Some(c) = &config.judge_script_content {
-        m.insert("judge_script_content".to_string(), serde_json::json!(c));
-    }
-    if let Some(a) = &config.judge_args_json {
-        m.insert("judge_args".to_string(), a.clone());
-    }
-    if let Some(t) = config.judge_timeout_secs {
-        m.insert("judge_timeout_secs".to_string(), serde_json::json!(t));
-    }
-    if let Some(t) = config.judge_retry_interval_secs {
-        m.insert(
-            "judge_retry_interval_secs".to_string(),
-            serde_json::json!(t),
-        );
-    }
-    serde_json::Value::Object(m.into_iter().collect())
-}
-
-pub fn spec_digest(spec: &serde_json::Value) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(spec.to_string().as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
 pub fn validate_config(config: &GameBoxConfig) -> AwdResult<()> {
     if config.image_ref.trim().is_empty() {
         return Err(AwdError::Validation("image_ref 不能为空".into()));
@@ -110,8 +56,26 @@ pub fn validate_config(config: &GameBoxConfig) -> AwdResult<()> {
     Ok(())
 }
 
-/// 创建 GameBox identity + Revision 1（新题入库）。
-pub async fn create_gamebox_with_revision(
+fn to_repo_fields(config: &GameBoxConfig) -> gamebox_lib_repo::GameBoxConfigFields {
+    gamebox_lib_repo::GameBoxConfigFields {
+        source_toml: config.source_toml.clone(),
+        image_ref: config.image_ref.clone(),
+        image_digest: config.image_digest.clone(),
+        username: config.username.clone(),
+        default_cpu_millis: config.cpu_millis,
+        default_memory_bytes: config.memory_bytes,
+        default_pids_limit: config.pids_limit,
+        healthcheck_json: config.healthcheck.clone(),
+        judge_script_name: config.judge_script_name.clone(),
+        judge_script_content: config.judge_script_content.clone(),
+        judge_args_json: config.judge_args_json.clone(),
+        default_judge_timeout_secs: config.judge_timeout_secs,
+        default_judge_retry_interval_secs: config.judge_retry_interval_secs,
+    }
+}
+
+/// 创建 GameBox（新题入库：身份 + 单版本配置一次写入）。
+pub async fn create_gamebox(
     db: &DatabaseConnection,
     name: String,
     safe_name: String,
@@ -119,7 +83,7 @@ pub async fn create_gamebox_with_revision(
     description: String,
     hidden: bool,
     config: GameBoxConfig,
-) -> AwdResult<(gameboxes::Model, gamebox_revisions::Model)> {
+) -> AwdResult<gameboxes::Model> {
     validate_safe_name(&safe_name).map_err(AwdError::Validation)?;
     validate_config(&config)?;
 
@@ -131,81 +95,32 @@ pub async fn create_gamebox_with_revision(
         return Err(AwdError::Conflict(format!("safe_name 已存在: {safe_name}")));
     }
 
-    let spec = canonical_spec(&config);
-    let digest = spec_digest(&spec);
-    let gb = gamebox_lib_repo::create_gamebox(db, name, safe_name, category, description, hidden)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    let rev = gamebox_lib_repo::create_revision(
+    gamebox_lib_repo::create_gamebox(
         db,
-        gb.id,
-        gamebox_lib_repo::NewRevision {
-            source_toml: config.source_toml,
-            spec_json: spec,
-            spec_digest: digest,
-            image_ref: config.image_ref,
-            image_digest: config.image_digest,
-            username: config.username,
-            default_cpu_millis: config.cpu_millis,
-            default_memory_bytes: config.memory_bytes,
-            default_pids_limit: config.pids_limit,
-            healthcheck_json: config.healthcheck,
-            judge_script_name: config.judge_script_name,
-            judge_script_content: config.judge_script_content,
-            judge_args_json: config.judge_args_json,
-            default_judge_timeout_secs: config.judge_timeout_secs,
-            default_judge_retry_interval_secs: config.judge_retry_interval_secs,
-        },
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?
-    .ok_or_else(|| AwdError::Internal("revision 1 creation unexpectedly skipped".into()))?;
-
-    Ok((gb, rev))
-}
-
-/// 编辑 GameBox：canonical spec 变化才创建 Revision N+1（§36）；已 pin 的赛事不受影响。
-/// 返回 None 表示 spec 未变化（未创建新 revision）。
-pub async fn edit_gamebox_revision(
-    db: &DatabaseConnection,
-    gamebox_id: Uuid,
-    config: GameBoxConfig,
-) -> AwdResult<Option<gamebox_revisions::Model>> {
-    validate_config(&config)?;
-    if gamebox_lib_repo::find_gamebox_by_id(db, gamebox_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .is_none()
-    {
-        return Err(AwdError::NotFound("GameBox not found".into()));
-    }
-
-    let spec = canonical_spec(&config);
-    let digest = spec_digest(&spec);
-    gamebox_lib_repo::create_revision(
-        db,
-        gamebox_id,
-        gamebox_lib_repo::NewRevision {
-            source_toml: config.source_toml,
-            spec_json: spec,
-            spec_digest: digest,
-            image_ref: config.image_ref,
-            image_digest: config.image_digest,
-            username: config.username,
-            default_cpu_millis: config.cpu_millis,
-            default_memory_bytes: config.memory_bytes,
-            default_pids_limit: config.pids_limit,
-            healthcheck_json: config.healthcheck,
-            judge_script_name: config.judge_script_name,
-            judge_script_content: config.judge_script_content,
-            judge_args_json: config.judge_args_json,
-            default_judge_timeout_secs: config.judge_timeout_secs,
-            default_judge_retry_interval_secs: config.judge_retry_interval_secs,
-        },
+        name,
+        safe_name,
+        category,
+        description,
+        hidden,
+        to_repo_fields(&config),
     )
     .await
     .map_err(|e| AwdError::Database(e.to_string()))
+}
+
+/// 编辑 GameBox：原地覆盖当前配置（单版本，同 Challenges 编辑语义）。
+/// 进行中的赛事解析的是 EventGameBox 复制时的默认值 + 覆盖，不受本次编辑影响；
+/// 新选择/重新部署的赛事使用新配置。
+pub async fn update_gamebox(
+    db: &DatabaseConnection,
+    gamebox_id: Uuid,
+    config: GameBoxConfig,
+) -> AwdResult<gameboxes::Model> {
+    validate_config(&config)?;
+    gamebox_lib_repo::update_gamebox_config(db, gamebox_id, to_repo_fields(&config))
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
 }
 
 /// safe_name 生成 + 去重（展示名 → 唯一 safe_name）。
@@ -236,13 +151,17 @@ pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> Aw
 // 单一 resolver（§49/§50）
 // ---------------------------------------------------------------------------
 
-/// EventGameBox + pin Revision + GameBox identity 的 effective runtime spec。
+/// EventGameBox + GameBox identity 的 effective runtime spec。
 /// 所有 Deploy / Reset / Recovery / Precheck 必须经它解析，禁止各自拼配置。
 #[derive(Debug, Clone)]
 pub struct ResolvedGameBoxRuntimeSpec {
     pub event_gamebox: awd_event_gameboxes::Model,
-    pub revision: gamebox_revisions::Model,
     pub gamebox: gameboxes::Model,
+    /// 解析后的镜像引用（GameBox 配置必填，取不到即 resolve 失败）。
+    pub image_ref: String,
+    pub image_digest: Option<String>,
+    /// 解析后的 SSH 用户名（GameBox 配置必填）。
+    pub username: String,
     pub effective_cpu_millis: i64,
     pub effective_memory_bytes: i64,
     pub effective_pids_limit: i64,
@@ -261,7 +180,7 @@ pub fn pinned_image_ref(image_ref: &str, image_digest: &Option<String>) -> Strin
 
 impl ResolvedGameBoxRuntimeSpec {
     pub fn effective_image_ref(&self) -> String {
-        pinned_image_ref(&self.revision.image_ref, &self.revision.image_digest)
+        pinned_image_ref(&self.image_ref, &self.image_digest)
     }
 
     pub fn effective_healthcheck(&self) -> Result<Option<fcmc::HealthcheckConfig>, AwdError> {
@@ -274,7 +193,7 @@ impl ResolvedGameBoxRuntimeSpec {
     }
 }
 
-/// 从 EventGameBox 解析 effective runtime spec（Revision 默认值 + 赛事覆盖）。
+/// 从 EventGameBox 解析 effective runtime spec（GameBox 单版本配置 + 赛事覆盖）。
 pub async fn resolve_event_gamebox_spec(
     db: &DatabaseConnection,
     event_gamebox_id: Uuid,
@@ -283,14 +202,17 @@ pub async fn resolve_event_gamebox_spec(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("EventGameBox not found".into()))?;
-    let revision = event_gamebox_repo::find_pinned_revision(db, &eg)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("pinned GameBoxRevision not found".into()))?;
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox identity not found".into()))?;
+    let image_ref = gamebox.image_ref.clone().ok_or_else(|| {
+        AwdError::Validation(format!("GameBox {} 未配置 image_ref", gamebox.name))
+    })?;
+    let username = gamebox
+        .username
+        .clone()
+        .ok_or_else(|| AwdError::Validation(format!("GameBox {} 未配置 username", gamebox.name)))?;
 
     Ok(ResolvedGameBoxRuntimeSpec {
         effective_cpu_millis: eg.cpu_millis,
@@ -299,15 +221,15 @@ pub async fn resolve_event_gamebox_spec(
         effective_healthcheck_json: eg
             .healthcheck_override_json
             .clone()
-            .or_else(|| revision.healthcheck_json.clone()),
-        effective_judge_timeout_secs: eg
-            .judge_timeout_secs
-            .or(revision.default_judge_timeout_secs),
+            .or_else(|| gamebox.healthcheck_json.clone()),
+        effective_judge_timeout_secs: eg.judge_timeout_secs.or(gamebox.default_judge_timeout_secs),
         effective_judge_retry_interval_secs: eg
             .judge_retry_interval_secs
-            .or(revision.default_judge_retry_interval_secs),
+            .or(gamebox.default_judge_retry_interval_secs),
         event_gamebox: eg,
-        revision,
+        image_ref,
+        image_digest: gamebox.image_digest.clone(),
+        username,
         gamebox,
     })
 }
@@ -343,7 +265,7 @@ pub fn build_gamebox_runtime_spec(
         image_ref: resolved.effective_image_ref(),
         network_name: network_name.to_string(),
         fixed_ip: gamebox_ip.to_string(),
-        username: resolved.revision.username.clone(),
+        username: resolved.username.clone(),
         password,
         cpu_millis: resolved.effective_cpu_millis,
         memory_bytes: resolved.effective_memory_bytes,
@@ -403,34 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_spec_is_deterministic() {
-        let c1 = canonical_spec(&base_config());
-        let c2 = canonical_spec(&base_config());
-        assert_eq!(c1, c2);
-        assert_eq!(spec_digest(&c1), spec_digest(&c2));
-    }
-
-    #[test]
-    fn spec_change_changes_digest() {
-        let a = base_config();
-        let mut b = base_config();
-        b.cpu_millis = 2000;
-        let da = spec_digest(&canonical_spec(&a));
-        let db = spec_digest(&canonical_spec(&b));
-        assert_ne!(da, db, "资源变化必须产生新 digest（新 revision）");
-    }
-
-    #[test]
-    fn field_order_does_not_change_digest() {
-        // §7：字段顺序/空格变化不产生无意义 revision —— canonical 序列化保证
-        let a = base_config();
-        let da = spec_digest(&canonical_spec(&a));
-        let same = base_config();
-        let db = spec_digest(&canonical_spec(&same));
-        assert_eq!(da, db);
-    }
-
-    #[test]
     fn effective_image_ref_pins_digest() {
         assert_eq!(
             pinned_image_ref("registry/easy-web:v1", &Some("sha256:abc123".into())),
@@ -455,5 +349,17 @@ mod tests {
         let mut c2 = base_config();
         c2.memory_bytes = 0;
         assert!(validate_config(&c2).is_err());
+    }
+
+    #[test]
+    fn repo_fields_roundtrip_preserves_config() {
+        let c = base_config();
+        let f = to_repo_fields(&c);
+        assert_eq!(f.image_ref, c.image_ref);
+        assert_eq!(f.username, c.username);
+        assert_eq!(f.default_cpu_millis, c.cpu_millis);
+        assert_eq!(f.default_memory_bytes, c.memory_bytes);
+        assert_eq!(f.default_pids_limit, c.pids_limit);
+        assert_eq!(f.default_judge_timeout_secs, c.judge_timeout_secs);
     }
 }

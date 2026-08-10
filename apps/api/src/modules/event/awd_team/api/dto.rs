@@ -6,7 +6,7 @@ use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entity::awd_events;
+use crate::entity::{awd_events, gameboxes};
 
 /// serde snake_case 序列化（AwdEventStatus/AwdPhase 无 Display）。
 fn snake_str<T: serde::Serialize>(v: &T) -> String {
@@ -496,9 +496,9 @@ fn default_category() -> String {
     "other".into()
 }
 
-/// POST /api/admin/awd/gameboxes/{gamebox_id}/revisions（编辑 → Revision N+1）
+/// POST /api/admin/awd/gameboxes/{gamebox_id}（编辑 → 原地覆盖单版本配置）
 #[derive(Debug, Deserialize)]
-pub struct EditGameBoxRevisionRequest {
+pub struct UpdateGameBoxRequest {
     pub config: GameBoxConfigPayload,
 }
 
@@ -506,9 +506,6 @@ pub struct EditGameBoxRevisionRequest {
 #[derive(Debug, Deserialize)]
 pub struct AddEventGameBoxRequest {
     pub gamebox_id: Uuid,
-    /// 可选：pin 的具体 revision；缺省使用 latest。
-    #[serde(default)]
-    pub revision_id: Option<Uuid>,
     /// 可选：确定性 IP 偏移（2..254）；缺省自动分配未占用值。
     #[serde(default)]
     pub host_offset: Option<i16>,
@@ -546,8 +543,6 @@ fn default_first_bonus() -> i64 {
 #[derive(Debug, Deserialize)]
 pub struct UpdateEventGameBoxRequest {
     #[serde(default)]
-    pub revision_id: Option<Uuid>,
-    #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
     pub hidden: Option<bool>,
@@ -575,50 +570,7 @@ pub struct UpdateEventGameBoxRequest {
 
 // ── 响应 DTO ──
 
-#[derive(Debug, Serialize)]
-pub struct GameBoxRevisionDto {
-    pub id: Uuid,
-    pub revision_number: i32,
-    pub image_ref: String,
-    pub image_digest: Option<String>,
-    pub username: String,
-    pub spec_digest: String,
-    /// 完整配置随 Revision 回传，供前端 Edit 对话框回填（同 Challenges 页编辑语义）。
-    pub cpu_millis: i64,
-    pub memory_bytes: i64,
-    pub pids_limit: i64,
-    pub healthcheck_json: Option<serde_json::Value>,
-    pub judge_script_name: Option<String>,
-    pub judge_script_content: Option<String>,
-    pub judge_args_json: Option<serde_json::Value>,
-    pub judge_timeout_secs: Option<i32>,
-    pub judge_retry_interval_secs: Option<i32>,
-    pub created_at: chrono::DateTime<chrono::FixedOffset>,
-}
-
-impl From<&crate::entity::gamebox_revisions::Model> for GameBoxRevisionDto {
-    fn from(r: &crate::entity::gamebox_revisions::Model) -> Self {
-        Self {
-            id: r.id,
-            revision_number: r.revision_number,
-            image_ref: r.image_ref.clone(),
-            image_digest: r.image_digest.clone(),
-            username: r.username.clone(),
-            spec_digest: r.spec_digest.clone(),
-            cpu_millis: r.default_cpu_millis,
-            memory_bytes: r.default_memory_bytes,
-            pids_limit: r.default_pids_limit,
-            healthcheck_json: r.healthcheck_json.clone(),
-            judge_script_name: r.judge_script_name.clone(),
-            judge_script_content: r.judge_script_content.clone(),
-            judge_args_json: r.judge_args_json.clone(),
-            judge_timeout_secs: r.default_judge_timeout_secs,
-            judge_retry_interval_secs: r.default_judge_retry_interval_secs,
-            created_at: r.created_at,
-        }
-    }
-}
-
+/// GameBox 库行 = 身份 + 单版本配置（同 Challenges 列表行直接携带配置）。
 #[derive(Debug, Serialize)]
 pub struct GameBoxLibraryDto {
     pub id: Uuid,
@@ -627,7 +579,45 @@ pub struct GameBoxLibraryDto {
     pub category: String,
     pub description: String,
     pub hidden: bool,
-    pub latest_revision: Option<GameBoxRevisionDto>,
+    pub source_toml: String,
+    pub image_ref: Option<String>,
+    pub image_digest: Option<String>,
+    pub username: Option<String>,
+    pub cpu_millis: Option<i64>,
+    pub memory_bytes: Option<i64>,
+    pub pids_limit: Option<i64>,
+    pub healthcheck_json: Option<serde_json::Value>,
+    pub judge_script_name: Option<String>,
+    pub judge_script_content: Option<String>,
+    pub judge_args_json: Option<serde_json::Value>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
+}
+
+impl From<&gameboxes::Model> for GameBoxLibraryDto {
+    fn from(g: &gameboxes::Model) -> Self {
+        Self {
+            id: g.id,
+            name: g.name.clone(),
+            safe_name: g.safe_name.clone(),
+            category: g.category.clone(),
+            description: g.description.clone(),
+            hidden: g.hidden,
+            source_toml: g.source_toml.clone().unwrap_or_default(),
+            image_ref: g.image_ref.clone(),
+            image_digest: g.image_digest.clone(),
+            username: g.username.clone(),
+            cpu_millis: g.default_cpu_millis,
+            memory_bytes: g.default_memory_bytes,
+            pids_limit: g.default_pids_limit,
+            healthcheck_json: g.healthcheck_json.clone(),
+            judge_script_name: g.judge_script_name.clone(),
+            judge_script_content: g.judge_script_content.clone(),
+            judge_args_json: g.judge_args_json.clone(),
+            judge_timeout_secs: g.default_judge_timeout_secs,
+            judge_retry_interval_secs: g.default_judge_retry_interval_secs,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -636,8 +626,6 @@ pub struct EventGameBoxDto {
     pub gamebox_id: Uuid,
     pub gamebox_name: String,
     pub gamebox_safe_name: String,
-    pub revision_id: Uuid,
-    pub revision_number: i32,
     pub host_offset: i16,
     pub enabled: bool,
     pub hidden: bool,

@@ -278,7 +278,7 @@ pub async fn get_ssh_config(
         info.push(super::dto::SshInstanceInfo {
             id: inst.id,
             gamebox_ip: inst.gamebox_ip.ip().to_string(),
-            username: resolved.revision.username.clone(),
+            username: resolved.username.clone(),
             container_name: inst.container_name,
             health_status: inst.health_status,
         });

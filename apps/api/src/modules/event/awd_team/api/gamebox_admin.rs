@@ -30,7 +30,7 @@ use crate::{
 use super::dto::*;
 
 // ────────────────────────────────────────────────────────────────────────────
-// GameBox 库（全局 identity + Revision）
+// GameBox 库（全局身份 + 单版本配置）
 // ────────────────────────────────────────────────────────────────────────────
 
 /// GET /api/admin/awd/gameboxes
@@ -78,28 +78,12 @@ pub async fn list_gamebox_library(
     )
     .await?;
 
-    let mut dto = Vec::with_capacity(items.len());
-    for gb in items {
-        let latest = gamebox_lib_repo::find_revisions_by_gamebox(ctx.db.get_ref(), gb.id)
-            .await
-            .map_err(AppError::from)?
-            .into_iter()
-            .next();
-        dto.push(GameBoxLibraryDto {
-            id: gb.id,
-            name: gb.name,
-            safe_name: gb.safe_name,
-            category: gb.category,
-            description: gb.description,
-            hidden: gb.hidden,
-            latest_revision: latest.as_ref().map(GameBoxRevisionDto::from),
-        });
-    }
+    let dto: Vec<GameBoxLibraryDto> = items.iter().map(GameBoxLibraryDto::from).collect();
     query_params.total = Some(total_items);
     UniResponse::ok_meta(Some(dto), query_params.into()).into()
 }
 
-/// POST /api/admin/awd/gameboxes —— 创建 GameBox（自动 Revision 1）
+/// POST /api/admin/awd/gameboxes —— 创建 GameBox（身份 + 单版本配置一次写入）
 #[post("/awd/gameboxes")]
 pub async fn create_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -117,7 +101,7 @@ pub async fn create_gamebox(
             .await
             .map_err(AppError::from)?,
     };
-    let (gb, rev) = gamebox_service::create_gamebox_with_revision(
+    let gb = gamebox_service::create_gamebox(
         ctx.db.get_ref(),
         req.name,
         safe_name,
@@ -128,65 +112,24 @@ pub async fn create_gamebox(
     )
     .await
     .map_err(AppError::from)?;
-    UniResponse::ok(
-        GameBoxLibraryDto {
-            id: gb.id,
-            name: gb.name,
-            safe_name: gb.safe_name,
-            category: gb.category,
-            description: gb.description,
-            hidden: gb.hidden,
-            latest_revision: Some(GameBoxRevisionDto::from(&rev)),
-        }
-        .into(),
-    )
-    .into()
+    UniResponse::ok(GameBoxLibraryDto::from(&gb).into()).into()
 }
 
-/// POST /api/admin/awd/gameboxes/{gamebox_id}/revisions —— 编辑（→ Revision N+1）
-/// spec 未变化时返回 200 + latest_revision 不变（§36 不创建重复 revision）。
-#[post("/awd/gameboxes/{gamebox_id}/revisions")]
-pub async fn edit_gamebox_revision(
+/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 编辑（原地覆盖单版本配置，同 Challenges）
+#[patch("/awd/gameboxes/{gamebox_id}")]
+pub async fn update_gamebox(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
-    body: web::Json<EditGameBoxRevisionRequest>,
+    body: web::Json<UpdateGameBoxRequest>,
 ) -> UniResult<GameBoxLibraryDto> {
     let gamebox_id = path.into_inner();
     let req = body.into_inner();
-    let created = gamebox_service::edit_gamebox_revision(
-        ctx.db.get_ref(),
-        gamebox_id,
-        req.config.into_config(),
-    )
-    .await
-    .map_err(AppError::from)?;
-
-    let gb = gamebox_lib_repo::find_gamebox_by_id(ctx.db.get_ref(), gamebox_id)
-        .await
-        .map_err(AppError::from)?
-        .ok_or_else(|| AppError::NotFound("GameBox not found".into()))?;
-    let latest = match created {
-        Some(r) => Some(r),
-        None => gamebox_lib_repo::find_revisions_by_gamebox(ctx.db.get_ref(), gamebox_id)
+    let gb =
+        gamebox_service::update_gamebox(ctx.db.get_ref(), gamebox_id, req.config.into_config())
             .await
-            .map_err(AppError::from)?
-            .into_iter()
-            .next(),
-    };
-    UniResponse::ok(
-        GameBoxLibraryDto {
-            id: gb.id,
-            name: gb.name,
-            safe_name: gb.safe_name,
-            category: gb.category,
-            description: gb.description,
-            hidden: gb.hidden,
-            latest_revision: latest.as_ref().map(GameBoxRevisionDto::from),
-        }
-        .into(),
-    )
-    .into()
+            .map_err(AppError::from)?;
+    UniResponse::ok(GameBoxLibraryDto::from(&gb).into()).into()
 }
 
 /// POST /api/admin/awd/gameboxes/{gamebox_id}/hide —— 归档（§55：被赛事引用禁止 hard delete）
@@ -261,13 +204,6 @@ pub async fn list_event_gameboxes(
 
     let mut dto = Vec::with_capacity(items.len());
     for eg in items {
-        let revision = match event_gamebox_repo::find_pinned_revision(ctx.db.get_ref(), &eg)
-            .await
-            .map_err(AppError::from)?
-        {
-            Some(r) => r,
-            None => continue, // 理论上不会发生（FK 保证）
-        };
         let gamebox =
             match event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), eg.gamebox_id)
                 .await
@@ -279,7 +215,6 @@ pub async fn list_event_gameboxes(
         dto.push(to_event_gamebox_dto(
             event_gamebox_repo::EventGameBoxDetail {
                 event_gamebox: eg,
-                revision,
                 gamebox,
             },
         ));
@@ -294,8 +229,6 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
         gamebox_id: d.gamebox.id,
         gamebox_name: d.gamebox.name,
         gamebox_safe_name: d.gamebox.safe_name,
-        revision_id: d.revision.id,
-        revision_number: d.revision.revision_number,
         host_offset: d.event_gamebox.host_offset,
         enabled: d.event_gamebox.enabled,
         hidden: d.event_gamebox.hidden,
@@ -314,7 +247,8 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
 }
 
 /// POST /api/admin/events/{event_id}/awd/gameboxes —— 赛事选择 GameBox
-/// （默认 pin latest revision；host_offset 缺省自动分配；完成后 touch_configuration §37）
+/// （单版本：复制 GameBox 当前配置作为赛事默认值，可再覆盖；host_offset 缺省自动分配；
+///   完成后 touch_configuration §37）
 #[post("{event_id}/awd/gameboxes")]
 pub async fn add_event_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -331,6 +265,12 @@ pub async fn add_event_gamebox(
         .await
         .map_err(AppError::from)?
         .ok_or_else(|| AppError::NotFound("GameBox not found".into()))?;
+    if gb.image_ref.is_none() {
+        return Err(AppError::Validation(
+            "GameBox 尚未配置（image_ref 为空），请先在 GameBox 库编辑".into(),
+        )
+        .into());
+    }
 
     // §12：Event 内一个 GameBox 只能有一个选择
     if event_gamebox_repo::find_event_gamebox(db, event_id, req.gamebox_id)
@@ -343,25 +283,6 @@ pub async fn add_event_gamebox(
             gb.name
         ))
         .into());
-    }
-
-    // pin revision：显式指定或 latest（§35：保存后必须 pin 具体 UUID）
-    let revision = match req.revision_id {
-        Some(rid) => gamebox_lib_repo::find_revision_by_id(db, rid)
-            .await
-            .map_err(AppError::from)?
-            .ok_or_else(|| AppError::NotFound("Revision not found".into()))?,
-        None => gamebox_lib_repo::find_revisions_by_gamebox(db, req.gamebox_id)
-            .await
-            .map_err(AppError::from)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                AppError::NotFound("GameBox has no revision; create one first".into())
-            })?,
-    };
-    if revision.gamebox_id != req.gamebox_id {
-        return Err(AppError::Conflict("revision 不属于该 GameBox（§11 一致性）".into()).into());
     }
 
     // host_offset：显式或自动分配（2..254 未占用）
@@ -388,20 +309,20 @@ pub async fn add_event_gamebox(
         }
     };
 
+    // 复制 GameBox 当前配置作为赛事默认值（单版本语义，同 Challenges 选择时固化副本）
     let eg = event_gamebox_repo::create_event_gamebox(
         db,
         event_id,
         req.gamebox_id,
-        revision.id,
         host_offset,
         true,
         req.hidden,
-        revision.default_cpu_millis,
-        revision.default_memory_bytes,
-        revision.default_pids_limit,
+        gb.default_cpu_millis.unwrap_or(1000),
+        gb.default_memory_bytes.unwrap_or(512 * 1024 * 1024),
+        gb.default_pids_limit.unwrap_or(100),
         None,
-        revision.default_judge_timeout_secs,
-        revision.default_judge_retry_interval_secs,
+        gb.default_judge_timeout_secs,
+        gb.default_judge_retry_interval_secs,
         req.break_points,
         req.loss_points,
         req.fix_points,
@@ -420,8 +341,6 @@ pub async fn add_event_gamebox(
             gamebox_id: eg.gamebox_id,
             gamebox_name: gb.name,
             gamebox_safe_name: gb.safe_name,
-            revision_id: revision.id,
-            revision_number: revision.revision_number,
             host_offset: eg.host_offset,
             enabled: eg.enabled,
             hidden: eg.hidden,
@@ -443,7 +362,7 @@ pub async fn add_event_gamebox(
 }
 
 /// PATCH /api/admin/events/{event_id}/awd/gameboxes/{event_gamebox_id}
-/// （计分/资源/判题覆盖/pin revision 变更；已部署的 host_offset 禁改 §38；§37 touch_configuration）
+/// （计分/资源/判题覆盖；已部署的 host_offset 禁改 §38；§37 touch_configuration）
 #[patch("{event_id}/awd/gameboxes/{event_gamebox_id}")]
 pub async fn update_event_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -451,33 +370,14 @@ pub async fn update_event_gamebox(
     path: web::Path<(Uuid, Uuid)>,
     body: web::Json<UpdateEventGameBoxRequest>,
 ) -> UniResult<EventGameBoxDto> {
-    let (_event_id, event_gamebox_id) = path.into_inner();
+    let (event_id, event_gamebox_id) = path.into_inner();
     let req = body.into_inner();
     let db: &DatabaseConnection = ctx.db.get_ref();
-
-    let eg = event_gamebox_repo::find_event_gamebox_by_id(db, event_gamebox_id)
-        .await
-        .map_err(AppError::from)?
-        .ok_or_else(|| AppError::NotFound("EventGameBox not found".into()))?;
-
-    // revision 变更必须属于同一 GameBox（§11）
-    if let Some(rid) = req.revision_id {
-        let rev = gamebox_lib_repo::find_revision_by_id(db, rid)
-            .await
-            .map_err(AppError::from)?
-            .ok_or_else(|| AppError::NotFound("Revision not found".into()))?;
-        if rev.gamebox_id != eg.gamebox_id {
-            return Err(
-                AppError::Conflict("revision 不属于该 GameBox（§11 一致性）".into()).into(),
-            );
-        }
-    }
 
     event_gamebox_repo::update_event_gamebox(
         db,
         event_gamebox_id,
         event_gamebox_repo::EventGameBoxPatch {
-            gamebox_revision_id: req.revision_id,
             enabled: req.enabled,
             hidden: req.hidden,
             cpu_millis: req.cpu_millis,
@@ -496,9 +396,9 @@ pub async fn update_event_gamebox(
     .await
     .map_err(AppError::from)?;
 
-    touch_event_configuration(db, eg.event_id).await?;
+    touch_event_configuration(db, event_id).await?;
 
-    let d = event_gamebox_repo::find_event_gameboxes_detail(db, eg.event_id)
+    let d = event_gamebox_repo::find_event_gameboxes_detail(db, event_id)
         .await
         .map_err(AppError::from)?
         .into_iter()
@@ -510,8 +410,6 @@ pub async fn update_event_gamebox(
             gamebox_id: d.gamebox.id,
             gamebox_name: d.gamebox.name,
             gamebox_safe_name: d.gamebox.safe_name,
-            revision_id: d.revision.id,
-            revision_number: d.revision.revision_number,
             host_offset: d.event_gamebox.host_offset,
             enabled: d.event_gamebox.enabled,
             hidden: d.event_gamebox.hidden,

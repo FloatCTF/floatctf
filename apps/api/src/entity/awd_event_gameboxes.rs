@@ -10,7 +10,6 @@ pub struct Model {
     pub id: Uuid,
     pub event_id: Uuid,
     pub gamebox_id: Uuid,
-    pub gamebox_revision_id: Uuid,
     pub host_offset: i16,
     pub enabled: bool,
     pub hidden: bool,
@@ -47,14 +46,6 @@ pub enum Relation {
     )]
     Events,
     #[sea_orm(
-        belongs_to = "super::gamebox_revisions::Entity",
-        from = "(Column::GameboxRevisionId, Column::GameboxId)",
-        to = "(super::gamebox_revisions::Column::Id, super::gamebox_revisions::Column::GameboxId)",
-        on_update = "NoAction",
-        on_delete = "Restrict"
-    )]
-    GameboxRevisions,
-    #[sea_orm(
         belongs_to = "super::gameboxes::Entity",
         from = "Column::GameboxId",
         to = "super::gameboxes::Column::Id",
@@ -85,12 +76,6 @@ impl Related<super::awd_score_events::Entity> for Entity {
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Events.def()
-    }
-}
-
-impl Related<super::gamebox_revisions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::GameboxRevisions.def()
     }
 }
 

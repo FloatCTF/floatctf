@@ -60,6 +60,28 @@ pub async fn find_latest_ready<C: ConnectionTrait>(
         .await
 }
 
+/// Latest ready revision per challenge id (single query, list enrichment).
+pub async fn find_latest_ready_map<C: ConnectionTrait>(
+    db: &C,
+    challenge_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, challenge_revisions::Model>, sea_orm::DbErr> {
+    let mut map = std::collections::HashMap::new();
+    if challenge_ids.is_empty() {
+        return Ok(map);
+    }
+    // Ready 行按 created_at 降序，每 challenge 只保留最新一条。
+    let rows = ChallengeRevisions::find()
+        .filter(challenge_revisions::Column::ChallengeId.is_in(challenge_ids.iter().copied()))
+        .filter(challenge_revisions::Column::BuildStatus.eq(BUILD_STATUS_READY))
+        .order_by_desc(challenge_revisions::Column::CreatedAt)
+        .all(db)
+        .await?;
+    for r in rows {
+        map.entry(r.challenge_id).or_insert(r);
+    }
+    Ok(map)
+}
+
 /// Load a ready revision by id (also verifies it belongs to `challenge_id`).
 pub async fn find_ready_for_challenge<C: ConnectionTrait>(
     db: &C,

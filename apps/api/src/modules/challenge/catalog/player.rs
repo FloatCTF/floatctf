@@ -4,8 +4,6 @@ use std::str::FromStr;
 
 use sea_orm::Condition;
 
-use crate::api::dto::map_dto_vec;
-
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
@@ -58,7 +56,10 @@ pub async fn get_challenges(
 
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    // 玩家侧返回 enriched DTO（latest ready revision 摘要 + 附件元数据），
+    // 附件链接由前端按 /static/challenges/... 构造。
+    let dtos = ChallengesDto::from_models(ctx.db.get_ref(), &items).await?;
+    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
 /// GET /api/challenges/{challenge_id}
@@ -74,7 +75,10 @@ pub async fn get_challenge(
         .one(ctx.db.get_ref())
         .await?
     {
-        Some(model) => UniResponse::ok(Some(model.into())).into(),
+        Some(model) => {
+            let dto = ChallengesDto::from_model(ctx.db.get_ref(), &model).await?;
+            UniResponse::ok(Some(dto)).into()
+        }
         None => AppError::NotFound(format!(" {} not exist", challenge_id)).into(),
     }
 }

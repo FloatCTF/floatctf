@@ -79,6 +79,35 @@ impl ChallengesDto {
         }
         Ok(dto)
     }
+
+    /// Batch-enrich models with their latest ready revisions (single query, avoids N+1).
+    pub async fn from_models(
+        db: &DatabaseConnection,
+        models: &[challenges::Model],
+    ) -> Result<Vec<Self>, sea_orm::DbErr> {
+        let ids: Vec<Uuid> = models.iter().map(|m| m.id).collect();
+        let rev_map = revision_repo::find_latest_ready_map(db, &ids).await?;
+        Ok(models
+            .iter()
+            .map(|m| {
+                let mut dto: ChallengesDto = m.clone().into();
+                if let Some(rev) = rev_map.get(&m.id) {
+                    dto.latest_version = Some(rev.version.clone());
+                    dto.latest_build_status = Some(rev.build_status.clone());
+                    dto.latest_image_ref = rev.image_ref.clone();
+                    dto.attachment =
+                        rev.attachment_name
+                            .clone()
+                            .map(|name| ChallengeAttachmentDto {
+                                name,
+                                path: rev.attachment_path.clone().unwrap_or_default(),
+                                size: rev.attachment_size,
+                            });
+                }
+                dto
+            })
+            .collect())
+    }
 }
 
 /// Admin revision detail (never exposes `static_flag_value`).

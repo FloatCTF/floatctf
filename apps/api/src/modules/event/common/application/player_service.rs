@@ -56,7 +56,8 @@ pub struct EventInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventChallengeResult {
-    pub challenge: challenges::Model,
+    /// Enriched challenge DTO（latest ready revision 摘要 + 附件元数据）。
+    pub challenge: crate::modules::challenge::catalog::ChallengesDto,
     pub current_points: f64,
     pub solved_count: u64,
     pub solved: bool,
@@ -238,7 +239,12 @@ pub async fn list_event_challenges(
                         AppError::BadRequest(format!("calculate_next_dynamic_score error: {}", e))
                     })?;
             result.push(EventChallengeResult {
-                challenge: c,
+                challenge: crate::modules::challenge::catalog::ChallengesDto::from_model(
+                    db.get_ref(),
+                    &c,
+                )
+                .await
+                .map_err(AppError::from)?,
                 current_points,
                 solved_count,
                 solved,

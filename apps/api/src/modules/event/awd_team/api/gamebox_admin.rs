@@ -1,8 +1,8 @@
 //! GameBox library + EventGameBox admin handlers。
 //!
-//! - `/api/admin/awd/gameboxes`：全局 GameBox 库（identity + revisions）
-//! - `/api/admin/awd/gameboxes/import`：package zip 导入（build + pin）
-//! - `/api/admin/events/{event_id}/awd/gameboxes`：赛事选择（pin ready revision）
+//! - `/api/admin/awd/gameboxes`：全局 GameBox 库（单版本 identity）
+//! - `/api/admin/awd/gameboxes/import`：package zip 导入（build + pin，单版本门禁）
+//! - `/api/admin/events/{event_id}/awd/gameboxes`：赛事选择（引用 GameBox 当前版本）
 
 use std::str::FromStr;
 
@@ -22,10 +22,7 @@ use crate::{
     entity::{awd_event_gameboxes, gameboxes},
     modules::event::awd_team::{
         domain::instance_ip_for_offset,
-        repo::{
-            event_gamebox_repo, event_repo, gamebox_lib_repo, gamebox_revision_repo,
-            gamebox_revision_repo::BUILD_STATUS_READY,
-        },
+        repo::{event_gamebox_repo, event_repo, gamebox_lib_repo},
         service::{gamebox_import_service, gamebox_service},
     },
 };
@@ -33,7 +30,7 @@ use crate::{
 use super::dto::*;
 
 // ────────────────────────────────────────────────────────────────────────────
-// GameBox 库（全局身份 + revisions）
+// GameBox 库（全局单版本 identity）
 // ────────────────────────────────────────────────────────────────────────────
 
 /// GET /api/admin/awd/gameboxes
@@ -80,23 +77,7 @@ pub async fn list_gamebox_library(
     )
     .await?;
 
-    let mut dto = Vec::with_capacity(items.len());
-    for g in &items {
-        // Prefer latest ready; else latest any status for visibility of building/failed.
-        let rev = match gamebox_revision_repo::find_latest_ready_by_gamebox(ctx.db.get_ref(), g.id)
-            .await
-            .map_err(AppError::from)?
-        {
-            Some(r) => Some(r),
-            None => gamebox_revision_repo::find_latest_by_gamebox(ctx.db.get_ref(), g.id)
-                .await
-                .map_err(AppError::from)?,
-        };
-        dto.push(GameBoxLibraryDto::from_identity_and_revision(
-            g,
-            rev.as_ref(),
-        ));
-    }
+    let dto: Vec<GameBoxLibraryDto> = items.iter().map(GameBoxLibraryDto::from).collect();
     query_params.total = Some(total_items);
     UniResponse::ok_meta(Some(dto), query_params.into()).into()
 }
@@ -107,7 +88,7 @@ struct ImportGameBoxForm {
     package_zip: TempFile,
 }
 
-/// POST /api/admin/awd/gameboxes/import —— package zip 导入（同步 build）
+/// POST /api/admin/awd/gameboxes/import —— package zip 导入（单版本：同步 build）
 #[post("/awd/gameboxes/import")]
 pub async fn import_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -126,12 +107,7 @@ pub async fn import_gamebox(
 
     UniResponse::ok(
         ImportGameBoxResponse {
-            gamebox: GameBoxLibraryDto::from_identity_and_revision(
-                &result.gamebox,
-                Some(&result.revision),
-            ),
-            revision: GameBoxRevisionSummaryDto::from(&result.revision),
-            already_exists: result.already_exists,
+            gamebox: GameBoxLibraryDto::from(&result.gamebox),
         }
         .into(),
     )
@@ -158,10 +134,7 @@ pub async fn update_gamebox(
     )
     .await
     .map_err(AppError::from)?;
-    let rev = gamebox_revision_repo::find_latest_ready_by_gamebox(ctx.db.get_ref(), gb.id)
-        .await
-        .map_err(AppError::from)?;
-    UniResponse::ok(GameBoxLibraryDto::from_identity_and_revision(&gb, rev.as_ref()).into()).into()
+    UniResponse::ok(GameBoxLibraryDto::from(&gb).into()).into()
 }
 
 /// POST /api/admin/awd/gameboxes/{gamebox_id}/hide —— 归档
@@ -243,19 +216,10 @@ pub async fn list_event_gameboxes(
                 Some(g) => g,
                 None => continue,
             };
-        let revision =
-            match event_gamebox_repo::find_revision(ctx.db.get_ref(), eg.gamebox_revision_id)
-                .await
-                .map_err(AppError::from)?
-            {
-                Some(r) => r,
-                None => continue,
-            };
         dto.push(to_event_gamebox_dto(
             event_gamebox_repo::EventGameBoxDetail {
                 event_gamebox: eg,
                 gamebox,
-                revision,
             },
         ));
     }
@@ -267,10 +231,9 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
     EventGameBoxDto {
         id: d.event_gamebox.id,
         gamebox_id: d.gamebox.id,
-        gamebox_revision_id: d.revision.id,
         gamebox_name: d.gamebox.name,
         gamebox_safe_name: d.gamebox.safe_name,
-        revision_version: d.revision.version,
+        gamebox_version: d.gamebox.version.clone(),
         host_offset: d.event_gamebox.host_offset,
         enabled: d.event_gamebox.enabled,
         hidden: d.event_gamebox.hidden,
@@ -288,7 +251,7 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
     }
 }
 
-/// POST /api/admin/events/{event_id}/awd/gameboxes —— pin ready revision
+/// POST /api/admin/events/{event_id}/awd/gameboxes —— 选择 GameBox（当前版本）
 #[post("{event_id}/awd/gameboxes")]
 pub async fn add_event_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -300,48 +263,18 @@ pub async fn add_event_gamebox(
     let req = body.into_inner();
     let db: &DatabaseConnection = ctx.db.get_ref();
 
-    // Resolve ready revision.
-    let revision = if let Some(rev_id) = req.gamebox_revision_id {
-        gamebox_revision_repo::find_by_id(db, rev_id)
-            .await
-            .map_err(AppError::from)?
-            .ok_or_else(|| AppError::NotFound("GameBox revision not found".into()))?
-    } else if let Some(gb_id) = req.gamebox_id {
-        if let Some(ver) = req.version.as_deref() {
-            gamebox_revision_repo::find_by_gamebox_and_version(db, gb_id, ver)
-                .await
-                .map_err(AppError::from)?
-                .ok_or_else(|| {
-                    AppError::NotFound(format!("GameBox revision version {ver} not found"))
-                })?
-        } else {
-            gamebox_revision_repo::find_latest_ready_by_gamebox(db, gb_id)
-                .await
-                .map_err(AppError::from)?
-                .ok_or_else(|| {
-                    AppError::Validation(
-                        "GameBox has no ready revision; import a package first".into(),
-                    )
-                })?
-        }
-    } else {
-        return Err(
-            AppError::Validation("gamebox_revision_id or gamebox_id is required".into()).into(),
-        );
-    };
-
-    if revision.build_status != BUILD_STATUS_READY {
-        return Err(AppError::Validation(format!(
-            "only ready revisions can be selected (status={})",
-            revision.build_status
-        ))
-        .into());
-    }
-
-    let gb = gamebox_lib_repo::find_gamebox_by_id(db, revision.gamebox_id)
+    // 单版本模型：事件引用 GameBox 当前版本（ready 校验）
+    let gb = gamebox_lib_repo::find_gamebox_by_id(db, req.gamebox_id)
         .await
         .map_err(AppError::from)?
         .ok_or_else(|| AppError::NotFound("GameBox not found".into()))?;
+    if gb.build_status.as_deref() != Some(gamebox_import_service::BUILD_STATUS_READY) {
+        return Err(AppError::Validation(format!(
+            "GameBox '{}' has no ready package; import a package first (status={:?})",
+            gb.name, gb.build_status
+        ))
+        .into());
+    }
 
     // UNIQUE(event_id, gamebox_id)
     if event_gamebox_repo::find_event_gamebox(db, event_id, gb.id)
@@ -379,21 +312,20 @@ pub async fn add_event_gamebox(
         }
     };
 
-    // Prefill resources from revision recommended_*.
+    // Prefill resources from GameBox recommended_*.
     let eg = event_gamebox_repo::create_event_gamebox(
         db,
         event_id,
         gb.id,
-        revision.id,
         host_offset,
         true,
         req.hidden,
-        revision.recommended_cpu_millis,
-        revision.recommended_memory_bytes,
-        revision.recommended_pids_limit,
+        gb.recommended_cpu_millis,
+        gb.recommended_memory_bytes,
+        gb.recommended_pids_limit,
         None,
-        revision.judge_timeout_secs,
-        revision.judge_retry_interval_secs,
+        gb.judge_timeout_secs,
+        gb.judge_retry_interval_secs,
         req.break_points,
         req.loss_points,
         req.fix_points,
@@ -409,10 +341,9 @@ pub async fn add_event_gamebox(
         EventGameBoxDto {
             id: eg.id,
             gamebox_id: eg.gamebox_id,
-            gamebox_revision_id: eg.gamebox_revision_id,
             gamebox_name: gb.name,
             gamebox_safe_name: gb.safe_name,
-            revision_version: revision.version,
+            gamebox_version: gb.version.clone(),
             host_offset: eg.host_offset,
             enabled: eg.enabled,
             hidden: eg.hidden,

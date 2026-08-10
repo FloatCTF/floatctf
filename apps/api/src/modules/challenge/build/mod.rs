@@ -1,11 +1,10 @@
 //! Admin challenge import / check / docker image ensure.
 
 pub mod import_service;
-pub mod revision_repo;
 
 use crate::api::prelude::*;
 use crate::entity::{challenges, prelude::Challenges};
-use crate::modules::challenge::catalog::{ChallengeRevisionDto, ChallengesDto};
+use crate::modules::challenge::catalog::ChallengesDto;
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use fcmc::{DockerContainerRuntime, ImageRuntime};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -17,7 +16,7 @@ struct UploadForm {
     package_zip: TempFile,
 }
 
-/// POST /api/admin/challenges/import —— package zip 导入（同步 build + pin digest）
+/// POST /api/admin/challenges/import —— package zip 导入（单版本：同步 build + pin digest）
 #[post("/import")]
 pub async fn web_import_challenge(
     user: SuperAdminJwtGuard,
@@ -35,11 +34,7 @@ pub async fn web_import_challenge(
     .await?;
 
     let response = ImportChallengeResponse {
-        challenge: ChallengesDto::from_model(ctx.db.get_ref(), &result.challenge)
-            .await
-            .map_err(AppError::from)?,
-        revision: result.revision.into(),
-        already_exists: result.already_exists,
+        challenge: ChallengesDto::from(&result.challenge),
     };
 
     ctx.log
@@ -50,9 +45,8 @@ pub async fn web_import_challenge(
             format!("{} 导入题目包: {}", user.username, response.challenge.name).as_str(),
             json!({
                 "challenge_id": response.challenge.id,
-                "version": response.revision.version,
-                "build_status": response.revision.build_status,
-                "already_exists": response.already_exists,
+                "version": response.challenge.version,
+                "build_status": response.challenge.build_status,
             }),
             None,
             user.id.into(),
@@ -66,9 +60,6 @@ pub async fn web_import_challenge(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportChallengeResponse {
     pub challenge: ChallengesDto,
-    pub revision: ChallengeRevisionDto,
-    /// True when an identical ready revision already existed (build skipped).
-    pub already_exists: bool,
 }
 
 /// POST /api/admin/challenges/check
@@ -111,20 +102,19 @@ pub async fn check_challenges(
     let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
     let mut results = Vec::new();
     for challenge in challenges {
-        let latest = revision_repo::find_latest_ready(ctx.db.get_ref(), challenge.id)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let (docker_image_ok, attachment_ok) = match latest {
-            Some(rev) => {
-                // 镜像检查：latest ready revision 的 pin（RepoDigest/image_id）必须本地可 inspect
-                let docker_ok = match revision_repo::effective_image_ref(&rev) {
+        let (docker_image_ok, attachment_ok) =
+            if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
+                // 镜像检查：当前版本 image pin（RepoDigest/image_id）必须本地可 inspect
+                let docker_ok = match effective_image_ref(
+                    challenge.image_repo_digest.as_deref(),
+                    challenge.image_id.as_deref(),
+                ) {
                     Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
                     Err(_) => false,
                 };
-                let attach_ok = match &rev.attachment_path {
+                let attach_ok = match &challenge.attachment_path {
                     Some(rel) => {
-                        let p = std::path::Path::new(&challenge_dir)
+                        let p = crate::infrastructure::settings::resolve_dir_path(&challenge_dir)
                             .join(&challenge.safe_name)
                             .join(rel);
                         p.is_file()
@@ -132,9 +122,9 @@ pub async fn check_challenges(
                     None => true,
                 };
                 (docker_ok, attach_ok)
-            }
-            None => (false, true),
-        };
+            } else {
+                (false, true)
+            };
 
         results.push(ChallengeCheckResult {
             id: challenge.id,
@@ -150,8 +140,8 @@ pub async fn check_challenges(
 
 /// POST /api/admin/challenges/build
 ///
-/// Ready revisions are immutable — this endpoint does NOT rebuild them. It
-/// re-ensures the pinned image exists locally (pull by RepoDigest when missing).
+/// 单版本模型：仅 re-ensure 当前版本的 pin 镜像本地存在（pull by RepoDigest when missing），
+/// 不重新构建。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildChallengeRequest {
     pub challenge_id: Option<Uuid>,
@@ -187,29 +177,31 @@ pub async fn build_challenge(
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let latest = revision_repo::find_latest_ready(ctx.db.get_ref(), challenge.id)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let (is_ok, message) = match latest {
-            Some(rev) if rev.container_port.is_some() => {
-                match revision_repo::effective_image_ref(&rev) {
-                    Ok(pin) => {
-                        let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
-                        match ImageRuntime::ensure_image(&runtime, &pin, None).await {
-                            Ok(_) => (true, "ok".to_string()),
-                            Err(e) => (false, e.to_string()),
+        let (is_ok, message) =
+            if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
+                if challenge.container_port.is_some() {
+                    match effective_image_ref(
+                        challenge.image_repo_digest.as_deref(),
+                        challenge.image_id.as_deref(),
+                    ) {
+                        Ok(pin) => {
+                            let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
+                            match ImageRuntime::ensure_image(&runtime, &pin, None).await {
+                                Ok(_) => (true, "ok".to_string()),
+                                Err(e) => (false, e.to_string()),
+                            }
                         }
+                        Err(e) => (false, e),
                     }
-                    Err(e) => (false, e),
+                } else {
+                    (true, "no docker runtime (static/misc)".to_string())
                 }
-            }
-            Some(_) => (true, "no docker runtime (static/misc)".to_string()),
-            None => (
-                false,
-                "no ready revision; import a package first".to_string(),
-            ),
-        };
+            } else {
+                (
+                    false,
+                    "no ready package; import a package first".to_string(),
+                )
+            };
 
         res.push(BuildChallengeResult {
             challenge_name: challenge.name.clone(),
@@ -232,6 +224,20 @@ pub async fn build_challenge(
     }
 
     UniResponse::ok(res.into()).into()
+}
+
+/// Image pin: `image_repo_digest` (repo@sha256:…) > `image_id` (LocalOnly sha256:…).
+pub fn effective_image_ref(
+    repo_digest: Option<&str>,
+    image_id: Option<&str>,
+) -> Result<String, String> {
+    if let Some(d) = repo_digest.filter(|d| !d.is_empty()) {
+        return Ok(d.to_string());
+    }
+    if let Some(id) = image_id.filter(|id| !id.is_empty()) {
+        return Ok(id.to_string());
+    }
+    Err("no image pin (image_repo_digest/image_id)".to_string())
 }
 
 // re-export for tests / other modules

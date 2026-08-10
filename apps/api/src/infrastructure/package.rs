@@ -387,6 +387,45 @@ pub fn sanitize_build_error(msg: &str) -> String {
     s
 }
 
+/// 单版本导入门禁：`incoming` 必须严格大于 `current`（semver 比较）才允许导入。
+/// 返回拒绝原因（`None` = 允许导入）。
+///
+/// 规则：等于不导入、小于不导入；`current` 缺失（新 identity / 尚无 package）时放行。
+/// 任一方无法解析为 semver 时拒绝（保守，避免错误覆盖）。
+pub fn version_gate_reason(incoming: &str, current: Option<&str>) -> Option<String> {
+    let incoming_ver = match semver::Version::parse(incoming.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(format!(
+                "VERSION_GATE_REJECTED: incoming version '{incoming}' is not valid SemVer ({e})"
+            ));
+        }
+    };
+    let current_ver = match current {
+        Some(c) => match semver::Version::parse(c.trim()) {
+            Ok(v) => v,
+            Err(_) => {
+                // 当前版本解析失败：保守拒绝，避免覆盖不可比的状态。
+                return Some(format!(
+                    "VERSION_GATE_REJECTED: current version '{c}' is not valid SemVer"
+                ));
+            }
+        },
+        None => return None,
+    };
+    if incoming_ver > current_ver {
+        None
+    } else if incoming_ver == current_ver {
+        Some(format!(
+            "VERSION_GATE_REJECTED: version {incoming_ver} 已存在（等于不导入）"
+        ))
+    } else {
+        Some(format!(
+            "VERSION_GATE_REJECTED: version {incoming_ver} 不大于当前版本 {current_ver}（只允许严格递增）"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +496,25 @@ description = "d"
             msg.contains("INVALID_PATH") || msg.contains("unsafe") || msg.contains("traversal"),
             "unexpected: {msg}"
         );
+    }
+
+    #[test]
+    fn version_gate_allows_strict_increase() {
+        assert_eq!(version_gate_reason("2.0.0", Some("1.0.0")), None);
+        assert_eq!(version_gate_reason("1.1.0", Some("1.0.0")), None);
+        // 新 identity（无当前版本）放行
+        assert_eq!(version_gate_reason("1.0.0", None), None);
+    }
+
+    #[test]
+    fn version_gate_rejects_equal_or_lower() {
+        assert!(version_gate_reason("1.0.0", Some("1.0.0")).is_some());
+        assert!(version_gate_reason("0.9.0", Some("1.0.0")).is_some());
+        assert!(version_gate_reason("1.0.0", Some("2.0.0")).is_some());
+        assert!(version_gate_reason("1.0.0-alpha", Some("1.0.0")).is_some());
+        // 非法版本拒绝
+        assert!(version_gate_reason("not-semver", Some("1.0.0")).is_some());
+        assert!(version_gate_reason("1.0.0", Some("garbage")).is_some());
     }
 
     #[test]

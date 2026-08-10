@@ -1,11 +1,11 @@
-//! Admin challenge catalog CRUD handlers — identity-only.
+//! Admin challenge catalog CRUD handlers — 单版本 identity（含当前 package 字段）。
 //!
 //! Version/runtime content enters via package import (`POST /api/admin/challenges/import`),
-//! which creates immutable `challenge_revisions`. Manual create/patch here only touch the
-//! stable identity (name / category / description / hidden); safe_name is derived from name
+//! which upserts the identity with the new version（严格递增门禁）。Manual create/patch here only
+//! touch the stable identity (name / category / description / hidden); safe_name is derived from name
 //! (never auto-suffixed — identity ambiguity is an explicit error).
 
-use crate::modules::challenge::catalog::{ChallengeRevisionDto, ChallengesDto};
+use crate::modules::challenge::catalog::ChallengesDto;
 use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
     entity::{challenges, prelude::Challenges},
@@ -13,8 +13,6 @@ use crate::{
 
 use sea_orm::Condition;
 use std::str::FromStr;
-
-use super::dto::ChallengeRevisionDto as _RevDto;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateChallengeRequest {
@@ -81,9 +79,7 @@ pub async fn create_challenge(
         )
         .await;
 
-    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &challenge)
-        .await
-        .map_err(AppError::from)?;
+    let dto = ChallengesDto::from(&challenge);
     UniResponse::ok(Some(dto)).into()
 }
 
@@ -147,9 +143,7 @@ pub async fn patch_challenge(
         )
         .await;
 
-    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &challenge)
-        .await
-        .map_err(AppError::from)?;
+    let dto = ChallengesDto::from(&challenge);
     UniResponse::ok(Some(dto)).into()
 }
 
@@ -206,7 +200,7 @@ pub async fn get_challenges(
 
     let mut dtos = Vec::with_capacity(items.len());
     for m in items {
-        dtos.push(ChallengesDto::from_model(ctx.db.get_ref(), &m).await?);
+        dtos.push(ChallengesDto::from(&m));
     }
 
     query_params.total = Some(total_items);
@@ -226,31 +220,8 @@ pub async fn get_challenge(
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
 
-    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &model)
-        .await
-        .map_err(AppError::from)?;
+    let dto = ChallengesDto::from(&model);
     UniResponse::ok(Some(dto)).into()
-}
-
-/// GET /api/admin/challenges/{challenge_id}/revisions
-#[get("/{challenge_id}/revisions")]
-pub async fn get_challenge_revisions(
-    _user: SuperAdminJwtGuard,
-    ctx: ReqCtx,
-    id: Path<Uuid>,
-) -> UniResult<Vec<ChallengeRevisionDto>> {
-    let challenge = Challenges::find_by_id(*id)
-        .one(ctx.db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
-
-    let revisions = crate::modules::challenge::build::revision_repo::list_for_challenge(
-        ctx.db.get_ref(),
-        challenge.id,
-    )
-    .await?;
-
-    UniResponse::ok(Some(revisions.into_iter().map(_RevDto::from).collect())).into()
 }
 
 /// DELETE /api/admin/challenges
@@ -274,7 +245,9 @@ pub async fn delete_challenge(
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let del_challenge_path = std::path::Path::new(&challenges_path).join(&challenge.safe_name);
+        let del_challenge_path =
+            crate::infrastructure::settings::resolve_dir_path(&challenges_path)
+                .join(&challenge.safe_name);
         if del_challenge_path.exists() {
             std::fs::remove_dir_all(&del_challenge_path)
                 .map_err(|e| AppError::BadRequest(format!("delete challenge dir error: {}", e)))?;

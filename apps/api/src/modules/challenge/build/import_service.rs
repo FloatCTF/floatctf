@@ -1,14 +1,13 @@
-//! Challenge package import pipeline.
+//! Challenge package import pipeline（单版本模型）。
 //!
-//! Flow (mirrors GameBox import):
+//! Flow:
 //! 1. Safe extract zip → discover package root → require meta.toml + src/Dockerfile
-//! 2. Parse/validate meta.toml via `fcmc::ChallengeMeta`
-//! 3. Compute package_digest (meta.toml + src/** + attachment/**) + spec_digest
-//! 4. Attachment: read + hash metadata (file copied to CHALLENGES_DIR after success)
-//! 5. Transaction1: upsert identity by safe_name; insert/retry revision as `building`
-//! 6. Outside txn: docker build (context = package/src ONLY); optional registry push
-//! 7. Transaction2: mark ready (image pins) or failed (sanitized error)
-//! 8. On success: mirror package (src/ + attachment/) into CHALLENGES_DIR/{safe_name}
+//! 2. Parse/validate meta.toml via `fcmc::ChallengeMeta` → 得 safe_name/version
+//! 3. 版本门禁：incoming 必须严格大于该 Challenge 当前版本（等于/小于拒绝，详细日志）
+//! 4. Compute package_digest (meta.toml + src/** + attachment/**) + spec_digest
+//! 5. Attachment: read + hash metadata (file copied to CHALLENGES_DIR after success)
+//! 6. 单版本 upsert：identity 先置 building → docker build → ready/failed（image pins）
+//! 7. On success: mirror package (src/ + attachment/) into CHALLENGES_DIR/{safe_name}
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,19 +22,21 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
     TransactionTrait,
 };
-use tracing::{error, info};
-use uuid::Uuid;
+use tracing::{error, info, warn};
 
 use crate::api::AppError;
 use crate::core::config::RegistryConfig;
-use crate::entity::{challenge_revisions, challenges};
+use crate::entity::{challenges, prelude::Challenges};
 use crate::infrastructure::package::{
     self, compute_package_digest, compute_spec_digest, discover_package_root, extract_package_zip,
     read_meta_toml, read_package_file, require_package_layout, sanitize_build_error, sha256_hex,
+    version_gate_reason,
 };
 use crate::infrastructure::settings::get_setting;
 
-use super::revision_repo;
+pub const BUILD_STATUS_BUILDING: &str = "building";
+pub const BUILD_STATUS_READY: &str = "ready";
+pub const BUILD_STATUS_FAILED: &str = "failed";
 
 /// Max attachment size (bounded; matches package single-file limit headroom).
 const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -44,13 +45,11 @@ const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct ImportChallengeResult {
     pub challenge: challenges::Model,
-    pub revision: challenge_revisions::Model,
-    /// True when an identical ready revision already existed (build skipped).
-    pub already_exists: bool,
 }
 
 /// Import a Challenge package zip (multipart tempfile path).
 ///
+/// 单版本模型：identity 直接承载当前版本全部 package 字段；导入要求 version 严格递增。
 /// Uses platform `RegistryConfig` for image prefix / push mode / credentials.
 pub async fn import_challenge_package(
     db: &DatabaseConnection,
@@ -70,6 +69,32 @@ pub async fn import_challenge_package(
     let safe_name = meta.resolved_safe_name().map_err(map_meta_error)?;
     let version = meta.version.clone();
     let normalized = meta.normalize().map_err(map_meta_error)?;
+
+    // ── 2. 版本门禁（先比对，任何写操作之前）─────────────────────────────
+    let existing = Challenges::find()
+        .filter(challenges::Column::SafeName.eq(&safe_name))
+        .one(db)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if let Some(reason) = version_gate_reason(
+        &version,
+        existing.as_ref().and_then(|c| c.version.as_deref()),
+    ) {
+        warn!(
+            safe_name = %safe_name,
+            incoming_version = %version,
+            current_version = ?existing.as_ref().and_then(|c| c.version.as_deref()),
+            reason = %reason,
+            "Challenge import rejected by version gate"
+        );
+        return Err(AppError::Conflict(reason));
+    }
+    info!(
+        safe_name = %safe_name,
+        version = %version,
+        "Challenge package import started"
+    );
+
     let package_digest =
         compute_package_digest(&package_root, &["src", "attachment"]).map_err(map_package_error)?;
     let spec_digest = compute_spec_digest(&normalized).map_err(map_package_error)?;
@@ -116,34 +141,15 @@ pub async fn import_challenge_package(
     );
     let resources = &normalized.recommended_resources;
 
-    // ── 2. Transaction1: identity + revision building ──────────────────────
-    enum Tx1 {
-        AlreadyReady {
-            challenge: challenges::Model,
-            revision: challenge_revisions::Model,
-        },
-        Build {
-            challenge: challenges::Model,
-            revision_id: Uuid,
-        },
-    }
-
-    let tx1 = {
+    // ── 3. 单版本 upsert：identity + building 状态（事务）──────────────────
+    let challenge = {
         let txn = db
             .begin()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let challenge = match challenges::Entity::find()
-            .filter(crate::entity::challenges::Column::SafeName.eq(&safe_name))
-            .one(&txn)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-        {
-            Some(existing) => {
-                // Do NOT silently rewrite name/category/description on import.
-                existing
-            }
+        let challenge = match existing {
+            Some(existing) => existing,
             None => challenges::ActiveModel {
                 name: Set(normalized.name.clone()),
                 safe_name: Set(safe_name.clone()),
@@ -157,129 +163,43 @@ pub async fn import_challenge_package(
             .map_err(|e| AppError::Database(e.to_string()))?,
         };
 
-        let existing_rev =
-            revision_repo::find_by_challenge_and_version(&txn, challenge.id, &version)
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let outcome = match existing_rev {
-            Some(rev) if rev.build_status == revision_repo::BUILD_STATUS_READY => {
-                if rev.package_digest == package_digest {
-                    Tx1::AlreadyReady {
-                        challenge: challenge.clone(),
-                        revision: rev,
-                    }
-                } else {
-                    return Err(AppError::Conflict(format!(
-                        "CHALLENGE_VERSION_CONFLICT: version {version} already ready with different package_digest"
-                    )));
-                }
-            }
-            Some(rev) if rev.build_status == revision_repo::BUILD_STATUS_BUILDING => {
-                return Err(AppError::Conflict(
-                    "build in progress for this version".into(),
-                ));
-            }
-            Some(rev) if rev.build_status == revision_repo::BUILD_STATUS_FAILED => {
-                if rev.package_digest != package_digest {
-                    return Err(AppError::Conflict(format!(
-                        "CHALLENGE_VERSION_CONFLICT: failed version {version} has different package_digest; bump version"
-                    )));
-                }
-                // Retry same package_digest.
-                let updated = revision_repo::reset_to_building(
-                    &txn,
-                    rev.id,
-                    source_toml.clone(),
-                    spec_json.clone(),
-                    spec_digest.clone(),
-                    package_digest.clone(),
-                    flag_type.clone(),
-                    static_flag_value.clone(),
-                    normalized.container_port.map(|p| p as i32),
-                    resources.cpu_millis,
-                    resources.memory_bytes,
-                    resources.pids_limit,
-                    attachment_path.clone(),
-                    attachment_name.clone(),
-                    attachment_size,
-                    attachment_sha.clone(),
-                    Some(image_ref.clone()),
-                )
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
-                Tx1::Build {
-                    challenge: challenge.clone(),
-                    revision_id: updated.id,
-                }
-            }
-            Some(_) => {
-                return Err(AppError::Conflict(format!(
-                    "unknown build_status for version {version}"
-                )));
-            }
-            None => {
-                let rev_no = revision_repo::next_revision_number(&txn, challenge.id)
-                    .await
-                    .map_err(|e| AppError::Database(e.to_string()))?;
-                let inserted = revision_repo::insert_building(
-                    &txn,
-                    revision_repo::NewRevision {
-                        challenge_id: challenge.id,
-                        version: version.clone(),
-                        revision_number: rev_no,
-                        source_toml: source_toml.clone(),
-                        spec_json: spec_json.clone(),
-                        spec_digest: spec_digest.clone(),
-                        package_digest: package_digest.clone(),
-                        flag_type: flag_type.clone(),
-                        static_flag_value: static_flag_value.clone(),
-                        container_port: normalized.container_port.map(|p| p as i32),
-                        recommended_cpu_millis: resources.cpu_millis,
-                        recommended_memory_bytes: resources.memory_bytes,
-                        recommended_pids_limit: resources.pids_limit,
-                        attachment_path: attachment_path.clone(),
-                        attachment_name: attachment_name.clone(),
-                        attachment_size,
-                        attachment_sha256: attachment_sha.clone(),
-                        image_ref: Some(image_ref.clone()),
-                    },
-                )
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
-                Tx1::Build {
-                    challenge: challenge.clone(),
-                    revision_id: inserted.id,
-                }
-            }
-        };
+        // 覆盖全部 package 字段（identity 字段 name/category/description 保持 admin 可编辑，导入不重写）。
+        let mut am: challenges::ActiveModel = challenge.clone().into();
+        am.version = Set(Some(version.clone()));
+        am.source_toml = Set(Some(source_toml.clone()));
+        am.spec_json = Set(Some(spec_json.clone()));
+        am.spec_digest = Set(Some(spec_digest.clone()));
+        am.package_digest = Set(Some(package_digest.clone()));
+        am.flag_type = Set(Some(flag_type.clone()));
+        am.static_flag_value = Set(static_flag_value.clone());
+        am.container_port = Set(normalized.container_port.map(|p| p as i32));
+        am.recommended_cpu_millis = Set(resources.cpu_millis);
+        am.recommended_memory_bytes = Set(resources.memory_bytes);
+        am.recommended_pids_limit = Set(resources.pids_limit);
+        am.attachment_path = Set(attachment_path.clone());
+        am.attachment_name = Set(attachment_name.clone());
+        am.attachment_size = Set(attachment_size);
+        am.attachment_sha256 = Set(attachment_sha.clone());
+        am.image_ref = Set(Some(image_ref.clone()));
+        am.image_id = Set(None);
+        am.image_repo_digest = Set(None);
+        am.build_status = Set(Some(BUILD_STATUS_BUILDING.to_string()));
+        am.build_error = Set(None);
+        am.updated_at = Set(chrono::Utc::now().into());
+        let challenge = am
+            .update(&txn)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         txn.commit()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
-        outcome
+        challenge
     };
 
-    let (challenge, revision_id) = match tx1 {
-        Tx1::AlreadyReady {
-            challenge,
-            revision,
-        } => {
-            return Ok(ImportChallengeResult {
-                challenge,
-                revision,
-                already_exists: true,
-            });
-        }
-        Tx1::Build {
-            challenge,
-            revision_id,
-        } => (challenge, revision_id),
-    };
-
-    // ── 3. Build outside txn (synchronous v1) ──────────────────────────────
+    // ── 4. Build outside txn (synchronous v1) ──────────────────────────────
     let context_dir = package_root.join("src");
-    let short_id = &revision_id.to_string().replace('-', "")[..8];
+    let short_id = &challenge.id.to_string().replace('-', "")[..8];
     let temp_tag = format!("{image_ref}-import-{short_id}");
 
     let mut labels = HashMap::new();
@@ -304,44 +224,51 @@ pub async fn import_challenge_package(
         .await
         .map_err(map_image_error);
 
-    // ── 4. Transaction2: ready or failed ───────────────────────────────────
+    // ── 5. ready or failed ─────────────────────────────────────────────────
     match build_outcome {
         Ok((image_id, image_repo_digest)) => {
-            let revision = revision_repo::mark_ready(
-                db,
-                revision_id,
-                image_ref.clone(),
-                image_id,
-                image_repo_digest,
-            )
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            let mut am: challenges::ActiveModel = challenge.clone().into();
+            am.image_ref = Set(Some(image_ref.clone()));
+            am.image_id = Set(Some(image_id.clone()));
+            am.image_repo_digest = Set(image_repo_digest.clone());
+            am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
+            am.build_error = Set(None);
+            am.updated_at = Set(chrono::Utc::now().into());
+            let challenge = am
+                .update(db)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
 
             // Mirror package (src/ + attachment/) into CHALLENGES_DIR for static serving.
             mirror_to_challenges_dir(db, &safe_name, &package_root).await;
 
             info!(
                 challenge_id = %challenge.id,
-                revision_id = %revision.id,
+                safe_name = %safe_name,
                 version = %version,
+                image_ref = %image_ref,
+                image_repo_digest = ?image_repo_digest,
+                package_digest = %package_digest,
                 "Challenge package import ready"
             );
             // Best-effort cleanup of temp tag (canonical image_ref still tagged).
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
-            Ok(ImportChallengeResult {
-                challenge,
-                revision,
-                already_exists: false,
-            })
+            Ok(ImportChallengeResult { challenge })
         }
         Err(e) => {
             let sanitized = sanitize_build_error(&e.to_string());
             error!(
-                revision_id = %revision_id,
+                challenge_id = %challenge.id,
+                safe_name = %safe_name,
+                version = %version,
                 error = %sanitized,
                 "Challenge package import build failed"
             );
-            let _ = revision_repo::mark_failed(db, revision_id, sanitized.clone()).await;
+            let mut am: challenges::ActiveModel = challenge.clone().into();
+            am.build_status = Set(Some(BUILD_STATUS_FAILED.to_string()));
+            am.build_error = Set(Some(sanitized.clone()));
+            am.updated_at = Set(chrono::Utc::now().into());
+            let _ = am.update(db).await;
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
             Err(e)
         }
@@ -415,7 +342,7 @@ async fn mirror_to_challenges_dir(db: &DatabaseConnection, safe_name: &str, pack
             return;
         }
     };
-    let dest = Path::new(&challenges_dir).join(safe_name);
+    let dest = crate::infrastructure::settings::resolve_dir_path(&challenges_dir).join(safe_name);
     let res = (|| -> std::io::Result<()> {
         if dest.exists() {
             std::fs::remove_dir_all(&dest)?;
@@ -424,6 +351,8 @@ async fn mirror_to_challenges_dir(db: &DatabaseConnection, safe_name: &str, pack
     })();
     if let Err(e) = res {
         error!(safe_name = %safe_name, error = %e, "mirror package to CHALLENGES_DIR failed");
+    } else {
+        info!(safe_name = %safe_name, dest = %dest.display(), "package mirrored to CHALLENGES_DIR");
     }
 }
 

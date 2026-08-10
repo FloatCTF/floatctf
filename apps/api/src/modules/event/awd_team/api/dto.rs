@@ -6,7 +6,7 @@ use sea_orm::prelude::DateTimeWithTimeZone;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entity::{awd_events, gamebox_revisions, gameboxes};
+use crate::entity::{awd_events, gameboxes};
 
 /// serde snake_case 序列化（AwdEventStatus/AwdPhase 无 Display）。
 fn snake_str<T: serde::Serialize>(v: &T) -> String {
@@ -424,17 +424,11 @@ pub struct UpdateGameBoxIdentityRequest {
     pub hidden: Option<bool>,
 }
 
-/// POST /api/admin/events/{event_id}/awd/gameboxes（赛事选择，pin ready revision）
+/// POST /api/admin/events/{event_id}/awd/gameboxes（赛事选择 GameBox 当前版本）
 #[derive(Debug, Deserialize)]
 pub struct AddEventGameBoxRequest {
-    /// 二选一：直接 pin revision，或 gamebox_id + 可选 version（默认最新 ready）。
     #[serde(default)]
-    pub gamebox_revision_id: Option<Uuid>,
-    #[serde(default)]
-    pub gamebox_id: Option<Uuid>,
-    /// 与 gamebox_id 联用：指定 version；缺省取最新 ready revision。
-    #[serde(default)]
-    pub version: Option<String>,
+    pub gamebox_id: Uuid,
     /// 可选：确定性 IP 偏移（2..254）；缺省自动分配未占用值。
     #[serde(default)]
     pub host_offset: Option<i16>,
@@ -499,55 +493,7 @@ pub struct UpdateEventGameBoxRequest {
 
 // ── 响应 DTO ──
 
-/// 列表/摘要用的 revision 摘要（不含 judge_script_content）。
-#[derive(Debug, Serialize, Clone)]
-pub struct GameBoxRevisionSummaryDto {
-    pub id: Uuid,
-    pub version: String,
-    pub revision_number: i32,
-    pub build_status: String,
-    pub package_digest: String,
-    pub image_ref: Option<String>,
-    pub image_id: Option<String>,
-    pub image_repo_digest: Option<String>,
-    pub username: String,
-    pub recommended_cpu_millis: i64,
-    pub recommended_memory_bytes: i64,
-    pub recommended_pids_limit: i64,
-    pub healthchecks_json: serde_json::Value,
-    pub judge_script_name: Option<String>,
-    pub judge_timeout_secs: Option<i32>,
-    pub judge_retry_interval_secs: Option<i32>,
-    pub build_error: Option<String>,
-    pub created_at: chrono::DateTime<chrono::FixedOffset>,
-}
-
-impl From<&gamebox_revisions::Model> for GameBoxRevisionSummaryDto {
-    fn from(r: &gamebox_revisions::Model) -> Self {
-        Self {
-            id: r.id,
-            version: r.version.clone(),
-            revision_number: r.revision_number,
-            build_status: r.build_status.clone(),
-            package_digest: r.package_digest.clone(),
-            image_ref: r.image_ref.clone(),
-            image_id: r.image_id.clone(),
-            image_repo_digest: r.image_repo_digest.clone(),
-            username: r.username.clone(),
-            recommended_cpu_millis: r.recommended_cpu_millis,
-            recommended_memory_bytes: r.recommended_memory_bytes,
-            recommended_pids_limit: r.recommended_pids_limit,
-            healthchecks_json: r.healthchecks_json.clone(),
-            judge_script_name: r.judge_script_name.clone(),
-            judge_timeout_secs: r.judge_timeout_secs,
-            judge_retry_interval_secs: r.judge_retry_interval_secs,
-            build_error: r.build_error.clone(),
-            created_at: r.created_at,
-        }
-    }
-}
-
-/// GameBox 库行 = 身份 + 最新/ready revision 摘要。
+/// GameBox 库行 = 身份 + 当前版本 package 摘要（单版本模型）。
 #[derive(Debug, Serialize)]
 pub struct GameBoxLibraryDto {
     pub id: Uuid,
@@ -556,9 +502,9 @@ pub struct GameBoxLibraryDto {
     pub category: String,
     pub description: String,
     pub hidden: bool,
-    /// 最新 ready revision 摘要（无 ready 时可能为最新任意状态，或 None）。
-    pub latest_revision: Option<GameBoxRevisionSummaryDto>,
-    // 兼容旧前端字段：从 latest_revision 投影（无则 null）
+    pub version: Option<String>,
+    pub build_status: Option<String>,
+    pub package_digest: Option<String>,
     pub image_ref: Option<String>,
     pub image_repo_digest: Option<String>,
     pub username: Option<String>,
@@ -566,17 +512,10 @@ pub struct GameBoxLibraryDto {
     pub memory_bytes: Option<i64>,
     pub pids_limit: Option<i64>,
     pub healthchecks_json: Option<serde_json::Value>,
-    pub build_status: Option<String>,
-    pub version: Option<String>,
-    pub package_digest: Option<String>,
 }
 
-impl GameBoxLibraryDto {
-    pub fn from_identity_and_revision(
-        g: &gameboxes::Model,
-        rev: Option<&gamebox_revisions::Model>,
-    ) -> Self {
-        let summary = rev.map(GameBoxRevisionSummaryDto::from);
+impl From<&gameboxes::Model> for GameBoxLibraryDto {
+    fn from(g: &gameboxes::Model) -> Self {
         Self {
             id: g.id,
             name: g.name.clone(),
@@ -584,17 +523,16 @@ impl GameBoxLibraryDto {
             category: g.category.clone(),
             description: g.description.clone(),
             hidden: g.hidden,
-            image_ref: summary.as_ref().and_then(|s| s.image_ref.clone()),
-            image_repo_digest: summary.as_ref().and_then(|s| s.image_repo_digest.clone()),
-            username: summary.as_ref().map(|s| s.username.clone()),
-            cpu_millis: summary.as_ref().map(|s| s.recommended_cpu_millis),
-            memory_bytes: summary.as_ref().map(|s| s.recommended_memory_bytes),
-            pids_limit: summary.as_ref().map(|s| s.recommended_pids_limit),
-            healthchecks_json: summary.as_ref().map(|s| s.healthchecks_json.clone()),
-            build_status: summary.as_ref().map(|s| s.build_status.clone()),
-            version: summary.as_ref().map(|s| s.version.clone()),
-            package_digest: summary.as_ref().map(|s| s.package_digest.clone()),
-            latest_revision: summary,
+            version: g.version.clone(),
+            build_status: g.build_status.clone(),
+            package_digest: g.package_digest.clone(),
+            image_ref: g.image_ref.clone(),
+            image_repo_digest: g.image_repo_digest.clone(),
+            username: g.username.clone(),
+            cpu_millis: Some(g.recommended_cpu_millis),
+            memory_bytes: Some(g.recommended_memory_bytes),
+            pids_limit: Some(g.recommended_pids_limit),
+            healthchecks_json: g.healthchecks_json.clone(),
         }
     }
 }
@@ -603,18 +541,15 @@ impl GameBoxLibraryDto {
 #[derive(Debug, Serialize)]
 pub struct ImportGameBoxResponse {
     pub gamebox: GameBoxLibraryDto,
-    pub revision: GameBoxRevisionSummaryDto,
-    pub already_exists: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct EventGameBoxDto {
     pub id: Uuid,
     pub gamebox_id: Uuid,
-    pub gamebox_revision_id: Uuid,
     pub gamebox_name: String,
     pub gamebox_safe_name: String,
-    pub revision_version: String,
+    pub gamebox_version: Option<String>,
     pub host_offset: i16,
     pub enabled: bool,
     pub hidden: bool,

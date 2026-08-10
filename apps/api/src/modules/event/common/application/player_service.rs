@@ -239,12 +239,7 @@ pub async fn list_event_challenges(
                         AppError::BadRequest(format!("calculate_next_dynamic_score error: {}", e))
                     })?;
             result.push(EventChallengeResult {
-                challenge: crate::modules::challenge::catalog::ChallengesDto::from_model(
-                    db.get_ref(),
-                    &c,
-                )
-                .await
-                .map_err(AppError::from)?,
+                challenge: crate::modules::challenge::catalog::ChallengesDto::from(&c),
                 current_points,
                 solved_count,
                 solved,

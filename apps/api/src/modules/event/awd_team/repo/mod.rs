@@ -10,7 +10,6 @@ pub mod event_repo;
 pub mod flag_repo;
 pub mod gamebox_lib_repo;
 pub mod gamebox_repo;
-pub mod gamebox_revision_repo;
 pub mod judge_repo;
 pub mod network_allocation_repo;
 pub mod network_settings_repo;

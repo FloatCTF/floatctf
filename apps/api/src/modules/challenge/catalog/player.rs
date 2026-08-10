@@ -56,9 +56,9 @@ pub async fn get_challenges(
 
     query_params.total = Some(total_items);
 
-    // 玩家侧返回 enriched DTO（latest ready revision 摘要 + 附件元数据），
+    // 玩家侧返回 enriched DTO（当前 package 摘要 + 附件元数据），
     // 附件链接由前端按 /static/challenges/... 构造。
-    let dtos = ChallengesDto::from_models(ctx.db.get_ref(), &items).await?;
+    let dtos: Vec<ChallengesDto> = items.into_iter().map(Into::into).collect();
     UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
@@ -76,7 +76,7 @@ pub async fn get_challenge(
         .await?
     {
         Some(model) => {
-            let dto = ChallengesDto::from_model(ctx.db.get_ref(), &model).await?;
+            let dto = ChallengesDto::from(&model);
             UniResponse::ok(Some(dto)).into()
         }
         None => AppError::NotFound(format!(" {} not exist", challenge_id)).into(),

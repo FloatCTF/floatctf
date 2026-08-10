@@ -58,6 +58,7 @@ pub async fn create_gamebox_identity<C: ConnectionTrait>(
         hidden: Set(hidden),
         created_at: Set(now),
         updated_at: Set(now),
+        ..Default::default()
     }
     .insert(db)
     .await

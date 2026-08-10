@@ -57,9 +57,10 @@ pub async fn run() -> Result<(), BootstrapError> {
 
     // Set working directory: absolutize relative paths before chdir so later
     // derived paths (e.g. logs) don't double-apply the relative work_dir.
-    let work_dir_abs = std::env::current_dir()
-        .unwrap_or_default()
-        .join(&config.server.work_dir);
+    // 先记录启动目录：settings 里 `{{WORK_DIR}}/challenges` 等相对路径以它为锚。
+    let launch_dir = std::env::current_dir().unwrap_or_default();
+    crate::infrastructure::settings::set_launch_dir(launch_dir.clone());
+    let work_dir_abs = launch_dir.join(&config.server.work_dir);
     std::env::set_current_dir(&work_dir_abs)
         .unwrap_or_else(|e| panic!("failed to set WORK_DIR={}: {}", config.server.work_dir, e));
 

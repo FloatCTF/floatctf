@@ -189,8 +189,8 @@ pub async fn jeopardy_launch(
         }
     };
 
-    // 钉住的 Revision：Event Challenge pin（§21/§91）——Instance 不得自行查 latest
-    let event_challenge = event_challenges::Entity::find()
+    // 单版本模型：事件直接使用 Challenge 当前版本（运行时契约由 instance_service 从 identity 读取）
+    event_challenges::Entity::find()
         .filter(
             event_challenges::Column::EventId
                 .eq(event_id)
@@ -199,13 +199,11 @@ pub async fn jeopardy_launch(
         .one(db)
         .await?
         .ok_or(anyhow!("challenge is not in this event"))?;
-    let pinned_revision_id = event_challenge.challenge_revision_id;
 
     let res_instance = common::launch_instance(
         &ctx.db,
         &ctx.docker,
         challenge_id,
-        pinned_revision_id,
         identifier,
         user.id,
         ref_label.into(),

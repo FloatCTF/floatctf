@@ -6,8 +6,6 @@ use serde::Serialize;
 pub struct EventChallengesDto {
     pub event_id: Uuid,
     pub challenge_id: Uuid,
-    /// Pinned immutable ChallengeRevision (Instance 创建/Reset/Recovery 使用)。
-    pub challenge_revision_id: Uuid,
     pub points: f64,
     pub hidden: bool,
 }
@@ -17,7 +15,6 @@ impl From<event_challenges::Model> for EventChallengesDto {
         Self {
             event_id: m.event_id,
             challenge_id: m.challenge_id,
-            challenge_revision_id: m.challenge_revision_id,
             points: m.points,
             hidden: m.hidden,
         }

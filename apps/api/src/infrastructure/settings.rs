@@ -201,6 +201,34 @@ pub async fn get_setting(db: &DbConn, key: &str) -> Result<String, anyhow::Error
     Ok(resolve_value_with_map(&raw, &map))
 }
 
+// ---------------------------------------------------------------------------
+// 相对路径设置（CHALLENGES_DIR / GAMEBOXES_DIR / UPLOAD_DIR）的锚定解析
+// ---------------------------------------------------------------------------
+//
+// 配置里 `work_dir = "../../app"` 是相对**启动目录**（apps/api）的；bootstrap 会
+// chdir 进 work_dir，此后 `Path::new("{{WORK_DIR}}/challenges")` 会被错误地相对
+// work_dir 再次解析（双重应用）。因此启动时先记录启动目录，路径类设置一律以它为锚。
+
+static LAUNCH_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// bootstrap chdir 前调用，记录进程启动目录。
+pub fn set_launch_dir(dir: std::path::PathBuf) {
+    let _ = LAUNCH_DIR.set(dir);
+}
+
+/// 解析目录类设置：绝对路径原样返回；相对路径以启动目录为锚（未记录时退回当前目录）。
+pub fn resolve_dir_path(value: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(value);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    let anchor = LAUNCH_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    anchor.join(p)
+}
+
 /// Upsert 一个设置值（不存在则插入，存在则更新 value）。
 ///
 /// 动态设置统一走这里（AGENTS.md 铁律 1：配置只从 TOML / settings 表读取）。

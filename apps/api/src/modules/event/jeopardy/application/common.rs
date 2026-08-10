@@ -12,14 +12,12 @@ use uuid::Uuid;
 
 /// InstanceLifecycle: launch / destroy / scheduled expire live here (fcmc is docker adapter).
 ///
-/// Launch and destroy both go through `InstanceService`. Launch pins the given
-/// `challenge_revision_id` (caller resolves event pin or latest-ready).
+/// Launch and destroy both go through `InstanceService`（单版本：直接使用 Challenge 当前版本）。
 
 pub async fn launch_instance(
     db: &WebDb,
     docker: &WebDocker,
     challenge_id: Uuid,
-    challenge_revision_id: Uuid,
     identifier: String,
     user_id: Uuid,
     r#ref: String,
@@ -27,14 +25,7 @@ pub async fn launch_instance(
 ) -> anyhow::Result<instances::Model> {
     let service = InstanceService::with_docker(db.get_ref().clone(), docker.get_ref().clone());
     service
-        .launch(
-            challenge_id,
-            challenge_revision_id,
-            identifier,
-            user_id,
-            r#ref,
-            flag_prefix,
-        )
+        .launch(challenge_id, identifier, user_id, r#ref, flag_prefix)
         .await
 }
 

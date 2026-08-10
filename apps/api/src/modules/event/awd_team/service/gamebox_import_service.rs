@@ -1,12 +1,12 @@
-//! GameBox package import pipeline.
+//! GameBox package import pipeline（单版本模型）。
 //!
 //! Flow:
 //! 1. Safe extract zip → discover package root → require meta.toml + src/Dockerfile
-//! 2. Parse/validate meta.toml via fcmc::GameBoxMeta
-//! 3. Compute package_digest + spec_digest
-//! 4. Transaction1: upsert identity by safe_name; insert/retry revision as `building`
-//! 5. Outside txn: docker build (context = package/src only); optional registry push
-//! 6. Transaction2: mark ready (image pins) or failed (sanitized error)
+//! 2. Parse/validate meta.toml via fcmc::GameBoxMeta → 得 safe_name/version
+//! 3. 版本门禁：incoming 必须严格大于该 GameBox 当前版本（等于/小于拒绝，详细日志）
+//! 4. Compute package_digest + spec_digest
+//! 5. 单版本 upsert：identity 先置 building → docker build → ready/failed（image pins）
+//! 6. On success: mirror package into GAMEBOXES_DIR/{safe_name}
 //!
 //! v1: synchronous build is OK (no durable job system for docker builds).
 
@@ -19,32 +19,38 @@ use fcmc::{
     DockerContainerRuntime, ImageBuildRequest, ImageError, ImageRuntime, RegistryAuth,
     build_gamebox_image_ref,
 };
-use sea_orm::{DatabaseConnection, TransactionTrait};
-use tracing::{error, info};
-use uuid::Uuid;
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, QueryFilter,
+    TransactionTrait,
+};
+use tracing::{error, info, warn};
 
 use crate::core::config::RegistryConfig;
-use crate::entity::{gamebox_revisions, gameboxes};
+use crate::entity::gameboxes;
+use crate::infrastructure::package::version_gate_reason;
+use crate::infrastructure::settings::get_setting;
 use crate::modules::event::awd_team::{
     AwdError, AwdResult,
-    repo::{gamebox_lib_repo, gamebox_revision_repo},
+    repo::gamebox_lib_repo,
     service::gamebox_package::{
         compute_package_digest, compute_spec_digest, discover_package_root, extract_package_zip,
         read_judge_script, read_meta_toml, require_package_layout, sanitize_build_error,
     },
 };
 
+pub const BUILD_STATUS_BUILDING: &str = "building";
+pub const BUILD_STATUS_READY: &str = "ready";
+pub const BUILD_STATUS_FAILED: &str = "failed";
+
 /// Result of import (returned to admin API).
 #[derive(Debug, Clone)]
 pub struct ImportGameBoxResult {
     pub gamebox: gameboxes::Model,
-    pub revision: gamebox_revisions::Model,
-    /// True when an identical ready revision already existed (build skipped).
-    pub already_exists: bool,
 }
 
 /// Import a GameBox package zip (multipart tempfile path).
 ///
+/// 单版本模型：identity 直接承载当前版本全部 package 字段；导入要求 version 严格递增。
 /// Uses platform `RegistryConfig` for image prefix / push mode / credentials.
 pub async fn import_gamebox_package(
     db: &DatabaseConnection,
@@ -64,6 +70,30 @@ pub async fn import_gamebox_package(
     let safe_name = meta.resolved_safe_name().map_err(map_meta_error)?;
     let version = meta.version.clone();
     let normalized = meta.normalize().map_err(map_meta_error)?;
+
+    // ── 2. 版本门禁（先比对，任何写操作之前）─────────────────────────────
+    let existing = gamebox_lib_repo::find_gamebox_by_safe_name(db, &safe_name)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if let Some(reason) = version_gate_reason(
+        &version,
+        existing.as_ref().and_then(|g| g.version.as_deref()),
+    ) {
+        warn!(
+            safe_name = %safe_name,
+            incoming_version = %version,
+            current_version = ?existing.as_ref().and_then(|g| g.version.as_deref()),
+            reason = %reason,
+            "GameBox import rejected by version gate"
+        );
+        return Err(AwdError::Conflict(reason));
+    }
+    info!(
+        safe_name = %safe_name,
+        version = %version,
+        "GameBox package import started"
+    );
+
     let package_digest = compute_package_digest(&package_root)?;
     let spec_digest = compute_spec_digest(&normalized)?;
     let spec_json = serde_json::to_value(&normalized)
@@ -86,33 +116,15 @@ pub async fn import_gamebox_package(
     let image_ref = build_gamebox_image_ref(&registry.image_prefix, &safe_name, &version);
     let resources = &normalized.recommended_resources;
 
-    // ── 2. Transaction1: identity + revision building ──────────────────────
-    // Decision outcome carried out of the txn.
-    enum Tx1 {
-        AlreadyReady {
-            gamebox: gameboxes::Model,
-            revision: gamebox_revisions::Model,
-        },
-        Build {
-            gamebox: gameboxes::Model,
-            revision_id: Uuid,
-        },
-    }
-
-    let tx1 = {
+    // ── 3. 单版本 upsert：identity + building 状态（事务）──────────────────
+    let gamebox = {
         let txn = db
             .begin()
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
 
-        let gamebox = match gamebox_lib_repo::find_gamebox_by_safe_name(&txn, &safe_name)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?
-        {
-            Some(existing) => {
-                // Do NOT silently rewrite name/category/description on import.
-                existing
-            }
+        let gamebox = match existing {
+            Some(existing) => existing,
             None => gamebox_lib_repo::create_gamebox_identity(
                 &txn,
                 normalized.name.clone(),
@@ -125,123 +137,42 @@ pub async fn import_gamebox_package(
             .map_err(|e| AwdError::Database(e.to_string()))?,
         };
 
-        let existing_rev =
-            gamebox_revision_repo::find_by_gamebox_and_version(&txn, gamebox.id, &version)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-
-        let outcome = match existing_rev {
-            Some(rev) if rev.build_status == gamebox_revision_repo::BUILD_STATUS_READY => {
-                if rev.package_digest == package_digest {
-                    Tx1::AlreadyReady {
-                        gamebox: gamebox.clone(),
-                        revision: rev,
-                    }
-                } else {
-                    return Err(AwdError::Conflict(format!(
-                        "VERSION_CONFLICT: version {version} already ready with different package_digest"
-                    )));
-                }
-            }
-            Some(rev) if rev.build_status == gamebox_revision_repo::BUILD_STATUS_BUILDING => {
-                return Err(AwdError::Conflict(
-                    "build in progress for this version".into(),
-                ));
-            }
-            Some(rev) if rev.build_status == gamebox_revision_repo::BUILD_STATUS_FAILED => {
-                if rev.package_digest != package_digest {
-                    return Err(AwdError::Conflict(format!(
-                        "VERSION_CONFLICT: failed version {version} has different package_digest; bump version"
-                    )));
-                }
-                // Retry same package_digest.
-                let updated = gamebox_revision_repo::reset_to_building(
-                    &txn,
-                    rev.id,
-                    source_toml.clone(),
-                    spec_json.clone(),
-                    spec_digest.clone(),
-                    package_digest.clone(),
-                    Some(image_ref.clone()),
-                    normalized.username.clone(),
-                    resources.cpu_millis,
-                    resources.memory_bytes,
-                    resources.pids_limit,
-                    healthchecks_json.clone(),
-                    judge_script_name.clone(),
-                    judge_script_content.clone(),
-                )
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-                Tx1::Build {
-                    gamebox: gamebox.clone(),
-                    revision_id: updated.id,
-                }
-            }
-            Some(_) => {
-                return Err(AwdError::Conflict(format!(
-                    "unknown build_status for version {version}"
-                )));
-            }
-            None => {
-                let rev_no = gamebox_revision_repo::next_revision_number(&txn, gamebox.id)
-                    .await
-                    .map_err(|e| AwdError::Database(e.to_string()))?;
-                let inserted = gamebox_revision_repo::insert_building(
-                    &txn,
-                    gamebox_revision_repo::NewRevision {
-                        gamebox_id: gamebox.id,
-                        version: version.clone(),
-                        revision_number: rev_no,
-                        source_toml: source_toml.clone(),
-                        spec_json: spec_json.clone(),
-                        spec_digest: spec_digest.clone(),
-                        package_digest: package_digest.clone(),
-                        image_ref: Some(image_ref.clone()),
-                        username: normalized.username.clone(),
-                        recommended_cpu_millis: resources.cpu_millis,
-                        recommended_memory_bytes: resources.memory_bytes,
-                        recommended_pids_limit: resources.pids_limit,
-                        healthchecks_json: healthchecks_json.clone(),
-                        judge_script_name: judge_script_name.clone(),
-                        judge_script_content: judge_script_content.clone(),
-                        judge_args_json: None,
-                        judge_timeout_secs: None,
-                        judge_retry_interval_secs: None,
-                    },
-                )
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-                Tx1::Build {
-                    gamebox: gamebox.clone(),
-                    revision_id: inserted.id,
-                }
-            }
-        };
+        let mut am: gameboxes::ActiveModel = gamebox.clone().into();
+        am.version = Set(Some(version.clone()));
+        am.source_toml = Set(Some(source_toml.clone()));
+        am.spec_json = Set(Some(spec_json.clone()));
+        am.spec_digest = Set(Some(spec_digest.clone()));
+        am.package_digest = Set(Some(package_digest.clone()));
+        am.image_ref = Set(Some(image_ref.clone()));
+        am.image_id = Set(None);
+        am.image_repo_digest = Set(None);
+        am.username = Set(Some(normalized.username.clone()));
+        am.recommended_cpu_millis = Set(resources.cpu_millis);
+        am.recommended_memory_bytes = Set(resources.memory_bytes);
+        am.recommended_pids_limit = Set(resources.pids_limit);
+        am.healthchecks_json = Set(Some(healthchecks_json.clone()));
+        am.judge_script_name = Set(judge_script_name.clone());
+        am.judge_script_content = Set(judge_script_content.clone());
+        am.judge_args_json = Set(None);
+        am.judge_timeout_secs = Set(None);
+        am.judge_retry_interval_secs = Set(None);
+        am.build_status = Set(Some(BUILD_STATUS_BUILDING.to_string()));
+        am.build_error = Set(None);
+        am.updated_at = Set(chrono::Utc::now().into());
+        let gamebox = am
+            .update(&txn)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
 
         txn.commit()
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
-        outcome
+        gamebox
     };
 
-    let (gamebox, revision_id) = match tx1 {
-        Tx1::AlreadyReady { gamebox, revision } => {
-            return Ok(ImportGameBoxResult {
-                gamebox,
-                revision,
-                already_exists: true,
-            });
-        }
-        Tx1::Build {
-            gamebox,
-            revision_id,
-        } => (gamebox, revision_id),
-    };
-
-    // ── 3. Build outside txn (synchronous v1) ──────────────────────────────
+    // ── 4. Build outside txn (synchronous v1) ──────────────────────────────
     let context_dir = package_root.join("src");
-    let short_id = &revision_id.to_string().replace('-', "")[..8];
+    let short_id = &gamebox.id.to_string().replace('-', "")[..8];
     let temp_tag = format!("{image_ref}-import-{short_id}");
 
     let mut labels = HashMap::new();
@@ -265,40 +196,51 @@ pub async fn import_gamebox_package(
     let build_outcome =
         run_build_and_pin(&runtime, registry, &build_req, &image_ref, &temp_tag).await;
 
-    // ── 4. Transaction2: ready or failed ───────────────────────────────────
+    // ── 5. ready or failed ─────────────────────────────────────────────────
     match build_outcome {
         Ok((image_id, image_repo_digest)) => {
-            let revision = gamebox_revision_repo::mark_ready(
-                db,
-                revision_id,
-                image_ref.clone(),
-                image_id,
-                image_repo_digest,
-            )
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+            let mut am: gameboxes::ActiveModel = gamebox.clone().into();
+            am.image_ref = Set(Some(image_ref.clone()));
+            am.image_id = Set(Some(image_id.clone()));
+            am.image_repo_digest = Set(image_repo_digest.clone());
+            am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
+            am.build_error = Set(None);
+            am.updated_at = Set(chrono::Utc::now().into());
+            let gamebox = am
+                .update(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+
+            // Mirror package into GAMEBOXES_DIR/{safe_name}（与 Challenge 一致）
+            mirror_to_gameboxes_dir(db, &safe_name, &package_root).await;
+
             info!(
                 gamebox_id = %gamebox.id,
-                revision_id = %revision.id,
+                safe_name = %safe_name,
                 version = %version,
+                image_ref = %image_ref,
+                image_repo_digest = ?image_repo_digest,
+                package_digest = %package_digest,
                 "GameBox package import ready"
             );
             // Best-effort cleanup of temp tag (canonical image_ref still tagged).
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
-            Ok(ImportGameBoxResult {
-                gamebox,
-                revision,
-                already_exists: false,
-            })
+            Ok(ImportGameBoxResult { gamebox })
         }
         Err(e) => {
             let sanitized = sanitize_build_error(&e.to_string());
             error!(
-                revision_id = %revision_id,
+                gamebox_id = %gamebox.id,
+                safe_name = %safe_name,
+                version = %version,
                 error = %sanitized,
                 "GameBox package import build failed"
             );
-            let _ = gamebox_revision_repo::mark_failed(db, revision_id, sanitized.clone()).await;
+            let mut am: gameboxes::ActiveModel = gamebox.clone().into();
+            am.build_status = Set(Some(BUILD_STATUS_FAILED.to_string()));
+            am.build_error = Set(Some(sanitized.clone()));
+            am.updated_at = Set(chrono::Utc::now().into());
+            let _ = am.update(db).await;
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
             Err(e)
         }
@@ -312,8 +254,6 @@ async fn run_build_and_pin(
     canonical_ref: &str,
     temp_tag: &str,
 ) -> AwdResult<(String, Option<String>)> {
-    // Prefer ImageRuntime trait methods (DockerContainerRuntime also has a legacy
-    // inherent build_image(&str, &Path) used by challenge build).
     let built = ImageRuntime::build_image(runtime, build_req.clone())
         .await
         .map_err(map_image_error)?;
@@ -367,6 +307,45 @@ fn registry_auth(registry: &RegistryConfig) -> Option<RegistryAuth> {
         password: registry.password.as_ref().map(|s| s.expose().to_string()),
         server_address: registry.server_address.clone(),
     })
+}
+
+/// Copy the imported package into `GAMEBOXES_DIR/{safe_name}`（解压落盘，与 Challenge 一致）。
+/// Best-effort: failure is logged, not fatal.
+async fn mirror_to_gameboxes_dir(db: &DatabaseConnection, safe_name: &str, package_root: &Path) {
+    let gameboxes_dir = match get_setting(db, "GAMEBOXES_DIR").await {
+        Ok(d) => d,
+        Err(e) => {
+            error!(error = %e, "mirror: cannot resolve GAMEBOXES_DIR");
+            return;
+        }
+    };
+    let dest = crate::infrastructure::settings::resolve_dir_path(&gameboxes_dir).join(safe_name);
+    let res = (|| -> std::io::Result<()> {
+        if dest.exists() {
+            std::fs::remove_dir_all(&dest)?;
+        }
+        copy_dir_all(package_root, &dest)
+    })();
+    if let Err(e) = res {
+        error!(safe_name = %safe_name, error = %e, "mirror package to GAMEBOXES_DIR failed");
+    } else {
+        info!(safe_name = %safe_name, dest = %dest.display(), "package mirrored to GAMEBOXES_DIR");
+    }
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 fn map_meta_error(e: fcmc::GameBoxMetaError) -> AwdError {

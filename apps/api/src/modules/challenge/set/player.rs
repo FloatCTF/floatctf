@@ -78,7 +78,10 @@ pub async fn get_challenge_set(
         .await?;
 
     UniResponse::ok(Some(
-        ChallengesDto::from_models(ctx.db.get_ref(), &challenges).await?,
+        challenges
+            .iter()
+            .map(ChallengesDto::from)
+            .collect::<Vec<_>>(),
     ))
     .into()
 }

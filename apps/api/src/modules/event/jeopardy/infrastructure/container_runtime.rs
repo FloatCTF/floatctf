@@ -3,9 +3,9 @@
 //! Thin façade over `fcmc::ContainerRuntime` + `ImageRuntime` so Jeopardy
 //! lifecycle does not call bollard or free helpers directly.
 //!
-//! Runtime contract comes from the pinned `challenge_revisions` row, never from
-//! a mutable manifest: image is the immutable pin (RepoDigest > image_id) and
-//! dynamic flags are injected via the fixed `FLAG` environment variable.
+//! Runtime contract comes from the Challenge identity row (单版本模型): image is the
+//! immutable pin (RepoDigest > image_id) and dynamic flags are injected via the fixed
+//! `FLAG` environment variable.
 
 use async_trait::async_trait;
 use bollard::Docker;
@@ -14,10 +14,10 @@ use fcmc::{
     PortBinding, ResourceLimits,
 };
 
-/// Immutable runtime contract resolved from a pinned ChallengeRevision.
+/// Runtime contract resolved from the Challenge identity（单版本）。
 #[derive(Debug, Clone)]
 pub struct ChallengeRuntimeSpec {
-    /// Pinned image: `image_repo_digest` > `image_id` (ready revisions always pinned).
+    /// Pinned image: `image_repo_digest` > `image_id` (ready challenges always pinned).
     pub image_ref: String,
     /// Single exposed TCP port (`[docker].port`).
     pub container_port: u16,

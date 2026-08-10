@@ -110,13 +110,13 @@ function RouteComponent() {
 			{/* 附件 */}
 			{challenge?.attachment && (
 				<a
-					href={`/static/challenges/${challenge.safe_name}/${challenge.attachment}`}
+					href={`/static/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
 					download
 					target="_blank"
 					rel="noopener noreferrer"
 					className="inline-block mt-1"
 				>
-					<Label variant="accent">{challenge.attachment}</Label>
+					<Label variant="accent">{challenge.attachment.name}</Label>
 				</a>
 			)}
 			{challengeStatus.instance && (

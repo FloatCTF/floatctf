@@ -1,17 +1,13 @@
-//! DB-gated: challenge 导入的覆盖语义 + safe_name 去重。
+//! DB-gated: challenge_revisions 不可变版本模型。
 //!
-//! 复现线上 400 根因：导入 UPSERT 只针对 name，但 challenges_safe_name_key
-//! 也是 UNIQUE —— 批量包里某题的 safe_name 撞上已存在行（不同 name）时
-//! 直接 duplicate key。修复后：同名 → 覆盖更新（保留原 safe_name）；
-//! 新名但 safe_name 被占 → 追加 -2/-3 去重。
-//!
-//! 需要可达的 PostgreSQL（soft-skip）。
+//! 覆盖：insert building → mark ready/failed、version 唯一、latest ready、
+//! effective_image_ref pin 顺序（RepoDigest > image_id）。不依赖 Docker。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::challenges;
-use floatctf::modules::challenge::build::import_challenge;
+use floatctf::modules::challenge::build::revision_repo;
 
 fn db_url() -> String {
     std::env::var("DATABASE_URL")
@@ -28,86 +24,137 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
     }
 }
 
-fn meta_toml(name: &str, desc: &str) -> String {
-    format!(
-        r#"name = "{name}"
-author = "tester@example.com"
-category = "Web"
-description = "{desc}"
-
-[flag]
-value = "flag{{{name}}}"
-env_var = "FLAG"
-"#
-    )
+#[derive(Clone)]
+struct RunCtx {
+    safe_name: String,
+    challenge_id: Uuid,
 }
 
-async fn find_by_safe_name(
-    db: &sea_orm::DatabaseConnection,
-    safe_name: &str,
-) -> Option<challenges::Model> {
-    challenges::Entity::find()
-        .filter(challenges::Column::SafeName.eq(safe_name))
-        .one(db)
-        .await
-        .expect("query challenge by safe_name")
+fn new_rev_for(
+    run: &RunCtx,
+    revision_number: i32,
+    version: &str,
+    package_digest: &str,
+) -> revision_repo::NewRevision {
+    revision_repo::NewRevision {
+        challenge_id: run.challenge_id,
+        version: version.to_string(),
+        revision_number,
+        source_toml: "name = \"t\"\nversion = \"1.0.0\"\n".into(),
+        spec_json: serde_json::json!({"name": "t", "version": version}),
+        spec_digest: "spec-digest".into(),
+        package_digest: package_digest.to_string(),
+        flag_type: "dynamic".into(),
+        static_flag_value: None,
+        container_port: Some(80),
+        recommended_cpu_millis: 500,
+        recommended_memory_bytes: 268_435_456,
+        recommended_pids_limit: 100,
+        attachment_path: None,
+        attachment_name: None,
+        attachment_size: None,
+        attachment_sha256: None,
+        image_ref: Some(format!("floatctf/challenges/{}:{version}", run.safe_name)),
+    }
 }
 
 #[tokio::test]
-async fn import_overwrite_same_name_and_dedup_safe_name() {
+async fn revision_lifecycle_version_unique_and_pin_order() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
 
-    let base = format!("imp-ovw-{}", Uuid::new_v4().simple());
-    // 种子行的 safe_name 带下划线，碰撞行用 '/'（generate_safe_name 会把 '/' 替换成 '_'）
-    let name_a = format!("{}_x", base);
-    let collision_name = format!("{}/x", base);
-    let seed_id = Uuid::new_v4();
-    challenges::ActiveModel {
-        id: Set(seed_id),
-        name: Set(name_a.clone()),
+    let base = format!("rev-{}", Uuid::new_v4().simple());
+    let challenge = challenges::ActiveModel {
+        name: Set(base.clone()),
+        safe_name: Set(base.clone()),
         category: Set("Web".into()),
-        description: Set("old".into()),
-        safe_name: Set(name_a.clone()),
-        toml_str: Set(meta_toml(&name_a, "old")),
+        description: Set("d".into()),
+        hidden: Set(false),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .expect("seed existing challenge");
+    .expect("seed challenge");
+    let run = RunCtx {
+        safe_name: base,
+        challenge_id: challenge.id,
+    };
 
-    // 1) 同名 → 覆盖更新，保留原 safe_name，行 id 不变
-    let updated = import_challenge(&db, meta_toml(&name_a, "v2"))
+    // 1) building → ready（LocalOnly：仅 image_id）
+    let rev = revision_repo::insert_building(&db, new_rev_for(&run, 1, "1.0.0", "abc"))
         .await
-        .expect("overwrite import should succeed");
-    assert_eq!(updated.id, seed_id, "同名覆盖必须复用原行");
-    assert_eq!(updated.description, "v2");
-    assert_eq!(updated.safe_name, name_a, "覆盖导入不得改 safe_name");
+        .expect("insert building");
+    assert_eq!(rev.build_status, "building");
+    let ready = revision_repo::mark_ready(
+        &db,
+        rev.id,
+        format!("floatctf/challenges/{}:1.0.0", run.safe_name),
+        "sha256:local".into(),
+        None,
+    )
+    .await
+    .expect("mark ready");
+    assert_eq!(ready.build_status, "ready");
+    // LocalOnly：pin 回退到 image_id
+    assert_eq!(
+        revision_repo::effective_image_ref(&ready).unwrap(),
+        "sha256:local"
+    );
 
-    // 2) 新名但 generate_safe_name 撞上现有 safe_name → 去重为 -2
-    //    ".../x" -> '/' 被替换为 '_'，与 name_a 的 safe_name（"..._x"）相同
-    let inserted = import_challenge(&db, meta_toml(&collision_name, "deduped"))
+    // 2) 同 version 同 package_digest → 幂等返回同一行
+    let again = revision_repo::find_by_challenge_and_version(&db, challenge.id, "1.0.0")
         .await
-        .expect("collision import should succeed");
-    assert_ne!(inserted.id, seed_id, "safe_name 冲突时必须是新行");
-    assert_eq!(inserted.safe_name, format!("{}-2", name_a));
-    assert_eq!(inserted.name, collision_name);
+        .expect("find by version")
+        .expect("exists");
+    assert_eq!(again.id, rev.id);
+    assert_eq!(again.package_digest, "abc");
 
-    // 3) 再次导入同名 → 覆盖，不再新增行
-    let again = import_challenge(&db, meta_toml(&collision_name, "v3"))
+    // 3) latest ready（同一 challenge 有两个版本时取 ready 的）
+    let rev2 = revision_repo::insert_building(&db, new_rev_for(&run, 2, "1.1.0", "def"))
         .await
-        .expect("re-import should succeed");
-    assert_eq!(again.id, inserted.id);
-    assert_eq!(again.description, "v3");
+        .expect("insert v1.1.0");
+    assert_eq!(rev2.build_status, "building");
+    let latest = revision_repo::find_latest_ready(&db, challenge.id)
+        .await
+        .expect("latest ready")
+        .expect("v1.0.0 is ready");
+    assert_eq!(latest.version, "1.0.0");
 
-    // 清理
-    for sn in [&name_a, &format!("{}-2", name_a)] {
-        if let Some(row) = find_by_safe_name(&db, sn).await {
-            challenges::Entity::delete_by_id(row.id)
-                .exec(&db)
-                .await
-                .ok();
-        }
-    }
+    // 4) RepoDigest > image_id
+    let ready2 = revision_repo::mark_ready(
+        &db,
+        rev2.id,
+        format!("floatctf/challenges/{}:1.1.0", run.safe_name),
+        "sha256:local2".into(),
+        Some(format!(
+            "registry.example/challenges/{}:1.1.0@sha256:repo",
+            run.safe_name
+        )),
+    )
+    .await
+    .expect("mark ready v1.1.0");
+    assert_eq!(
+        revision_repo::effective_image_ref(&ready2).unwrap(),
+        format!(
+            "registry.example/challenges/{}:1.1.0@sha256:repo",
+            run.safe_name
+        )
+    );
+
+    // 5) failed revision 保留诊断
+    let rev3 = revision_repo::insert_building(&db, new_rev_for(&run, 3, "2.0.0", "ghi"))
+        .await
+        .expect("insert v2.0.0");
+    let failed = revision_repo::mark_failed(&db, rev3.id, "BUILD_FAILED: boom".into())
+        .await
+        .expect("mark failed");
+    assert_eq!(failed.build_status, "failed");
+    assert_eq!(failed.build_error.as_deref(), Some("BUILD_FAILED: boom"));
+
+    // 6) 清理
+    challenges::Entity::delete_by_id(challenge.id)
+        .exec(&db)
+        .await
+        .expect("cleanup challenge");
 }

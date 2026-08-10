@@ -59,7 +59,7 @@ pids_limit = 100
 |----|------|
 | `version` | SemVer，禁止 build metadata（`+`） |
 | `safe_name` | 可选；缺省由 name 派生；无法派生时必须显式给出 |
-| image | 平台生成：`<registry.image_prefix>/gameboxes/<safe_name>:<version>` |
+| image | 平台生成：`<registry.image_prefix>/gameboxes/<safe_name>:<version>`（与 Challenge 共用 `fcmc::build_artifact_image_ref(ArtifactKind)`） |
 | build context | 仅 `src/` |
 | judge | 导入时读入 Revision，自包含存储 |
 

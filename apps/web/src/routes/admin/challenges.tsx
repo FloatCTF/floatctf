@@ -5,7 +5,6 @@ import {
 	Dialog,
 	Stack,
 	TextInput,
-	Textarea,
 	ToggleSwitch,
 } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
@@ -17,8 +16,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
-import type { Challenges } from "@/entity";
 import { AdminRouteGuard } from "@/routes/admin/route";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow, useSelectedRowIds } from "@/util";
 
 export const Route = createFileRoute("/admin/challenges")({
@@ -38,11 +37,44 @@ function RouteComponent() {
 			sortBy: true,
 		},
 		{
+			accessorKey: "latest_version",
+			header: "Latest Version",
+			field: "latest_version",
+			renderCell: (row: ChallengesListItem) => {
+				return (
+					<span>
+						{row.latest_version ?? "—"}{" "}
+						{row.latest_build_status === "ready" ? (
+							<CheckIcon />
+						) : row.latest_build_status ? (
+							<span className="text-red-500">{row.latest_build_status}</span>
+						) : null}
+					</span>
+				);
+			},
+		},
+		{
+			accessorKey: "attachment",
+			header: "Attachment",
+			field: "attachment",
+			renderCell: (row: ChallengesListItem) => {
+				return (
+					<span>
+						{row.attachment ? (
+							<span title={row.attachment.path}>{row.attachment.name}</span>
+						) : (
+							<></>
+						)}
+					</span>
+				);
+			},
+		},
+		{
 			accessorKey: "hidden",
 			header: "Hidden",
 			field: "hidden",
 
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{row.hidden ? <CheckIcon /> : <></>}</span>;
 			},
 			sortBy: true,
@@ -51,7 +83,7 @@ function RouteComponent() {
 			accessorKey: "created_at",
 			header: "Created At",
 			field: "created_at",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.created_at)}</span>;
 			},
 		},
@@ -59,19 +91,17 @@ function RouteComponent() {
 			accessorKey: "updated_at",
 			header: "Updated At",
 			field: "updated_at",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
 	];
 
-	const mutationChallenge = useReactive<Partial<Challenges>>({
+	const mutationChallenge = useReactive<Partial<ChallengesListItem>>({
 		name: "",
 		category: "",
 		description: "",
-		attachment: "",
 		hidden: true,
-		toml_str: "",
 	});
 
 	const mutationColumns = [
@@ -112,18 +142,6 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "attachment",
-			field: "attachment",
-			render: (
-				<TextInput
-					value={mutationChallenge.attachment}
-					onChange={(e) => {
-						mutationChallenge.attachment = e.target.value;
-					}}
-				/>
-			),
-		},
-		{
 			header: "hidden",
 			field: "hidden",
 			render: (
@@ -138,18 +156,6 @@ function RouteComponent() {
 				</Stack>
 			),
 		},
-		{
-			header: "toml_str",
-			field: "toml_str",
-			render: (
-				<Textarea
-					value={mutationChallenge.toml_str}
-					onChange={(e) => {
-						mutationChallenge.toml_str = e.target.value;
-					}}
-				/>
-			),
-		},
 	];
 	const [selectedRowIds, setSelectedRowIds] = useSelectedRowIds();
 
@@ -161,7 +167,14 @@ function RouteComponent() {
 			</ButtonGroup>
 		</div>
 	);
-	const filterKeys = ["id", "name", "category", "hidden", "description"];
+	const filterKeys = [
+		"id",
+		"name",
+		"safe_name",
+		"category",
+		"hidden",
+		"description",
+	];
 
 	return (
 		<GenericTable
@@ -278,6 +291,22 @@ export type BuildChallengeResult = {
 	challenge_name: string;
 	is_ok: boolean;
 	message: string;
+};
+export type ImportChallengeResponse = {
+	challenge: ChallengesListItem;
+	revision: {
+		id: string;
+		challenge_id: string;
+		revision_number: number;
+		version: string;
+		build_status: string;
+		build_error?: string;
+		flag_type: string;
+		container_port?: number;
+		image_ref?: string;
+		image_repo_digest?: string;
+	};
+	already_exists: boolean;
 };
 
 export function CheckButton({

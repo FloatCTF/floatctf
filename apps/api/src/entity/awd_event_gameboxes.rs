@@ -27,7 +27,6 @@ pub struct Model {
     pub first_bonus: i64,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
-    pub gamebox_revision_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -46,14 +45,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
-    #[sea_orm(
-        belongs_to = "super::gamebox_revisions::Entity",
-        from = "Column::GameboxRevisionId",
-        to = "super::gamebox_revisions::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Restrict"
-    )]
-    GameboxRevisions,
     #[sea_orm(
         belongs_to = "super::gameboxes::Entity",
         from = "Column::GameboxId",
@@ -85,12 +76,6 @@ impl Related<super::awd_score_events::Entity> for Entity {
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Events.def()
-    }
-}
-
-impl Related<super::gamebox_revisions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::GameboxRevisions.def()
     }
 }
 

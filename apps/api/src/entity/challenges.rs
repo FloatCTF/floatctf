@@ -19,12 +19,45 @@ pub struct Model {
     pub hidden: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub version: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub source_toml: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub spec_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub spec_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub package_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub flag_type: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub static_flag_value: Option<String>,
+    pub container_port: Option<i32>,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_path: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_name: Option<String>,
+    pub attachment_size: Option<i64>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_sha256: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_ref: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_repo_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_status: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::challenge_revisions::Entity")]
-    ChallengeRevisions,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
     #[sea_orm(has_many = "super::challenge_solves::Entity")]
@@ -37,12 +70,6 @@ pub enum Relation {
     EventChallenges,
     #[sea_orm(has_many = "super::instances::Entity")]
     Instances,
-}
-
-impl Related<super::challenge_revisions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeRevisions.def()
-    }
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {
@@ -87,6 +114,15 @@ impl Related<super::challenge_sets::Entity> for Entity {
     }
     fn via() -> Option<RelationDef> {
         Some(super::challenge_set_items::Relation::Challenges.def().rev())
+    }
+}
+
+impl Related<super::events::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::event_challenges::Relation::Events.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(super::event_challenges::Relation::Challenges.def().rev())
     }
 }
 

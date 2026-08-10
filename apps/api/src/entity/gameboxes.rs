@@ -19,25 +19,52 @@ pub struct Model {
     pub hidden: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub version: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub source_toml: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub spec_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub spec_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub package_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_ref: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_repo_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub username: Option<String>,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub healthchecks_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub judge_script_name: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub judge_script_content: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub judge_args_json: Option<Json>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_status: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
     AwdEventGameboxes,
-    #[sea_orm(has_many = "super::gamebox_revisions::Entity")]
-    GameboxRevisions,
 }
 
 impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdEventGameboxes.def()
-    }
-}
-
-impl Related<super::gamebox_revisions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::GameboxRevisions.def()
     }
 }
 

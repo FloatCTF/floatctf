@@ -13,19 +13,10 @@ pub struct Model {
     #[sea_orm(column_type = "Double")]
     pub points: f64,
     pub hidden: bool,
-    pub challenge_revision_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::challenge_revisions::Entity",
-        from = "(Column::ChallengeRevisionId, Column::ChallengeId)",
-        to = "(super::challenge_revisions::Column::Id, super::challenge_revisions::Column::ChallengeId)",
-        on_update = "NoAction",
-        on_delete = "Restrict"
-    )]
-    ChallengeRevisions,
     #[sea_orm(
         belongs_to = "super::challenges::Entity",
         from = "Column::ChallengeId",
@@ -42,12 +33,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
-}
-
-impl Related<super::challenge_revisions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeRevisions.def()
-    }
 }
 
 impl Related<super::challenges::Entity> for Entity {

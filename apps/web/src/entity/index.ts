@@ -20,6 +20,7 @@ export * from "./awd_score_events";
 export * from "./awd_team_bans";
 export * from "./awd_team_networks";
 export * from "./awd_wireguard_peers";
+export * from "./challenge_revisions";
 export * from "./challenge_set_items";
 export * from "./challenge_sets";
 export * from "./challenge_solves";

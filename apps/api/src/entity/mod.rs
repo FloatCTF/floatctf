@@ -23,6 +23,7 @@ pub mod awd_score_events;
 pub mod awd_team_bans;
 pub mod awd_team_networks;
 pub mod awd_wireguard_peers;
+pub mod challenge_revisions;
 pub mod challenge_set_items;
 pub mod challenge_sets;
 pub mod challenge_solves;

@@ -262,15 +262,6 @@ impl Related<super::event_writeup::Entity> for Entity {
     }
 }
 
-impl Related<super::challenges::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::event_challenges::Relation::Challenges.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_challenges::Relation::Events.def().rev())
-    }
-}
-
 impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
         super::event_users::Relation::Users.def()

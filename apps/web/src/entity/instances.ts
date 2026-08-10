@@ -12,4 +12,5 @@ export type Instances = {
   created_at: string;
   updated_at: string;
   destroy_at: string;
+  challenge_revision_id?: string;
 };

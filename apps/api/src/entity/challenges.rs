@@ -16,17 +16,15 @@ pub struct Model {
     pub category: String,
     #[sea_orm(column_type = "Text")]
     pub description: String,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub attachment: Option<String>,
     pub hidden: bool,
-    #[sea_orm(column_type = "Text")]
-    pub toml_str: String,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::challenge_revisions::Entity")]
+    ChallengeRevisions,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
     #[sea_orm(has_many = "super::challenge_solves::Entity")]
@@ -39,6 +37,12 @@ pub enum Relation {
     EventChallenges,
     #[sea_orm(has_many = "super::instances::Entity")]
     Instances,
+}
+
+impl Related<super::challenge_revisions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ChallengeRevisions.def()
+    }
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {
@@ -83,15 +87,6 @@ impl Related<super::challenge_sets::Entity> for Entity {
     }
     fn via() -> Option<RelationDef> {
         Some(super::challenge_set_items::Relation::Challenges.def().rev())
-    }
-}
-
-impl Related<super::events::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::event_challenges::Relation::Events.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_challenges::Relation::Challenges.def().rev())
     }
 }
 

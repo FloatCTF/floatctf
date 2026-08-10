@@ -23,10 +23,19 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub destroy_at: DateTimeWithTimeZone,
+    pub challenge_revision_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::challenge_revisions::Entity",
+        from = "Column::ChallengeRevisionId",
+        to = "super::challenge_revisions::Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    ChallengeRevisions,
     #[sea_orm(
         belongs_to = "super::challenges::Entity",
         from = "Column::ChallengeId",
@@ -45,6 +54,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Users,
+}
+
+impl Related<super::challenge_revisions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ChallengeRevisions.def()
+    }
 }
 
 impl Related<super::challenges::Entity> for Entity {

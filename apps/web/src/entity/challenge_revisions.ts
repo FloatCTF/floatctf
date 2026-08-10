@@ -1,0 +1,26 @@
+export type ChallengeRevisions = {
+  id: string;
+  challenge_id: string;
+  revision_number: number;
+  version: string;
+  source_toml: string;
+  spec_json: string;
+  spec_digest: string;
+  package_digest: string;
+  flag_type: string;
+  static_flag_value?: string;
+  container_port?: string;
+  recommended_cpu_millis: number;
+  recommended_memory_bytes: number;
+  recommended_pids_limit: number;
+  attachment_path?: string;
+  attachment_name?: string;
+  attachment_size?: string;
+  attachment_sha256?: string;
+  image_ref?: string;
+  image_id?: string;
+  image_repo_digest?: string;
+  build_status: string;
+  build_error?: string;
+  created_at: string;
+};

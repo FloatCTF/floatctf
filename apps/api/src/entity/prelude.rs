@@ -21,6 +21,7 @@ pub use super::awd_score_events::Entity as AwdScoreEvents;
 pub use super::awd_team_bans::Entity as AwdTeamBans;
 pub use super::awd_team_networks::Entity as AwdTeamNetworks;
 pub use super::awd_wireguard_peers::Entity as AwdWireguardPeers;
+pub use super::challenge_revisions::Entity as ChallengeRevisions;
 pub use super::challenge_set_items::Entity as ChallengeSetItems;
 pub use super::challenge_sets::Entity as ChallengeSets;
 pub use super::challenge_solves::Entity as ChallengeSolves;

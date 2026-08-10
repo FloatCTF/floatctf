@@ -40,9 +40,18 @@
 | **UNTRACKED** | 有业务表但**无** schema_migrations | ❌ 拒绝（防止对已有 Schema 重放迁移）。需要 baseline 接管（见下） |
 | **TRACKED** | 有 schema_migrations | ✅ 只执行 PENDING 的迁移；先校验历史 |
 
-> 当前开发库（floatctf_db）**已于 2026-08-10 完成 baseline**（建 schema_migrations + 29 条记录），状态 TRACKED，`db:migration:apply` 直接可用。
+> 当前开发库（floatctf_db）**已于 2026-08-10 完成 Pre-v1 baseline**（migrations/ 已 squash 为 `20260810121925-initial-schema` + `20260810121926-initial-data` 两条，旧 29 条开发历史由 Git 保留），状态 TRACKED，`db:migration:apply` 直接可用。
 > 新增一台**全新**机器/CI：DB 为 EMPTY，apply 会从 0 执行全部迁移；或用 merged.sql 一次性初始化（见 merged.sql 节）。
-> 遇到 UNTRACKED 库（如接管旧环境）——不要直接动它，向用户说明需要 baseline（生成 schema_migrations + 按迁移最终状态打 29 条记录），确认后再做。
+> 遇到 UNTRACKED 库（如接管旧环境）——不要直接动它，向用户说明需要 baseline（生成 schema_migrations + 按迁移最终状态打记录），确认后再做。
+
+## Baseline（Pre-v1 历史 squash）
+
+- **Baseline version**：`20260810121925`（initial-schema）+ `20260810121926`（initial-data）
+- **Migration history is frozen from baseline**：`20260810121925-initial-schema.sql` 视为 **IMMUTABLE**，以后任何 Schema 修改**禁止回头改它**，只能 `db:migration:new` 追加新迁移；除非未来明确进行另一次 major-version squash（需单独迁移策略）
+- initial-schema：直接描述最终 Schema（Extensions/Types/Casts/Functions/Tables/Constraints/Indexes/Triggers），不含 `schema_migrations`（由 migrate.sh 独占）
+- initial-data：仅程序运行必需 bootstrap（内置超级管理员 sysadmin、AWD 网络池默认配置单例）；不含任何 dev/demo/历史数据
+- 旧 29 条开发 migration 不再存在（Git 已保留历史）；不要重新建立 old/legacy/archive 目录存放
+- 验证基线等价性的方法（如再次做 baseline）：reference DB（旧历史构建）↔ candidate DB（baseline 构建）做 pg_dump 归一化 diff + catalog 语义比较 + bootstrap 数据比较，必须 0 unexplained diff
 
 ## 完整流程
 
@@ -88,7 +97,7 @@ COMMENT ON TABLE "challenge_solves" IS '独立解题记录：练习模式的解�
 mise run db:migration:validate
 ```
 
-检查：文件名正则、timestamp 唯一、内容非空（仅注释会警告）、无事务控制、无 schema_migrations 操作。
+检查：文件名正则、timestamp 唯一、内容非空（仅注释会警告）、无事务控制、无 `schema_migrations` 操作（语句级检测：CREATE/DROP/ALTER/TRUNCATE/INSERT/UPDATE/DELETE）、无非事务安全语句（`CREATE INDEX CONCURRENTLY`/`VACUUM`/`CREATE DATABASE` 等，剥离注释后匹配）。
 
 ### 4. 应用到开发库
 

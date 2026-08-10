@@ -415,7 +415,7 @@ async fn seed_submission_fixture(
 ) {
     use floatctf::entity::{
         awd_event_gameboxes, awd_flag_issues, awd_gamebox_instances, awd_rounds, event_teams,
-        gamebox_revisions, gameboxes,
+        gameboxes,
         sea_orm_active_enums::{AwdPhase, GameboxStatus, RoundStatus},
         users,
     };
@@ -469,10 +469,9 @@ async fn seed_submission_fixture(
     .await
     .expect("insert victim team");
 
-    // GameBox identity + ready revision + EventGameBox（pin revision）
+    // GameBox identity（单版本：package 字段在 identity）+ EventGameBox
     // safe_name 随机后缀，避免跨 run 残留冲突（gameboxes 是全局表，events 级联清不到）
     let gamebox_id = Uuid::new_v4();
-    let revision_id = Uuid::new_v4();
     let gb_suffix = &gamebox_id.to_string().replace('-', "")[..8];
     gameboxes::ActiveModel {
         id: Set(gamebox_id),
@@ -483,47 +482,36 @@ async fn seed_submission_fixture(
         hidden: Set(false),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
-    }
-    .insert(db)
-    .await
-    .expect("insert gamebox");
-
-    gamebox_revisions::ActiveModel {
-        id: Set(revision_id),
-        gamebox_id: Set(gamebox_id),
-        version: Set("1.0.0".into()),
-        revision_number: Set(1),
-        source_toml: Set(String::new()),
-        spec_json: Set(serde_json::json!({})),
-        spec_digest: Set("spec".into()),
-        package_digest: Set("pkg".into()),
+        version: Set(Some("1.0.0".into())),
+        source_toml: Set(None),
+        spec_json: Set(Some(serde_json::json!({}))),
+        spec_digest: Set(Some("spec".into())),
+        package_digest: Set(Some("pkg".into())),
         image_ref: Set(Some(format!("fctf/test-{gb_suffix}:1.0.0"))),
         image_id: Set(Some(format!("sha256:scen{}", gb_suffix))),
         image_repo_digest: Set(None),
-        username: Set("root".into()),
+        username: Set(Some("root".into())),
         recommended_cpu_millis: Set(1000),
         recommended_memory_bytes: Set(512 * 1024 * 1024),
         recommended_pids_limit: Set(256),
-        healthchecks_json: Set(serde_json::json!([])),
+        healthchecks_json: Set(Some(serde_json::json!([]))),
         judge_script_name: Set(None),
         judge_script_content: Set(None),
         judge_args_json: Set(None),
         judge_timeout_secs: Set(None),
         judge_retry_interval_secs: Set(None),
-        build_status: Set("ready".into()),
+        build_status: Set(Some("ready".into())),
         build_error: Set(None),
-        created_at: Set(now.into()),
     }
     .insert(db)
     .await
-    .expect("insert revision");
+    .expect("insert gamebox");
 
     let event_gamebox_id = Uuid::new_v4();
     awd_event_gameboxes::ActiveModel {
         id: Set(event_gamebox_id),
         event_id: Set(event_id),
         gamebox_id: Set(gamebox_id),
-        gamebox_revision_id: Set(revision_id),
         host_offset: Set(10),
         enabled: Set(true),
         hidden: Set(false),

@@ -1,13 +1,16 @@
-//! DB-gated: challenge_revisions 不可变版本模型。
+//! DB-gated: 单版本 Challenge identity 导入语义。
 //!
-//! 覆盖：insert building → mark ready/failed、version 唯一、latest ready、
+//! 覆盖：版本门禁（严格递增）、identity 上的 package 字段 upsert、
 //! effective_image_ref pin 顺序（RepoDigest > image_id）。不依赖 Docker。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::challenges;
-use floatctf::modules::challenge::build::revision_repo;
+use floatctf::infrastructure::package::version_gate_reason;
+use floatctf::modules::challenge::build::import_service::{
+    BUILD_STATUS_READY, ImportChallengeResult,
+};
 
 fn db_url() -> String {
     std::env::var("DATABASE_URL")
@@ -24,42 +27,38 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
     }
 }
 
-#[derive(Clone)]
-struct RunCtx {
-    safe_name: String,
-    challenge_id: Uuid,
-}
-
-fn new_rev_for(
-    run: &RunCtx,
-    revision_number: i32,
+/// 直接对 identity 做"导入"语义的字段更新（模拟 import 的 upsert 阶段，不构建镜像）。
+async fn seed_challenge_package(
+    db: &sea_orm::DatabaseConnection,
+    challenge: &challenges::Model,
     version: &str,
-    package_digest: &str,
-) -> revision_repo::NewRevision {
-    revision_repo::NewRevision {
-        challenge_id: run.challenge_id,
-        version: version.to_string(),
-        revision_number,
-        source_toml: "name = \"t\"\nversion = \"1.0.0\"\n".into(),
-        spec_json: serde_json::json!({"name": "t", "version": version}),
-        spec_digest: "spec-digest".into(),
-        package_digest: package_digest.to_string(),
-        flag_type: "dynamic".into(),
-        static_flag_value: None,
-        container_port: Some(80),
-        recommended_cpu_millis: 500,
-        recommended_memory_bytes: 268_435_456,
-        recommended_pids_limit: 100,
-        attachment_path: None,
-        attachment_name: None,
-        attachment_size: None,
-        attachment_sha256: None,
-        image_ref: Some(format!("floatctf/challenges/{}:{version}", run.safe_name)),
-    }
+    image_repo_digest: Option<&str>,
+) -> challenges::Model {
+    let mut am: challenges::ActiveModel = challenge.clone().into();
+    am.version = Set(Some(version.to_string()));
+    am.source_toml = Set(Some(format!("name = \"t\"\nversion = \"{version}\"\n")));
+    am.spec_json = Set(Some(serde_json::json!({"name": "t", "version": version})));
+    am.spec_digest = Set(Some("spec-digest".into()));
+    am.package_digest = Set(Some(format!("pkg-{version}")));
+    am.flag_type = Set(Some("dynamic".into()));
+    am.static_flag_value = Set(None);
+    am.container_port = Set(Some(80));
+    am.recommended_cpu_millis = Set(500);
+    am.recommended_memory_bytes = Set(268_435_456);
+    am.recommended_pids_limit = Set(100);
+    am.image_ref = Set(Some(format!(
+        "floatctf/challenges/{}:{version}",
+        challenge.safe_name
+    )));
+    am.image_id = Set(Some(format!("sha256:local-{version}")));
+    am.image_repo_digest = Set(image_repo_digest.map(str::to_string));
+    am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
+    am.build_error = Set(None);
+    am.update(db).await.expect("upsert package fields")
 }
 
 #[tokio::test]
-async fn revision_lifecycle_version_unique_and_pin_order() {
+async fn single_version_identity_upsert_and_pin_order() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
@@ -76,85 +75,51 @@ async fn revision_lifecycle_version_unique_and_pin_order() {
     .insert(&db)
     .await
     .expect("seed challenge");
-    let run = RunCtx {
-        safe_name: base,
-        challenge_id: challenge.id,
-    };
 
-    // 1) building → ready（LocalOnly：仅 image_id）
-    let rev = revision_repo::insert_building(&db, new_rev_for(&run, 1, "1.0.0", "abc"))
-        .await
-        .expect("insert building");
-    assert_eq!(rev.build_status, "building");
-    let ready = revision_repo::mark_ready(
-        &db,
-        rev.id,
-        format!("floatctf/challenges/{}:1.0.0", run.safe_name),
-        "sha256:local".into(),
-        None,
+    // 1) 新 identity：v1.0.0 允许导入
+    assert_eq!(version_gate_reason("1.0.0", None), None);
+
+    // 2) LocalOnly：pin 回退到 image_id
+    let c1 = seed_challenge_package(&db, &challenge, "1.0.0", None).await;
+    assert_eq!(c1.build_status.as_deref(), Some("ready"));
+    let pin = floatctf::modules::challenge::build::effective_image_ref(
+        c1.image_repo_digest.as_deref(),
+        c1.image_id.as_deref(),
     )
-    .await
-    .expect("mark ready");
-    assert_eq!(ready.build_status, "ready");
-    // LocalOnly：pin 回退到 image_id
-    assert_eq!(
-        revision_repo::effective_image_ref(&ready).unwrap(),
-        "sha256:local"
-    );
+    .expect("pin");
+    assert_eq!(pin, "sha256:local-1.0.0");
 
-    // 2) 同 version 同 package_digest → 幂等返回同一行
-    let again = revision_repo::find_by_challenge_and_version(&db, challenge.id, "1.0.0")
-        .await
-        .expect("find by version")
-        .expect("exists");
-    assert_eq!(again.id, rev.id);
-    assert_eq!(again.package_digest, "abc");
-
-    // 3) latest ready（同一 challenge 有两个版本时取 ready 的）
-    let rev2 = revision_repo::insert_building(&db, new_rev_for(&run, 2, "1.1.0", "def"))
-        .await
-        .expect("insert v1.1.0");
-    assert_eq!(rev2.build_status, "building");
-    let latest = revision_repo::find_latest_ready(&db, challenge.id)
-        .await
-        .expect("latest ready")
-        .expect("v1.0.0 is ready");
-    assert_eq!(latest.version, "1.0.0");
-
-    // 4) RepoDigest > image_id
-    let ready2 = revision_repo::mark_ready(
+    // 3) RepoDigest > image_id
+    let c2 = seed_challenge_package(
         &db,
-        rev2.id,
-        format!("floatctf/challenges/{}:1.1.0", run.safe_name),
-        "sha256:local2".into(),
-        Some(format!(
+        &challenge,
+        "1.1.0",
+        Some(&format!(
             "registry.example/challenges/{}:1.1.0@sha256:repo",
-            run.safe_name
+            challenge.safe_name
         )),
     )
-    .await
-    .expect("mark ready v1.1.0");
-    assert_eq!(
-        revision_repo::effective_image_ref(&ready2).unwrap(),
-        format!(
-            "registry.example/challenges/{}:1.1.0@sha256:repo",
-            run.safe_name
-        )
-    );
+    .await;
+    let pin2 = floatctf::modules::challenge::build::effective_image_ref(
+        c2.image_repo_digest.as_deref(),
+        c2.image_id.as_deref(),
+    )
+    .expect("pin");
+    assert!(pin2.contains("@sha256:repo"));
 
-    // 5) failed revision 保留诊断
-    let rev3 = revision_repo::insert_building(&db, new_rev_for(&run, 3, "2.0.0", "ghi"))
-        .await
-        .expect("insert v2.0.0");
-    let failed = revision_repo::mark_failed(&db, rev3.id, "BUILD_FAILED: boom".into())
-        .await
-        .expect("mark failed");
-    assert_eq!(failed.build_status, "failed");
-    assert_eq!(failed.build_error.as_deref(), Some("BUILD_FAILED: boom"));
+    // 4) 版本门禁：等于/小于拒绝，严格递增放行
+    assert!(version_gate_reason("1.1.0", Some("1.1.0")).is_some());
+    assert!(version_gate_reason("1.0.0", Some("1.1.0")).is_some());
+    assert_eq!(version_gate_reason("2.0.0", Some("1.1.0")), None);
 
-    // 6) 清理
+    // 5) 清理
     challenges::Entity::delete_by_id(challenge.id)
         .exec(&db)
         .await
         .expect("cleanup challenge");
+}
+
+#[allow(dead_code)]
+fn _assert_result_type(_r: ImportChallengeResult) {
+    // 编译期锚点：import 结果只含 identity（无 revision）。
 }

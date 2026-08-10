@@ -1,8 +1,13 @@
+import type { UniResponse } from "@/api/axios";
 import { Spinner } from "@primer/react";
+import { DataTable, Table } from "@primer/react/experimental";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import type { AxiosError } from "axios";
 
 import { serviceApi } from "@/api";
+import type { AwdScoreRow } from "@/api/awd";
 import { ServiceRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/service/events/awd/$id/scoreboard")({
@@ -12,43 +17,102 @@ export const Route = createFileRoute("/service/events/awd/$id/scoreboard")({
 
 function RouteComponent() {
 	const { id } = Route.useParams();
-	const q = useQuery({
+	const { data, isLoading, isError, error } = useQuery<
+		UniResponse<AwdScoreRow[]>,
+		AxiosError<{ message: string }>
+	>({
 		queryKey: ["awd-scores", id],
 		queryFn: () => serviceApi.awd.scores(id),
+		refetchInterval: 30000, // 30 秒自动刷新（轮次推进分数变化）
 	});
 
-	if (q.isLoading) return <Spinner />;
-	const rows = q.data?.data ?? [];
+	if (isLoading) {
+		return <Spinner size="large" />;
+	}
+	if (isError) {
+		return <div>{error.response?.data.message ?? error.message}</div>;
+	}
+
+	return <ScoreBoard data={data?.data ?? []} className="mt-2" />;
+}
+
+function ScoreBoard({
+	data,
+	className,
+}: {
+	data: AwdScoreRow[];
+	className?: string;
+}) {
+	const columns = [
+		{
+			accessorKey: "rank",
+			header: "Rank",
+			field: "rank",
+		},
+		{
+			accessorKey: "team_name",
+			header: "Team",
+			field: "team_name",
+			rowHeader: true,
+			renderCell: (row: AwdScoreRow) => (
+				<div className="flex items-center gap-2">
+					<div
+						className="flex items-center justify-center rounded-full bg-gray-200 text-gray-500 font-medium shrink-0"
+						style={{ width: 24, height: 24, fontSize: 10 }}
+					>
+						{row.team_name?.[0]?.toUpperCase() || "?"}
+					</div>
+					<span>{row.team_name}</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "attack_score",
+			header: "Attack",
+			field: "attack_score",
+			renderCell: (row: AwdScoreRow) => <span>{row.attack_score}</span>,
+		},
+		{
+			accessorKey: "defense_score",
+			header: "Defense",
+			field: "defense_score",
+			renderCell: (row: AwdScoreRow) => <span>{row.defense_score}</span>,
+		},
+		{
+			accessorKey: "total_score",
+			header: "Total",
+			field: "total_score",
+			renderCell: (row: AwdScoreRow) => <strong>{row.total_score}</strong>,
+		},
+	];
+
+	const table = useReactTable({
+		data,
+		columns,
+		getCoreRowModel: getCoreRowModel(),
+	});
 
 	return (
-		<table className="w-full text-sm">
-			<thead>
-				<tr>
-					<th align="left">#</th>
-					<th align="left">Team</th>
-					<th align="right">Attack</th>
-					<th align="right">Defense</th>
-					<th align="right">Total</th>
-				</tr>
-			</thead>
-			<tbody>
-				{rows.map((r) => (
-					<tr key={r.team_id}>
-						<td>{r.rank}</td>
-						<td>{r.team_name}</td>
-						<td align="right">{r.attack_score}</td>
-						<td align="right">{r.defense_score}</td>
-						<td align="right">
-							<strong>{r.total_score}</strong>
-						</td>
-					</tr>
-				))}
-				{rows.length === 0 && (
-					<tr>
-						<td colSpan={5}>No scores yet.</td>
-					</tr>
-				)}
-			</tbody>
-		</table>
+		<Table.Container className={`${className}`}>
+			<Table.Subtitle id="awd-scoreboard-subtitle">
+				<div className="flex gap-2">
+					<span>Attack: 提交 Flag 获得</span>
+					<span>Defense: 守住己方 GameBox 获得</span>
+					<span>Total: 总分</span>
+				</div>
+			</Table.Subtitle>
+			<DataTable
+				aria-labelledby="awd-scoreboard"
+				// @ts-ignore
+				columns={columns}
+				data={table.getRowModel().rows.map((row) => ({
+					...row.original,
+					id: row.original.team_id,
+				}))}
+			/>
+			{data.length === 0 && (
+				<p className="text-sm opacity-70 p-3">暂无成绩。</p>
+			)}
+		</Table.Container>
 	);
 }

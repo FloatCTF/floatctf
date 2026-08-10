@@ -49,6 +49,7 @@ export type AwdGameBox = {
 	id: string;
 	team_id: string;
 	event_gamebox_id: string;
+	gamebox_name: string;
 	status: string;
 	gamebox_ip: string;
 	container_name: string;

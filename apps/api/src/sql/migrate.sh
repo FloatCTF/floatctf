@@ -14,7 +14,9 @@ set -Eeuo pipefail
 # ================================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# migrate.sh 位于 <repo>/apps/api/src/sql/，向上 4 级才是 repository root
+# （sql/.. → src，sql/../.. → api，sql/../../.. → apps，sql/../../../.. → repo）。
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 # 测试可覆盖内部路径（FLOATCTF_MIGRATIONS_DIR/FLOATCTF_MERGED_FILE 仅用于隔离测试，
 # 生产路径永远来自脚本自身位置）。
@@ -28,7 +30,7 @@ LOCK_FILE="$SCRIPT_DIR/.migrate.lock"
 ADVISORY_LOCK_ID=1179204948
 
 # schema_migrations 由 migrate.sh 独占管理，普通 migration 不得创建/删除它。
-SCHEMA_MIGRATIONS_DDL='CREATE TABLE IF NOT EXISTS schema_migrations (
+SCHEMA_MIGRATIONS_DDL='CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version BIGINT PRIMARY KEY,
     name TEXT NOT NULL,
     checksum CHAR(64) NOT NULL,
@@ -244,7 +246,7 @@ db_user_table_count() {
 
 db_read_history() {
     psql -X -q -A -t -F'|' -v ON_ERROR_STOP=1 -d "$DB_URL" \
-        -c "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
+        -c "SELECT version, name, checksum FROM public.schema_migrations ORDER BY version"
 }
 
 
@@ -252,6 +254,12 @@ build_db_history() {
     DB_VERSION_NAME=()
     DB_VERSION_CHECKSUM=()
     DB_APPLIED_VERSIONS=()
+
+    # 完全空的数据库（无 schema_migrations）没有可读取的 history，
+    # 此时所有本地 migration 都视为 PENDING（read-only status 必须支持 fresh DB）。
+    if ! db_has_schema_migrations; then
+        return 0
+    fi
 
     local -a rows=()
     local row v n sha
@@ -335,6 +343,50 @@ verify_applied_history() {
 
 # ── validate：纯本地校验，不连接数据库 ─────────────────────────────────────────
 
+# 检测 migration 中的违规语句（剥离 SQL 注释后按实际语句匹配，避免注释中提及造成误报）：
+#   ownership —— 操作 migrate.sh 独占管理的 schema_migrations 元数据表
+#   nontrans  —— PostgreSQL 普通事务块内无法执行的语句（contract 要求所有 migration transaction-safe）
+# 输出：<类别>:<行号>:<片段>
+detect_banned_statements() {
+    perl -0777 -e '
+        my $content = <>;                 # 整个文件
+        $content =~ s{--[^\n]*}{}g;      # 去掉 -- 行注释
+        $content =~ s{/\*.*?\*/}{}gs;   # 去掉 /* */ 块注释
+
+        # 语句起点：文件开头 / 行首(/m) / 前一条语句后的分号
+        my $target = qr/\b(?:public\s*\.\s*)?schema_migrations\b/i;
+
+        my @rules = (
+            ["ownership", qr/(?:^|;)\s*CREATE\s+(?:TEMP(?:ORARY)?|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?$target/im],
+            ["ownership", qr/(?:^|;)\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?$target/im],
+            ["ownership", qr/(?:^|;)\s*ALTER\s+TABLE\s+(?:ONLY\s+)?(?:IF\s+EXISTS\s+)?$target/im],
+            ["ownership", qr/(?:^|;)\s*TRUNCATE\s+(?:TABLE\s+)?$target/im],
+            ["ownership", qr/(?:^|;)\s*INSERT\s+INTO\s+$target/im],
+            ["ownership", qr/(?:^|;)\s*UPDATE\s+$target/im],
+            ["ownership", qr/(?:^|;)\s*DELETE\s+FROM\s+$target/im],
+            ["nontrans", qr/(?:^|;)\s*(?:CREATE|DROP)\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/im],
+            ["nontrans", qr/(?:^|;)\s*REINDEX\s+CONCURRENTLY\b/im],
+            ["nontrans", qr/(?:^|;)\s*REFRESH\s+MATERIALIZED\s+VIEW\s+CONCURRENTLY\b/im],
+            ["nontrans", qr/(?:^|;)\s*VACUUM\b/im],
+            ["nontrans", qr/(?:^|;)\s*(?:CREATE|DROP)\s+DATABASE\b/im],
+            ["nontrans", qr/(?:^|;)\s*(?:CREATE|DROP)\s+TABLESPACE\b/im],
+            ["nontrans", qr/(?:^|;)\s*ALTER\s+SYSTEM\b/im],
+            ["nontrans", qr/(?:^|;)\s*(?:CREATE|DROP)\s+SUBSCRIPTION\b/im],
+        );
+
+        for my $r (@rules) {
+            my ($cat, $p) = @$r;
+            while ($content =~ /$p/g) {
+                my $line = 1 + (() = substr($content, 0, $-[0]) =~ /\n/g);
+                my $frag = substr($content, $-[0], 70);
+                $frag =~ s/\s+/ /g;
+                print "$cat:$line:$frag\n";
+            }
+        }
+    ' "$1"
+}
+
+
 run_validate() {
     local -i errors=0
 
@@ -351,7 +403,7 @@ run_validate() {
         exit 1
     fi
 
-    local f v content tc sm
+    local f v content tc
     local -A seen_version=()
 
     for f in "${files[@]}"; do
@@ -387,14 +439,27 @@ run_validate() {
             errors=$((errors + 1))
         fi
 
-        # 禁止管理 schema_migrations 元数据表
-        sm="$(grep -inE '^[[:space:]]*(CREATE|DROP)[[:space:]]+(TEMP(ORARY)?[[:space:]]+|UNLOGGED[[:space:]]+)?TABLE[[:space:]]+.*schema_migrations' "$MIGRATIONS_DIR/$f" || true)"
-        if [[ -n "$sm" ]]; then
-            echo "错误：migration 不能创建/删除 schema_migrations：$f" >&2
-            echo "  schema_migrations is managed by migrate.sh." >&2
-            echo "$sm" >&2
-            errors=$((errors + 1))
-        fi
+        # 禁止管理 schema_migrations 元数据表 + 禁止非事务安全语句
+        # （剥离注释后按实际 SQL 语句检测，注释中提及 schema_migrations 不构成违规）。
+        local -a banned=()
+        mapfile -t banned < <(detect_banned_statements "$MIGRATIONS_DIR/$f")
+
+        local b bcat bline bfrag
+        for b in "${banned[@]}"; do
+            IFS=':' read -r bcat bline bfrag <<< "$b"
+            if [[ "$bcat" == ownership ]]; then
+                echo "错误：migration 不允许操作 schema_migrations（由 migrate.sh 独占管理）：$f" >&2
+                echo "  schema_migrations is managed exclusively by migrate.sh" >&2
+                echo "  $f:$bline: $bfrag" >&2
+                errors=$((errors + 1))
+            elif [[ "$bcat" == nontrans ]]; then
+                echo "错误：migration 包含非事务安全语句（不支持）：$f" >&2
+                echo "  Non-transactional migration statement is not supported:" >&2
+                echo "  $f:$bline" >&2
+                echo "  $bfrag" >&2
+                errors=$((errors + 1))
+            fi
+        done
     done
 
     if [[ $errors -gt 0 ]]; then
@@ -519,7 +584,7 @@ run_status() {
     printf '%-14s  %-*s  %s\n' "VERSION" "$maxw" "NAME" "STATUS"
     printf '%s\n' '----------------------------------------------------------------'
 
-    local -i problems=0
+    local -i has_problems=0
     local -i applied=0
     local -i pending=0
     local status
@@ -530,10 +595,10 @@ run_status() {
         if [[ -n "${DB_VERSION_NAME[$v]+x}" ]]; then
             if [[ "${DB_VERSION_NAME[$v]}" != "$n" ]]; then
                 status="HISTORY MISMATCH"
-                problems=1
+                has_problems=1
             elif [[ "${DB_VERSION_CHECKSUM[$v]}" != "${LOCAL_VERSION_CHECKSUM[$v]}" ]]; then
                 status="MODIFIED"
-                problems=1
+                has_problems=1
             else
                 status="APPLIED"
                 applied=$((applied + 1))
@@ -549,7 +614,7 @@ run_status() {
     for v in "${DB_APPLIED_VERSIONS[@]}"; do
         if [[ -z "${LOCAL_VERSION_NAME[$v]+x}" ]]; then
             printf '%-14s  %-*s  %s\n' "$v" "$maxw" "${DB_VERSION_NAME[$v]}" "MISSING LOCAL"
-            problems=1
+            has_problems=1
         fi
     done
 
@@ -557,7 +622,7 @@ run_status() {
     echo "Applied: $applied"
     echo "Pending: $pending"
 
-    if [[ $problems -eq 1 ]]; then
+    if [[ $has_problems -eq 1 ]]; then
         echo "存在异常状态（MISSING LOCAL / MODIFIED / HISTORY MISMATCH）" >&2
         exit 1
     fi
@@ -619,12 +684,12 @@ generate_apply_script() {
             n="${LOCAL_VERSION_NAME[$v]}"
             sha="${LOCAL_VERSION_CHECKSUM[$v]}"
 
-            printf '%s\n' "SELECT NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $v) AS pending_v;"
+            printf '%s\n' "SELECT NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = $v) AS pending_v;"
             printf '%s\n' '\gset'
             printf '%s\n' '\if :pending_v'
             printf '%s\n' 'BEGIN;'
             printf '%s\n' "\\ir '$MIGRATIONS_DIR/${LOCAL_VERSION_FILE[$v]}'"
-            printf 'INSERT INTO schema_migrations (version, name, checksum) VALUES (%s, %s, %s);\n' \
+            printf 'INSERT INTO public.schema_migrations (version, name, checksum) VALUES (%s, %s, %s);\n' \
                 "$v" "$(sql_literal "$n")" "$(sql_literal "$sha")"
             printf '%s\n' 'COMMIT;'
             printf '%s\n' "\\echo APPLIED_MIGRATION:${LOCAL_VERSION_FILE[$v]}"
@@ -684,14 +749,8 @@ run_apply() {
     fi
     echo "OK"
 
-    # 记录 apply 前的已应用数量（用于 summary；具体应用了哪些以 psql 的
-    # \echo APPLIED_MIGRATION: 标记为准——该标记只在锁内实际执行后才输出，
-    # 并发败者 runner 不会误报）。
-    local -i before_count=0
-
-    if db_has_schema_migrations; then
-        before_count="$(db_read_history | wc -l | tr -d ' ')"
-    fi
+    # 具体应用了哪些以 psql 的 \echo APPLIED_MIGRATION: 标记为准——该标记只在锁内
+    # 实际执行后才输出，并发败者 runner 不会误报。
 
     local apply_script
     apply_script="$(mktemp "$SCRIPT_DIR/.apply.XXXXXX.sql")"
@@ -797,7 +856,7 @@ run_make() {
             printf '\n'
             cat "$MIGRATIONS_DIR/${LOCAL_VERSION_FILE[$v]}"
             printf '\n'
-            printf 'INSERT INTO schema_migrations (version, name, checksum) VALUES (%s, %s, %s);\n' \
+            printf 'INSERT INTO public.schema_migrations (version, name, checksum) VALUES (%s, %s, %s);\n' \
                 "$v" "$(sql_literal "$n")" "$(sql_literal "$sha")"
             printf '\n'
             printf '%s\n' 'COMMIT;'

@@ -6,11 +6,9 @@
 -- 之后再次请求不再返回私钥（防 token 泄漏后私钥被反复拉取）。
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "awd_wireguard_peers"
     ADD COLUMN IF NOT EXISTS "config_fetched_at" TIMESTAMPTZ;
 
 COMMENT ON COLUMN "awd_wireguard_peers"."config_fetched_at" IS 'WG 配置（含私钥）首次拉取时间；NULL=尚未拉取（Phase 1 P1-15）';
 
-COMMIT;

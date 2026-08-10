@@ -7,7 +7,6 @@
 -- Start 校验两者相等，不匹配 → StartBlocked（AWD_CONFIG_CHANGED）。
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "awd_events"
     ADD COLUMN IF NOT EXISTS "configuration_generation" BIGINT NOT NULL DEFAULT 0,
@@ -16,4 +15,3 @@ ALTER TABLE "awd_events"
 COMMENT ON COLUMN "awd_events"."configuration_generation" IS '配置代数：影响 runtime 的配置每次变更 +1（Phase 2 P2-9）';
 COMMENT ON COLUMN "awd_events"."verified_generation" IS '已验证代数：Precheck 成功时记录当时的 configuration_generation（Phase 2 P2-9）';
 
-COMMIT;

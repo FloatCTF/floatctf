@@ -13,7 +13,6 @@
 -- 删除 legacy 字段在 Migration D。严格按 A → B → C → D 顺序执行。
 -- ================================================================================
 
-BEGIN;
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 0. text → inet/cidr 隐式转换
@@ -226,4 +225,3 @@ CREATE INDEX IF NOT EXISTS "idx_awd_network_allocations_event"
 CREATE INDEX IF NOT EXISTS "idx_awd_network_allocations_cidr"
     ON "awd_network_allocations" ("cidr");
 
-COMMIT;

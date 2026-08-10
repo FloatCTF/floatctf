@@ -16,7 +16,6 @@
 --   - awd_judge_tasks.template_id / awd_score_events.gamebox_template_id（→ event_gamebox_id）
 -- ================================================================================
 
-BEGIN;
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 1. awd_gamebox_instances：删旧列 + container_id 改名 + gamebox_ip 转 INET
@@ -73,4 +72,3 @@ DROP TABLE IF EXISTS "event_gameboxes";
 ALTER TABLE "instances"
     DROP COLUMN IF EXISTS "gamebox_id";
 
-COMMIT;

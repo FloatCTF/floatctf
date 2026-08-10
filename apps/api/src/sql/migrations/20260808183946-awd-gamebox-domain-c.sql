@@ -6,7 +6,6 @@
 -- 仅在 Migration B 回填完成后执行（依赖所有旧行已获得 event_gamebox_id）。
 -- ================================================================================
 
-BEGIN;
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 1. awd_gamebox_instances：event_gamebox_id 强制 + FK + 新 UNIQUE
@@ -46,4 +45,3 @@ ALTER TABLE "awd_score_events"
 COMMENT ON COLUMN "awd_judge_tasks"."event_gamebox_id" IS '判题目标 EventGameBox（SET NULL：EventGameBox 删除后保留历史行）';
 COMMENT ON COLUMN "awd_score_events"."event_gamebox_id" IS '计分作用域 EventGameBox（SET NULL：EventGameBox 删除后保留历史行）';
 
-COMMIT;

@@ -13,7 +13,6 @@
 -- nth_subnet 完全对齐。
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "awd_team_networks"
     ADD COLUMN IF NOT EXISTS "subnet_index" SMALLINT;
@@ -37,4 +36,3 @@ ALTER TABLE "awd_team_networks"
 
 COMMENT ON COLUMN "awd_team_networks"."subnet_index" IS 'Team 在 Event 内的稳定子网 slot 序号（0=infra 保留；已释放 slot 不复用）';
 
-COMMIT;

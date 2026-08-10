@@ -14,7 +14,6 @@
 -- 回填依赖本迁移创建的表/列，故严格按 A → B → C → D 顺序执行。
 -- ================================================================================
 
-BEGIN;
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 1. gamebox_revisions：GameBox 的不可变部署版本
@@ -179,4 +178,3 @@ ALTER TABLE "awd_score_events"
 COMMENT ON COLUMN "awd_judge_tasks"."event_gamebox_id" IS '判题目标（EventGameBox 维度；Judge 配置从 EventGameBox → Revision 解析）';
 COMMENT ON COLUMN "awd_score_events"."event_gamebox_id" IS '计分作用域（EventGameBox 维度；first-blood 等按 EventGameBox 独立）';
 
-COMMIT;

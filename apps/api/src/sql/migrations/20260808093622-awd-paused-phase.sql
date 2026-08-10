@@ -6,11 +6,9 @@
 -- Phase 4 P4-8 依赖此列）。暂停时经 transition_event 原子写入 paused_phase。
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "awd_events"
     ADD COLUMN IF NOT EXISTS "paused_phase" "awd_phase";
 
 COMMENT ON COLUMN "awd_events"."paused_phase" IS '暂停前所处的比赛阶段（resume 时恢复，Phase 0 P0-1b 引入）';
 
-COMMIT;

@@ -9,7 +9,6 @@
 --   - DROP gamebox_revisions 表
 -- ================================================================================
 
-BEGIN;
 
 -- ── 1. gameboxes 增加配置列（幂等）───────────────────────────────────────────
 ALTER TABLE gameboxes ADD COLUMN IF NOT EXISTS source_toml TEXT;
@@ -72,4 +71,3 @@ ALTER TABLE awd_event_gameboxes DROP COLUMN IF EXISTS gamebox_revision_id;
 -- ── 4. 删除 Revision 表（gamebox_revisions_gamebox_id_fkey ON DELETE CASCADE 随表删除）──
 DROP TABLE IF EXISTS gamebox_revisions;
 
-COMMIT;

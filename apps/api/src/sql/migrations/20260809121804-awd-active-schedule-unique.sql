@@ -3,7 +3,6 @@
 -- Created at: 2026-08-09 12:18:04 +0800
 -- ================================================================================
 
-BEGIN;
 
 -- Event 级一次性任务只允许一个 active 实例。上线前若已存在重复任务必须停止迁移，
 -- 禁止静默删除，因为无法判断哪一个 execute_at 才是管理员期望值。
@@ -32,4 +31,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_scheduled_tasks_awd_event_active_unique"
 COMMENT ON INDEX "idx_scheduled_tasks_awd_event_active_unique" IS
     '每个 AWD 赛事的自动预检/定时开赛任务最多存在一个 pending 或 running 实例，防止并发重复执行';
 
-COMMIT;

@@ -8,7 +8,6 @@
 -- next_gamebox_host 已在 GameBox 领域重构（Migration D of that series）删除。
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "awd_events" DROP COLUMN IF EXISTS "gamebox_cidr";
 ALTER TABLE "awd_events" DROP COLUMN IF EXISTS "wireguard_cidr";
@@ -19,4 +18,3 @@ ALTER TABLE "awd_events" DROP COLUMN IF EXISTS "judgeserver_ip";
 ALTER TABLE "awd_events" DROP COLUMN IF EXISTS "docker_network_id";
 ALTER TABLE "awd_events" DROP COLUMN IF EXISTS "docker_network_name";
 
-COMMIT;

@@ -14,7 +14,6 @@
 --   · docker_network_id 属 Observed（runtime），不进新模型。
 -- ================================================================================
 
-BEGIN;
 
 CREATE TEMP TABLE IF NOT EXISTS "_en_backfill" (
     "event_id" UUID PRIMARY KEY,
@@ -146,4 +145,3 @@ END $$;
 
 DROP TABLE IF EXISTS "_en_backfill";
 
-COMMIT;

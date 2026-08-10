@@ -112,6 +112,26 @@ run = """
 {{config_root}}/apps/api/src/sql/migrate.sh new "$@"
 """
 
+[tasks."db:migration:list"]
+description = "列出数据库 migrations"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh list"
+
+[tasks."db:migration:validate"]
+description = "校验数据库 migrations（不连接数据库）"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh validate"
+
+[tasks."db:migration:status"]
+description = "查看数据库 migration 状态（read-only）"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh status"
+
+[tasks."db:migration:verify"]
+description = "校验数据库 migration 历史"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh verify"
+
+[tasks."db:migration:apply"]
+description = "执行未应用的数据库 migrations"
+run = "{{config_root}}/apps/api/src/sql/migrate.sh apply"
+
 [tasks."db:migration:merge"]
 description = "合并数据库 migrations 为 merged.sql"
 run = "{{config_root}}/apps/api/src/sql/migrate.sh make"

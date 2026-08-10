@@ -10,7 +10,6 @@
 -- Safe to re-run (IF NOT EXISTS).
 -- ================================================================================
 
-BEGIN;
 
 ALTER TABLE "challenge_solves"
     ADD COLUMN IF NOT EXISTS "event_id" UUID REFERENCES "events" ("id") ON DELETE CASCADE;
@@ -21,4 +20,3 @@ COMMENT ON COLUMN "challenge_solves"."event_id" IS
 COMMENT ON TABLE "challenge_solves" IS
     '独立解题记录：练习模式的解题流水（event_id 为空）；赛事解题另有 event_challenge_solves';
 
-COMMIT;

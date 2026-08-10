@@ -8,7 +8,6 @@
 -- 则 ALTER 失败 = STOP，不静默改数据。
 -- ================================================================================
 
-BEGIN;
 
 -- Team Network：子网 → CIDR
 ALTER TABLE "awd_team_networks"
@@ -30,4 +29,3 @@ COMMENT ON COLUMN "awd_team_networks"."wireguard_subnet" IS 'Team WireGuard 子�
 COMMENT ON COLUMN "awd_wireguard_peers"."assigned_ip" IS 'Peer 稳定 /32 地址（INET）';
 COMMENT ON COLUMN "awd_gamebox_instances"."gamebox_ip" IS 'GameBox 固定 IP = Team gamebox_subnet + AwdEventGameBox.host_offset（INET）';
 
-COMMIT;

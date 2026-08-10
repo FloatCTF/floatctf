@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 
-/// Generate a Challenge template directory.
+/// Generate a Challenge template directory (package manifest v1).
 pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
@@ -19,56 +19,51 @@ pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     let attachment_dir = challenge_dir.join("attachment");
     fs::create_dir_all(&attachment_dir).context("Failed to create attachment directory")?;
 
-    // meta.toml
+    // meta.toml (v1 manifest — strict deny_unknown_fields)
     let meta_content = format!(
-        r#"name = "{}"
+        r#"name = "{name}"
+version = "1.0.0"
 author = "your_email@example.com" # modify
-category = "Web" # modify
+category = "web" # modify
 description = "Challenge description" # modify
 
-attachment = "attachment/src.zip" # Optional
+# Optional: 显式 safe_name；缺省由 name 派生（派生失败时必须显式提供）
+# safe_name = "easy-web-01"
+
+# Optional: 附件路径（必须位于 attachment/ 目录下）
+# attachment = "attachment/src.zip"
 
 [flag]
-value = ""       # is empty stand for dynamic flag # modify
-env_var = "FLAG"
-
+type = "dynamic"
 
 [docker]
-image_tag = "floatctf/{}:challenge-web_v1.0" # modify
-port = "80/tcp"
-"#,
-        name,
-        name.to_lowercase()
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 500
+memory_bytes = 268435456
+pids_limit = 100
+"#
     );
     fs::write(challenge_dir.join("meta.toml"), meta_content)
         .context("Failed to write meta.toml")?;
 
-    // flag
-    fs::write(src_dir.join("flag"), "flag{test_flag}").context("Failed to write flag")?;
+    // flag — placeholder for dynamic flags; the runtime overwrites it from FLAG.
+    fs::write(src_dir.join("flag"), "flag{dynamic_placeholder}").context("Failed to write flag")?;
 
-    // flag.sh
-    fs::write(
-        src_dir.join("flag.sh"),
-        r#"#!/bin/bash
-# flag 动态替换脚本
-sed -i "s/flag{test_flag}/$FLAG/" /flag
-
-export FLAG=not_flag
-FLAG=not_flag
-
-rm -f /flag.sh
-"#,
-    )
-    .context("Failed to write flag.sh")?;
-
-    // entrypoint.sh
+    // entrypoint.sh — writes FLAG to /flag then unsets it in the SAME shell
+    // before exec, so the app can never read the real flag via getenv.
     fs::write(
         src_dir.join("entrypoint.sh"),
-        r#"#!/bin/bash
-if [ -f /flag.sh ]; then
-    echo "--- 正在初始化 Flag ---"
-    sed -i 's/\r//g' /flag.sh
-    /flag.sh
+        r#"#!/bin/sh
+set -eu
+
+# FloatCTF dynamic flag runtime contract:
+# 将 FLAG 写入 /flag 后，必须在最终 exec 的同一个 shell 中 unset，
+# 防止应用进程通过 getenv / /proc/<pid>/environ 读取真实 FLAG。
+if [ -n "${FLAG:-}" ]; then
+    printf '%s\n' "$FLAG" > /flag
+    unset FLAG
 fi
 
 exec "$@"
@@ -79,33 +74,27 @@ exec "$@"
     // index.php
     fs::write(
         src_dir.join("index.php"),
-        r#"<?php
-echo get_file_contents("/flag");
-?>
-"#,
+        "<?php echo file_get_contents(\"/flag\"); ?>",
     )
     .context("Failed to write index.php")?;
 
-    // Dockerfile
+    // Dockerfile (no flag.sh anymore — the flag write happens in entrypoint.sh)
     fs::write(
         src_dir.join("Dockerfile"),
         r#"FROM php:8.2-apache-bookworm
 LABEL Author="your_name <your_email@example.com>"
 
 COPY flag /flag
-COPY flag.sh /flag.sh
 COPY entrypoint.sh /entrypoint.sh
 COPY index.php /var/www/html/index.php
-RUN chmod +x /flag.sh
 RUN chmod +x /entrypoint.sh
 
-# 必须
+# 运行时端口契约来自 meta.toml [docker].port（EXPOSE 仅示意）
 EXPOSE 80
 WORKDIR /var/www/html
 
-
-ENTRYPOINT [ "/entrypoint.sh" ]
-CMD [ "apache2-foreground" ]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["apache2-foreground"]
 "#,
     )
     .context("Failed to write Dockerfile")?;

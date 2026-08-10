@@ -5,37 +5,67 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use bollard::Docker;
 
-use crate::metadata::{ChallengeMeta, GameBoxMeta, build_gamebox_image_ref};
+use crate::metadata::{
+    ArtifactKind, ChallengeMeta, GameBoxMeta, build_artifact_image_ref, build_gamebox_image_ref,
+};
 use crate::runtime::{DockerContainerRuntime, ImageBuildRequest, ImageRuntime};
 
-/// Default registry prefix used by the CLI when no `-t/--tag` is supplied for gamebox builds.
+/// Default registry prefix used by the CLI when no `-t/--tag` is supplied.
 /// Platform imports must pass an explicit tag from config — never hardcode this in API code.
 pub const DEFAULT_CLI_REGISTRY_PREFIX: &str = "floatctf";
 
-/// Build a Challenge Docker image (tag still comes from `meta.toml` `[docker].image_tag`).
-pub async fn build_challenge(dir: &Path) -> Result<()> {
+/// Build a Challenge Docker image.
+///
+/// Image tag is **no longer** in `meta.toml`. Resolution order:
+/// 1. Explicit `tag` argument (CLI `-t/--tag` or caller-supplied)
+/// 2. Constructed via [`build_artifact_image_ref`] with
+///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
+///
+/// Only `src/` is the build context — `meta.toml` and `attachment/` are excluded.
+pub async fn build_challenge(dir: &Path, tag: Option<&str>) -> Result<()> {
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
-    let cfg: ChallengeMeta = toml::from_str(&content).context("Failed to parse meta.toml")?;
+    let cfg = ChallengeMeta::parse_and_validate(&content).context("Invalid challenge meta.toml")?;
 
-    let image_tag = cfg
-        .docker
-        .as_ref()
-        .context("No docker config found")?
-        .image_tag
-        .clone();
+    let image_tag = match tag {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => {
+            let safe = cfg
+                .resolved_safe_name()
+                .context("Cannot derive safe_name for default image tag")?;
+            build_artifact_image_ref(
+                ArtifactKind::Challenge,
+                DEFAULT_CLI_REGISTRY_PREFIX,
+                &safe,
+                &cfg.version,
+            )
+        }
+    };
 
     let src_dir = dir.join("src");
     if !src_dir.exists() {
         anyhow::bail!("Source directory not found: {:?}", src_dir);
     }
+    if !src_dir.join("Dockerfile").exists() {
+        anyhow::bail!("Dockerfile not found: {:?}", src_dir.join("Dockerfile"));
+    }
 
     let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
     let rt = DockerContainerRuntime::new(docker);
 
-    // Inherent wrapper (challenge-compat) — tag still comes from meta.toml.
-    rt.build_image(&image_tag, &src_dir).await?;
+    // Note: only `src/` is the build context — meta.toml / attachment/ are excluded.
+    let req = ImageBuildRequest::new(&src_dir, image_tag);
+    let result = ImageRuntime::build_image(&rt, req)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    tracing::info!(
+        target: "fcmc::build",
+        image_id = %result.image_id,
+        target_ref = %result.target_ref,
+        "challenge image built"
+    );
 
     Ok(())
 }

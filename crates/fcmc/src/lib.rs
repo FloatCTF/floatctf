@@ -33,10 +33,12 @@ pub use cli::{Args, Commands, GenFormat};
 
 // ── Metadata ──
 pub use metadata::{
-    ChallengeMeta, DockerMeta, FlagMeta, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest,
-    GameBoxMeta, GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedGameBoxSpec,
-    NormalizedHealthcheck, RecommendedResources, build_gamebox_image_ref, derive_safe_name,
-    validate_judge_path, validate_safe_name, validate_version,
+    ArtifactKind, ChallengeDockerConfig, ChallengeFlagConfig, ChallengeManifest, ChallengeMeta,
+    ChallengeMetaError, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta,
+    GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedChallengeSpec,
+    NormalizedGameBoxSpec, NormalizedHealthcheck, RecommendedResources, build_artifact_image_ref,
+    build_gamebox_image_ref, derive_safe_name, validate_judge_path, validate_safe_name,
+    validate_version,
 };
 
 // ── Re-export runtime model types for external use ──

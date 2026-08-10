@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
             match format {
                 GenFormat::Challenge => {
-                    build::build_challenge(&dir).await?;
+                    build::build_challenge(&dir, tag.as_deref()).await?;
                 }
                 GenFormat::Gamebox => {
                     build::build_gamebox(&dir, tag.as_deref()).await?;

@@ -5,7 +5,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use crate::metadata::{ChallengeMeta, GameBoxMeta};
+use crate::metadata::{
+    ArtifactKind, ChallengeFlagConfig, ChallengeMeta, GameBoxMeta, build_artifact_image_ref,
+};
 
 /// Result of a configuration check.
 #[derive(Debug)]
@@ -38,7 +40,11 @@ impl std::fmt::Display for CheckLevel {
     }
 }
 
-/// Check a ChallengeMeta configuration directory.
+/// Check a Challenge package directory (v1 manifest).
+///
+/// Validates:
+/// - `meta.toml` parse + semantic rules (version, safe_name, flag, docker port/resources, attachment path)
+/// - attachment file exists under the package root (when configured)
 pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
     let meta_path = dir.join("meta.toml");
     let mut messages = Vec::new();
@@ -50,15 +56,43 @@ pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
         message: format!("配置文件: {:?}", meta_path),
     });
 
-    // Parse TOML
+    // Parse TOML + semantic validation
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
 
-    match toml::from_str::<ChallengeMeta>(&content) {
+    match ChallengeMeta::parse_and_validate(&content) {
         Ok(cfg) => {
             messages.push(CheckMessage {
                 level: CheckLevel::Ok,
                 section: "解析结果".into(),
                 message: "配置文件解析成功".into(),
+            });
+
+            // safe_name
+            match cfg.resolved_safe_name() {
+                Ok(s) => messages.push(CheckMessage {
+                    level: CheckLevel::Ok,
+                    section: "safe_name".into(),
+                    message: format!("safe_name = {s}"),
+                }),
+                Err(e) => {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Err,
+                        section: "safe_name".into(),
+                        message: e.to_string(),
+                    });
+                    passed = false;
+                }
+            }
+
+            // flag config
+            let flag_type = match &cfg.flag {
+                ChallengeFlagConfig::Dynamic => "dynamic",
+                ChallengeFlagConfig::Static { .. } => "static",
+            };
+            messages.push(CheckMessage {
+                level: CheckLevel::Ok,
+                section: "flag".into(),
+                message: format!("type = {flag_type}"),
             });
 
             // Check attachment
@@ -95,19 +129,34 @@ pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
                 });
             }
 
-            // Docker check (static only)
+            // Docker check (port + recommended_resources already validated by parse_and_validate)
             messages.push(CheckMessage {
                 level: CheckLevel::Ok,
                 section: "Docker 检查".into(),
                 message: String::new(),
             });
 
-            if cfg.docker.is_some() {
+            if let Some(ref docker) = cfg.docker {
                 messages.push(CheckMessage {
                     level: CheckLevel::Ok,
                     section: "Docker 检查".into(),
-                    message: "Docker 配置存在".into(),
+                    message: format!("Docker 配置存在, port = {}", docker.port),
                 });
+                match &docker.recommended_resources {
+                    Some(res) => messages.push(CheckMessage {
+                        level: CheckLevel::Ok,
+                        section: "资源配置".into(),
+                        message: format!(
+                            "cpu_millis={}, memory_bytes={}, pids_limit={}",
+                            res.cpu_millis, res.memory_bytes, res.pids_limit
+                        ),
+                    }),
+                    None => messages.push(CheckMessage {
+                        level: CheckLevel::Warn,
+                        section: "资源配置".into(),
+                        message: "未配置 recommended_resources（将使用默认值）".into(),
+                    }),
+                }
             } else {
                 messages.push(CheckMessage {
                     level: CheckLevel::Warn,
@@ -120,7 +169,7 @@ pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
             messages.push(CheckMessage {
                 level: CheckLevel::Err,
                 section: "解析结果".into(),
-                message: format!("配置文件解析失败: {}", e),
+                message: format!("配置文件解析/校验失败: {}", e),
             });
             passed = false;
         }
@@ -289,6 +338,9 @@ pub fn print_check_result(result: &CheckResult) {
 }
 
 /// Runtime check: create a test container and verify it starts.
+///
+/// Image ref is derived via `build_artifact_image_ref(Challenge, "floatctf", …)`;
+/// dynamic flags are injected as `FLAG` env (static flags are baked into the image).
 pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, PortBinding, ResourceLimits,
@@ -297,26 +349,42 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
 
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
-    let cfg: ChallengeMeta = toml::from_str(&content).context("Failed to parse meta.toml")?;
+    let cfg = ChallengeMeta::parse_and_validate(&content).context("Invalid challenge meta.toml")?;
 
     let docker_meta = cfg.docker.as_ref().context("No docker config found")?;
+
+    let safe_name = cfg
+        .resolved_safe_name()
+        .context("Cannot resolve safe_name for runtime image ref")?;
+    let image_ref = build_artifact_image_ref(
+        ArtifactKind::Challenge,
+        "floatctf",
+        &safe_name,
+        &cfg.version,
+    );
 
     let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
 
     let rt = DockerContainerRuntime::new(docker.clone());
     let container_name = format!("fcmc_check_{}", cfg.name);
-    let flag = "flag{runtime-check}";
+
+    // Dynamic flag: platform injects FLAG env (entrypoint writes it to /flag).
+    // Static flag: the flag is baked into the image — no env.
+    let env = match &cfg.flag {
+        ChallengeFlagConfig::Dynamic => vec!["FLAG=flag{runtime-check}".to_string()],
+        ChallengeFlagConfig::Static { .. } => Vec::new(),
+    };
 
     let handle = rt
         .create_and_start(ContainerSpec {
             name: container_name.clone(),
-            image: docker_meta.image_tag.clone(),
-            env: vec![format!("{}={}", cfg.flag.env_var, flag)],
+            image: image_ref,
+            env,
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
             port_bindings: vec![PortBinding {
-                container_port: docker_meta.port.clone(),
+                container_port: format!("{}/tcp", docker_meta.port),
                 host_ip: Some("0.0.0.0".into()),
                 host_port: None,
             }],

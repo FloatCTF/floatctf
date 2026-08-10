@@ -167,24 +167,8 @@ pub struct JudgeManifest {
     pub script: String,
 }
 
-/// Soft resource recommendation for operators / EventGameBox prefills.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RecommendedResources {
-    pub cpu_millis: i64,
-    pub memory_bytes: i64,
-    pub pids_limit: i64,
-}
-
-impl Default for RecommendedResources {
-    fn default() -> Self {
-        Self {
-            cpu_millis: 1000,
-            memory_bytes: 536_870_912,
-            pids_limit: 100,
-        }
-    }
-}
+/// Shared soft resource recommendation (see [`crate::metadata::RecommendedResources`]).
+pub use super::RecommendedResources;
 
 // ---------------------------------------------------------------------------
 // Canonical normalized spec (stable JSON for spec_digest)
@@ -219,84 +203,30 @@ pub enum NormalizedHealthcheck {
 }
 
 // ---------------------------------------------------------------------------
-// Safe name helpers
+// Shared identity helpers (logic lives in crate::metadata::identity)
 // ---------------------------------------------------------------------------
 
-/// Validate an explicit `safe_name`: `^[a-z0-9][a-z0-9_-]*$`.
+pub use crate::metadata::identity::{ArtifactKind, build_artifact_image_ref, derive_safe_name};
+
+/// Validate an explicit `safe_name` (identity rules) mapped to
+/// [`GameBoxMetaError`] so the public error type stays stable.
 pub fn validate_safe_name(s: &str) -> Result<(), GameBoxMetaError> {
-    if s.is_empty() {
-        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
-    }
-    let mut chars = s.chars();
-    let Some(first) = chars.next() else {
-        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
-    };
-    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
-        return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
-    }
-    for c in chars {
-        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
-            return Err(GameBoxMetaError::InvalidSafeName(s.to_string()));
-        }
-    }
-    Ok(())
+    crate::metadata::identity::validate_safe_name(s)
+        .map_err(|_| GameBoxMetaError::InvalidSafeName(s.to_string()))
 }
 
-/// Derive a Docker-repo-safe slug from a human `name`.
-///
-/// Rules:
-/// - lowercase ASCII
-/// - whitespace → `-`
-/// - unsupported punctuation → `-`
-/// - collapse repeated separators
-/// - trim leading/trailing separators
-/// - empty / non-ASCII-only → `None` (caller must require explicit `safe_name`)
-pub fn derive_safe_name(name: &str) -> Option<String> {
-    let mut out = String::with_capacity(name.len());
-    let mut last_sep = false;
-    let mut saw_alnum = false;
-
-    for c in name.chars() {
-        let mapped = if c.is_ascii_alphanumeric() {
-            saw_alnum = true;
-            Some(c.to_ascii_lowercase())
-        } else if c.is_ascii_whitespace() || c == '_' || c == '-' || c == '.' {
-            Some('-')
-        } else if c.is_ascii() {
-            // other ASCII punctuation → separator
-            Some('-')
-        } else {
-            // non-ASCII: drop (no pinyin); may leave empty
-            None
-        };
-
-        if let Some(ch) = mapped {
-            if ch == '-' {
-                if !out.is_empty() && !last_sep {
-                    out.push('-');
-                    last_sep = true;
-                }
-            } else {
-                out.push(ch);
-                last_sep = false;
-            }
+/// Parse a package version as SemVer **without** build metadata (`+…` rejected),
+/// mapped to [`GameBoxMetaError`]. Prerelease (`1.0.0-rc.1`) is allowed.
+pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaError> {
+    if version.contains('+') {
+        return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
+    }
+    crate::metadata::identity::validate_version(version).map_err(|reason| {
+        GameBoxMetaError::InvalidVersion {
+            version: version.to_string(),
+            reason,
         }
-    }
-
-    while out.ends_with('-') || out.ends_with('_') {
-        out.pop();
-    }
-
-    if !saw_alnum || out.is_empty() {
-        return None;
-    }
-
-    // Must start with [a-z0-9]
-    if validate_safe_name(&out).is_ok() {
-        Some(out)
-    } else {
-        None
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -346,35 +276,11 @@ pub fn validate_judge_path(path: &str) -> Result<(), GameBoxMetaError> {
 }
 
 // ---------------------------------------------------------------------------
-// Version helper
-// ---------------------------------------------------------------------------
-
-/// Parse package version as SemVer **without** build metadata (`+…` rejected).
-/// Prerelease (`1.0.0-rc.1`) is allowed.
-pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaError> {
-    if version.contains('+') {
-        return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
-    }
-    match semver::Version::parse(version) {
-        Ok(v) => {
-            // Double-check: semver crate accepts build metadata after `+`.
-            if !v.build.is_empty() {
-                return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
-            }
-            Ok(v)
-        }
-        Err(e) => Err(GameBoxMetaError::InvalidVersion {
-            version: version.to_string(),
-            reason: e.to_string(),
-        }),
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Image ref helper (platform prefix + identity)
 // ---------------------------------------------------------------------------
 
-/// Build the canonical GameBox image reference.
+/// Build the canonical GameBox image reference (delegates to the shared
+/// [`build_artifact_image_ref`] implementation).
 ///
 /// ```text
 /// {registry_prefix}/gameboxes/{safe_name}:{version}
@@ -383,8 +289,7 @@ pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaErr
 /// `registry_prefix` comes from **platform config**, never from `meta.toml`.
 /// CLI default when none is supplied: `"floatctf"`.
 pub fn build_gamebox_image_ref(registry_prefix: &str, safe_name: &str, version: &str) -> String {
-    let prefix = registry_prefix.trim_end_matches('/');
-    format!("{prefix}/gameboxes/{safe_name}:{version}")
+    build_artifact_image_ref(ArtifactKind::GameBox, registry_prefix, safe_name, version)
 }
 
 // ---------------------------------------------------------------------------

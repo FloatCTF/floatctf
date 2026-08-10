@@ -2,7 +2,7 @@ use clap::Parser;
 use colored::*;
 use fcmc::application::{build, check, generate};
 use fcmc::{Commands, GenFormat};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,9 +14,7 @@ async fn main() -> anyhow::Result<()> {
             let dir = PathBuf::from(&dir);
 
             // 按 meta.toml 内容自动识别包类型：含 [gamebox] 段按 GameBox 检查，否则按 Challenge。
-            let is_gamebox = std::fs::read_to_string(dir.join("meta.toml"))
-                .map(|c| c.contains("[gamebox]"))
-                .unwrap_or(false);
+            let is_gamebox = matches!(detect_package_kind(&dir), GenFormat::Gamebox);
 
             let result = if is_gamebox {
                 check::check_gamebox(&dir)?
@@ -67,6 +65,9 @@ async fn main() -> anyhow::Result<()> {
             let dir = path.unwrap_or_else(|| ".".to_string());
             let dir = PathBuf::from(&dir);
 
+            // 未显式指定 --format 时按 meta.toml 自动识别包类型。
+            let format = format.unwrap_or_else(|| detect_package_kind(&dir));
+
             match format {
                 GenFormat::Challenge => {
                     build::build_challenge(&dir, tag.as_deref(), proxy.as_deref()).await?;
@@ -79,4 +80,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// 按 meta.toml 内容自动识别包类型：含 `[gamebox]` 段按 GameBox，否则按 Challenge。
+/// 供 `check` 与未显式指定 `--format` 的 `build` 使用。
+fn detect_package_kind(dir: &Path) -> GenFormat {
+    let is_gamebox = std::fs::read_to_string(dir.join("meta.toml"))
+        .map(|c| c.contains("[gamebox]"))
+        .unwrap_or(false);
+    if is_gamebox {
+        GenFormat::Gamebox
+    } else {
+        GenFormat::Challenge
+    }
 }

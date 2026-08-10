@@ -37,9 +37,10 @@ pub enum Commands {
         /// 配置文件目录 (里面需要包含 meta.toml)
         #[arg(short, long)]
         path: Option<String>,
-        /// 构建模板类型: challenge (c) | gamebox (g)
-        #[arg(short, long, default_value = "challenge")]
-        format: GenFormat,
+        /// 构建模板类型: challenge (c) | gamebox (g)。缺省不传时按 meta.toml 内容自动识别
+        /// （含 [gamebox] 段按 gamebox，否则按 challenge）。
+        #[arg(short, long)]
+        format: Option<GenFormat>,
         /// 镜像 tag（gamebox 推荐显式传入；缺省为 floatctf/gameboxes/<safe_name>:<version>）
         /// Challenge 默认 <prefix>/challenges/<safe_name>:<version>。
         #[arg(short = 't', long = "tag")]

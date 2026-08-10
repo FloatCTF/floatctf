@@ -36,7 +36,8 @@ fn cli_build_default() {
             proxy,
         } => {
             assert!(path.is_none());
-            assert_eq!(format, GenFormat::Challenge);
+            // 未指定 --format：无默认值，由 main 按 meta.toml 自动识别。
+            assert!(format.is_none());
             assert!(tag.is_none());
             assert!(proxy.is_none());
         }
@@ -49,7 +50,7 @@ fn cli_build_with_format() {
     let args = Args::try_parse_from(["fcmc", "build", "-f", "gamebox"]).unwrap();
     match args.command {
         Commands::Build { format, tag, .. } => {
-            assert_eq!(format, GenFormat::Gamebox);
+            assert_eq!(format, Some(GenFormat::Gamebox));
             assert!(tag.is_none());
         }
         _ => panic!("expected Build command"),
@@ -69,7 +70,7 @@ fn cli_build_with_tag() {
     .unwrap();
     match args.command {
         Commands::Build { format, tag, .. } => {
-            assert_eq!(format, GenFormat::Gamebox);
+            assert_eq!(format, Some(GenFormat::Gamebox));
             assert_eq!(tag.as_deref(), Some("myreg/gameboxes/x:1.0.0"));
         }
         _ => panic!("expected Build command"),

@@ -3,6 +3,23 @@
 > 数据库 Schema 变更的完整流程与规范。**任何 Schema 变更 = 迁移 + 应用 + 实体/类型再生成 + 验证**，缺一不可。
 > 本文档描述的是 **forward-only migration manager**（`apps/api/src/sql/migrate.sh`）体系：迁移只前进、不回滚；修 Schema 错误 = 再写一个新迁移。
 
+## 绝对禁令（AI / 开发者均适用）
+
+**无论如何都不可以直接改 `apps/api/src/sql/migrations/` 下已经存在的迁移文件。**
+
+| 禁止 | 正确做法 |
+|------|----------|
+| 编辑/删改/重命名已有 `migrations/*.sql`（含 baseline `initial-schema` / `initial-data`） | `mise run db:migration:new <名称>`，只在**新文件**里写 SQL |
+| 为了"修一点"回头改已 apply / 已提交的 migration | 再写一条 forward migration 纠正 |
+| 手改 `merged.sql` | `mise run db:migration:merge` 重新生成 |
+| 手改 `schema_migrations` 表 / 在 migration SQL 里操作该表 | 由 `migrate.sh` 独占管理 |
+| 手改 `apps/api/src/entity/` 或 `apps/web/src/entity/` | `mise run db:gen` |
+| 恢复旧 29 migrations、擅自 squash/baseline 重做 | 仅当用户明确批准 major-version 策略时才可讨论 |
+
+唯一允许写入 migrations 目录的对象：**刚 `db:migration:new` 生成、尚未 apply、尚未作为历史固化的新文件**。
+
+> `db:migration:verify` 会对已应用文件做 checksum；改历史 = MODIFIED / 全环境漂移 / 强制返工。
+
 ## 三处一致原则（最高优先级）
 
 数据库 Schema、`entity/` 生成实体、业务代码引用，三者必须一致：
@@ -47,10 +64,10 @@
 ## Baseline（Pre-v1 历史 squash）
 
 - **Baseline version**：`20260810121925`（initial-schema）+ `20260810121926`（initial-data）
-- **Migration history is frozen from baseline**：`20260810121925-initial-schema.sql` 视为 **IMMUTABLE**，以后任何 Schema 修改**禁止回头改它**，只能 `db:migration:new` 追加新迁移；除非未来明确进行另一次 major-version squash（需单独迁移策略）
+- **IMMUTABLE BOUNDARY**：自 baseline 起，**全部已存在 migration 文件**（不限于 baseline 两条）均不可直接改动；Schema 变更**只能** `db:migration:new` 追加。除非用户明确批准另一次 major-version squash（单独策略），否则禁止重写 baseline / 恢复旧 29 条历史
 - initial-schema：直接描述最终 Schema（Extensions/Types/Casts/Functions/Tables/Constraints/Indexes/Triggers），不含 `schema_migrations`（由 migrate.sh 独占）
-- initial-data：仅程序运行必需 bootstrap（内置超级管理员 sysadmin、AWD 网络池默认配置单例）；不含任何 dev/demo/历史数据
-- 旧 29 条开发 migration 不再存在（Git 已保留历史）；不要重新建立 old/legacy/archive 目录存放
+- initial-data：仅程序运行必需 bootstrap（内置超级管理员 sysadmin、AWD 网络池默认配置单例）；不含任何 dev/demo/历史数据；**sysadmin credential 策略 accepted as-is，不要改 seed**
+- 旧 29 条开发 migration 不再存在（Git tag `pre-db-baseline-20260810` → `18d64fa` 保留历史）；不要重新建立 old/legacy/archive 目录存放
 - 验证基线等价性的方法（如再次做 baseline）：reference DB（旧历史构建）↔ candidate DB（baseline 构建）做 pg_dump 归一化 diff + catalog 语义比较 + bootstrap 数据比较，必须 0 unexplained diff
 
 ## 完整流程
@@ -162,7 +179,7 @@ cargo test -p floatctf <相关测试>   # 涉及行为的变更跑相关 DB-gate
 
 - `.migrate.lock` 是 migrate.sh 的 flock 临时文件，**不入库**（已 gitignore）
 - 迁移文件命名：时间戳-简短英文描述（如 `20260807105735-add-challenge-solves-event-id.sql`）
-- 删除列/表：优先保留（数据可能还在用）；确需删除时同步检查代码引用与实体（`db:gen` 会移除实体字段）
+- 删除列/表：优先保留（数据可能还在用）；确需删除时同步检查代码引用与实体（`db:gen` 会移除实体字段）——删除动作本身也必须是**新 migration**，不是改旧文件
 - 生产环境数据库密码等敏感值不写入迁移文件；迁移只含 Schema 与业务数据，不含凭据
-- **已应用迁移的文件内容不可修改**（verify 会报 MODIFIED）；改 Schema 只能新增迁移
-- 迁移文件转换约定：文件内不含事务控制（旧模板残留的 `BEGIN;`/`COMMIT;` 由 migrate.sh 校验，重写历史迁移需谨慎——先 `db:migration:verify` 看清影响）
+- **已有迁移文件内容不可修改**（已 apply 时 verify 会报 MODIFIED；未 apply 但已提交共享的同样禁止改历史）。改 Schema **只能**新增迁移
+- 迁移文件内不含事务控制（`BEGIN`/`COMMIT` 由 migrate.sh 管理；validate 会拒绝）

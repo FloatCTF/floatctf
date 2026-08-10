@@ -1,4 +1,4 @@
-# rules.md — 用户反复强调的规则与返工教训
+# RULES.md — 用户反复强调的规则与返工教训
 
 > 来源：2026-08 多轮开发中被用户**多次拒绝/纠正后**沉淀的行为准则（前端页面多次返工、GameBox 设计推翻、弹窗/数据要求等）。
 > 本文件是 AGENTS.md 铁律的细则与真实案例。**默认照此执行，不要等到返工。**
@@ -54,6 +54,6 @@
 ## 5. 开发环境与仓库约定（容易踩坑的事实）
 
 - `mise run dev:api` **不是 watch 进程**：改后端代码后必须手动重启（kill 9090 端口进程 → `cd apps/api && setsid nohup cargo run > /tmp/dev-api.log 2>&1 & disown`），否则旧进程继续提供旧行为，导致验证失效/误判 bug。
-- `merged.sql` 是**生成产物，不追踪 git**（由 `mise run db:migration:merge` 重新生成；fresh clone 需先运行 merge 再 infra:up）。
+- `merged.sql` 是**生成产物，不追踪 git**（由 `mise run db:migration:merge` 重新生成；fresh clone 需先运行 merge 再 infra:up）。**禁止手改 merged.sql**。
 - `chore/` 目录（plans/ 等）被 gitignore，其中的文档是本地工作笔记，不会进入提交。
-- DB 相关变更一律走正式迁移流程（见 AGENTS.md 铁律 2 与 DATABASE.md），禁止手改生成实体。
+- **Migrations 绝对禁区**（见 AGENTS.md 铁律 2 与 DATABASE.md）：`apps/api/src/sql/migrations/` 下**已有文件无论如何都不可直接修改/删除/重命名/重写**（含 baseline `initial-schema` / `initial-data`）。改 Schema **只能** `db:migration:new` 追加新迁移；禁止手改生成实体；禁止操作 `schema_migrations` 表。

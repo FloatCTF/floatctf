@@ -21,6 +21,7 @@ pub struct Args {
 
 #[derive(Parser, Debug, Clone)]
 #[command(rename_all = "snake_case")]
+#[command(disable_help_subcommand = true)]
 pub enum Commands {
     /// 检查题目配置文件是否合法
     Check {
@@ -69,6 +70,16 @@ pub enum Commands {
         #[arg(short, long, default_value = "false")]
         template: bool,
     },
+    /// 输出详细使用说明（--agent 输出面向 AI 助手的完整手册；
+    /// 或指定命令查看单命令详解）
+    Help {
+        /// 输出面向 AI 助手的超详细完整手册（含 meta.toml 契约、包布局、
+        /// 镜像命名、代理、运行时检查、常见错误），纯文本打印到 stdout
+        #[arg(long)]
+        agent: bool,
+        /// 查看单个命令的详解: check | build | gen | help
+        command: Option<String>,
+    },
 }
 
 impl Commands {
@@ -78,6 +89,7 @@ impl Commands {
             Commands::Check { path, .. } => path.as_deref(),
             Commands::Build { path, .. } => path.as_deref(),
             Commands::Gen { .. } => None,
+            Commands::Help { .. } => None,
         }
     }
 }

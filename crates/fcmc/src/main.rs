@@ -1,6 +1,6 @@
 use clap::Parser;
 use colored::*;
-use fcmc::application::{build, check, generate};
+use fcmc::application::{build, check, generate, manual};
 use fcmc::{Commands, GenFormat};
 use std::path::{Path, PathBuf};
 
@@ -41,6 +41,20 @@ async fn main() -> anyhow::Result<()> {
 
             if !result.passed {
                 std::process::exit(1);
+            }
+        }
+        Commands::Help { agent, command } => {
+            if agent {
+                manual::print_agent_manual();
+            } else if let Some(cmd) = command {
+                if let Err(e) = manual::print_command_manual(&cmd) {
+                    anyhow::bail!("{e}");
+                }
+            } else {
+                // 无参: 打印 clap 原生帮助。
+                use clap::CommandFactory;
+                fcmc::Args::command().print_help()?;
+                println!();
             }
         }
         Commands::Gen {

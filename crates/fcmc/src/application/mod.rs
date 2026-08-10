@@ -4,3 +4,4 @@ pub mod awd;
 pub mod build;
 pub mod check;
 pub mod generate;
+pub mod manual;

@@ -26,6 +26,30 @@ fn cli_check_with_path() {
 }
 
 #[test]
+fn cli_help_agent() {
+    let args = Args::try_parse_from(["fcmc", "help", "--agent"]).unwrap();
+    match args.command {
+        Commands::Help { agent, command } => {
+            assert!(agent);
+            assert!(command.is_none());
+        }
+        _ => panic!("expected Help command"),
+    }
+}
+
+#[test]
+fn cli_help_command() {
+    let args = Args::try_parse_from(["fcmc", "help", "build"]).unwrap();
+    match args.command {
+        Commands::Help { agent, command } => {
+            assert!(!agent);
+            assert_eq!(command.as_deref(), Some("build"));
+        }
+        _ => panic!("expected Help command"),
+    }
+}
+
+#[test]
 fn cli_build_default() {
     let args = Args::try_parse_from(["fcmc", "build"]).unwrap();
     match args.command {

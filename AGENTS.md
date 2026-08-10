@@ -16,6 +16,7 @@
 | [docs/agents/DATABASE.md](docs/agents/DATABASE.md) | **改数据库**：迁移 → 应用 → 实体/类型再生成 |
 | [docs/agents/DATA-FETCHING.md](docs/agents/DATA-FETCHING.md) | **前端数据页面**：缓存分级、keepPreviousData、queryKey 失效 |
 | [docs/agents/TESTING.md](docs/agents/TESTING.md) | 测试规范：层级、写法、禁忌 |
+| [docs/agents/rules.md](docs/agents/rules.md) | **用户反复强调的规则与返工教训**：前端形态细则、禁原生弹窗、数据必须真实、环境约定 |
 
 ## 铁律（违反即返工）
 
@@ -25,7 +26,8 @@
 4. **敏感值走 `Secret`**：Debug/日志必须脱敏；`auth.jwt_secret` 等不落日志、不入库。
 5. **提交规范**：中文 message（feat/fix/chore/docs/refactor 前缀），按角度分批提交；提交前 `cargo fmt --all && cargo check -p floatctf` 与相关测试全绿。**push 前必须本地完整过一遍验证**：`mise run check` 全绿，前端额外 `tsc --noEmit` 与 `vite build` 通过（CI 跑的是 `vite build && tsc`，本地不绿推送必红）。
 6. **先诊断后修复**：修 bug 先定位根因并给证据；涉及行为/数据变更，先向用户说明方案获批后再动手。
-7. **前端仿照既有页面**：新页面先找同域参照页（赛事详情参照 `service/events/jeopardy.$id/*` 与 `awd.$id/*`、管理列表参照 `admin/challenges.tsx`、导航配置参照 `navigation/*`），结构/布局/交互与参照页保持一致；优先复用 `components/` 现有组件（GenericTable、EventStatusBadge、SubmitWriteup、MsgBanner、AppLink、FilterBar 等）与 `@primer/react`，禁止另起炉灶自创视觉风格或手写重复实现。
+7. **前端仿照既有页面**：新页面先找同域参照页（赛事详情参照 `service/events/jeopardy.$id/*` 与 `awd.$id/*`、管理列表参照 `admin/challenges.tsx`、导航配置参照 `navigation/*`），结构/布局/交互与参照页保持一致；优先复用 `components/` 现有组件（GenericTable、EventStatusBadge、SubmitWriteup、MsgBanner、AppLink、FilterBar 等）与 `@primer/react`，禁止另起炉灶自创视觉风格或手写重复实现。管理页必须用 Challenges 内置 GenericTable 增删改查形态、样式对照要"一模一样"、默认最简方案等细则与全部返工案例见 [rules.md](docs/agents/rules.md)。
+8. **用户偏好（详细见 [rules.md](docs/agents/rules.md)）**：禁止原生 `alert(`/`confirm(` 弹窗（一律用 Primer `useConfirm`/`Dialog`/`useMsgBanner`）；展示数据必须来自真实接口、禁止假数据/占位糊弄（"不要随便搞点数据糊弄我"），状态判定必须与后端一致。
 
 ## 常用命令速查
 
@@ -37,7 +39,7 @@ mise run db:migration:validate                # 校验迁移文件（不连库�
 mise run db:migration:status                  # 查看迁移状态（只读）
 mise run db:migration:verify                  # 校验迁移历史（checksum）
 mise run db:migration:apply                   # 执行未应用的迁移（开发库已 baseline）
-mise run db:migration:merge                   # 合并迁移 → merged.sql（fresh DB bootstrap）
+mise run db:migration:merge                   # 合并迁移 → merged.sql（fresh DB bootstrap；生成产物不提交 git）
 mise run db:gen                               # 重新生成 Rust 实体 + TS 类型
 mise run fmt / lint / test / check / build     # 质量门禁
 cargo test -p floatctf <关键词>                 # 跑指定单元测试
@@ -49,3 +51,4 @@ cargo test -p floatctf <关键词>                 # 跑指定单元测试
 - 开发库：`postgres://postgres:postgres@127.0.0.1:5432/floatctf_db`（容器 floatctf-dev-db）
 - 对象存储：RustFS `http://127.0.0.1:9000`（桶 `floatctf-public` / `floatctf-private`）
 - 配置样例：`apps/api/config/development.toml`；启动日志：`WORK_DIR/logs/api/`（按天滚动，开发库 WORK_DIR=`../../app` → `app/logs/api/`）
+- **`mise run dev:api` 不是 watch 进程**：改后端代码后必须手动重启（kill 9090 端口进程 → `cd apps/api && setsid nohup cargo run > /tmp/dev-api.log 2>&1 & disown`），否则旧进程继续提供旧行为（曾导致验证失效/误判 bug）

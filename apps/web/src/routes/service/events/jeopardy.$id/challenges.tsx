@@ -28,6 +28,7 @@ export const Route = createFileRoute("/service/events/jeopardy/$id/challenges")(
 );
 
 export type EventChallengeResult = {
+	/** 行唯一标识（后端不返回，前端由 challenge.id 合成，供 DataTable 行 key）。 */
 	id: string;
 	challenge: ChallengesListItem;
 	current_points: number;
@@ -69,11 +70,16 @@ function RouteComponent() {
 	const [open, setOpen] = useState(false);
 	const filteredData = useMemo(() => {
 		if (!data?.data) return [];
-		if (selected.text === "ALL") return data.data;
-		return data.data.filter(
-			(row: EventChallengeResult) =>
-				row.challenge.category.toLowerCase() === selected.text.toLowerCase(),
-		);
+		const rows =
+			selected.text === "ALL"
+				? data.data
+				: data.data.filter(
+						(row: EventChallengeResult) =>
+							row.challenge.category.toLowerCase() ===
+							selected.text.toLowerCase(),
+					);
+		// DataTable 行 key 需要 id；后端不返回，合成 challenge.id。
+		return rows.map((row) => ({ ...row, id: row.challenge.id }));
 	}, [data?.data, selected]);
 	// TODO: add filter to GenericTable
 	const filteredItems = categories.filter(
@@ -313,7 +319,7 @@ function ChallengeDialog({
 				{/* 附件 */}
 				{challenge?.attachment && (
 					<a
-						href={`/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
+						href={`/static/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
 						download
 						target="_blank"
 						rel="noopener noreferrer"

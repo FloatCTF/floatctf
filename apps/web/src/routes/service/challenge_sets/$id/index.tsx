@@ -242,7 +242,7 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 
 				{challenge?.attachment && (
 					<a
-						href={`/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
+						href={`/static/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
 						download
 						target="_blank"
 						rel="noopener noreferrer"

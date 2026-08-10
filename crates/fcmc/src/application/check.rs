@@ -337,15 +337,18 @@ pub fn print_check_result(result: &CheckResult) {
     println!("==============================================\n");
 }
 
-/// Runtime check: create a test container and verify it starts.
+/// Runtime check: create a test container, print access info, and keep it alive
+/// until the user presses Enter (or Ctrl+C), then stop and remove it.
 ///
 /// Image ref is derived via `build_artifact_image_ref(Challenge, "floatctf", …)`;
 /// dynamic flags are injected as `FLAG` env (static flags are baked into the image).
 pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
-        ContainerRuntime, ContainerSpec, DockerContainerRuntime, PortBinding, ResourceLimits,
+        ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,
+        ResourceLimits,
     };
     use bollard::Docker;
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
     let meta_path = dir.join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).context("Failed to read meta.toml")?;
@@ -366,7 +369,11 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
 
     let rt = DockerContainerRuntime::new(docker.clone());
-    let container_name = format!("fcmc_check_{}", cfg.name);
+    // 容器名必须合法（仅 [a-zA-Z0-9_.-]），故用 safe_name 而非显示名。
+    let container_name = format!("fcmc_check_{safe_name}");
+
+    // 本地缺镜像时自动拉取（检查前先把镜像就位）。
+    rt.ensure_image(&image_ref, None).await?;
 
     // Dynamic flag: platform injects FLAG env (entrypoint writes it to /flag).
     // Static flag: the flag is baked into the image — no env.
@@ -404,9 +411,51 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
         anyhow::bail!("Container {} is not running", container_name);
     }
 
-    // Auto-cleanup
+    // 打印访问信息，保持容器存活直到用户测试完成。
+    println!(
+        "\n  {} 容器已启动: {} ({})",
+        "OK".green(),
+        state.container_name,
+        state.container_id
+    );
+    if state.published_ports.is_empty() {
+        println!(
+            "  {} 未发布任何端口（检查 meta.toml 的 [docker] port 配置）",
+            "WARN".yellow()
+        );
+    } else {
+        let mut ports: Vec<(&String, &u16)> = state.published_ports.iter().collect();
+        ports.sort();
+        for (container_port, host_port) in ports {
+            println!(
+                "  {} 访问地址: http://127.0.0.1:{}  (容器内 {})",
+                "OK".green(),
+                host_port,
+                container_port
+            );
+        }
+    }
+    if matches!(cfg.flag, ChallengeFlagConfig::Dynamic) {
+        println!(
+            "  {} 动态 flag：容器内已注入 FLAG=flag{{runtime-check}}，入口脚本会写入 /flag",
+            "提示".yellow()
+        );
+    }
+    println!("\n  测试完成后按 {} 停止并删除容器 …\n", "Enter".bold());
+
+    // 等待 Enter 或 Ctrl+C（两者都走同一清理路径）。
+    let mut line = String::new();
+    let mut stdin = BufReader::new(tokio::io::stdin());
+    tokio::select! {
+        _ = stdin.read_line(&mut line) => {}
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n  收到 Ctrl+C，停止并删除容器 …");
+        }
+    }
+
     rt.stop_and_remove(&handle.container_id, std::time::Duration::from_secs(5))
         .await?;
+    println!("  {} 容器已停止并删除", "OK".green());
 
     Ok(())
 }

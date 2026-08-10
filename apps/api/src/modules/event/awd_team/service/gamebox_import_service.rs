@@ -258,6 +258,7 @@ pub async fn import_gamebox_package(
         target_ref: temp_tag.clone(),
         labels,
         timeout: Duration::from_secs(registry.build_timeout_secs),
+        verbose: false,
     };
 
     let build_outcome =

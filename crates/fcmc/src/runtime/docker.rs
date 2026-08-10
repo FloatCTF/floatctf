@@ -97,6 +97,7 @@ impl DockerContainerRuntime {
             target_ref: image_tag.to_string(),
             labels: Default::default(),
             timeout: Duration::from_secs(600),
+            verbose: false,
         };
         ImageRuntime::build_image(self, req)
             .await

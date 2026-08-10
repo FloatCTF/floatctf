@@ -26,6 +26,9 @@ pub struct ImageBuildRequest {
     pub labels: HashMap<String, String>,
     /// Hard timeout for the build stream.
     pub timeout: Duration,
+    /// Stream the Docker daemon build log to stdout (CLI 交互用；平台/API 导入保持 false，
+    /// 仅走 tracing，避免把构建日志灌进服务端 stdout)。
+    pub verbose: bool,
 }
 
 impl ImageBuildRequest {
@@ -36,7 +39,14 @@ impl ImageBuildRequest {
             target_ref: target_ref.into(),
             labels: HashMap::new(),
             timeout: Duration::from_secs(600),
+            verbose: false,
         }
+    }
+
+    /// Enable streaming the Docker build log to stdout.
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 }
 
@@ -267,6 +277,7 @@ impl ImageRuntime for DockerContainerRuntime {
         let docker = self.inner().clone();
         let target_ref = req.target_ref.clone();
         let timeout = req.timeout;
+        let verbose = req.verbose;
 
         let build_future = async {
             let mut build_stream = docker.build_image(options, None, Some(body));
@@ -275,6 +286,12 @@ impl ImageRuntime for DockerContainerRuntime {
                 if let Some(ref stream_msg) = info.stream {
                     let msg = stream_msg.trim();
                     if !msg.is_empty() {
+                        // CLI 交互：把 Docker daemon 的构建输出实时打到 stdout。
+                        if verbose {
+                            use std::io::Write;
+                            println!("{msg}");
+                            std::io::stdout().flush().ok();
+                        }
                         info!(target: "fcmc::image", "{msg}");
                     }
                 }

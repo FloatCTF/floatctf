@@ -55,10 +55,17 @@ pub async fn build_challenge(dir: &Path, tag: Option<&str>) -> Result<()> {
     let rt = DockerContainerRuntime::new(docker);
 
     // Note: only `src/` is the build context — meta.toml / attachment/ are excluded.
-    let req = ImageBuildRequest::new(&src_dir, image_tag);
+    println!("[fcmc] 开始构建挑战镜像");
+    println!("  context: {:?}", src_dir);
+    println!("  target : {}", image_tag);
+    let req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
     let result = ImageRuntime::build_image(&rt, req)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
+
+    println!("[fcmc] 构建完成");
+    println!("  image_id  : {}", result.image_id);
+    println!("  target_ref: {}", result.target_ref);
 
     tracing::info!(
         target: "fcmc::build",
@@ -108,10 +115,17 @@ pub async fn build_gamebox(dir: &Path, tag: Option<&str>) -> Result<()> {
     // Note: only `src/` is the build context — `judge/` is intentionally excluded.
     // Use ImageRuntime UFCS so the typed request API is used (inherent build_image
     // is the (&str, &Path) challenge-compat wrapper).
-    let req = ImageBuildRequest::new(&src_dir, image_tag);
+    println!("[fcmc] 开始构建 GameBox 镜像");
+    println!("  context: {:?}", src_dir);
+    println!("  target : {}", image_tag);
+    let req = ImageBuildRequest::new(&src_dir, image_tag).with_verbose(true);
     let result = ImageRuntime::build_image(&rt, req)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
+
+    println!("[fcmc] 构建完成");
+    println!("  image_id  : {}", result.image_id);
+    println!("  target_ref: {}", result.target_ref);
 
     tracing::info!(
         target: "fcmc::build",

@@ -4,11 +4,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
 
 import { adminApi } from "@/api";
+import type { GameBoxConfigPayload, GameBoxLibraryDto } from "@/api/awd";
 import { type QueryParams, type UniResponse } from "@/api/axios";
-import type {
-	GameBoxConfigPayload,
-	GameBoxLibraryDto,
-} from "@/api/awd";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../route";
 
@@ -18,27 +15,6 @@ export const Route = createFileRoute("/admin/awd/gameboxes")({
 });
 
 export const QUERY_KEY = "AWDGameBoxes";
-
-/** 库行 = DTO + latest_revision 展开（内置 Edit 对话框按顶级字段回填，同 Challenges 页）。 */
-export type FlattenedGameBox = GameBoxLibraryDto & {
-	revision_number?: number | null;
-	image_ref?: string;
-	image_digest?: string | null;
-	username?: string;
-	cpu_millis?: number;
-	memory_bytes?: number;
-	pids_limit?: number;
-	judge_script_name?: string | null;
-	judge_script_content?: string | null;
-	judge_timeout_secs?: number | null;
-	judge_retry_interval_secs?: number | null;
-	spec_digest?: string;
-};
-
-export const flattenGameBox = (g: GameBoxLibraryDto): FlattenedGameBox => ({
-	...g,
-	...(g.latest_revision ?? {}),
-});
 
 const CONFIG_KEYS = [
 	"source_toml",
@@ -82,7 +58,7 @@ function RouteComponent() {
 	});
 
 	// 内置 Add/Edit 对话框的表单数据（同 Challenges 页 mutationData 模式）
-	const mutationData = useReactive<Partial<FlattenedGameBox>>({
+	const mutationData = useReactive<Partial<GameBoxLibraryDto>>({
 		name: "",
 		image_ref: "",
 		image_digest: null,
@@ -114,7 +90,7 @@ function RouteComponent() {
 			field: "image_ref",
 			render: (
 				<TextInput
-					value={mutationData.image_ref}
+					value={mutationData.image_ref ?? ""}
 					onChange={(e) => {
 						mutationData.image_ref = e.target.value;
 					}}
@@ -140,7 +116,7 @@ function RouteComponent() {
 			field: "username",
 			render: (
 				<TextInput
-					value={mutationData.username}
+					value={mutationData.username ?? ""}
 					onChange={(e) => {
 						mutationData.username = e.target.value;
 					}}
@@ -250,18 +226,10 @@ function RouteComponent() {
 			field: "safe_name",
 		},
 		{
-			accessorKey: "revision_number",
-			header: "Latest Revision",
-			field: "revision_number",
-			renderCell: (row: FlattenedGameBox) => (
-				<span>{row.revision_number ? `rev ${row.revision_number}` : "(none)"}</span>
-			),
-		},
-		{
 			accessorKey: "image_ref",
 			header: "Image",
 			field: "image_ref",
-			renderCell: (row: FlattenedGameBox) => (
+			renderCell: (row: GameBoxLibraryDto) => (
 				<span>
 					{row.image_ref ?? "-"}
 					{row.image_digest ? " 🔒" : ""}
@@ -272,13 +240,13 @@ function RouteComponent() {
 			accessorKey: "hidden",
 			header: "Hidden",
 			field: "hidden",
-			renderCell: (row: FlattenedGameBox) => (
+			renderCell: (row: GameBoxLibraryDto) => (
 				<span>{row.hidden ? "yes" : "no"}</span>
 			),
 		},
 	];
 
-	const columnActions = (row: FlattenedGameBox) => (
+	const columnActions = (row: GameBoxLibraryDto) => (
 		<ActionList>
 			<ActionList.Item
 				variant="danger"
@@ -298,27 +266,27 @@ function RouteComponent() {
 
 	const queryFn = async (
 		params?: QueryParams,
-	): Promise<UniResponse<FlattenedGameBox[]>> => {
+	): Promise<UniResponse<GameBoxLibraryDto[]>> => {
 		const res = await adminApi.awd.listGameboxes(params);
-		return { ...res, data: (res.data ?? []).map(flattenGameBox) };
+		return res;
 	};
 	const createFn = async (
-		data: Partial<FlattenedGameBox>,
-	): Promise<UniResponse<FlattenedGameBox>> => {
+		data: Partial<GameBoxLibraryDto>,
+	): Promise<UniResponse<GameBoxLibraryDto>> => {
 		const res = await adminApi.awd.createGamebox({
 			name: data.name ?? "",
 			config: extractConfig(data as Record<string, unknown>),
 		});
-		return { ...res, data: flattenGameBox(res.data ?? ({} as GameBoxLibraryDto)) };
+		return res;
 	};
-	// Edit row = 全量 config 提交；无改动时 digest 相同 → 后端去重不建新 Revision（§36）
+	// Edit = 全量 config 原地覆盖（单版本，同 Challenges 编辑语义）
 	const patchFn = async (
-		data: Partial<FlattenedGameBox>,
-	): Promise<UniResponse<FlattenedGameBox>> => {
-		const res = await adminApi.awd.editGameboxRevision(data.id!, {
+		data: Partial<GameBoxLibraryDto>,
+	): Promise<UniResponse<GameBoxLibraryDto>> => {
+		const res = await adminApi.awd.updateGamebox(data.id!, {
 			config: extractConfig(mutationData as unknown as Record<string, unknown>),
 		});
-		return { ...res, data: flattenGameBox(res.data ?? ({} as GameBoxLibraryDto)) };
+		return res;
 	};
 
 	return (
@@ -334,7 +302,7 @@ function RouteComponent() {
 				mutationData={mutationData}
 				columnActions={columnActions}
 				filterKeys={["name", "safe_name", "category", "hidden"]}
-				subtitle="GameBox = AWD 题目长期身份；Edit = 创建不可变 Revision N+1"
+				subtitle="GameBox = AWD 题目长期身份，单版本配置直接编辑（同 Challenges）"
 			/>
 		</div>
 	);

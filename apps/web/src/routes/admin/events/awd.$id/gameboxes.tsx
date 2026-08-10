@@ -8,13 +8,9 @@ import { adminApi } from "@/api";
 import type { EventGameBoxDto, GameBoxLibraryDto } from "@/api/awd";
 import type { QueryParams } from "@/api/axios";
 import { GenericTable, useMsgBanner } from "@/components";
+import { QUERY_KEY as LIB_QUERY_KEY } from "@/routes/admin/awd/gameboxes";
 import { useSelectedRowIds } from "@/util";
 import { AdminRouteGuard } from "../../route";
-import {
-	QUERY_KEY as LIB_QUERY_KEY,
-	flattenGameBox,
-	type FlattenedGameBox,
-} from "@/routes/admin/awd/gameboxes";
 
 export const Route = createFileRoute("/admin/events/awd/$id/gameboxes")({
 	component: RouteComponent,
@@ -51,14 +47,6 @@ function RouteComponent() {
 			field: "gamebox_safe_name",
 		},
 		{
-			accessorKey: "revision_number",
-			header: "Revision",
-			field: "revision_number",
-			renderCell: (row: EventGameBoxDto) => (
-				<span>rev {row.revision_number}</span>
-			),
-		},
-		{
 			accessorKey: "host_offset",
 			header: "Host Offset",
 			field: "host_offset",
@@ -82,9 +70,7 @@ function RouteComponent() {
 		<ActionList>
 			<ActionList.Item
 				key={`${row.id}-toggle`}
-				onSelect={() =>
-					toggle.mutate({ egId: row.id, enabled: !row.enabled })
-				}
+				onSelect={() => toggle.mutate({ egId: row.id, enabled: !row.enabled })}
 			>
 				{row.enabled ? "Disable" : "Enable"}
 			</ActionList.Item>
@@ -188,7 +174,7 @@ function AddGameBoxButton({
 			accessorKey: "image_ref",
 			header: "Image",
 			field: "image_ref",
-			renderCell: (row: FlattenedGameBox) => (
+			renderCell: (row: GameBoxLibraryDto) => (
 				<span>{row.image_ref ?? "-"}</span>
 			),
 		},
@@ -201,15 +187,9 @@ function AddGameBoxButton({
 					<GenericTable
 						subject={LIB_QUERY_KEY}
 						columns={columns}
-						queryFn={async (params?: QueryParams) => {
-							const res = await adminApi.awd.listGameboxes(params);
-							return {
-								...res,
-								data: (res.data as GameBoxLibraryDto[]).map(
-									flattenGameBox,
-								),
-							};
-						}}
+						queryFn={(params?: QueryParams) =>
+							adminApi.awd.listGameboxes(params)
+						}
 						disableAdd
 						filterKeys={["name", "safe_name", "category", "hidden"]}
 						enableInternalActions={false}
@@ -220,7 +200,11 @@ function AddGameBoxButton({
 					/>
 				</Dialog>
 			)}
-			<Button variant="primary" ref={buttonRef} onClick={() => setIsOpen(!isOpen)}>
+			<Button
+				variant="primary"
+				ref={buttonRef}
+				onClick={() => setIsOpen(!isOpen)}
+			>
 				Add GameBoxes
 			</Button>
 		</>

@@ -56,26 +56,6 @@ export type AwdGameBox = {
 	health_status: string;
 };
 
-export type GameBoxRevisionDto = {
-	id: string;
-	revision_number: number;
-	image_ref: string;
-	image_digest: string | null;
-	username: string;
-	spec_digest: string;
-	// 完整配置回传（Edit 对话框回填，§46）
-	cpu_millis: number;
-	memory_bytes: number;
-	pids_limit: number;
-	healthcheck_json: Record<string, unknown> | null;
-	judge_script_name: string | null;
-	judge_script_content: string | null;
-	judge_args_json: Record<string, unknown> | null;
-	judge_timeout_secs: number | null;
-	judge_retry_interval_secs: number | null;
-	created_at: string;
-};
-
 export type GameBoxLibraryDto = {
 	id: string;
 	name: string;
@@ -83,7 +63,20 @@ export type GameBoxLibraryDto = {
 	category: string;
 	description: string;
 	hidden: boolean;
-	latest_revision: GameBoxRevisionDto | null;
+	// 单版本配置直接挂库行（同 Challenges 列表行携带配置）
+	source_toml: string;
+	image_ref: string | null;
+	image_digest: string | null;
+	username: string | null;
+	cpu_millis: number | null;
+	memory_bytes: number | null;
+	pids_limit: number | null;
+	healthcheck_json: Record<string, unknown> | null;
+	judge_script_name: string | null;
+	judge_script_content: string | null;
+	judge_args_json: Record<string, unknown> | null;
+	judge_timeout_secs: number | null;
+	judge_retry_interval_secs: number | null;
 };
 
 export type EventGameBoxDto = {
@@ -91,8 +84,6 @@ export type EventGameBoxDto = {
 	gamebox_id: string;
 	gamebox_name: string;
 	gamebox_safe_name: string;
-	revision_id: string;
-	revision_number: number;
 	host_offset: number;
 	enabled: boolean;
 	hidden: boolean;
@@ -337,7 +328,7 @@ export const awdAdminApi = {
 		);
 		return res.data;
 	},
-	// ── GameBox 库（全局 identity + immutable Revision，§46）──
+	// ── GameBox 库（全局身份 + 单版本配置，同 Challenges 语义）──
 	// 支持 Challenges 同款搜索/分页：?page=&limit=&filter=name:xx&category:yy
 	listGameboxes: async (
 		params: QueryParams = {},
@@ -356,14 +347,11 @@ export const awdAdminApi = {
 		const res = await admin_api.post(`/awd/gameboxes`, body);
 		return res.data;
 	},
-	editGameboxRevision: async (
+	updateGamebox: async (
 		gameboxId: string,
 		body: { config: GameBoxConfigPayload },
 	): Promise<UniResponse<GameBoxLibraryDto>> => {
-		const res = await admin_api.post(
-			`/awd/gameboxes/${gameboxId}/revisions`,
-			body,
-		);
+		const res = await admin_api.patch(`/awd/gameboxes/${gameboxId}`, body);
 		return res.data;
 	},
 	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
@@ -436,7 +424,6 @@ export const awdAdminApi = {
 		eventId: string,
 		body: {
 			gamebox_id: string;
-			revision_id?: string;
 			host_offset?: number;
 			hidden?: boolean;
 			break_points?: number;
@@ -453,7 +440,6 @@ export const awdAdminApi = {
 		eventId: string,
 		eventGameboxId: string,
 		body: {
-			revision_id?: string;
 			enabled?: boolean;
 			hidden?: boolean;
 			cpu_millis?: number;

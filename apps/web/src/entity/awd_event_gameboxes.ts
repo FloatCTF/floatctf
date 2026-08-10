@@ -2,7 +2,6 @@ export type AwdEventGameboxes = {
   id: string;
   event_id: string;
   gamebox_id: string;
-  gamebox_revision_id: string;
   host_offset: string;
   enabled: boolean;
   hidden: boolean;

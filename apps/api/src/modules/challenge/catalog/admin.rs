@@ -1,8 +1,11 @@
-//! Admin challenge catalog CRUD handlers.
+//! Admin challenge catalog CRUD handlers — identity-only.
+//!
+//! Version/runtime content enters via package import (`POST /api/admin/challenges/import`),
+//! which creates immutable `challenge_revisions`. Manual create/patch here only touch the
+//! stable identity (name / category / description / hidden); safe_name is derived from name
+//! (never auto-suffixed — identity ambiguity is an explicit error).
 
-use crate::api::dto::map_dto_vec;
-
-use crate::modules::challenge::catalog::ChallengesDto;
+use crate::modules::challenge::catalog::{ChallengeRevisionDto, ChallengesDto};
 use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
     entity::{challenges, prelude::Challenges},
@@ -11,14 +14,14 @@ use crate::{
 use sea_orm::Condition;
 use std::str::FromStr;
 
+use super::dto::ChallengeRevisionDto as _RevDto;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateChallengeRequest {
     pub name: String,
     pub category: String,
     pub description: String,
     pub hidden: bool,
-    pub attachment: Option<String>,
-    pub toml_str: String,
 }
 // POST /api/admin/challenges
 #[post("")]
@@ -30,12 +33,35 @@ pub async fn create_challenge(
     let user = user.into_inner();
     let ccr = ccr.into_inner();
 
+    if ccr.name.trim().is_empty() {
+        return AppError::Validation("CHALLENGE_INVALID_MANIFEST: name must be non-empty".into())
+            .into();
+    }
+    let safe_name = fcmc::derive_safe_name(&ccr.name).ok_or_else(|| {
+        AppError::Validation(
+            "CHALLENGE_SAFE_NAME_REQUIRED: cannot derive safe_name from name; use package import with explicit safe_name"
+                .to_string(),
+        )
+    })?;
+
+    // 不允许静默 collision suffix：safe_name 被占用即显式 conflict
+    let taken = Challenges::find()
+        .filter(challenges::Column::SafeName.eq(&safe_name))
+        .one(ctx.db.get_ref())
+        .await?
+        .is_some();
+    if taken {
+        return AppError::Conflict(format!(
+            "CHALLENGE_SAFE_NAME_CONFLICT: safe_name '{safe_name}' already exists"
+        ))
+        .into();
+    }
+
     let new_challenge = challenges::ActiveModel {
         name: Set(ccr.name),
         category: Set(ccr.category),
         description: Set(ccr.description),
-        attachment: Set(ccr.attachment),
-        toml_str: Set(ccr.toml_str),
+        safe_name: Set(safe_name),
         hidden: Set(ccr.hidden),
         ..Default::default()
     };
@@ -48,14 +74,17 @@ pub async fn create_challenge(
             "CHALLENGES",
             "CREATE",
             format!("{} 创建题目: {}", user.username, challenge.name).as_str(),
-            json!({"name": challenge.name, "category": challenge.category}),
+            json!({"name": challenge.name, "category": challenge.category, "safe_name": challenge.safe_name}),
             None,
             user.id.into(),
             Some(&ctx.req),
         )
         .await;
 
-    UniResponse::ok(Some(challenge.into())).into()
+    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &challenge)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(Some(dto)).into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,9 +92,7 @@ pub struct PatchChallengeRequest {
     pub name: Option<String>,
     pub category: Option<String>,
     pub description: Option<String>,
-    pub attachment: Option<String>,
     pub hidden: Option<bool>,
-    pub toml_str: Option<String>,
 }
 /// PATCH /api/admin/challenges/{challenge_id}
 #[patch("/{challenge_id}")]
@@ -85,27 +112,24 @@ pub async fn patch_challenge(
 
     let mut m_challenge = challenge.into_active_model();
 
-    pcr.name.map(|n| {
+    if let Some(n) = pcr.name {
+        if n.trim().is_empty() {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_MANIFEST: name must be non-empty".into(),
+            )
+            .into();
+        }
         m_challenge.name = Set(n);
-    });
-
-    pcr.category.map(|c| {
+    }
+    if let Some(c) = pcr.category {
         m_challenge.category = Set(c);
-    });
-
-    pcr.description.map(|d| {
+    }
+    if let Some(d) = pcr.description {
         m_challenge.description = Set(d);
-    });
-
-    pcr.attachment.map(|a| {
-        m_challenge.attachment = Set(a.into());
-    });
-
-    pcr.hidden.map(|h| {
+    }
+    if let Some(h) = pcr.hidden {
         m_challenge.hidden = Set(h);
-    });
-
-    pcr.toml_str.map(|t| m_challenge.toml_str = Set(t));
+    }
     m_challenge.updated_at = Set(Utc::now().into());
 
     let challenge = m_challenge.update(ctx.db.get_ref()).await?;
@@ -123,7 +147,10 @@ pub async fn patch_challenge(
         )
         .await;
 
-    UniResponse::ok(Some(challenge.into())).into()
+    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &challenge)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(Some(dto)).into()
 }
 
 /// GET /api/admin/challenges
@@ -146,6 +173,10 @@ pub async fn get_challenges(
         FilterMapping {
             key: "name",
             column: Box::new(|v| Condition::all().add(challenges::Column::Name.contains(v))),
+        },
+        FilterMapping {
+            key: "safe_name",
+            column: Box::new(|v| Condition::all().add(challenges::Column::SafeName.contains(v))),
         },
         FilterMapping {
             key: "category",
@@ -173,9 +204,14 @@ pub async fn get_challenges(
     )
     .await?;
 
+    let mut dtos = Vec::with_capacity(items.len());
+    for m in items {
+        dtos.push(ChallengesDto::from_model(ctx.db.get_ref(), &m).await?);
+    }
+
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
 /// GET /api/admin/challenges/{challenge_id}
@@ -190,7 +226,31 @@ pub async fn get_challenge(
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
 
-    UniResponse::ok(Some(model.into())).into()
+    let dto = ChallengesDto::from_model(ctx.db.get_ref(), &model)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(Some(dto)).into()
+}
+
+/// GET /api/admin/challenges/{challenge_id}/revisions
+#[get("/{challenge_id}/revisions")]
+pub async fn get_challenge_revisions(
+    _user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    id: Path<Uuid>,
+) -> UniResult<Vec<ChallengeRevisionDto>> {
+    let challenge = Challenges::find_by_id(*id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
+
+    let revisions = crate::modules::challenge::build::revision_repo::list_for_challenge(
+        ctx.db.get_ref(),
+        challenge.id,
+    )
+    .await?;
+
+    UniResponse::ok(Some(revisions.into_iter().map(_RevDto::from).collect())).into()
 }
 
 /// DELETE /api/admin/challenges

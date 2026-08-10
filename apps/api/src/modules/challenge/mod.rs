@@ -1,11 +1,10 @@
-//! Challenge catalog module — challenges, sets, writeups, metadata, build/import.
+//! Challenge catalog module — challenges, sets, writeups, build/import.
 //!
 //! Manages the challenge *catalog* itself (not event-challenge relationships).
 //! `event_challenges` remains under the event module / admin API.
 
 pub mod build;
 pub mod catalog;
-pub mod metadata;
 pub mod set;
 pub mod writeup;
 
@@ -68,6 +67,8 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .service(build::web_import_challenge)
             // POST /api/admin/challenges/build
             .service(build::build_challenge)
+            // GET /api/admin/challenges/{challenge_id}/revisions
+            .service(catalog::admin::get_challenge_revisions)
             // POST /api/admin/challenges
             .service(catalog::admin::create_challenge)
             // DELETE /api/admin/challenges

@@ -32,6 +32,11 @@ function RouteComponent() {
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
 		{
+			accessorKey: "safe_name",
+			header: "Safe Name",
+			field: "safe_name",
+		},
+		{
 			accessorKey: "category",
 			header: "Category",
 			field: "category",
@@ -63,22 +68,6 @@ function RouteComponent() {
 					<span>
 						{row.image_ref ?? "—"}
 						{row.image_repo_digest ? " 🔒" : ""}
-					</span>
-				);
-			},
-		},
-		{
-			accessorKey: "attachment",
-			header: "Attachment",
-			field: "attachment",
-			renderCell: (row: ChallengesListItem) => {
-				return (
-					<span>
-						{row.attachment ? (
-							<span title={row.attachment.path}>{row.attachment.name}</span>
-						) : (
-							<></>
-						)}
 					</span>
 				);
 			},

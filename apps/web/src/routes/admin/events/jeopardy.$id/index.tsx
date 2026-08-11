@@ -16,6 +16,7 @@ import { useCallback, useContext, useRef, useState } from "react";
 import { adminApi } from "@/api";
 import { ActionSelect, GenericTable, useMsgBanner } from "@/components";
 import type { Challenges } from "@/entity";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { CheckButton } from "@/routes/admin/challenges";
 import { DatetimeToShow, useSelectedRowIds } from "@/util";
 import { AdminRouteGuard } from "../../route";
@@ -219,7 +220,7 @@ function AddChallengeButton({
 			accessorKey: "updated_at",
 			header: "Updated At",
 			field: "updated_at",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},

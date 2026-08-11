@@ -3,7 +3,7 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { Challenges } from "@/entity";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "@/routes/service/route";
 import { DatetimeToShow } from "@/util";
@@ -21,7 +21,7 @@ function RouteComponent() {
 			header: "ID",
 			field: "id",
 			rowHeader: true,
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return (
 					<AppLink to={"/service/challenges/$id"} params={{ id: row.id }}>
 						{row.id}
@@ -34,7 +34,7 @@ function RouteComponent() {
 			header: "Name",
 			field: "name",
 			rowHeader: true,
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return (
 					<AppLink to={"/service/challenges/$id"} params={{ id: row.id }}>
 						{row.name}
@@ -52,7 +52,7 @@ function RouteComponent() {
 			accessorKey: "updated_at",
 			header: "Updated At",
 			field: "updated_at",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
@@ -61,7 +61,7 @@ function RouteComponent() {
 
 	return (
 		<GenericTable
-			subject="Challenges"
+			subject="ChallengesListItem"
 			subtitle="If you want submit yours, pls visit https://github.com/FloatCTF/challenge-template"
 			columns={columns}
 			filterKeys={filterKeys}

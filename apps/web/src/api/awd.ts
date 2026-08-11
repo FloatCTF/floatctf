@@ -73,6 +73,11 @@ export type GameBoxLibraryDto = {
 	memory_bytes: number | null;
 	pids_limit: number | null;
 	healthchecks_json: unknown | null;
+	judge_script_name: string | null;
+	judge_script_content: string | null;
+	judge_args_json: unknown | null;
+	judge_timeout_secs: number | null;
+	judge_retry_interval_secs: number | null;
 };
 
 export type ImportGameBoxResponse = {
@@ -346,6 +351,18 @@ export const awdAdminApi = {
 			category?: string;
 			description?: string;
 			hidden?: boolean;
+			username?: string | null;
+			recommended_cpu_millis?: number | null;
+			recommended_memory_bytes?: number | null;
+			recommended_pids_limit?: number | null;
+			/** JSON 文本；null 清空。 */
+			healthchecks_json?: string | null;
+			judge_script_name?: string | null;
+			judge_script_content?: string | null;
+			/** JSON 文本；null 清空。 */
+			judge_args_json?: string | null;
+			judge_timeout_secs?: number | null;
+			judge_retry_interval_secs?: number | null;
 		},
 	): Promise<UniResponse<GameBoxLibraryDto>> => {
 		const res = await admin_api.patch(`/awd/gameboxes/${gameboxId}`, body);

@@ -103,7 +103,19 @@ function RouteComponent() {
 		category: "",
 		description: "",
 		hidden: true,
+		static_flag_value: "",
+		container_port: undefined,
+		recommended_cpu_millis: undefined,
+		recommended_memory_bytes: undefined,
+		recommended_pids_limit: undefined,
 	});
+
+	// 数字输入：空 → null（清空），非法输入保持不变
+	const toNumOrNull = (v: string) => {
+		if (v === "") return null;
+		const n = Number(v);
+		return Number.isNaN(n) ? undefined : n;
+	};
 
 	const mutationColumns = [
 		{
@@ -155,6 +167,76 @@ function RouteComponent() {
 						}}
 					/>
 				</Stack>
+			),
+		},
+		{
+			header: "static_flag_value",
+			field: "static_flag_value",
+			render: (
+				<TextInput
+					value={mutationChallenge.static_flag_value ?? ""}
+					onChange={(e) => {
+						mutationChallenge.static_flag_value = e.target.value;
+					}}
+					placeholder="仅 flag_type=static 时生效；留空表示清空"
+				/>
+			),
+		},
+		{
+			header: "container_port",
+			field: "container_port",
+			render: (
+				<TextInput
+					value={mutationChallenge.container_port ?? ""}
+					onChange={(e) => {
+						mutationChallenge.container_port = toNumOrNull(
+							e.target.value,
+						);
+					}}
+					placeholder="容器端口 1-65535；留空表示无 docker 运行时"
+				/>
+			),
+		},
+		{
+			header: "recommended_cpu_millis",
+			field: "recommended_cpu_millis",
+			render: (
+				<TextInput
+					value={mutationChallenge.recommended_cpu_millis ?? ""}
+					onChange={(e) => {
+						mutationChallenge.recommended_cpu_millis =
+							toNumOrNull(e.target.value) ?? undefined;
+					}}
+					placeholder="CPU 限额（毫核），如 500"
+				/>
+			),
+		},
+		{
+			header: "recommended_memory_bytes",
+			field: "recommended_memory_bytes",
+			render: (
+				<TextInput
+					value={mutationChallenge.recommended_memory_bytes ?? ""}
+					onChange={(e) => {
+						mutationChallenge.recommended_memory_bytes =
+							toNumOrNull(e.target.value) ?? undefined;
+					}}
+					placeholder="内存限额（字节），如 268435456"
+				/>
+			),
+		},
+		{
+			header: "recommended_pids_limit",
+			field: "recommended_pids_limit",
+			render: (
+				<TextInput
+					value={mutationChallenge.recommended_pids_limit ?? ""}
+					onChange={(e) => {
+						mutationChallenge.recommended_pids_limit =
+							toNumOrNull(e.target.value) ?? undefined;
+					}}
+					placeholder="进程数限额，如 100"
+				/>
 			),
 		},
 	];

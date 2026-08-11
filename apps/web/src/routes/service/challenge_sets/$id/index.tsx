@@ -12,6 +12,7 @@ import { serviceApi } from "@/api";
 import type { UniResponse } from "@/api/axios";
 import { useMsgBanner } from "@/components";
 import type { Challenges, Instances } from "@/entity";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import type { AxiosError } from "axios";
 
 export const Route = createFileRoute("/service/challenge_sets/$id/")({
@@ -28,7 +29,7 @@ function RouteComponent() {
 	});
 
 	const { data, isLoading, isError, error } = useQuery<
-		UniResponse<Challenges[]>,
+		UniResponse<ChallengesListItem[]>,
 		AxiosError<{ message: string }>
 	>({
 		queryKey: ["challengeSet", id],
@@ -52,7 +53,7 @@ function RouteComponent() {
 		if (!data?.data) return [];
 		if (selected.text === "ALL") return data.data;
 		return data.data.filter(
-			(row: Challenges) =>
+			(row: ChallengesListItem) =>
 				row.category.toLowerCase() === selected.text.toLowerCase(),
 		);
 	}, [data?.data, selected]);
@@ -77,7 +78,7 @@ function RouteComponent() {
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return (
 					<button
 						type="button"

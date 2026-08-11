@@ -1,4 +1,4 @@
-import { ActionList, Button, TextInput, useConfirm } from "@primer/react";
+import { ActionList, Button, TextInput, Textarea, useConfirm } from "@primer/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
@@ -32,13 +32,38 @@ function RouteComponent() {
 		onError: banner.showErrorBanner,
 	});
 
-	// Identity-only edit form (package import is the create path; UI upload TODO).
+	// 编辑表单：身份 + 可编辑运行参数（digest/镜像 pin/build 状态由系统管理，不在此列）
 	const mutationData = useReactive<Partial<GameBoxLibraryDto>>({
 		name: "",
 		category: "other",
 		description: "",
 		hidden: false,
+		username: "",
+		cpu_millis: undefined,
+		memory_bytes: undefined,
+		pids_limit: undefined,
+		healthchecks_json: undefined,
+		judge_script_name: "",
+		judge_script_content: "",
+		judge_args_json: undefined,
+		judge_timeout_secs: undefined,
+		judge_retry_interval_secs: undefined,
 	});
+
+	// 数字输入：空 → null（清空），非法输入保持不变
+	const toNumOrNull = (v: string) => {
+		if (v === "") return null;
+		const n = Number(v);
+		return Number.isNaN(n) ? undefined : n;
+	};
+
+	// JSON 字段控件值：编辑后为字符串原文；未编辑时回显已格式化 JSON
+	const jsonValue = (v: unknown) =>
+		typeof v === "string"
+			? v
+			: v !== undefined && v !== null
+				? JSON.stringify(v, null, 2)
+				: "";
 
 	const mutationColumns = [
 		{
@@ -74,6 +99,156 @@ function RouteComponent() {
 					onChange={(e) => {
 						mutationData.description = e.target.value;
 					}}
+				/>
+			),
+		},
+		{
+			header: "hidden",
+			field: "hidden",
+			render: (
+				<TextInput
+					value={String(mutationData.hidden)}
+					onChange={(e) => {
+						mutationData.hidden = e.target.value === "true";
+					}}
+					placeholder="true / false"
+				/>
+			),
+		},
+		{
+			header: "username",
+			field: "username",
+			render: (
+				<TextInput
+					value={mutationData.username ?? ""}
+					onChange={(e) => {
+						mutationData.username = e.target.value;
+					}}
+					placeholder="容器内用户名（healthcheck/judge 执行用）；留空清空"
+				/>
+			),
+		},
+		{
+			header: "recommended_cpu_millis",
+			field: "cpu_millis",
+			render: (
+				<TextInput
+					value={mutationData.cpu_millis ?? ""}
+					onChange={(e) => {
+						mutationData.cpu_millis = toNumOrNull(e.target.value);
+					}}
+					placeholder="CPU 限额（毫核），如 1000"
+				/>
+			),
+		},
+		{
+			header: "recommended_memory_bytes",
+			field: "memory_bytes",
+			render: (
+				<TextInput
+					value={mutationData.memory_bytes ?? ""}
+					onChange={(e) => {
+						mutationData.memory_bytes = toNumOrNull(e.target.value);
+					}}
+					placeholder="内存限额（字节），如 536870912"
+				/>
+			),
+		},
+		{
+			header: "recommended_pids_limit",
+			field: "pids_limit",
+			render: (
+				<TextInput
+					value={mutationData.pids_limit ?? ""}
+					onChange={(e) => {
+						mutationData.pids_limit = toNumOrNull(e.target.value);
+					}}
+					placeholder="进程数限额，如 100"
+				/>
+			),
+		},
+		{
+			header: "healthchecks_json",
+			field: "healthchecks_json",
+			render: (
+				<Textarea
+					value={jsonValue(mutationData.healthchecks_json)}
+					rows={4}
+					onChange={(e) => {
+						mutationData.healthchecks_json = e.target.value;
+					}}
+					placeholder={'健康检查 JSON，如 [{"port":80,"path":"/health","expected_status":200}]；留空清空'}
+				/>
+			),
+		},
+		{
+			header: "judge_script_name",
+			field: "judge_script_name",
+			render: (
+				<TextInput
+					value={mutationData.judge_script_name ?? ""}
+					onChange={(e) => {
+						mutationData.judge_script_name = e.target.value;
+					}}
+					placeholder="判题脚本文件名，如 check.py"
+				/>
+			),
+		},
+		{
+			header: "judge_script_content",
+			field: "judge_script_content",
+			render: (
+				<Textarea
+					value={mutationData.judge_script_content ?? ""}
+					rows={6}
+					onChange={(e) => {
+						mutationData.judge_script_content = e.target.value;
+					}}
+					placeholder="判题脚本内容"
+				/>
+			),
+		},
+		{
+			header: "judge_args_json",
+			field: "judge_args_json",
+			render: (
+				<Textarea
+					value={jsonValue(mutationData.judge_args_json)}
+					rows={3}
+					onChange={(e) => {
+						mutationData.judge_args_json = e.target.value;
+					}}
+					placeholder='判题参数 JSON，如 ["--flag"]；留空清空'
+				/>
+			),
+		},
+		{
+			header: "judge_timeout_secs",
+			field: "judge_timeout_secs",
+			render: (
+				<TextInput
+					value={mutationData.judge_timeout_secs ?? ""}
+					onChange={(e) => {
+						mutationData.judge_timeout_secs = toNumOrNull(
+							e.target.value,
+						);
+					}}
+					placeholder="判题超时（秒）；留空继承赛事默认"
+				/>
+			),
+		},
+		{
+			header: "judge_retry_interval_secs",
+			field: "judge_retry_interval_secs",
+			render: (
+				<TextInput
+					value={mutationData.judge_retry_interval_secs ?? ""}
+					onChange={(e) => {
+						mutationData.judge_retry_interval_secs = toNumOrNull(
+							e.target.value,
+						);
+					}}
+					placeholder="判题重试间隔（秒）；留空继承赛事默认"
 				/>
 			),
 		},
@@ -152,15 +327,31 @@ function RouteComponent() {
 	// Create via package import only（与 Challenges 页一致，无 Add 表单）
 	const createFn = undefined;
 
-	// Edit = identity metadata only
+	// Edit = 身份 + 可编辑运行参数（只发 diff 中实际变化的字段；undefined 不发送）
 	const patchFn = async (
 		data: Partial<GameBoxLibraryDto>,
 	): Promise<UniResponse<GameBoxLibraryDto>> => {
 		const res = await adminApi.awd.updateGamebox(data.id!, {
-			name: mutationData.name,
-			category: mutationData.category,
-			description: mutationData.description,
-			hidden: mutationData.hidden,
+			name: data.name,
+			category: data.category,
+			description: data.description,
+			hidden: data.hidden,
+			username: data.username,
+			recommended_cpu_millis: data.cpu_millis,
+			recommended_memory_bytes: data.memory_bytes,
+			recommended_pids_limit: data.pids_limit,
+			healthchecks_json: data.healthchecks_json as
+				| string
+				| null
+				| undefined,
+			judge_script_name: data.judge_script_name,
+			judge_script_content: data.judge_script_content,
+			judge_args_json: data.judge_args_json as
+				| string
+				| null
+				| undefined,
+			judge_timeout_secs: data.judge_timeout_secs,
+			judge_retry_interval_secs: data.judge_retry_interval_secs,
 		});
 		return res;
 	};

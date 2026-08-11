@@ -2,12 +2,14 @@
 
 use std::{collections::HashMap, str::FromStr};
 
-use sea_orm::{Condition, JoinType, QuerySelect, RelationTrait};
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait,
+};
 
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
     entity::{
-        events, jeopardy_challenge_solves,
+        challenges, events, jeopardy_challenge_solves,
         sea_orm_active_enums::{EventFamily, EventPurpose},
         users,
     },
@@ -22,6 +24,7 @@ pub struct SolveResult {
     pub solve: jeopardy_challenge_solves::Model,
     pub nickname: String,
     pub avatar: Option<String>,
+    pub challenge_name: String,
 }
 
 /// GET /api/challenge_solves (scope `/solves`)
@@ -89,11 +92,29 @@ pub async fn get_solves(
     let nickname = user.nickname.clone();
     let avatar = user.avatar.clone();
 
+    // 收集涉及题目的名称，避免逐行查询。
+    let challenge_ids: Vec<Uuid> = items.iter().map(|s| s.challenge_id).collect();
+    let challenge_names = if challenge_ids.is_empty() {
+        HashMap::new()
+    } else {
+        challenges::Entity::find()
+            .filter(challenges::Column::Id.is_in(challenge_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c.name))
+            .collect::<HashMap<Uuid, String>>()
+    };
+
     let results: Vec<SolveResult> = items
         .into_iter()
         .map(|s| SolveResult {
             nickname: nickname.clone(),
             avatar: avatar.clone(),
+            challenge_name: challenge_names
+                .get(&s.challenge_id)
+                .cloned()
+                .unwrap_or_else(|| s.challenge_id.to_string()),
             solve: s,
         })
         .collect();

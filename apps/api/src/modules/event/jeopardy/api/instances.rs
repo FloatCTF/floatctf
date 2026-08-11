@@ -4,12 +4,10 @@ use actix_web::web;
 
 use sea_orm::Condition;
 
-use crate::api::dto::map_dto_vec;
-
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenge_instances, events, sea_orm_active_enums::InstanceStatus},
+    entity::{challenge_instances, challenges, events, sea_orm_active_enums::InstanceStatus},
     modules::event::{
         common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::context::EventContextBuilder,
@@ -85,9 +83,39 @@ pub async fn get_instances(
         item.flag.clear();
     }
 
+    // 批量查询题目名称，避免逐行查询。
+    let challenge_ids: Vec<Uuid> = items.iter().map(|i| i.challenge_id).collect();
+    let challenge_titles = if challenge_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        challenges::Entity::find()
+            .filter(challenges::Column::Id.is_in(challenge_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c.name))
+            .collect::<std::collections::HashMap<Uuid, String>>()
+    };
+
+    let event_title = practice.title.clone();
+    let user_name = user.nickname.clone();
+
+    let dtos: Vec<InstancesDto> = items
+        .into_iter()
+        .map(|m| {
+            let challenge_id = m.challenge_id;
+            let dto = InstancesDto::from(m);
+            dto.with_names(
+                challenge_titles.get(&challenge_id).cloned(),
+                Some(event_title.clone()),
+                Some(user_name.clone()),
+            )
+        })
+        .collect();
+
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
 /// GET /api/instances/{instance_id}

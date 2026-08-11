@@ -16,6 +16,12 @@ pub struct InstancesDto {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub destroy_at: DateTimeWithTimeZone,
+    /// 题目名称（列表页展示用，非数据库列）。
+    pub challenge_title: Option<String>,
+    /// 赛事标题（列表页展示用，非数据库列）。
+    pub event_title: Option<String>,
+    /// 启动用户昵称（列表页展示用，非数据库列）。
+    pub user_name: Option<String>,
 }
 
 impl From<challenge_instances::Model> for InstancesDto {
@@ -33,6 +39,24 @@ impl From<challenge_instances::Model> for InstancesDto {
             created_at: m.created_at,
             updated_at: m.updated_at,
             destroy_at: m.destroy_at,
+            challenge_title: None,
+            event_title: None,
+            user_name: None,
         }
+    }
+}
+
+impl InstancesDto {
+    /// 填充列表页展示名称字段（题目/赛事/用户）。
+    pub fn with_names(
+        mut self,
+        challenge_title: Option<String>,
+        event_title: Option<String>,
+        user_name: Option<String>,
+    ) -> Self {
+        self.challenge_title = challenge_title;
+        self.event_title = event_title;
+        self.user_name = user_name;
+        self
     }
 }

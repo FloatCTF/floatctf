@@ -51,7 +51,7 @@ pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
         purpose: Set(EventPurpose::Practice),
         participant_mode: Set(ParticipantMode::Individual),
         system_key: Set(Some(PRACTICE_JEOPARDY_SYSTEM_KEY.into())),
-        title: Set("Practice".into()),
+        title: Set("JeopardyPractice".into()),
         description: Set(Some("Practice Event".into())),
         hidden: Set(true),
         allow_join: Set(false),

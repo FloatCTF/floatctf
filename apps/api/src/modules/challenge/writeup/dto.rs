@@ -9,6 +9,7 @@ pub struct ChallengeWriteupDto {
     pub user_id: Uuid,
     pub content: String,
     pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 impl From<challenge_writeup::Model> for ChallengeWriteupDto {
@@ -19,6 +20,7 @@ impl From<challenge_writeup::Model> for ChallengeWriteupDto {
             user_id: m.user_id,
             content: m.content,
             created_at: m.created_at,
+            updated_at: m.updated_at,
         }
     }
 }

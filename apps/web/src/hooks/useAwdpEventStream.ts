@@ -1,9 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 /**
  * AWDP 实时事件流 hook。
  * 与 useAwdEventStream 同模式：优先 EventSource，失败回退轮询（invalidate）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 
 export type AwdpStreamEvent = {
 	type: string;
@@ -19,7 +19,8 @@ export type UseAwdpEventStreamOptions = {
 	enabled?: boolean;
 };
 
-const SNAPSHOT_RE = /awdp\.(score|phase|patch|manual|round|evaluation|instance)/;
+const SNAPSHOT_RE =
+	/awdp\.(score|phase|patch|manual|round|evaluation|instance)/;
 
 export function useAwdpEventStream({
 	eventId,
@@ -34,6 +35,8 @@ export function useAwdpEventStream({
 	const invalidate = useCallback(() => {
 		queryClient.invalidateQueries({ queryKey: ["awdp-overview", eventId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-config", eventId] });
+		queryClient.invalidateQueries({ queryKey: ["awdp-rounds", eventId] });
+		queryClient.invalidateQueries({ queryKey: ["awdp-evals", eventId] });
 		queryClient.invalidateQueries({ queryKey: ["eventInfo", eventId] });
 		queryClient.invalidateQueries({ queryKey: ["event", eventId] });
 	}, [queryClient, eventId]);
@@ -100,5 +103,9 @@ export function useAwdpEventStream({
 		};
 	}, [eventId, enabled, preferStream, pollMs, invalidate, onEvent]);
 
-	return { connected, lastEvent: lastEventRef.current, invalidateAwdp: invalidate };
+	return {
+		connected,
+		lastEvent: lastEventRef.current,
+		invalidateAwdp: invalidate,
+	};
 }

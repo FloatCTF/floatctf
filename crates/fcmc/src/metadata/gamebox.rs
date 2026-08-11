@@ -142,7 +142,7 @@ pub struct JudgeManifest {
     pub script: String,
 }
 
-/// `[awdp]` section — path to the attack (exploit) script under the package.
+/// `[awdp]` section — AWD-P capability（可选 section，出现则内部字段全部必填）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AwdpManifest {
@@ -150,8 +150,7 @@ pub struct AwdpManifest {
     pub exploit_script: String,
     /// Container-internal source directory (absolute path, e.g. `/var/www/html`)
     /// that the platform packages into a source zip provided to players.
-    #[serde(default)]
-    pub source_code_dir: Option<String>,
+    pub source_code_dir: String,
 }
 
 /// 共享的软资源建议（见 [`crate::metadata::RecommendedResources`]）。
@@ -407,9 +406,7 @@ impl GameBoxMeta {
 
         if let Some(ref awdp) = self.awdp {
             validate_awdp_path(&awdp.exploit_script)?;
-            if let Some(ref dir) = awdp.source_code_dir {
-                validate_source_code_dir(dir)?;
-            }
+            validate_source_code_dir(&awdp.source_code_dir)?;
         }
 
         if let Some(ref res) = self.gamebox.recommended_resources {
@@ -499,7 +496,7 @@ impl GameBoxMeta {
             recommended_resources,
             judge_script: self.judge.as_ref().map(|j| j.script.clone()),
             exploit_script: self.awdp.as_ref().map(|a| a.exploit_script.clone()),
-            source_code_dir: self.awdp.as_ref().and_then(|a| a.source_code_dir.clone()),
+            source_code_dir: self.awdp.as_ref().map(|a| a.source_code_dir.clone()),
         })
     }
 }
@@ -824,7 +821,7 @@ source_code_dir = "/var/www/html"
         assert_eq!(meta.judge.as_ref().unwrap().script, "judge/check.py");
         let awdp = meta.awdp.as_ref().unwrap();
         assert_eq!(awdp.exploit_script, "awdp/exploit.py");
-        assert_eq!(awdp.source_code_dir.as_deref(), Some("/var/www/html"));
+        assert_eq!(awdp.source_code_dir, "/var/www/html");
         let norm = meta.normalize().unwrap();
         assert_eq!(norm.judge_script.as_deref(), Some("judge/check.py"));
         assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
@@ -832,7 +829,8 @@ source_code_dir = "/var/www/html"
     }
 
     #[test]
-    fn parse_with_awdp_no_source_dir() {
+    fn parse_with_awdp_without_source_dir_rejected() {
+        // [awdp] 内部字段全部必填（source_code_dir required）。
         let toml = r#"
 name = "t"
 version = "1.0.0"
@@ -846,10 +844,10 @@ username = "u"
 [awdp]
 exploit_script = "awdp/exploit.py"
 "#;
-        let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
-        assert_eq!(meta.awdp.as_ref().unwrap().source_code_dir, None);
-        let norm = meta.normalize().unwrap();
-        assert_eq!(norm.source_code_dir, None);
+        assert!(
+            GameBoxMeta::parse_and_validate(toml).is_err(),
+            "[awdp] without source_code_dir must be rejected"
+        );
     }
 
     #[test]
@@ -866,6 +864,7 @@ username = "u"
 
 [awdp]
 exploit_script = "judge/exploit.py"
+source_code_dir = "/var/www/html"
 "#;
         let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
         assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));

@@ -26,6 +26,7 @@ use sea_orm::{
 use tracing::{error, info, warn};
 
 use super::library;
+use super::source_artifact;
 use crate::core::config::RegistryConfig;
 use crate::entity::gameboxes;
 use crate::infrastructure::package::version_gate_reason;
@@ -44,6 +45,16 @@ pub const BUILD_STATUS_BUILDING: &str = "building";
 pub const BUILD_STATUS_READY: &str = "ready";
 pub const BUILD_STATUS_FAILED: &str = "failed";
 
+/// [awdp] capability 完整物化（import 成功后一次性写入 gameboxes 行）。
+#[derive(Debug, Clone)]
+struct AwdpCapability {
+    source_code_dir: String,
+    exploit_script_name: String,
+    exploit_script_content: String,
+    source_artifact_key: String,
+    source_artifact_digest: String,
+}
+
 /// import (returned to admin API)的结果。
 #[derive(Debug, Clone)]
 pub struct ImportGameBoxResult {
@@ -57,6 +68,7 @@ pub struct ImportGameBoxResult {
 pub async fn import_gamebox_package(
     db: &DatabaseConnection,
     docker: &Docker,
+    rustfs: &aws_sdk_s3::Client,
     registry: &RegistryConfig,
     zip_path: &Path,
 ) -> GameboxResult<ImportGameBoxResult> {
@@ -201,33 +213,113 @@ pub async fn import_gamebox_package(
     // ── 5. ready or failed ─────────────────────────────────────────────────
     match build_outcome {
         Ok((image_id, image_repo_digest)) => {
-            let mut am: gameboxes::ActiveModel = gamebox.clone().into();
-            am.image_ref = Set(Some(image_ref.clone()));
-            am.image_id = Set(Some(image_id.clone()));
-            am.image_repo_digest = Set(image_repo_digest.clone());
-            am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
-            am.build_error = Set(None);
-            am.updated_at = Set(chrono::Utc::now().into());
-            let gamebox = am
-                .update(db)
-                .await
-                .map_err(|e| GameboxError::Database(e.to_string()))?;
+            // [awdp] capability：从最终镜像导出 source.zip 并上传 private RustFS。
+            // 任一环节失败 → 整个 import 失败（source_code_dir 不存在必须给明确错误）。
+            let awdp_result: GameboxResult<Option<AwdpCapability>> = async {
+                let Some(awdp) = meta.awdp.as_ref() else {
+                    return Ok(None);
+                };
+                let script_content = read_awdp_script(&package_root, &awdp.exploit_script)?;
+                let script_name = Path::new(&awdp.exploit_script)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&awdp.exploit_script)
+                    .to_string();
+                let temp_container = format!("awdp-src-{short_id}");
+                let zip_bytes = source_artifact::extract_awdp_source_zip(
+                    &runtime,
+                    &image_ref,
+                    &temp_container,
+                    &awdp.source_code_dir,
+                )
+                .await?;
+                let (artifact_key, artifact_digest) =
+                    source_artifact::publish_awdp_source_artifact(
+                        rustfs,
+                        gamebox.id,
+                        &package_digest,
+                        &zip_bytes,
+                    )
+                    .await?;
+                Ok(Some(AwdpCapability {
+                    source_code_dir: awdp.source_code_dir.clone(),
+                    exploit_script_name: script_name,
+                    exploit_script_content: script_content,
+                    source_artifact_key: artifact_key,
+                    source_artifact_digest: artifact_digest,
+                }))
+            }
+            .await;
 
-            // Mirror package into GAMEBOXES_DIR/{safe_name}（与 Challenge 一致）
-            mirror_to_gameboxes_dir(db, &safe_name, &package_root).await;
+            match awdp_result {
+                Ok(awdp_cap) => {
+                    let mut am: gameboxes::ActiveModel = gamebox.clone().into();
+                    am.image_ref = Set(Some(image_ref.clone()));
+                    am.image_id = Set(Some(image_id.clone()));
+                    am.image_repo_digest = Set(image_repo_digest.clone());
+                    am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
+                    am.build_error = Set(None);
+                    if let Some(cap) = &awdp_cap {
+                        am.awdp_source_code_dir = Set(Some(cap.source_code_dir.clone()));
+                        am.awdp_exploit_script_name = Set(Some(cap.exploit_script_name.clone()));
+                        am.awdp_exploit_script_content =
+                            Set(Some(cap.exploit_script_content.clone()));
+                        am.awdp_source_artifact_key = Set(Some(cap.source_artifact_key.clone()));
+                        am.awdp_source_artifact_digest =
+                            Set(Some(cap.source_artifact_digest.clone()));
+                    } else {
+                        am.awdp_source_code_dir = Set(None);
+                        am.awdp_exploit_script_name = Set(None);
+                        am.awdp_exploit_script_content = Set(None);
+                        am.awdp_source_artifact_key = Set(None);
+                        am.awdp_source_artifact_digest = Set(None);
+                    }
+                    am.updated_at = Set(chrono::Utc::now().into());
+                    let gamebox = am
+                        .update(db)
+                        .await
+                        .map_err(|e| GameboxError::Database(e.to_string()))?;
 
-            info!(
-                gamebox_id = %gamebox.id,
-                safe_name = %safe_name,
-                version = %version,
-                image_ref = %image_ref,
-                image_repo_digest = ?image_repo_digest,
-                package_digest = %package_digest,
-                "GameBox package import ready"
-            );
-            // 尽力清理临时 tag（规范 image_ref 仍保留 tag）。
-            let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
-            Ok(ImportGameBoxResult { gamebox })
+                    // Mirror package into GAMEBOXES_DIR/{safe_name}（与 Challenge 一致）
+                    mirror_to_gameboxes_dir(db, &safe_name, &package_root).await;
+
+                    info!(
+                        gamebox_id = %gamebox.id,
+                        safe_name = %safe_name,
+                        version = %version,
+                        image_ref = %image_ref,
+                        image_repo_digest = ?image_repo_digest,
+                        package_digest = %package_digest,
+                        awdp_capability = awdp_cap.is_some(),
+                        "GameBox package import ready"
+                    );
+                    // 尽力清理临时 tag（规范 image_ref 仍保留 tag）。
+                    let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
+                    Ok(ImportGameBoxResult { gamebox })
+                }
+                Err(awdp_err) => {
+                    let sanitized = sanitize_build_error(&awdp_err.to_string());
+                    error!(
+                        gamebox_id = %gamebox.id,
+                        safe_name = %safe_name,
+                        version = %version,
+                        error = %sanitized,
+                        "GameBox awdp capability materialization failed"
+                    );
+                    let mut am: gameboxes::ActiveModel = gamebox.clone().into();
+                    am.build_status = Set(Some(BUILD_STATUS_FAILED.to_string()));
+                    am.build_error = Set(Some(sanitized.clone()));
+                    am.awdp_source_code_dir = Set(None);
+                    am.awdp_exploit_script_name = Set(None);
+                    am.awdp_exploit_script_content = Set(None);
+                    am.awdp_source_artifact_key = Set(None);
+                    am.awdp_source_artifact_digest = Set(None);
+                    am.updated_at = Set(chrono::Utc::now().into());
+                    let _ = am.update(db).await;
+                    let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
+                    Err(awdp_err)
+                }
+            }
         }
         Err(e) => {
             let sanitized = sanitize_build_error(&e.to_string());
@@ -241,6 +333,12 @@ pub async fn import_gamebox_package(
             let mut am: gameboxes::ActiveModel = gamebox.clone().into();
             am.build_status = Set(Some(BUILD_STATUS_FAILED.to_string()));
             am.build_error = Set(Some(sanitized.clone()));
+            // 失败即 capability 未物化：清空 awdp 列（与全有/全无 CHECK 一致）。
+            am.awdp_source_code_dir = Set(None);
+            am.awdp_exploit_script_name = Set(None);
+            am.awdp_exploit_script_content = Set(None);
+            am.awdp_source_artifact_key = Set(None);
+            am.awdp_source_artifact_digest = Set(None);
             am.updated_at = Set(chrono::Utc::now().into());
             let _ = am.update(db).await;
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
@@ -268,6 +366,7 @@ pub struct GameBoxScanItem {
 pub async fn scan_gameboxes_dir(
     db: &DatabaseConnection,
     docker: &Docker,
+    rustfs: &aws_sdk_s3::Client,
     registry: &RegistryConfig,
 ) -> GameboxResult<Vec<GameBoxScanItem>> {
     use crate::infrastructure::settings::resolve_dir_path;
@@ -461,8 +560,87 @@ pub async fn scan_gameboxes_dir(
                 ),
             };
 
+        // [awdp] capability：镜像本地可用时从镜像重新导出 source.zip（幂等，按 package_digest 键）。
+        // 先分配 gamebox id（对象键需要真实 id），插入成功后修正对象键路径。
+        let new_gamebox_id = uuid::Uuid::new_v4();
+        let awdp_cap: Option<AwdpCapability> = if build_status == BUILD_STATUS_READY {
+            if let Some(awdp) = meta.awdp.as_ref() {
+                match read_awdp_script(&package_root, &awdp.exploit_script) {
+                    Ok(script_content) => {
+                        let script_name = Path::new(&awdp.exploit_script)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(&awdp.exploit_script)
+                            .to_string();
+                        let short_id = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8];
+                        let temp_container = format!("awdp-src-{short_id}");
+                        match source_artifact::extract_awdp_source_zip(
+                            &runtime,
+                            &image_ref,
+                            &temp_container,
+                            &awdp.source_code_dir,
+                        )
+                        .await
+                        {
+                            Ok(zip_bytes) => match source_artifact::publish_awdp_source_artifact(
+                                rustfs,
+                                new_gamebox_id,
+                                &package_digest,
+                                &zip_bytes,
+                            )
+                            .await
+                            {
+                                Ok((key, digest)) => Some(AwdpCapability {
+                                    source_code_dir: awdp.source_code_dir.clone(),
+                                    exploit_script_name: script_name,
+                                    exploit_script_content: script_content,
+                                    source_artifact_key: key,
+                                    source_artifact_digest: digest,
+                                }),
+                                Err(e) => {
+                                    items.push(GameBoxScanItem {
+                                        safe_name,
+                                        name: Some(normalized.name.clone()),
+                                        version: Some(version),
+                                        status: "error".into(),
+                                        message: format!("awdp source 上传失败: {e}"),
+                                    });
+                                    continue;
+                                }
+                            },
+                            Err(e) => {
+                                items.push(GameBoxScanItem {
+                                    safe_name,
+                                    name: Some(normalized.name.clone()),
+                                    version: Some(version),
+                                    status: "error".into(),
+                                    message: format!("awdp source 导出失败: {e}"),
+                                });
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        items.push(GameBoxScanItem {
+                            safe_name,
+                            name: Some(normalized.name.clone()),
+                            version: Some(version),
+                            status: "error".into(),
+                            message: format!("awdp 脚本读取失败: {e}"),
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let resources = &normalized.recommended_resources;
-        let model = gameboxes::ActiveModel {
+        let mut model = gameboxes::ActiveModel {
+            id: Set(new_gamebox_id),
             name: Set(normalized.name.clone()),
             safe_name: Set(safe_name.clone()),
             category: Set(normalized.category.clone()),
@@ -488,6 +666,15 @@ pub async fn scan_gameboxes_dir(
             judge_retry_interval_secs: Set(None),
             build_status: Set(Some(build_status.to_string())),
             build_error: Set(build_error),
+            awdp_source_code_dir: Set(awdp_cap.as_ref().map(|c| c.source_code_dir.clone())),
+            awdp_exploit_script_name: Set(awdp_cap.as_ref().map(|c| c.exploit_script_name.clone())),
+            awdp_exploit_script_content: Set(awdp_cap
+                .as_ref()
+                .map(|c| c.exploit_script_content.clone())),
+            awdp_source_artifact_key: Set(awdp_cap.as_ref().map(|c| c.source_artifact_key.clone())),
+            awdp_source_artifact_digest: Set(awdp_cap
+                .as_ref()
+                .map(|c| c.source_artifact_digest.clone())),
             ..Default::default()
         };
         let g = match model.insert(db).await {

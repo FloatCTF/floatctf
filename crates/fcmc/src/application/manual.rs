@@ -263,9 +263,9 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
   [judge]（可选，缺省 WARN）:
     script = "judge/check.py"   # 必须位于 judge/ 下，且文件真实存在；兼容键名 check_script
 
-  [awdp]（可选，缺省 WARN）:
-    source_code_dir = "/var/www/html"   # 可选；容器内源码绝对路径，平台据此打包源码 zip 提供给选手
-    exploit_script = "awdp/exploit.py"   # 必须位于 awdp/ 下，且文件真实存在
+  [awdp]（可选 section，缺省 WARN；出现则内部字段全部必填）:
+    source_code_dir = "/var/www/html"   # 必填；容器内源码绝对路径，平台据此打包源码 zip 提供给选手
+    exploit_script = "awdp/exploit.py"   # 必填；必须位于 awdp/ 下，且文件真实存在
 
   完整示例:
     name = "hello-floatctf"

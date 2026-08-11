@@ -334,6 +334,11 @@ mod tests {
             judge_retry_interval_secs: None,
             build_status: Some(status.into()),
             build_error: None,
+            awdp_source_code_dir: None,
+            awdp_exploit_script_name: None,
+            awdp_exploit_script_content: None,
+            awdp_source_artifact_key: None,
+            awdp_source_artifact_digest: None,
         }
     }
 

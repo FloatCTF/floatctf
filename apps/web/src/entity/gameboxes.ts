@@ -27,4 +27,9 @@ export type Gameboxes = {
   judge_retry_interval_secs?: string;
   build_status?: string;
   build_error?: string;
+  awdp_source_code_dir?: string;
+  awdp_exploit_script_name?: string;
+  awdp_exploit_script_content?: string;
+  awdp_source_artifact_key?: string;
+  awdp_source_artifact_digest?: string;
 };

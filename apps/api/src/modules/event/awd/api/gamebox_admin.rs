@@ -21,7 +21,6 @@ use crate::{
     modules::event::awd::{
         domain::instance_ip_for_offset,
         repo::{event_gamebox_repo, event_repo},
-        service::gamebox_service,
     },
     modules::gamebox::{
         self, BUILD_STATUS_READY, GameBoxScanItem, import as gamebox_import,
@@ -101,6 +100,7 @@ pub async fn import_gamebox(
     let result = gamebox_import::import_gamebox_package(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
+        ctx.rustfs.get_ref(),
         &ctx.config.registry,
         zip_path,
     )
@@ -267,6 +267,7 @@ pub async fn scan_gameboxes(
     let items = gamebox_import::scan_gameboxes_dir(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
+        ctx.rustfs.get_ref(),
         &ctx.config.registry,
     )
     .await

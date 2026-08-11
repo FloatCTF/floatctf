@@ -12,6 +12,7 @@ pub mod identity;
 pub mod import;
 pub mod library;
 pub mod package;
+pub mod source_artifact;
 
 pub use error::{GameboxError, GameboxResult};
 pub use import::{

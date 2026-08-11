@@ -504,6 +504,11 @@ async fn seed_submission_fixture(
         judge_args_json: Set(None),
         judge_timeout_secs: Set(None),
         judge_retry_interval_secs: Set(None),
+        awdp_source_code_dir: Set(None),
+        awdp_exploit_script_name: Set(None),
+        awdp_exploit_script_content: Set(None),
+        awdp_source_artifact_key: Set(None),
+        awdp_source_artifact_digest: Set(None),
         build_status: Set(Some("ready".into())),
         build_error: Set(None),
     }

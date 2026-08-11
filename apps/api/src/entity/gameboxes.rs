@@ -54,6 +54,16 @@ pub struct Model {
     pub build_status: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub build_error: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_code_dir: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_exploit_script_name: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_exploit_script_content: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_artifact_key: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_artifact_digest: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

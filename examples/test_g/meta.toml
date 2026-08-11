@@ -19,6 +19,8 @@ check_script = "judge/check.py"
 
 # optional: awdp
 [awdp]
+# zip file from docker image and provide the path to user
+source_code_dir = "/var/www/html"
 exploit_script = "awdp/exploit.py"
 
 [gamebox.recommended_resources]

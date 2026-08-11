@@ -9,3 +9,4 @@ pub mod patch_repo;
 pub mod round_repo;
 pub mod run_repo;
 pub mod score_repo;
+pub mod writeup_repo;

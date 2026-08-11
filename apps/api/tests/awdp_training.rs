@@ -9,7 +9,7 @@ use uuid::Uuid;
 use floatctf::entity::gameboxes;
 use floatctf::modules::event::awdp::{
     domain::AwdpConfig,
-    repo::{run_repo, score_repo},
+    repo::{run_repo, score_repo, writeup_repo},
     service::practice_service,
 };
 
@@ -253,7 +253,67 @@ async fn start_training_idempotent_and_train_again() {
     cleanup(&db).await;
 }
 
-/// 容器刚启动时内部服务需要数秒就绪；取 flag 带重试（最多 12 次 × 500ms）。
+/// Run Writeup：一 run 一份，upsert 更新（§右侧写 WP）。
+#[tokio::test]
+async fn run_writeup_upsert_single_row() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let user_id = seed_user(&db, "wp").await;
+    let gb_id = seed_trainable_gamebox(&db, "wp").await;
+    let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
+        .await
+        .expect("create practice run");
+
+    // 1. 无记录 → None。
+    assert!(
+        writeup_repo::find_by_run(&db, run.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // 2. upsert 创建。
+    let saved = writeup_repo::upsert(&db, run.id, user_id, "# 思路\n1. 扫目录".into())
+        .await
+        .expect("create writeup");
+    assert_eq!(saved.content, "# 思路\n1. 扫目录");
+    let found = writeup_repo::find_by_run(&db, run.id)
+        .await
+        .unwrap()
+        .expect("writeup exists");
+    assert_eq!(found.user_id, user_id);
+    assert_eq!(found.content, "# 思路\n1. 扫目录");
+
+    // 3. upsert 更新：内容替换 + updated_at 刷新，仍是一行。
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let updated = writeup_repo::upsert(&db, run.id, user_id, "# 更新版".into())
+        .await
+        .expect("update writeup");
+    assert_eq!(updated.content, "# 更新版");
+    assert_eq!(updated.user_id, user_id, "user_id 不变");
+    assert!(updated.updated_at > found.updated_at, "updated_at 刷新");
+    let rows = floatctf::entity::awdp_run_writeups::Entity::find()
+        .filter(floatctf::entity::awdp_run_writeups::Column::RunId.eq(run.id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "一 run 仅一行");
+
+    // 4. 清理（含 writeup 行）。
+    writeup_repo::delete_for_run(&db, run.id).await.unwrap();
+    assert!(
+        writeup_repo::find_by_run(&db, run.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    cleanup(&db).await;
+}
+
 async fn fetch_flag_with_retry(url: &str) -> String {
     for _ in 0..12 {
         match reqwest::get(url).await {

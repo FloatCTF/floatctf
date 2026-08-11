@@ -20,7 +20,9 @@ use crate::{
     entity::{awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase},
     modules::event::awdp::{
         api::dto::*,
-        repo::{evaluation_repo, event_gamebox_repo, round_repo, run_repo, score_repo},
+        repo::{
+            evaluation_repo, event_gamebox_repo, round_repo, run_repo, score_repo, writeup_repo,
+        },
         service::{
             break_service, evaluation, patch_service, practice_service,
             runtime::{self, Subject},
@@ -650,6 +652,76 @@ pub async fn get_my_scores(
     .into()
 }
 
+/// GET .../writeup —— 我的 Writeup（练习 run 属主可读写；无记录返回空内容）。
+#[get("awdp/runs/{run_id}/writeup")]
+pub async fn get_run_writeup(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdpRunWriteupDto> {
+    let run_id = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    let row = writeup_repo::find_by_run(ctx.db.get_ref(), run.id).await?;
+    UniResponse::ok(
+        AwdpRunWriteupDto {
+            run_id: run.id,
+            content: row.as_ref().map(|r| r.content.clone()).unwrap_or_default(),
+            updated_at: row.map(|r| r.updated_at),
+        }
+        .into(),
+    )
+    .into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveAwdpRunWriteupForm {
+    pub content: String,
+}
+
+/// PUT .../writeup —— 保存我的 Writeup（一 run 一份，upsert）。
+#[put("awdp/runs/{run_id}/writeup")]
+pub async fn save_run_writeup(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+    form: Json<SaveAwdpRunWriteupForm>,
+) -> UniResult<AwdpRunWriteupDto> {
+    let run_id = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    let db = ctx.db.get_ref();
+    let existed = writeup_repo::find_by_run(db, run.id).await?.is_some();
+    let row = writeup_repo::upsert(db, run.id, user.id, form.content.clone()).await?;
+    let action = if existed { "UPDATE" } else { "CREATE" };
+    ctx.log
+        .add_log(
+            "INFO",
+            "WRITEUP",
+            action,
+            format!(
+                "{} AWDP Run {} 的 Writeup",
+                if existed { "更新" } else { "创建" },
+                run.id
+            )
+            .as_str(),
+            json!({}),
+            user.id.into(),
+            None,
+            Some(&ctx.req),
+        )
+        .await;
+    UniResponse::ok(
+        AwdpRunWriteupDto {
+            run_id: run.id,
+            content: row.content,
+            updated_at: Some(row.updated_at),
+        }
+        .into(),
+    )
+    .into()
+}
+
 /// GET .../stream —— run-scoped SSE（只对 run 属主可见）。
 #[get("awdp/runs/{run_id}/stream")]
 pub async fn run_stream(
@@ -784,5 +856,7 @@ pub fn configure_training_routes(cfg: &mut web::ServiceConfig) {
         .service(get_rounds)
         .service(get_my_evaluations)
         .service(get_my_scores)
+        .service(get_run_writeup)
+        .service(save_run_writeup)
         .service(run_stream);
 }

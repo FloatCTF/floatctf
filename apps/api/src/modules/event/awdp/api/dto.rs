@@ -415,3 +415,11 @@ pub struct AwdpEvaluationDto {
     pub judge_result: Option<String>,
     pub finished_at: Option<DateTime<FixedOffset>>,
 }
+
+/// 我的 Writeup DTO（练习 run 属主可读写，一 run 一份）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpRunWriteupDto {
+    pub run_id: Uuid,
+    pub content: String,
+    pub updated_at: Option<DateTime<FixedOffset>>,
+}

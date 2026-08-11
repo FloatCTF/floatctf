@@ -1,4 +1,4 @@
-//! AWDP Break→Fix + Patch 集成测试（DB + Docker gated）。
+//! AWDP Break→Fix + Patch 集成测试（DB + Docker gated，run 中心化）。
 //!
 //! 覆盖（plan §47）：Break 上传拒绝 / Fix 上传接受 / FLOATCTF_SOURCE_DIR /
 //! exit 0 applied / 非 0 failed / restart 保留 patch / reset 移除 patch /
@@ -9,12 +9,12 @@ use uuid::Uuid;
 
 use fcmc::ContainerRuntime;
 use floatctf::entity::{
-    awdp_event_gameboxes, events, gameboxes,
+    events, gameboxes,
     sea_orm_active_enums::{AwdpPhase, EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::{
     domain::AwdpConfig,
-    repo::{event_gamebox_repo, event_repo, patch_repo, score_repo},
+    repo::{event_gamebox_repo, event_repo, patch_repo, run_repo, score_repo},
     service::{
         event_service, patch_service,
         runtime::{self, Subject},
@@ -66,8 +66,12 @@ async fn seed_user(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     id
 }
 
-/// 建事件（pending）→ 可选推进到 Break/Fix。
-async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, mode: ParticipantMode) -> Uuid {
+/// 建 competition 事件 + active run（pending），返回 (event_id, run_id)。
+async fn seed_event_and_run(
+    db: &sea_orm::DatabaseConnection,
+    tag: &str,
+    mode: ParticipantMode,
+) -> (Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -91,19 +95,22 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, mode: Participa
     event_repo::ensure_by_event_id(db, event.id, &AwdpConfig::default())
         .await
         .unwrap();
-    event.id
+    let run = run_repo::create_competition_run(db, event.id, &AwdpConfig::default())
+        .await
+        .unwrap();
+    (event.id, run.id)
 }
 
-async fn transition(db: &sea_orm::DatabaseConnection, event_id: Uuid, to: AwdpPhase) {
+async fn transition(db: &sea_orm::DatabaseConnection, run_id: Uuid, to: AwdpPhase) {
     let now = chrono::Utc::now();
     match to {
         AwdpPhase::Break => {
-            event_repo::transition_phase(
+            run_repo::transition_phase(
                 db,
-                event_id,
+                run_id,
                 AwdpPhase::Pending,
                 AwdpPhase::Break,
-                event_repo::PhaseTransitionPatch {
+                run_repo::PhaseTransitionPatch {
                     started_at: Some(now),
                     break_ends_at: Some(now + chrono::Duration::hours(1)),
                     next_action_at: Some(now + chrono::Duration::hours(1)),
@@ -114,12 +121,12 @@ async fn transition(db: &sea_orm::DatabaseConnection, event_id: Uuid, to: AwdpPh
             .unwrap();
         }
         AwdpPhase::Fix => {
-            event_repo::transition_phase(
+            run_repo::transition_phase(
                 db,
-                event_id,
+                run_id,
                 AwdpPhase::Pending,
                 AwdpPhase::Break,
-                event_repo::PhaseTransitionPatch {
+                run_repo::PhaseTransitionPatch {
                     started_at: Some(now),
                     break_ends_at: Some(now - chrono::Duration::minutes(1)),
                     next_action_at: Some(now - chrono::Duration::minutes(1)),
@@ -132,7 +139,7 @@ async fn transition(db: &sea_orm::DatabaseConnection, event_id: Uuid, to: AwdpPh
                 db,
                 &docker_or_skip().unwrap(),
                 JWT_SECRET,
-                event_id,
+                run_id,
             )
             .await
             .unwrap();
@@ -201,10 +208,10 @@ sys.exit(0 if all(check(ip)["success"] for ip in ips) else 1)
     .insert(db)
     .await
     .unwrap();
-    let eg = event_gamebox_repo::attach_gamebox(db, event_id, gb.id, false)
+    event_gamebox_repo::attach_gamebox(db, event_id, gb.id, false)
         .await
         .expect("attach");
-    eg.id
+    gb.id
 }
 
 #[tokio::test]
@@ -225,13 +232,13 @@ async fn patch_and_reset_lifecycle() {
         return;
     }
 
-    let event_id = seed_event(&db, "fix", ParticipantMode::Individual).await;
-    let eg_id = seed_gamebox_and_attach(&db, event_id, "fix").await;
-    transition(&db, event_id, AwdpPhase::Fix).await;
+    let (event_id, run_id) = seed_event_and_run(&db, "fix", ParticipantMode::Individual).await;
+    let gb_id = seed_gamebox_and_attach(&db, event_id, "fix").await;
+    transition(&db, run_id, AwdpPhase::Fix).await;
 
     let user_id = seed_user(&db, "fix").await;
     let subject = Subject::user(user_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, event_id, eg_id, subject, "flag")
+    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
         .await
         .expect("start");
     let original_port = view.endpoints[0].public_port;
@@ -242,7 +249,7 @@ echo "hello from patch"
 ls "$FLOATCTF_SOURCE_DIR" >/dev/null && echo "source-ok"
 exit 0
 "#;
-    let r = patch_service::apply_patch(&db, &docker, event_id, view.instance_id, ok_patch, subject)
+    let r = patch_service::apply_patch(&db, &docker, run_id, view.instance_id, ok_patch, subject)
         .await
         .expect("apply ok patch");
     assert_eq!(r, patch_service::PatchResult::Applied);
@@ -261,10 +268,9 @@ exit 0
 
     // 2. 失败 patch → failed（exit 1）。
     let bad_patch = "#!/bin/sh\necho boom >&2\nexit 1\n";
-    let r =
-        patch_service::apply_patch(&db, &docker, event_id, view.instance_id, bad_patch, subject)
-            .await
-            .expect("apply bad patch");
+    let r = patch_service::apply_patch(&db, &docker, run_id, view.instance_id, bad_patch, subject)
+        .await
+        .expect("apply bad patch");
     assert_eq!(r, patch_service::PatchResult::Failed);
     let sub = patch_repo::latest_for_instance(&db, view.instance_id)
         .await
@@ -278,7 +284,7 @@ exit 0
     let r = patch_service::apply_patch(
         &db,
         &docker,
-        event_id,
+        run_id,
         view.instance_id,
         marker_patch,
         subject,
@@ -323,13 +329,13 @@ exit 0
     assert_eq!(gone.exit_code, Some(0), "reset 后 patch 标记应消失");
 
     // 4. Manual check：health + judge 通过且不计分。
-    let before = score_repo::my_total(&db, event_id, Some(user_id), None)
+    let before = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
     let mc = floatctf::modules::event::awdp::service::evaluation::manual_check(
         &db,
         &docker,
-        event_id,
+        run_id,
         view.instance_id,
         subject,
     )
@@ -337,19 +343,19 @@ exit 0
     .expect("manual check");
     assert!(mc.healthcheck_ok, "{:?}", mc.healthcheck_detail);
     assert!(mc.judge_ok, "{:?}", mc.judge_detail);
-    let after = score_repo::my_total(&db, event_id, Some(user_id), None)
+    let after = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
     assert_eq!(before, after, "manual check 不计分");
 
-    // 5. Break 阶段拒绝 patch（新建事件）。
-    let ev2 = seed_event(&db, "breakgate", ParticipantMode::Individual).await;
-    let eg2 = seed_gamebox_and_attach(&db, ev2, "breakgate").await;
-    transition(&db, ev2, AwdpPhase::Break).await;
-    let v2 = runtime::start_instance(&db, &docker, JWT_SECRET, ev2, eg2, subject, "flag")
+    // 5. Break 阶段拒绝 patch（新 run 留在 Break）。
+    let (ev2, run2) = seed_event_and_run(&db, "breakgate", ParticipantMode::Individual).await;
+    let gb2 = seed_gamebox_and_attach(&db, ev2, "breakgate").await;
+    transition(&db, run2, AwdpPhase::Break).await;
+    let v2 = runtime::start_instance(&db, &docker, JWT_SECRET, run2, gb2, subject, "flag")
         .await
         .expect("start in break");
-    let err = patch_service::apply_patch(&db, &docker, ev2, v2.instance_id, ok_patch, subject)
+    let err = patch_service::apply_patch(&db, &docker, run2, v2.instance_id, ok_patch, subject)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("Fix"), "{err}");
@@ -381,28 +387,26 @@ async fn break_to_fix_resets_all_instances() {
         return;
     }
 
-    let event_id = seed_event(&db, "btf", ParticipantMode::Individual).await;
-    let eg_id = seed_gamebox_and_attach(&db, event_id, "btf").await;
-    transition(&db, event_id, AwdpPhase::Break).await;
+    let (event_id, run_id) = seed_event_and_run(&db, "btf", ParticipantMode::Individual).await;
+    let gb_id = seed_gamebox_and_attach(&db, event_id, "btf").await;
+    transition(&db, run_id, AwdpPhase::Break).await;
     let user_id = seed_user(&db, "btf").await;
     let subject = Subject::user(user_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, event_id, eg_id, subject, "flag")
+    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
         .await
         .expect("start");
     let port = view.endpoints[0].public_port;
     assert_eq!(view.runtime_generation, 1);
 
     // Break → Fix：实例 pristine reset（gen+1、端点不变）。
-    event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, event_id)
+    event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run_id)
         .await
         .expect("break to fix");
-    let row = event_repo::require_by_event_id(&db, event_id)
-        .await
-        .unwrap();
+    let row = run_repo::require_by_id(&db, run_id).await.unwrap();
     assert_eq!(row.phase, AwdpPhase::Fix);
     assert!(row.fix_started_at.is_some());
 
-    let after = runtime::get_my_instance_view(&db, event_id, eg_id, subject)
+    let after = runtime::get_my_instance_view(&db, run_id, gb_id, subject)
         .await
         .unwrap()
         .expect("view");

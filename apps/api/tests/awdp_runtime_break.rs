@@ -1,6 +1,6 @@
 //! AWDP 运行时 + Break 集成测试（DB + Docker + 本地 test-g 镜像 gated）。
 //!
-//! 覆盖（plan §47）：on-demand 启动 / healthcheck 端点发布 / 端点跨重启稳定 /
+//! 覆盖（plan §47，run 中心化）：on-demand 启动 / healthcheck 端点发布 / 端点跨重启稳定 /
 //! flag 正确得分一次 / 重复 flag 不再得分 / 错误 flag 拒绝 / Team 共享实例。
 //!
 //! 前置：本地镜像 `floatctf/gameboxes/test-g:1.0.3`（examples/test_g v1.0.3，
@@ -10,12 +10,12 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awdp_event_gameboxes, events, gameboxes,
-    sea_orm_active_enums::{AwdpPhase, EventFamily, EventPurpose, ParticipantMode},
+    events, gameboxes,
+    sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::{
     domain::AwdpConfig,
-    repo::{event_gamebox_repo, event_repo, score_repo},
+    repo::{event_gamebox_repo, event_repo, run_repo, score_repo},
     service::{
         break_service,
         runtime::{self, Subject},
@@ -68,7 +68,7 @@ async fn seed_user(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
 }
 
 async fn cleanup(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
-    // events 级联删除 awdp 子表；gameboxes 是全局表需单独清理。
+    // events 级联删除 awdp 子表（含 runs）；gameboxes 是全局表需单独清理。
     let _ = events::Entity::delete_by_id(event_id).exec(db).await;
     for row in gameboxes::Entity::find()
         .filter(gameboxes::Column::SafeName.like("awdp-it-gb-%"))
@@ -80,8 +80,31 @@ async fn cleanup(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
     }
 }
 
-/// 建 AWDP competition individual 事件（Break 已开始）。
-async fn seed_event_in_break(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
+/// 容器刚启动时内部服务需要数秒就绪；取 flag 带重试（最多 12 次 × 500ms）。
+async fn fetch_flag_with_retry(url: &str) -> String {
+    for _ in 0..12 {
+        match reqwest::get(url).await {
+            Ok(resp) => match resp.text().await {
+                Ok(body) => {
+                    let flag = body.trim().to_string();
+                    if !flag.is_empty() {
+                        return flag;
+                    }
+                }
+                Err(_) => {}
+            },
+            Err(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    panic!("flag endpoint not ready: {url}");
+}
+
+/// 建 AWDP competition individual 事件 + active competition run（Break 已开始）。
+async fn seed_competition_run_in_break(
+    db: &sea_orm::DatabaseConnection,
+    tag: &str,
+) -> (Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -105,13 +128,17 @@ async fn seed_event_in_break(db: &sea_orm::DatabaseConnection, tag: &str) -> Uui
     event_repo::ensure_by_event_id(db, event.id, &AwdpConfig::default())
         .await
         .unwrap();
+    // Event start：create_competition_run + 立即 Break。
+    let run = run_repo::create_competition_run(db, event.id, &AwdpConfig::default())
+        .await
+        .unwrap();
     let now = chrono::Utc::now();
-    event_repo::transition_phase(
+    run_repo::transition_phase(
         db,
-        event.id,
-        AwdpPhase::Pending,
-        AwdpPhase::Break,
-        event_repo::PhaseTransitionPatch {
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        run_repo::PhaseTransitionPatch {
             started_at: Some(now),
             break_ends_at: Some(now + chrono::Duration::hours(1)),
             next_action_at: Some(now + chrono::Duration::hours(1)),
@@ -120,7 +147,7 @@ async fn seed_event_in_break(db: &sea_orm::DatabaseConnection, tag: &str) -> Uui
     )
     .await
     .unwrap();
-    event.id
+    (event.id, run.id)
 }
 
 #[tokio::test]
@@ -142,8 +169,8 @@ async fn individual_start_flag_break_and_idempotency() {
         return;
     }
 
-    let event_id = seed_event_in_break(&db, "ind").await;
-    let (_gb_id, eg_id) = {
+    let (event_id, run_id) = seed_competition_run_in_break(&db, "ind").await;
+    let gb_id = {
         // attach 需要走真实 repo（校验 [awdp] capability）。
         let gb_id = Uuid::new_v4();
         let now = chrono::Utc::now().into();
@@ -190,17 +217,17 @@ async fn individual_start_flag_break_and_idempotency() {
         .insert(&db)
         .await
         .unwrap();
-        let eg = event_gamebox_repo::attach_gamebox(&db, event_id, gb.id, false)
+        event_gamebox_repo::attach_gamebox(&db, event_id, gb.id, false)
             .await
             .expect("attach awdp gamebox");
-        (gb.id, eg.id)
+        gb.id
     };
 
     let user_id = seed_user(&db, "ind").await;
     let subject = Subject::user(user_id);
 
-    // 启动实例 → 端点发布。
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, event_id, eg_id, subject, "flag")
+    // 启动实例 → 端点发布（run-scoped）。
+    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
         .await
         .expect("start instance");
     assert_eq!(view.runtime_state, "running");
@@ -211,7 +238,7 @@ async fn individual_start_flag_break_and_idempotency() {
     assert!(ep.public_port > 0);
 
     // 幂等：再次 start 返回同一实例与同一端点。
-    let view2 = runtime::start_instance(&db, &docker, JWT_SECRET, event_id, eg_id, subject, "flag")
+    let view2 = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
         .await
         .expect("restart idempotent");
     assert_eq!(view2.instance_id, view.instance_id);
@@ -221,24 +248,19 @@ async fn individual_start_flag_break_and_idempotency() {
     );
 
     // 从真实容器取 flag（flag.php 提供 FLAG env）并提交。
-    let flag = {
-        let url = format!("http://{}:{}/flag.php", ep.public_host, ep.public_port);
-        let body = reqwest::get(&url)
-            .await
-            .expect("fetch flag")
-            .text()
-            .await
-            .unwrap();
-        body.trim().to_string()
-    };
+    let flag = fetch_flag_with_retry(&format!(
+        "http://{}:{}/flag.php",
+        ep.public_host, ep.public_port
+    ))
+    .await;
     assert!(flag.starts_with("flag{"), "flag from box: {flag}");
 
-    let r1 = break_service::submit_flag(&db, JWT_SECRET, event_id, eg_id, &flag, subject)
+    let r1 = break_service::submit_flag(&db, JWT_SECRET, run_id, gb_id, &flag, subject)
         .await
         .expect("submit flag");
     assert!(r1.accepted && r1.scored, "first break scores: {r1:?}");
 
-    let r2 = break_service::submit_flag(&db, JWT_SECRET, event_id, eg_id, &flag, subject)
+    let r2 = break_service::submit_flag(&db, JWT_SECRET, run_id, gb_id, &flag, subject)
         .await
         .expect("duplicate submit");
     assert!(
@@ -246,25 +268,23 @@ async fn individual_start_flag_break_and_idempotency() {
         "dup no score: {r2:?}"
     );
 
-    let r3 = break_service::submit_flag(&db, JWT_SECRET, event_id, eg_id, "flag{wrong}", subject)
+    let r3 = break_service::submit_flag(&db, JWT_SECRET, run_id, gb_id, "flag{wrong}", subject)
         .await
         .expect("wrong flag");
     assert!(!r3.accepted && !r3.scored, "wrong flag rejected: {r3:?}");
 
-    // 分数恰好一次。
-    let total = score_repo::my_total(&db, event_id, Some(user_id), None)
+    // 分数恰好一次（run 维度）。
+    let total = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
-    let awdp = event_repo::require_by_event_id(&db, event_id)
-        .await
-        .unwrap();
-    assert_eq!(total, awdp.break_score, "break_score 恰好一次");
+    let run_row = run_repo::require_by_id(&db, run_id).await.unwrap();
+    assert_eq!(total, run_row.break_score, "break_score 恰好一次");
 
     // 停止后端点保留。
     runtime::stop_instance(&db, &docker, view.instance_id, subject)
         .await
         .expect("stop");
-    let after = runtime::get_my_instance_view(&db, event_id, eg_id, subject)
+    let after = runtime::get_my_instance_view(&db, run_id, gb_id, subject)
         .await
         .unwrap()
         .expect("view after stop");
@@ -277,10 +297,9 @@ async fn individual_start_flag_break_and_idempotency() {
     // 他人 flag 不可用（不同 subject 不同 flag → rejected）。
     let other_user = seed_user(&db, "other").await;
     let other_subject = Subject::user(other_user);
-    let r_other =
-        break_service::submit_flag(&db, JWT_SECRET, event_id, eg_id, &flag, other_subject)
-            .await
-            .expect("other subject");
+    let r_other = break_service::submit_flag(&db, JWT_SECRET, run_id, gb_id, &flag, other_subject)
+        .await
+        .expect("other subject");
     assert!(!r_other.accepted, "other subject cannot use my flag");
 
     cleanup(&db, event_id).await;
@@ -328,12 +347,15 @@ async fn team_shares_instance_and_score() {
     event_repo::ensure_by_event_id(&db, event.id, &AwdpConfig::default())
         .await
         .unwrap();
-    event_repo::transition_phase(
+    let run = run_repo::create_competition_run(&db, event.id, &AwdpConfig::default())
+        .await
+        .unwrap();
+    run_repo::transition_phase(
         &db,
-        event.id,
-        AwdpPhase::Pending,
-        AwdpPhase::Break,
-        event_repo::PhaseTransitionPatch {
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        run_repo::PhaseTransitionPatch {
             started_at: Some(chrono::Utc::now()),
             next_action_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             ..Default::default()
@@ -424,17 +446,17 @@ async fn team_shares_instance_and_score() {
     .insert(&db)
     .await
     .unwrap();
-    let eg = event_gamebox_repo::attach_gamebox(&db, event.id, gb.id, false)
+    event_gamebox_repo::attach_gamebox(&db, event.id, gb.id, false)
         .await
         .expect("attach");
 
     let subject = Subject::team(team_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, event.id, eg.id, subject, "flag")
+    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run.id, gb.id, subject, "flag")
         .await
         .expect("team instance");
 
     // 第二个成员看到的实例与第一个一致。
-    let view2 = runtime::get_my_instance_view(&db, event.id, eg.id, Subject::team(team_id))
+    let view2 = runtime::get_my_instance_view(&db, run.id, gb.id, Subject::team(team_id))
         .await
         .unwrap()
         .expect("team view");
@@ -442,28 +464,20 @@ async fn team_shares_instance_and_score() {
 
     // team 提交 flag 得分。
     let ep = &view.endpoints[0];
-    let flag = reqwest::get(&format!(
+    let flag = fetch_flag_with_retry(&format!(
         "http://{}:{}/flag.php",
         ep.public_host, ep.public_port
     ))
-    .await
-    .unwrap()
-    .text()
-    .await
-    .unwrap()
-    .trim()
-    .to_string();
-    let r = break_service::submit_flag(&db, JWT_SECRET, event.id, eg.id, &flag, subject)
+    .await;
+    let r = break_service::submit_flag(&db, JWT_SECRET, run.id, gb.id, &flag, subject)
         .await
         .expect("team submit");
     assert!(r.accepted && r.scored, "team break: {r:?}");
-    let total = score_repo::my_total(&db, event.id, None, Some(team_id))
+    let total = score_repo::my_total(&db, run.id, None, Some(team_id))
         .await
         .unwrap();
-    let awdp = event_repo::require_by_event_id(&db, event.id)
-        .await
-        .unwrap();
-    assert_eq!(total, awdp.break_score);
+    let run_row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(total, run_row.break_score);
 
     cleanup(&db, event.id).await;
 }

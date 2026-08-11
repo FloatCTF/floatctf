@@ -1,21 +1,21 @@
 //! AWDP 核心领域 DB 集成测试（DB-gated）。
 //!
-//! 覆盖（plan §47 的 EventMode / config 子集）：
+//! 覆盖（plan §47 的 EventMode / config 子集，run 中心化后）：
 //!   - EventMode 组合：awdp practice individual / competition individual / competition team
 //!     通过；awdp practice team 失败（DB CHECK + Rust validate 双保险）
-//!   - awdp_events：ensure 默认配置 / 配置校验（divisibility）/ start 前可改 /
-//!     start 后冻结 / expected_updated_at 乐观锁
-//!   - 阶段迁移 CAS
+//!   - awdp_events：ensure 默认配置 / 配置校验（divisibility）/ 无 active run 可改 /
+//!     active run 后冻结 / expected_updated_at 乐观锁 / events.end_time 回写
+//!   - awdp_runs 阶段迁移 CAS（practice run pending→break→fix→ended + 非法迁移）
 
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awdp_events, events,
+    events,
     sea_orm_active_enums::{AwdpPhase, EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::domain::{AwdpConfig, AwdpConfigPatch};
-use floatctf::modules::event::awdp::repo::event_repo;
+use floatctf::modules::event::awdp::repo::{event_repo, run_repo};
 use floatctf::modules::event::common::domain::event_mode::EventMode;
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -182,7 +182,7 @@ async fn awdp_practice_allows_bounded_end_time() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// awdp_events 配置
+// awdp_events 配置（纯配置；运行态在 awdp_runs）
 // ────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -196,16 +196,15 @@ async fn config_defaults_and_update_lifecycle() {
     let mode = EventMode::awdp_individual_competition();
     let ev = create_event(&db, &mode, "awdp-it-config", 60, 3600).await;
 
-    // ensure 默认配置。
+    // ensure 默认配置（awdp_events 不再有 phase/next_action_at）。
     let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
         .await
         .expect("ensure awdp event");
-    assert_eq!(awdp.phase, AwdpPhase::Pending);
     assert_eq!(awdp.break_duration_secs, 3600);
     assert_eq!(awdp.fix_round_interval_secs, 600);
     assert_eq!(awdp.configuration_generation, 1);
 
-    // start 前可改（乐观锁必填）。
+    // 未启动（无 active run）可改（乐观锁必填）。
     let patch = AwdpConfigPatch {
         expected_updated_at: Some(awdp.updated_at.into()),
         break_duration_secs: Some(1800),
@@ -220,7 +219,6 @@ async fn config_defaults_and_update_lifecycle() {
     assert_eq!(updated.break_duration_secs, 1800);
     assert_eq!(updated.fix_round_score, 300);
     assert_eq!(updated.configuration_generation, 2);
-    assert_eq!(updated.break_duration_secs, 1800);
 
     // 事件 end_time 与 start + break + fix 同步。
     let ev_reload = events::Entity::find_by_id(ev.id)
@@ -257,13 +255,26 @@ async fn config_defaults_and_update_lifecycle() {
         .unwrap_err();
     assert!(err.to_string().contains("mismatch"), "{err}");
 
-    // 进入 Break 后配置冻结。
-    event_repo::transition_phase(
+    // 事件启动（创建 active run）后配置冻结。
+    let run = run_repo::create_competition_run(
         &db,
         ev.id,
+        &AwdpConfig {
+            break_duration_secs: 1800,
+            fix_duration_secs: 1800,
+            fix_round_interval_secs: 600,
+            break_score: 2000,
+            fix_round_score: 300,
+        },
+    )
+    .await
+    .expect("create competition run");
+    run_repo::transition_phase(
+        &db,
+        run.id,
         AwdpPhase::Pending,
         AwdpPhase::Break,
-        event_repo::PhaseTransitionPatch {
+        run_repo::PhaseTransitionPatch {
             started_at: Some(chrono::Utc::now()),
             break_ends_at: Some(chrono::Utc::now() + chrono::Duration::seconds(1800)),
             next_action_at: Some(chrono::Utc::now() + chrono::Duration::seconds(1800)),
@@ -286,6 +297,78 @@ async fn config_defaults_and_update_lifecycle() {
     cleanup(&db).await;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// awdp_runs 阶段迁移 CAS
+// ────────────────────────────────────────────────────────────────────────────
+
+async fn seed_user(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+    let now = chrono::Utc::now().into();
+    let id = Uuid::new_v4();
+    floatctf::entity::users::ActiveModel {
+        id: Set(id),
+        username: Set(format!("u-{tag}-{}", &id.to_string()[..8])),
+        nickname: Set(format!("u-{tag}-{}", &id.to_string()[..8])),
+        password: Set("x".into()),
+        email: Set(format!("u-{tag}-{}@it.example", &id.to_string()[..8])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn seed_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+    let now = chrono::Utc::now().into();
+    let gb_id = Uuid::new_v4();
+    floatctf::entity::gameboxes::ActiveModel {
+        id: Set(gb_id),
+        name: Set(format!("awdp-gb-{tag}")),
+        safe_name: Set(format!(
+            "awdp-it-gb-{tag}-{}",
+            &Uuid::new_v4().to_string()[..8]
+        )),
+        category: Set("web".into()),
+        description: Set(String::new()),
+        hidden: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        version: Set(Some("1.0.0".into())),
+        source_toml: Set(None),
+        spec_json: Set(Some(serde_json::json!({}))),
+        spec_digest: Set(Some("spec".into())),
+        package_digest: Set(Some("pkg".into())),
+        image_ref: Set(None),
+        image_id: Set(None),
+        image_repo_digest: Set(None),
+        username: Set(None),
+        recommended_cpu_millis: Set(1000),
+        recommended_memory_bytes: Set(512 * 1024 * 1024),
+        recommended_pids_limit: Set(100),
+        healthchecks_json: Set(Some(serde_json::json!([]))),
+        judge_script_name: Set(None),
+        judge_script_content: Set(None),
+        judge_args_json: Set(None),
+        judge_timeout_secs: Set(None),
+        judge_retry_interval_secs: Set(None),
+        build_status: Set(Some("ready".into())),
+        build_error: Set(None),
+        awdp_source_code_dir: Set(Some("/var/www/html".into())),
+        awdp_exploit_script_name: Set(Some("exploit.py".into())),
+        awdp_exploit_script_content: Set(Some("x".into())),
+        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.zip"))),
+        awdp_source_artifact_digest: Set(Some("deadbeef".into())),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    gb_id
+}
+
 #[tokio::test]
 async fn phase_transitions_are_cas_guarded() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -294,18 +377,25 @@ async fn phase_transitions_are_cas_guarded() {
     };
     cleanup(&db).await;
 
-    let mode = EventMode::awdp_practice();
-    let ev = create_event(&db, &mode, "awdp-it-phase", 60, 3600).await;
-    event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
+    let user_id = seed_user(&db, "phase").await;
+    let gb_id = seed_gamebox(&db, "phase").await;
+    let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
         .await
-        .expect("ensure");
+        .expect("create practice run");
 
-    // 非法迁移：pending → fix 直接拒绝。
-    let err = event_repo::transition_phase(
+    // practice run 创建即 Break（不走 pending）。
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Break, "practice run 创建即 Break");
+    assert!(row.started_at.is_some());
+    assert!(row.break_ends_at.is_some());
+    assert!(row.next_action_at.is_some());
+
+    // 非法迁移：pending → fix 直接拒绝（虽然当前是 break，但非法链仍被拒绝）。
+    let err = run_repo::transition_phase(
         &db,
-        ev.id,
-        AwdpPhase::Pending,
-        AwdpPhase::Fix,
+        run.id,
+        AwdpPhase::Break,
+        AwdpPhase::Ended,
         Default::default(),
     )
     .await
@@ -316,9 +406,9 @@ async fn phase_transitions_are_cas_guarded() {
     );
 
     // CAS：期望阶段不符 → Conflict。
-    let err = event_repo::transition_phase(
+    let err = run_repo::transition_phase(
         &db,
-        ev.id,
+        run.id,
         AwdpPhase::Fix,
         AwdpPhase::Ended,
         Default::default(),
@@ -327,28 +417,19 @@ async fn phase_transitions_are_cas_guarded() {
     .unwrap_err();
     assert!(err.to_string().contains("concurrent"), "{err}");
 
-    // 合法链 pending→break→fix→ended。
-    event_repo::transition_phase(
+    // 合法链 break→fix→ended。
+    run_repo::transition_phase(
         &db,
-        ev.id,
-        AwdpPhase::Pending,
-        AwdpPhase::Break,
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    event_repo::transition_phase(
-        &db,
-        ev.id,
+        run.id,
         AwdpPhase::Break,
         AwdpPhase::Fix,
         Default::default(),
     )
     .await
     .unwrap();
-    event_repo::transition_phase(
+    run_repo::transition_phase(
         &db,
-        ev.id,
+        run.id,
         AwdpPhase::Fix,
         AwdpPhase::Ended,
         Default::default(),
@@ -356,8 +437,46 @@ async fn phase_transitions_are_cas_guarded() {
     .await
     .unwrap();
 
-    let final_row = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let final_row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(final_row.phase, AwdpPhase::Ended);
+
+    // ended 后不能回退。
+    let err = run_repo::transition_phase(
+        &db,
+        run.id,
+        AwdpPhase::Ended,
+        AwdpPhase::Break,
+        Default::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("Invalid AWDP phase transition"),
+        "{err}"
+    );
+
+    // 同 user+gamebox 再建 practice run：active unique 冲突（ended 的不算 active）。
+    let run2 = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
+        .await
+        .expect("ended 后可再训练（新 run）");
+    let row2 = run_repo::require_by_id(&db, run2.id).await.unwrap();
+    assert_eq!(row2.phase, AwdpPhase::Break);
+    assert_ne!(run2.id, run.id, "train again 创建新 run");
+
+    // 同 user+gamebox 已有 active run → Conflict。
+    let err = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("进行中"), "{err}");
+
+    // 冗余 awdp_events 表仍为纯配置（无运行态列可读）。
+    let ev_mode = EventMode::awdp_individual_competition();
+    let ev = create_event(&db, &ev_mode, "awdp-it-phase-ev", 60, 3600).await;
+    let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
+        .await
+        .unwrap();
+    let _ = awdp;
+    // 直接查表确认没有 phase/next_action_at 列（生成的 Model 不含这些字段即编译期保证）。
 
     cleanup(&db).await;
 }

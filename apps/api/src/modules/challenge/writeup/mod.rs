@@ -1,7 +1,7 @@
 //! Writeup 相关能力。
 
 pub mod dto;
-pub use dto::{ChallengeWriteupDto, UnifiedWriteupResult};
+pub use dto::{ChallengeWriteupDto, UnifiedWriteupDetail, UnifiedWriteupResult};
 
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
@@ -158,46 +158,89 @@ pub async fn get_challenge_writeups(
     UniResponse::ok(results.into()).into()
 }
 
-/// GET /api/writeups/{writeup_id}
+/// GET /api/writeups/{writeup_id} —— challenge 或 gamebox 的 Writeup 统一详情。
+/// 优先按 challenge_writeup.id 解析；找不到再按 awdp_run_writeups.run_id 解析
+/// （practice run writeup 属主可见，非本人 403）。
 #[get("/{writeup_id}")]
 pub async fn get_writeup(
-    _user: UserJwtGuard,
+    user: UserJwtGuard,
     ctx: ReqCtx,
     writeup_id: Path<Uuid>,
-) -> UniResult<ChallengeWriteupResult> {
+) -> UniResult<UnifiedWriteupDetail> {
+    let me = user.into_inner();
+    let db = ctx.db.get_ref();
     let writeup_id = writeup_id.into_inner();
 
-    let writeup = challenge_writeup::Entity::find_by_id(writeup_id)
+    // 1. challenge writeup（公开）。
+    if let Some((writeup, challenge)) = challenge_writeup::Entity::find_by_id(writeup_id)
         .find_also_related(challenges::Entity)
-        .one(ctx.db.get_ref())
+        .one(db)
         .await?
-        .ok_or(AppError::NotFound(format!(
-            "Writeup {} not found",
+    {
+        let challenge = challenge.ok_or(AppError::NotFound(format!(
+            "Challenge of writeup {} not found",
             writeup_id
         )))?;
+        let user = users::Entity::find_by_id(writeup.user_id)
+            .one(db)
+            .await?
+            .ok_or(AppError::NotFound(format!(
+                "User {} not found",
+                writeup.user_id
+            )))?;
+        return Ok(UniResponse::ok(Some(UnifiedWriteupDetail {
+            writeup_type: "challenge".into(),
+            id: writeup.id,
+            content_id: challenge.id,
+            content_name: challenge.name,
+            category: Some(challenge.category),
+            nickname: user.nickname,
+            avatar: user.avatar.clone(),
+            email: user.email,
+            content: writeup.content,
+            created_at: writeup.created_at,
+            updated_at: writeup.updated_at,
+        }))
+        .into());
+    }
 
-    let (writeup, challenge) = writeup;
-
-    let user = users::Entity::find_by_id(writeup.user_id)
-        .one(ctx.db.get_ref())
+    // 2. gamebox（practice run）writeup：owner-only，与 run 系接口一致。
+    if let Some((wp, run)) = awdp_run_writeups::Entity::find_by_id(writeup_id)
+        .find_also_related(awdp_runs::Entity)
+        .one(db)
         .await?
-        .ok_or(AppError::NotFound(format!(
-            "User {} not found",
-            writeup.user_id
+    {
+        if wp.user_id != me.id {
+            return Err(AppError::Forbidden("该训练 writeup 不属于你".into()).into());
+        }
+        let run = run.ok_or(AppError::NotFound(format!(
+            "Run of writeup {} not found",
+            writeup_id
         )))?;
+        let gb_id = run
+            .gamebox_id
+            .ok_or(AppError::NotFound("该 run 无 gamebox".into()))?;
+        let gb = gameboxes::Entity::find_by_id(gb_id)
+            .one(db)
+            .await?
+            .ok_or(AppError::NotFound(format!("GameBox {} not found", gb_id)))?;
+        return Ok(UniResponse::ok(Some(UnifiedWriteupDetail {
+            writeup_type: "gamebox".into(),
+            id: wp.run_id,
+            content_id: gb.id,
+            content_name: gb.name,
+            category: None,
+            nickname: me.nickname,
+            avatar: me.avatar.clone(),
+            email: me.email,
+            content: wp.content,
+            created_at: wp.created_at,
+            updated_at: wp.updated_at,
+        }))
+        .into());
+    }
 
-    let result = ChallengeWriteupResult {
-        nickname: user.nickname,
-        avatar: user.avatar.clone(),
-        email: user.email,
-        challenge: challenge.ok_or(AppError::NotFound(format!(
-            "Challenge {} not found",
-            writeup.challenge_id
-        )))?,
-        writeup,
-    };
-
-    UniResponse::ok(result.into()).into()
+    Err(AppError::NotFound(format!("Writeup {} not found", writeup_id)).into())
 }
 
 /// GET /api/writeups

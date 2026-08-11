@@ -39,3 +39,21 @@ pub struct UnifiedWriteupResult {
     pub content_name: String,
     pub updated_at: DateTimeWithTimeZone,
 }
+
+/// 单个 Writeup 详情统一条目（challenge + gamebox 都能渲染）。
+/// `writeup_type` = "challenge" | "gamebox"；gamebox 的 `id` 即 practice run 的 run_id。
+#[derive(Debug, Serialize)]
+pub struct UnifiedWriteupDetail {
+    pub writeup_type: String,
+    pub id: Uuid,
+    pub content_id: Uuid,
+    pub content_name: String,
+    /// challenge 才有（category），gamebox 为 None。
+    pub category: Option<String>,
+    pub nickname: String,
+    pub avatar: Option<String>,
+    pub email: String,
+    pub content: String,
+    pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
+}

@@ -24,16 +24,11 @@ function RouteComponent() {
 			field: "content_name",
 			rowHeader: true,
 			sortBy: true,
-			renderCell: (row: UnifiedWriteupResult) =>
-				row.writeup_type === "gamebox" ? (
-					<AppLink to="/service/awdp/runs/$runId" params={{ runId: row.id }}>
-						{row.content_name}
-					</AppLink>
-				) : (
-					<AppLink to="/service/challenges/$id" params={{ id: row.content_id }}>
-						{row.content_name}
-					</AppLink>
-				),
+			renderCell: (row: UnifiedWriteupResult) => (
+				<AppLink to="/service/writeups/$id" params={{ id: row.id }}>
+					{row.content_name}
+				</AppLink>
+			),
 		},
 		{
 			accessorKey: "nickname",

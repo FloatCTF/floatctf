@@ -20,6 +20,21 @@ export type UnifiedWriteupResult = {
 	updated_at: string;
 };
 
+/** 单个 Writeup 详情统一条目（challenge + gamebox 都能渲染；gamebox 的 id 即 run_id）。 */
+export type UnifiedWriteupDetail = {
+	id: string;
+	writeup_type: "challenge" | "gamebox";
+	content_id: string;
+	content_name: string;
+	category?: string | null;
+	nickname: string;
+	avatar?: string | null;
+	email: string;
+	content: string;
+	created_at: string;
+	updated_at: string;
+};
+
 export const challengeServiceApi = {
 	fetch: async (
 		params: QueryParams = {},
@@ -58,7 +73,7 @@ export const challengeServiceApi = {
 	},
 	getWriteup: async (
 		id: string,
-	): Promise<UniResponse<ChallengeWriteupResult>> => {
+	): Promise<UniResponse<UnifiedWriteupDetail>> => {
 		const res = await service_api.get(`/writeups/${id}`);
 		return res.data;
 	},

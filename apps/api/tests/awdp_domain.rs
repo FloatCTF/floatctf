@@ -7,7 +7,7 @@
 //!     active run 后冻结 / expected_updated_at 乐观锁 / events.end_time 回写
 //!   - awdp_runs 阶段迁移 CAS（practice run pending→break→fix→ended + 非法迁移）
 
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::{
@@ -196,12 +196,15 @@ async fn config_defaults_and_update_lifecycle() {
     let mode = EventMode::awdp_individual_competition();
     let ev = create_event(&db, &mode, "awdp-it-config", 60, 3600).await;
 
-    // ensure 默认配置（awdp_events 不再有 phase/next_action_at）。
+    // ensure 默认配置（awdp_events 不再有 phase/next_action_at；plan §76 defaults 全断言）。
     let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
         .await
         .expect("ensure awdp event");
     assert_eq!(awdp.break_duration_secs, 3600);
+    assert_eq!(awdp.fix_duration_secs, 3600);
     assert_eq!(awdp.fix_round_interval_secs, 600);
+    assert_eq!(awdp.break_score, 1000);
+    assert_eq!(awdp.fix_round_score, 150);
     assert_eq!(awdp.configuration_generation, 1);
 
     // 未启动（无 active run）可改（乐观锁必填）。
@@ -242,6 +245,27 @@ async fn config_defaults_and_update_lifecycle() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("divisible"), "{err}");
+
+    // 零值拒绝（plan §76）。
+    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let zero = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        break_duration_secs: Some(0),
+        ..Default::default()
+    };
+    let err = event_repo::update_config(&db, ev.id, zero)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("> 0"), "{err}");
+    let zero_score = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        break_score: Some(-5),
+        ..Default::default()
+    };
+    let err = event_repo::update_config(&db, ev.id, zero_score)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(">= 0"), "{err}");
 
     // 乐观锁冲突。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
@@ -293,6 +317,158 @@ async fn config_defaults_and_update_lifecycle() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("locked"), "{err}");
+
+    cleanup(&db).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 配置快照语义（plan §76：active Run snapshot / new Run gets new config）
+// ────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn run_snapshot_captures_config_immune_to_later_changes() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let mode = EventMode::awdp_individual_competition();
+    let ev = create_event(&db, &mode, "awdp-it-snapshot", 60, 3600).await;
+    let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
+        .await
+        .expect("ensure");
+
+    // 启动前把配置改为自定义（break 1800 / fix 1800 / interval 600 / 2000+300）。
+    let patch = AwdpConfigPatch {
+        expected_updated_at: Some(awdp.updated_at.into()),
+        break_duration_secs: Some(1800),
+        fix_duration_secs: Some(1800),
+        fix_round_interval_secs: Some(600),
+        break_score: Some(2000),
+        fix_round_score: Some(300),
+    };
+    let updated = event_repo::update_config(&db, ev.id, patch)
+        .await
+        .expect("update config");
+    assert_eq!(updated.configuration_generation, 2);
+
+    // 1. 用该配置创建 competition run → 快照 5 列 = 创建时配置（plan §76 snapshot）。
+    let run = run_repo::create_competition_run(
+        &db,
+        ev.id,
+        &AwdpConfig {
+            break_duration_secs: 1800,
+            fix_duration_secs: 1800,
+            fix_round_interval_secs: 600,
+            break_score: 2000,
+            fix_round_score: 300,
+        },
+    )
+    .await
+    .expect("create run");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.break_duration_secs, 1800);
+    assert_eq!(row.fix_duration_secs, 1800);
+    assert_eq!(row.fix_round_interval_secs, 600);
+    assert_eq!(row.break_score, 2000);
+    assert_eq!(row.fix_round_score, 300);
+    assert_eq!(row.total_rounds, 3, "1800/600 = 3 rounds");
+
+    // 2. active run 期间配置冻结：admin 修改被拒（plan §76 已锁定）。
+    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let frozen = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        break_duration_secs: Some(7200),
+        ..Default::default()
+    };
+    let err = event_repo::update_config(&db, ev.id, frozen)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("locked"), "{err}");
+
+    // 3. 即使 awdp_events 行被直接改掉（绕过锁，模拟外部写入/数据漂移），
+    //    已启动 run 的 snapshot 不受影响（plan §76 snapshot 语义）。
+    use floatctf::entity::awdp_events;
+    {
+        let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+        let mut am: awdp_events::ActiveModel = cur.into();
+        am.break_duration_secs = Set(9999);
+        am.break_score = Set(999);
+        am.updated_at = Set(chrono::Utc::now().into());
+        am.update(&db).await.unwrap();
+    }
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.break_duration_secs, 1800, "run snapshot 不随配置行变化");
+    assert_eq!(row.break_score, 2000, "run snapshot 不随配置行变化");
+
+    // 4. run 结束后配置重新可改。
+    let now = chrono::Utc::now();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        run_repo::PhaseTransitionPatch {
+            started_at: Some(now),
+            break_ends_at: Some(now + chrono::Duration::seconds(1800)),
+            next_action_at: Some(now + chrono::Duration::seconds(1800)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Ended,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let reopen = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        fix_duration_secs: Some(1200),
+        fix_round_interval_secs: Some(600),
+        ..Default::default()
+    };
+    event_repo::update_config(&db, ev.id, reopen)
+        .await
+        .expect("ended 后配置可改");
+
+    // 5. 新 run 用新配置（plan §76 new Run gets new config；practice run 直接注入配置）。
+    let user_id = seed_user(&db, "snap").await;
+    let gb_id = seed_gamebox(&db, "snap").await;
+    let new_run = run_repo::create_practice_run(
+        &db,
+        gb_id,
+        user_id,
+        &AwdpConfig {
+            break_duration_secs: 600,
+            fix_duration_secs: 1200,
+            fix_round_interval_secs: 600,
+            break_score: 500,
+            fix_round_score: 100,
+        },
+    )
+    .await
+    .expect("new practice run");
+    let new_row = run_repo::require_by_id(&db, new_run.id).await.unwrap();
+    assert_eq!(new_row.break_duration_secs, 600);
+    assert_eq!(new_row.fix_duration_secs, 1200);
+    assert_eq!(new_row.fix_round_score, 100);
+    assert_eq!(new_row.total_rounds, 2);
 
     cleanup(&db).await;
 }

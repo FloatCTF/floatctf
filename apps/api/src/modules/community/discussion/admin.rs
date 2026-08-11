@@ -1,18 +1,16 @@
 //! 讨论管理端接口。
 
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use sea_orm::Condition;
 
-use crate::api::dto::map_dto_vec;
-
-use crate::modules::community::discussion::DiscussionsDto;
+use crate::modules::community::discussion::{DiscussionWithAuthor, DiscussionsDto};
 use crate::{
     api::{
         FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
         sea_orm_utils::paginate_query,
     },
-    entity::discussions,
+    entity::{discussions, users},
 };
 
 /// GET /api/admin/discussions
@@ -21,7 +19,7 @@ pub async fn get_discussions(
     _user: SuperAdminJwtGuard,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
-) -> UniResult<Vec<DiscussionsDto>> {
+) -> UniResult<Vec<DiscussionWithAuthor>> {
     let mut query_params = query_params.0;
 
     let mappings = [
@@ -58,9 +56,37 @@ pub async fn get_discussions(
             (items.clone(), items.len())
         };
 
+    // 批量查询作者信息（昵称/头像），避免逐行 N+1 查询。
+    let author_map: HashMap<Uuid, users::Model> = if !items.is_empty() {
+        let author_ids: Vec<Uuid> = items.iter().map(|d| d.author_id).collect();
+        users::Entity::find()
+            .filter(users::Column::Id.is_in(author_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .map(|u| (u.id, u))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    let result: Vec<DiscussionWithAuthor> = items
+        .into_iter()
+        .map(|d| {
+            let author = author_map.get(&d.author_id);
+            DiscussionWithAuthor {
+                author_nickname: author
+                    .map_or_else(|| d.author_id.to_string(), |u| u.nickname.clone()),
+                author_avatar: author.and_then(|u| u.avatar.clone()),
+                is_liked: false,
+                discussion: d,
+            }
+        })
+        .collect();
+
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    UniResponse::ok_meta(result.into(), query_params.into()).into()
 }
 
 /// GET /api/admin/discussions/{discussion_id}

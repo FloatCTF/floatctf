@@ -23,6 +23,9 @@ function RouteComponent() {
 			header: "Container ID",
 			field: "id",
 			rowHeader: true,
+			renderCell: (row: FloatDockerContainer) => (
+				<span title={row.id}>{row.id.slice(0, 12)}</span>
+			),
 		},
 		{ accessorKey: "name", header: "Name", field: "name" },
 		{ accessorKey: "image", header: "Image", field: "image" },

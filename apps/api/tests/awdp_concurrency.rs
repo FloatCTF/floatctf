@@ -28,6 +28,40 @@ use floatctf::modules::event::awdp::{
     },
 };
 
+/// pristine reset 后等待 Docker 容器真正进入 running（Docker 状态可能短暂滞后于 DB
+/// runtime_state='running'，首个 patch exec 会命中 409 not running 的微竞态）。
+async fn wait_container_running(
+    docker: &bollard::Docker,
+    db: &sea_orm::DatabaseConnection,
+    instance_id: Uuid,
+) {
+    use bollard::query_parameters::InspectContainerOptions;
+    for _ in 0..40 {
+        let (instance, _) =
+            floatctf::modules::event::awdp::repo::instance_repo::find_by_instance_id(
+                db,
+                instance_id,
+            )
+            .await
+            .expect("instance");
+        if let Some(cid) = instance.container_id {
+            match docker
+                .inspect_container(&cid, None::<InspectContainerOptions>)
+                .await
+            {
+                Ok(info) => {
+                    if info.state.as_ref().and_then(|s| s.running).unwrap_or(false) {
+                        return;
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    panic!("container for instance {instance_id} not running within timeout");
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -341,6 +375,7 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick to fix");
+    wait_container_running(&docker, &db, inst.instance_id).await;
 
     // Round 1：apply patch（eligible）→ 到期 → tick 物化 pending 评估（worker 未消费）。
     open_round(&db, run_id, 1).await;
@@ -452,6 +487,7 @@ async fn reset_and_evaluation_concurrent() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick to fix");
+    wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
@@ -554,6 +590,7 @@ async fn manual_check_and_evaluation_concurrent() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick to fix");
+    wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,

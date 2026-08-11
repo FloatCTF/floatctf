@@ -141,3 +141,69 @@ pub async fn set_status(db: &DatabaseConnection, round_id: Uuid, status: &str) -
         .map_err(|e| AwdpError::Database(e.to_string()))?;
     Ok(())
 }
+
+/// 下一个 status=pending 且 cutoff <= now 的回合（tick 物化用）。
+pub async fn next_pending_due_round(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    now: DateTime<Utc>,
+) -> AwdpResult<Option<awdp_fix_rounds::Model>> {
+    let row = awdp_fix_rounds::Entity::find()
+        .filter(awdp_fix_rounds::Column::EventId.eq(event_id))
+        .filter(awdp_fix_rounds::Column::Status.eq("pending"))
+        .filter(awdp_fix_rounds::Column::CutoffAt.lte(now))
+        .order_by_asc(awdp_fix_rounds::Column::Sequence)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(row)
+}
+
+/// 下一个 status=pending 的回合（推进 next_action_at 用）。
+pub async fn next_pending_round(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> AwdpResult<Option<awdp_fix_rounds::Model>> {
+    let row = awdp_fix_rounds::Entity::find()
+        .filter(awdp_fix_rounds::Column::EventId.eq(event_id))
+        .filter(awdp_fix_rounds::Column::Status.eq("pending"))
+        .order_by_asc(awdp_fix_rounds::Column::Sequence)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(row)
+}
+
+/// 全部 evaluating 且无 pending/running 评估的回合 → completed（幂等兜底）。
+pub async fn complete_finished_rounds(db: &DatabaseConnection) -> AwdpResult<usize> {
+    use sea_orm::{QuerySelect, sea_query::Condition};
+    let evaluating = awdp_fix_rounds::Entity::find()
+        .filter(awdp_fix_rounds::Column::Status.eq("evaluating"))
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let mut n = 0usize;
+    for round in evaluating {
+        let pending = crate::entity::awdp_evaluations::Entity::find()
+            .filter(crate::entity::awdp_evaluations::Column::FixRoundId.eq(round.id))
+            .filter(
+                Condition::any()
+                    .add(
+                        crate::entity::awdp_evaluations::Column::Status
+                            .eq(crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::Pending),
+                    )
+                    .add(
+                        crate::entity::awdp_evaluations::Column::Status
+                            .eq(crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::Running),
+                    ),
+            )
+            .count(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        if pending == 0 {
+            set_status(db, round.id, "completed").await?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}

@@ -182,6 +182,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         awd_firewall.clone(),
         awd_crypto.clone(),
         publisher.clone(),
+        config.clone(),
     )
     .await
     .expect("init startup handlers failed!");

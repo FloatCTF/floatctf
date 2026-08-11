@@ -31,6 +31,7 @@ pub async fn require_by_event_id<C: ConnectionTrait>(
 }
 
 /// 确保 awdp_events 行存在（默认配置）。创建/读取事件时调用。
+/// pending 且未排期 → next_action_at = events.start_time（tick 驱动开始）。
 pub async fn ensure_by_event_id(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -44,6 +45,11 @@ pub async fn ensure_by_event_id(
     }
     config.validate()?;
     let now = Utc::now().into();
+    let next_action_at = crate::entity::events::Entity::find_by_id(event_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .map(|e| e.start_time.with_timezone(&Utc));
     awdp_events::ActiveModel {
         event_id: Set(event_id),
         phase: Set(AwdpPhase::Pending),
@@ -54,6 +60,7 @@ pub async fn ensure_by_event_id(
         fix_round_score: Set(config.fix_round_score),
         configuration_generation: Set(1),
         current_round: Set(0),
+        next_action_at: Set(next_action_at.map(|t| t.into())),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()

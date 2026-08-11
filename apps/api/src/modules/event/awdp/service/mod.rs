@@ -6,3 +6,4 @@ pub mod event_service;
 pub mod lock;
 pub mod patch_service;
 pub mod runtime;
+pub mod tick_service;

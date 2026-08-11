@@ -11,7 +11,9 @@ use uuid::Uuid;
 use crate::infrastructure::script_runner::{parse_batch_results, run_script};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    repo::{evaluation_repo, event_gamebox_repo, event_repo, instance_repo},
+    repo::{
+        evaluation_repo, event_gamebox_repo, event_repo, instance_repo, patch_repo, score_repo,
+    },
     service::{lock::InstanceAdvisoryLock, runtime::Subject},
 };
 
@@ -229,4 +231,313 @@ async fn manual_check_locked(
         judge_ok,
         judge_detail,
     })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Official evaluation（plan §25/§32/§33/§36）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 物化一条 official 评估（round × instance 唯一；幂等）。
+pub async fn materialize_official_evaluations(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    instance_id: Uuid,
+    fix_round_id: Uuid,
+) -> AwdpResult<bool> {
+    let _ = evaluation_repo::create_official(db, event_id, instance_id, fix_round_id).await?;
+    Ok(true)
+}
+
+/// worker 单轮：领取 pending 评估（SKIP LOCKED）并逐一执行。
+pub async fn worker_round(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    concurrency: u64,
+) -> AwdpResult<usize> {
+    let claimed = evaluation_repo::claim_pending(db, concurrency).await?;
+    let mut n = 0usize;
+    for ev in claimed {
+        match process_official(db, docker, &ev).await {
+            Ok(()) => n += 1,
+            Err(e) => {
+                // 平台内部失败：PLATFORM_ERROR，可 retry（与 VULNERABLE/BROKEN 区分）。
+                let _ = evaluation_repo::finish(
+                    db,
+                    ev.id,
+                    crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::PlatformError,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&format!("{e}")),
+                )
+                .await;
+                tracing::warn!(evaluation_id = %ev.id, error = %e, "AWDP evaluation failed");
+            }
+        }
+    }
+    Ok(n)
+}
+
+/// 执行单条 official 评估：NO_PATCH → Healthcheck → Judge → Exploit → Score。
+async fn process_official(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    ev: &crate::entity::awdp_evaluations::Model,
+) -> AwdpResult<()> {
+    let lock = InstanceAdvisoryLock::acquire(db, ev.instance_id).await?;
+    let result = process_official_locked(db, docker, ev).await;
+    lock.release().await;
+    result
+}
+
+async fn process_official_locked(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    ev: &crate::entity::awdp_evaluations::Model,
+) -> AwdpResult<()> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
+
+    let (_instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
+    let (_eg, gamebox) =
+        event_gamebox_repo::effective_gamebox_spec(db, ext.event_gamebox_id).await?;
+    let round_id = ev
+        .fix_round_id
+        .ok_or_else(|| AwdpError::Internal("official evaluation missing fix_round_id".into()))?;
+
+    // 1. NO_PATCH 短路（plan §21/§33：本轮无 APPLIED patch → +0，不浪费资源）。
+    if !patch_repo::has_applied_patch(db, ev.instance_id, round_id).await? {
+        evaluation_repo::finish(
+            db,
+            ev.id,
+            S::NoPatch,
+            Some("no applied patch this round"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let instance = {
+        // 容器可能已停 → 评估前确保运行（评估官方语义：对当前 instance 状态判）。
+        let (inst, _) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
+        inst
+    };
+    let runtime = DockerContainerRuntime::new(docker.clone());
+    let container_ip = if instance.runtime_state == "running" {
+        let state = runtime
+            .inspect_container(&instance.container_name)
+            .await
+            .map_err(|e| AwdpError::Docker(format!("inspect for eval: {e}")))?;
+        state.ip_address
+    } else {
+        None
+    };
+
+    // 2. Healthcheck（public endpoints，重试）。
+    let endpoints = super::runtime::instance_endpoints_for(db, ev.instance_id).await?;
+    let healthchecks = crate::modules::gamebox::healthcheck::parse_healthchecks(
+        &gamebox
+            .healthchecks_json
+            .clone()
+            .unwrap_or_else(|| serde_json::json!([])),
+    )?;
+    let mut health_ok = true;
+    let mut health_detail = Vec::new();
+    for hc in &healthchecks {
+        let (port, protocol) = match hc {
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Http { port, .. } => {
+                (*port, "http")
+            }
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => (*port, "tcp"),
+        };
+        let Some(ep) = endpoints
+            .iter()
+            .find(|e| e.protocol == protocol && e.container_port == port as i32)
+        else {
+            health_ok = false;
+            health_detail.push(format!("{protocol}:{port} 未发布"));
+            continue;
+        };
+        let public_check = match hc {
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
+                path,
+                expected_status,
+                ..
+            } => crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
+                port: ep.public_port as u16,
+                path: path.clone(),
+                expected_status: *expected_status,
+            },
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { .. } => {
+                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp {
+                    port: ep.public_port as u16,
+                }
+            }
+        };
+        let r = crate::modules::gamebox::healthcheck::probe_one_with_retries(
+            &ep.public_host,
+            &public_check,
+            Duration::from_secs(5),
+            3,
+            Duration::from_secs(2),
+        )
+        .await;
+        health_detail.push(r.detail.clone());
+        if !r.ok {
+            health_ok = false;
+        }
+    }
+    if !health_ok {
+        evaluation_repo::finish(
+            db,
+            ev.id,
+            S::ServiceDown,
+            Some(&health_detail.join("; ")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // 3. Judge（check.py）。
+    let judge_content = gamebox.judge_script_content.clone();
+    let (judge_ok, judge_detail) = match (judge_content, &container_ip) {
+        (Some(script), Some(ip)) => {
+            let outcome = run_script(
+                &script,
+                "python3",
+                &[ip.clone()],
+                &[],
+                Duration::from_secs(30),
+                16 * 1024,
+                16 * 1024,
+            )
+            .await
+            .map_err(|e| AwdpError::Internal(format!("judge runner: {e}")))?;
+            match parse_batch_results(&outcome.stdout) {
+                Ok(rows) => {
+                    let hit = rows
+                        .iter()
+                        .find(|r| r.ip == *ip || r.ip.is_empty())
+                        .or_else(|| rows.first());
+                    match hit {
+                        Some(r) => (
+                            r.success,
+                            r.error.clone().unwrap_or_else(|| {
+                                format!("judge: {}", if r.success { "PASS" } else { "FAIL" })
+                            }),
+                        ),
+                        None => (false, "judge 无该目标结果".into()),
+                    }
+                }
+                Err(e) => (false, format!("judge 输出解析失败: {e}")),
+            }
+        }
+        (None, _) => (false, "GameBox 无 judge 脚本".into()),
+        (_, None) => (false, "容器未运行，无法 judge".into()),
+    };
+    if !judge_ok {
+        evaluation_repo::finish(
+            db,
+            ev.id,
+            S::FunctionalBroken,
+            Some(&health_detail.join("; ")),
+            Some(&judge_detail),
+            None,
+            None,
+            None,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // 4. Official exploit（平台侧执行；成功 = VULNERABLE +0，失败 = PATCHED +score）。
+    let exploit_content = gamebox.awdp_exploit_script_content.clone();
+    let (exploit_ok, exploit_detail) = match (exploit_content, &container_ip) {
+        (Some(script), Some(ip)) => {
+            let outcome = run_script(
+                &script,
+                "python3",
+                &[ip.clone()],
+                &[],
+                Duration::from_secs(60),
+                32 * 1024,
+                32 * 1024,
+            )
+            .await
+            .map_err(|e| AwdpError::Internal(format!("exploit runner: {e}")))?;
+            match parse_batch_results(&outcome.stdout) {
+                Ok(rows) => {
+                    let hit = rows
+                        .iter()
+                        .find(|r| r.ip == *ip || r.ip.is_empty())
+                        .or_else(|| rows.first());
+                    match hit {
+                        Some(r) => (
+                            r.success,
+                            r.error.clone().unwrap_or_else(|| "exploit executed".into()),
+                        ),
+                        None => (false, "exploit 无该目标结果".into()),
+                    }
+                }
+                Err(e) => (false, format!("exploit 输出解析失败: {e}")),
+            }
+        }
+        (None, _) => (false, "GameBox 无 [awdp] exploit 脚本".into()),
+        (_, None) => (false, "容器未运行，无法执行 exploit".into()),
+    };
+
+    if exploit_ok {
+        // VULNERABLE → +0（记录即可）。
+        evaluation_repo::finish(
+            db,
+            ev.id,
+            S::Vulnerable,
+            Some(&health_detail.join("; ")),
+            Some(&judge_detail),
+            Some(&exploit_detail),
+            None,
+            None,
+        )
+        .await?;
+    } else {
+        // PATCHED → +fix_round_score（幂等键 awdp:fix:{event}:{round}:{instance}）。
+        let awdp = event_repo::require_by_event_id(db, ev.event_id).await?;
+        let key = crate::modules::event::awdp::domain::fix_idempotency_key(
+            ev.event_id,
+            round_id,
+            ev.instance_id,
+        );
+        let _scored = score_repo::create_score_event(
+            db,
+            ev.event_id,
+            ext.owner_user_id,
+            ext.owner_team_id,
+            ext.event_gamebox_id,
+            "fix",
+            Some(round_id),
+            awdp.fix_round_score,
+            &key,
+        )
+        .await?;
+        evaluation_repo::finish(
+            db,
+            ev.id,
+            S::Patched,
+            Some(&health_detail.join("; ")),
+            Some(&judge_detail),
+            Some(&exploit_detail),
+            None,
+            None,
+        )
+        .await?;
+    }
+    Ok(())
 }

@@ -7,6 +7,7 @@ use fcmc::DockerRuntime;
 use tracing::info;
 
 use crate::{
+    core::AppConfig,
     infrastructure::LogService,
     infrastructure::realtime::EventPublisher,
     infrastructure::{WebDb, WebDocker, WebRustfs},
@@ -18,6 +19,7 @@ use crate::{
             AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler, AwdTeamUnbanHandler,
         },
     },
+    modules::event::awdp::scheduler::{AwdpEvalWorkerHandler, AwdpTickHandler},
     scheduler::{
         CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
         TaskHandler, TaskScheduler,
@@ -34,8 +36,11 @@ pub async fn build_task_scheduler(
     firewall: Arc<dyn FirewallRuntime>,
     crypto: Arc<AwdCrypto>,
     publisher: Arc<dyn EventPublisher>,
+    config: Arc<AppConfig>,
 ) -> Result<TaskScheduler> {
     let mut scheduler = TaskScheduler::new(db.clone(), docker.clone(), rustfs.clone(), logger);
+    // seed 需要裸 connection；handler 构造完成后 db 可能被 move，提前克隆。
+    let seed_db = db.get_ref().clone();
 
     // AWD 容器 runtime：自动 precheck 与 archive cleanup 共享同一实例。
     let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
@@ -82,11 +87,20 @@ pub async fn build_task_scheduler(
             publisher: publisher.clone(),
         }),
         Arc::new(AwdArchiveCleanupHandler {
-            db,
+            db: db.clone(),
             docker: docker.clone(),
             network,
             firewall,
             containers: awd_containers,
+        }),
+        Arc::new(AwdpTickHandler {
+            db: db.clone(),
+            docker: docker.clone(),
+            config: config.clone(),
+        }),
+        Arc::new(AwdpEvalWorkerHandler {
+            db,
+            docker: docker.clone(),
         }),
     ];
 
@@ -99,6 +113,8 @@ pub async fn build_task_scheduler(
     }
 
     scheduler.seed_startup_tasks().await?;
+    // AWDP 引擎：2 个 recurring cron（tick / eval worker），幂等 seed。
+    crate::modules::event::awdp::scheduler::seed_awdp_recurring_tasks(&seed_db).await?;
     scheduler.validate_enabled_task_keys().await?;
     Ok(scheduler)
 }

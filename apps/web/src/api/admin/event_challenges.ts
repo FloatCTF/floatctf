@@ -1,4 +1,4 @@
-import type { EventChallenges } from "@/entity";
+import type { JeopardyEventChallenges as EventChallenges } from "@/entity";
 import type { EventChallengeResult } from "@/routes/admin/events/jeopardy.$id";
 import { type QueryParams, type UniResponse, admin_api } from "@/api/axios";
 

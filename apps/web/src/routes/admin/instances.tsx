@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { adminApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { DatetimeToShow } from "@/util";
 

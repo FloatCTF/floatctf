@@ -2,7 +2,7 @@ import type {
     EventAnnouncements,
     EventTeams,
     EventUsers,
-    Instances,
+    ChallengeInstances as Instances,
 } from "@/entity";
 import type { EventInfo } from "@/routes/service/events";
 import type { EventChallengeResult } from "@/routes/service/events/jeopardy.$id/challenges";

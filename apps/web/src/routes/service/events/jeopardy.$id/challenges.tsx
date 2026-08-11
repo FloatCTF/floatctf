@@ -18,7 +18,7 @@ import { RemainingTimer } from "../../challenges/$id";
 
 import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import type { ChallengesListItem } from "@/types/challengeDto";
 import type { AxiosError } from "axios";
 export const Route = createFileRoute("/service/events/jeopardy/$id/challenges")(

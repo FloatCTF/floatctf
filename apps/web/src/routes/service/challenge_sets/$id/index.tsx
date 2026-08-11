@@ -11,7 +11,7 @@ import { RemainingTimer } from "../../challenges/$id";
 import { serviceApi } from "@/api";
 import type { UniResponse } from "@/api/axios";
 import { useMsgBanner } from "@/components";
-import type { Challenges, Instances } from "@/entity";
+import type { Challenges, ChallengeInstances as Instances } from "@/entity";
 import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow } from "@/util";
 import type { AxiosError } from "axios";

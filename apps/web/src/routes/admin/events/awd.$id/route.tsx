@@ -11,7 +11,7 @@ import { createContext, useEffect } from "react";
 import { adminApi } from "@/api";
 import {
 	type Challenges,
-	type EventChallenges,
+	type JeopardyEventChallenges as EventChallenges,
 	EventFamily,
 	type Events,
 } from "@/entity";

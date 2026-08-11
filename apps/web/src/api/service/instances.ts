@@ -1,4 +1,4 @@
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import { type QueryParams, type UniResponse, service_api } from "../axios";
 
 export const instanceServiceApi = {

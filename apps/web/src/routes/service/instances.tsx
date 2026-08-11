@@ -5,7 +5,7 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 

@@ -13,7 +13,7 @@ import {
 	challengeQueryOptions,
 } from "@/api/queries";
 import { useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import { ServiceRouteGuard } from "@/routes/service/route";
 
 export const Route = createFileRoute("/service/challenges/$id/")({

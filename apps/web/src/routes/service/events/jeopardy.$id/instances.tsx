@@ -8,7 +8,7 @@ import type { AxiosError } from "axios";
 
 import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+import type { ChallengeInstances as Instances } from "@/entity";
 import { DatetimeToShow } from "@/util";
 
 export type EventInstanceResult = {

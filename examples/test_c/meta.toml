@@ -8,7 +8,7 @@ description = "Challenge description" # modify
 # safe_name = "easy-web-01"
 
 # Optional: 附件路径（必须位于 attachment/ 目录下）
-# attachment = "attachment/src.zip"
+attachment = "attachment/note.txt"
 
 [flag]
 type = "dynamic"

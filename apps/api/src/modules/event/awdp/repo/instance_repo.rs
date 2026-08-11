@@ -1,25 +1,40 @@
-//! AWDP 实例仓储：generic `instances` 根 + `awdp_instances` extension。
+//! AWDP 实例仓储：generic `instances` 根 + `awdp_instances` extension（run 作用域）。
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, TransactionTrait,
 };
 use uuid::Uuid;
 
 use crate::entity::{awdp_instances, instances};
-use crate::modules::event::awdp::{AwdpError, AwdpResult};
+use crate::modules::event::awdp::{AwdpError, AwdpResult, repo::run_repo};
 
 /// 创建逻辑实例（instances + awdp_instances 同事务写入；owner 双主体镜像）。
+/// run_id 决定 scope：practice（无 event，event_id 冗余列为 NULL）/ competition（event_id=run.event_id，
+/// 供 team 复合 FK）。内部校验 run 存在且 scope 合法。
 pub async fn create_instance(
     db: &DatabaseConnection,
-    event_id: Uuid,
-    event_gamebox_id: Uuid,
+    run_id: Uuid,
+    gamebox_id: Uuid,
     owner_user_id: Option<Uuid>,
     owner_team_id: Option<Uuid>,
     container_name: &str,
     image_ref: &str,
 ) -> AwdpResult<(instances::Model, awdp_instances::Model)> {
+    // scope 校验：run 必须存在；practice run 只允许 user 主体。
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if run.gamebox_id.is_some() && owner_team_id.is_some() {
+        return Err(AwdpError::Validation(
+            "practice run 只支持 individual 主体".into(),
+        ));
+    }
+    if run.event_id.is_some() && owner_user_id.is_none() && owner_team_id.is_none() {
+        return Err(AwdpError::Internal(
+            "competition instance 必须指定主体".into(),
+        ));
+    }
+
     let txn = db
         .begin()
         .await
@@ -45,8 +60,9 @@ pub async fn create_instance(
 
     let ext = awdp_instances::ActiveModel {
         instance_id: Set(instance.id),
-        event_id: Set(event_id),
-        event_gamebox_id: Set(event_gamebox_id),
+        run_id: Set(run_id),
+        gamebox_id: Set(gamebox_id),
+        event_id: Set(run.event_id),
         owner_user_id: Set(owner_user_id),
         owner_team_id: Set(owner_team_id),
         created_at: Set(now),
@@ -67,17 +83,17 @@ pub async fn create_instance(
     Ok((instance, ext))
 }
 
-/// 按 subject × event_gamebox 查找现有实例。
+/// 按 subject × run × gamebox 查找现有实例。
 pub async fn find_instance_for_subject(
     db: &DatabaseConnection,
-    event_id: Uuid,
-    event_gamebox_id: Uuid,
+    run_id: Uuid,
+    gamebox_id: Uuid,
     owner_user_id: Option<Uuid>,
     owner_team_id: Option<Uuid>,
 ) -> AwdpResult<Option<(instances::Model, awdp_instances::Model)>> {
     let mut q = awdp_instances::Entity::find()
-        .filter(awdp_instances::Column::EventId.eq(event_id))
-        .filter(awdp_instances::Column::EventGameboxId.eq(event_gamebox_id));
+        .filter(awdp_instances::Column::RunId.eq(run_id))
+        .filter(awdp_instances::Column::GameboxId.eq(gamebox_id));
     q = match (owner_user_id, owner_team_id) {
         (Some(u), None) => q.filter(awdp_instances::Column::OwnerUserId.eq(u)),
         (None, Some(t)) => q.filter(awdp_instances::Column::OwnerTeamId.eq(t)),
@@ -96,7 +112,7 @@ pub async fn find_instance_for_subject(
     Ok(Some((instance, ext)))
 }
 
-/// 按 instance_id 查找（含 extension 与 event_gamebox）。
+/// 按 instance_id 查找（含 extension）。
 pub async fn find_by_instance_id(
     db: &DatabaseConnection,
     instance_id: Uuid,
@@ -145,13 +161,41 @@ pub async fn update_runtime_state(
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
-/// 列表：事件下全部实例（管理端 inspect）。
+/// 列表：run 下全部实例。
+pub async fn list_for_run(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+) -> AwdpResult<Vec<(instances::Model, awdp_instances::Model)>> {
+    let exts = awdp_instances::Entity::find()
+        .filter(awdp_instances::Column::RunId.eq(run_id))
+        .order_by_asc(awdp_instances::Column::CreatedAt)
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let mut out = Vec::with_capacity(exts.len());
+    for ext in exts {
+        let instance = instances::Entity::find_by_id(ext.instance_id)
+            .one(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .ok_or_else(|| AwdpError::Internal("instance row missing".into()))?;
+        out.push((instance, ext));
+    }
+    Ok(out)
+}
+
+/// 列表：事件下全部实例（管理端 inspect；经 run 聚合）。
 pub async fn list_for_event(
     db: &DatabaseConnection,
     event_id: Uuid,
 ) -> AwdpResult<Vec<(instances::Model, awdp_instances::Model)>> {
+    let runs = run_repo::list_for_event(db, event_id).await?;
+    if runs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let run_ids: Vec<Uuid> = runs.into_iter().map(|r| r.id).collect();
     let exts = awdp_instances::Entity::find()
-        .filter(awdp_instances::Column::EventId.eq(event_id))
+        .filter(awdp_instances::Column::RunId.is_in(run_ids))
         .order_by_asc(awdp_instances::Column::CreatedAt)
         .all(db)
         .await

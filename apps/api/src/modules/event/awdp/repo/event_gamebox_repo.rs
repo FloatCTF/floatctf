@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::entity::{awdp_event_gameboxes, gameboxes};
 use crate::modules::event::awdp::{AwdpError, AwdpResult};
-use crate::modules::gamebox::{GameboxError, library};
+use crate::modules::gamebox::library;
 
 pub async fn find_by_id<C: ConnectionTrait>(
     db: &C,
@@ -134,4 +134,26 @@ pub async fn effective_gamebox_spec(
     let eg = require_by_id(db, event_gamebox_id).await?;
     let gamebox = find_gamebox_identity(db, eg.gamebox_id).await?;
     Ok((eg, gamebox))
+}
+
+/// 按 (event_id, gamebox_id) 查找赛事挂载行（competition run 从 gamebox_id 解析 eg）。
+pub async fn find_for_event_and_gamebox(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    gamebox_id: Uuid,
+) -> AwdpResult<Option<awdp_event_gameboxes::Model>> {
+    awdp_event_gameboxes::Entity::find()
+        .filter(awdp_event_gameboxes::Column::EventId.eq(event_id))
+        .filter(awdp_event_gameboxes::Column::GameboxId.eq(gamebox_id))
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))
+}
+
+/// practice 用的 GameBox 默认规格（无赛事 override）：直接返回 gamebox 身份。
+pub async fn effective_gamebox_spec_by_gamebox(
+    db: &DatabaseConnection,
+    gamebox_id: Uuid,
+) -> AwdpResult<gameboxes::Model> {
+    find_gamebox_identity(db, gamebox_id).await
 }

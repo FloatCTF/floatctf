@@ -1,9 +1,9 @@
-//! awdp_evaluations 仓储。
+//! awdp_evaluations 仓储（run 作用域）。
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
@@ -16,14 +16,14 @@ use crate::modules::event::awdp::{AwdpError, AwdpResult};
 /// 创建 official 评估（每 round × instance 唯一；冲突视为已存在）。
 pub async fn create_official(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     fix_round_id: Uuid,
 ) -> AwdpResult<awdp_evaluations::Model> {
     let now = Utc::now().into();
     let model = awdp_evaluations::ActiveModel {
         id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
+        run_id: Set(run_id),
         instance_id: Set(instance_id),
         fix_round_id: Set(Some(fix_round_id)),
         kind: Set(AwdpEvaluationKind::Official),
@@ -54,13 +54,13 @@ pub async fn create_official(
 /// 创建 manual 评估（healthcheck + judge，不计分）。
 pub async fn create_manual(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
 ) -> AwdpResult<awdp_evaluations::Model> {
     let now = Utc::now().into();
     awdp_evaluations::ActiveModel {
         id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
+        run_id: Set(run_id),
         instance_id: Set(instance_id),
         fix_round_id: Set(None),
         kind: Set(AwdpEvaluationKind::Manual),
@@ -147,23 +147,23 @@ pub async fn finish(
     Ok(())
 }
 
-/// 事件的全部评估（选手视角过滤在 service 层）。
-pub async fn list_for_event(
+/// run 的全部评估（选手视角过滤在 service 层）。
+pub async fn list_for_run(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
 ) -> AwdpResult<Vec<awdp_evaluations::Model>> {
     awdp_evaluations::Entity::find()
-        .filter(awdp_evaluations::Column::EventId.eq(event_id))
+        .filter(awdp_evaluations::Column::RunId.eq(run_id))
         .order_by_desc(awdp_evaluations::Column::CreatedAt)
         .all(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
-/// 事件下全部带 instance 的评估（管理端视图）。
-pub async fn list_for_event_with_instances(
+/// run 下全部带 instance 的评估（管理端视图）。
+pub async fn list_for_run_with_instances(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
 ) -> AwdpResult<
     Vec<(
         awdp_evaluations::Model,
@@ -171,7 +171,7 @@ pub async fn list_for_event_with_instances(
         instances::Model,
     )>,
 > {
-    let evals = list_for_event(db, event_id).await?;
+    let evals = list_for_run(db, run_id).await?;
     let mut out = Vec::with_capacity(evals.len());
     for ev in evals {
         let ext = awdp_instances::Entity::find_by_id(ev.instance_id)

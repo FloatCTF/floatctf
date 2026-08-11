@@ -1,20 +1,20 @@
-//! awdp_patch_submissions 仓储。
+//! awdp_patch_submissions 仓储（run 作用域）。
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
 use crate::entity::awdp_patch_submissions;
-use crate::modules::event::awdp::{AwdpError, AwdpResult};
+use crate::modules::event::awdp::{AwdpError, AwdpResult, repo::run_repo};
 
 /// 创建 patch 提交（status=applying）。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_submission(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     fix_round_id: Uuid,
     user_id: Option<Uuid>,
@@ -22,9 +22,11 @@ pub async fn create_submission(
     script_sha256: &str,
     script_content: &str,
 ) -> AwdpResult<awdp_patch_submissions::Model> {
+    let event_id = run_repo::event_id_for_team_fk(db, run_id).await?;
     let now = Utc::now().into();
     awdp_patch_submissions::ActiveModel {
         id: Set(Uuid::new_v4()),
+        run_id: Set(run_id),
         event_id: Set(event_id),
         instance_id: Set(instance_id),
         fix_round_id: Set(Some(fix_round_id)),
@@ -101,13 +103,13 @@ pub async fn latest_for_instance(
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
-/// 事件全部 patch 提交（管理端审计）。
-pub async fn list_for_event(
+/// run 全部 patch 提交（管理端审计）。
+pub async fn list_for_run(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
 ) -> AwdpResult<Vec<awdp_patch_submissions::Model>> {
     awdp_patch_submissions::Entity::find()
-        .filter(awdp_patch_submissions::Column::EventId.eq(event_id))
+        .filter(awdp_patch_submissions::Column::RunId.eq(run_id))
         .order_by_desc(awdp_patch_submissions::Column::SubmittedAt)
         .all(db)
         .await

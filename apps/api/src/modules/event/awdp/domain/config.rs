@@ -36,6 +36,17 @@ impl Default for AwdpConfig {
 }
 
 impl AwdpConfig {
+    /// 从 run 快照列重建配置（run 启动后 snapshot 冻结，此后不随 awdp_events 变化）。
+    pub fn from_run(run: &crate::entity::awdp_runs::Model) -> Self {
+        Self {
+            break_duration_secs: run.break_duration_secs,
+            fix_duration_secs: run.fix_duration_secs,
+            fix_round_interval_secs: run.fix_round_interval_secs,
+            break_score: run.break_score,
+            fix_round_score: run.fix_round_score,
+        }
+    }
+
     /// 校验全部时长/分值约束。
     pub fn validate(&self) -> AwdpResult<()> {
         if self.break_duration_secs <= 0 {

@@ -7,6 +7,7 @@ import {
 	LogIcon,
 	MegaphoneIcon,
 	NoteIcon,
+	PackageIcon,
 	PersonIcon,
 	TasklistIcon,
 	TelescopeIcon,
@@ -77,6 +78,10 @@ export const serviceNavigation: NavigationSection[] = [
 			}),
 			item("service.instances", "Instances", "/service/instances", {
 				icon: <FlameIcon />,
+			}),
+			item("service.gameboxes", "Gameboxes", "/service/gameboxes", {
+				icon: <PackageIcon />,
+				match: { mode: "segment-prefix" },
 			}),
 		],
 	},

@@ -3,9 +3,9 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { ChallengesListItem } from "@/types/challengeDto";
 import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "@/routes/service/route";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow } from "@/util";
 
 export const Route = createFileRoute("/service/challenges/")({
@@ -34,6 +34,22 @@ function RouteComponent() {
 			accessorKey: "category",
 			header: "Category",
 			field: "category",
+		},
+		{
+			accessorKey: "author",
+			header: "Author",
+			field: "author",
+			renderCell: (row: ChallengesListItem) => {
+				return <span>{row.author || "—"}</span>;
+			},
+		},
+		{
+			accessorKey: "version",
+			header: "Version",
+			field: "version",
+			renderCell: (row: ChallengesListItem) => {
+				return <span>{row.version ?? "—"}</span>;
+			},
 		},
 		{
 			accessorKey: "updated_at",

@@ -15,6 +15,8 @@ export type ChallengeAttachmentDto = {
  */
 export type ChallengesListItem = Omit<Challenges, "container_port"> & {
 	version?: string;
+	/** 包 manifest 作者（spec_json.author）。 */
+	author?: string;
 	build_status?: string;
 	image_ref?: string;
 	attachment?: ChallengeAttachmentDto;

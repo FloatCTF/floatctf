@@ -44,6 +44,9 @@ export type GameBoxCatalogDto = {
 	description: string;
 	category: string;
 	version: string | null;
+	/** 作者（gameboxes.username）。 */
+	author?: string | null;
+	updated_at?: string;
 	awdp_capable: boolean;
 	recommended_cpu_millis: number;
 	recommended_memory_bytes: number;

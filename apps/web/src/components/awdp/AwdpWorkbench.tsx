@@ -29,20 +29,11 @@ import type {
 	PatchSubmitResponse,
 } from "@/api/awdp";
 import { useMsgBanner } from "@/components";
+import { AwdpPhaseOverview } from "@/components/awdp/AwdpPhaseOverview";
 
 // ────────────────────────────────────────────────────────────────────────────
 // 常量与工具
 // ────────────────────────────────────────────────────────────────────────────
-
-export const PHASE_META: Record<
-	string,
-	{ text: string; variant: "attention" | "accent" | "success" | "done" }
-> = {
-	pending: { text: "Pending", variant: "attention" },
-	break: { text: "Break", variant: "accent" },
-	fix: { text: "Fix", variant: "success" },
-	ended: { text: "Ended", variant: "done" },
-};
 
 export const EVAL_STATUS_LABEL: Record<string, string> = {
 	pending: "pending",
@@ -57,13 +48,6 @@ export const EVAL_STATUS_LABEL: Record<string, string> = {
 
 function fmtTime(iso?: string | null) {
 	return iso ? dayjs.utc(iso).local().format("MM-DD HH:mm:ss") : "-";
-}
-
-function formatCountdown(seconds: number | null) {
-	if (seconds == null || seconds <= 0) {
-		return "-";
-	}
-	return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${seconds % 60}s`;
 }
 
 function useNow() {
@@ -193,6 +177,14 @@ export type AwdpWorkbenchViewModel = {
 	/** 标题下方展示的描述（与挑战详情页同款 border-top 分隔）。 */
 	description?: string;
 	phase: AwdpPhase;
+	/** Break 开始时间（新顶部面板 timeline 用）。 */
+	startedAt?: string | null;
+	/** Fix 开始时间。 */
+	fixStartedAt?: string | null;
+	/** Break 时长秒（timeline 宽度按真实比例）。 */
+	breakDurationSecs: number;
+	/** Fix 时长秒。 */
+	fixDurationSecs: number;
 	/** break → break_ends_at；fix → next_action_at（下一 cutoff）。 */
 	phaseEndsAt: string | null;
 	breakEndsAt?: string | null;
@@ -262,7 +254,6 @@ export function AwdpWorkbench({
 	const banner = useMsgBanner({});
 	const now = useNow();
 	const { phase } = viewModel;
-	const phaseMeta = PHASE_META[phase] ?? PHASE_META.pending;
 	const active = phase === "break" || phase === "fix";
 
 	// 交互 state（按 gamebox id 索引）
@@ -279,19 +270,6 @@ export function AwdpWorkbench({
 	const [busy, setBusy] = useState<Record<string, boolean>>({});
 	const setBusyKey = (key: string, value: boolean) =>
 		setBusy((prev) => ({ ...prev, [key]: value }));
-
-	const countdownTarget =
-		phase === "break"
-			? viewModel.phaseEndsAt
-			: phase === "fix"
-				? viewModel.nextCheckAt
-				: null;
-	const countdown = countdownTarget
-		? Math.max(
-				0,
-				Math.floor((new Date(countdownTarget).getTime() - now) / 1000),
-			)
-		: null;
 
 	// ── handlers ────────────────────────────────────────────────────────────
 
@@ -686,29 +664,23 @@ export function AwdpWorkbench({
 			) : null}
 			<banner.BannerComponent />
 
-			{/* 状态条：Phase + Turn + Countdown + 得分 */}
-			<section className="p-3 rounded border flex items-center gap-3">
-				<Label variant={phaseMeta.variant}>Phase: {phaseMeta.text}</Label>
-				{phase === "fix" ? (
-					<span className="text-sm font-medium">
-						Turn {viewModel.currentRound} / {viewModel.totalRounds}
-					</span>
-				) : null}
-				{active && countdownTarget ? (
-					<span className="text-sm font-medium tabular-nums">
-						剩余 {formatCountdown(countdown)}
-					</span>
-				) : null}
-				<span className="text-sm font-medium ml-auto">
-					我的得分：
-					<strong className="tabular-nums">{viewModel.score}</strong>
-				</span>
-			</section>
-
-			{/* pending：短暂过渡态 */}
-			{phase === "pending" && (
-				<p className="text-sm opacity-70">训练初始化中，请稍候…</p>
-			)}
+			{/* 顶部状态面板：Phase / Countdown / Score / Break→Fix Timeline（§3-21） */}
+			<div className="mb-2">
+				<AwdpPhaseOverview
+					phase={phase}
+					startedAt={viewModel.startedAt ?? null}
+					breakEndsAt={viewModel.breakEndsAt ?? null}
+					fixStartedAt={viewModel.fixStartedAt ?? null}
+					fixEndsAt={viewModel.fixEndsAt ?? null}
+					breakDurationSecs={viewModel.breakDurationSecs}
+					fixDurationSecs={viewModel.fixDurationSecs}
+					currentRound={viewModel.currentRound}
+					totalRounds={viewModel.totalRounds}
+					nextCheckAt={viewModel.nextCheckAt}
+					score={viewModel.score}
+					now={now}
+				/>
+			</div>
 
 			{/* GameBox 卡片列表 */}
 			<div className="flex flex-col gap-3">

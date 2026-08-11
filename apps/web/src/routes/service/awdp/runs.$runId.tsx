@@ -64,6 +64,10 @@ function RouteComponent() {
 			title: run.gamebox_name,
 			description: run.gamebox_description,
 			phase: run.phase,
+			startedAt: run.started_at,
+			fixStartedAt: run.fix_started_at,
+			breakDurationSecs: run.break_duration_secs,
+			fixDurationSecs: run.fix_duration_secs,
 			phaseEndsAt:
 				run.phase === "break"
 					? run.break_ends_at

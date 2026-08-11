@@ -5,6 +5,7 @@ import { useTitle } from "ahooks";
 import { type GameBoxCatalogDto, awdpRunApi } from "@/api/awdpRuns";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AppLink } from "@/navigation";
+import { DatetimeToShow } from "@/util";
 import { ServiceRouteGuard } from "./route";
 
 export const Route = createFileRoute("/service/gameboxes")({
@@ -74,11 +75,27 @@ function RouteComponent() {
 			},
 		},
 		{
+			accessorKey: "author",
+			header: "Author",
+			field: "author",
+			renderCell: (row: GameBoxCatalogDto) => {
+				return <span>{row.author || "—"}</span>;
+			},
+		},
+		{
 			accessorKey: "version",
 			header: "Version",
 			field: "version",
 			renderCell: (row: GameBoxCatalogDto) => {
 				return <span>{row.version ?? "—"}</span>;
+			},
+		},
+		{
+			accessorKey: "updated_at",
+			header: "Updated At",
+			field: "updated_at",
+			renderCell: (row: GameBoxCatalogDto) => {
+				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
 	];

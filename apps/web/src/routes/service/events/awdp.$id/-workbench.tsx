@@ -118,6 +118,10 @@ function toViewModel(
 	return {
 		title: "",
 		phase,
+		startedAt: overview.started_at,
+		fixStartedAt: overview.fix_started_at,
+		breakDurationSecs: overview.break_duration_secs,
+		fixDurationSecs: overview.fix_duration_secs,
 		phaseEndsAt:
 			phase === "break"
 				? overview.break_ends_at

@@ -6,12 +6,14 @@
 
 | 位置 | 内容 |
 |------|------|
-| `apps/web/src/integrations/tanstack-query/root-provider.tsx` | QueryClient **全局默认**：`staleTime: 30s`、`gcTime: 10min`、`refetchOnWindowFocus: false`、`retry: 1`（指数退避上限 8s）；**模块级真单例**（HMR 热更新不重建缓存） |
+| `apps/web/src/integrations/tanstack-query/root-provider.tsx` | QueryClient **全局默认**：`staleTime: 5s`、`gcTime: 10min`、`refetchOnWindowFocus: false`、`retry: 1`（指数退避上限 8s）；**模块级真单例**（HMR 热更新不重建缓存） |
 | `apps/web/src/components/Table.tsx`（GenericTable） | 所有表格页内置 `staleTime: 30s` + `placeholderData: keepPreviousData`（翻页保留上一页数据） |
 | 分级示例（低频覆盖） | `admin/version.tsx` changelog、`service/profile.tsx` profile → `staleTime: 5min`（低频数据覆盖全局） |
 | 轮询（实时数据） | 得分榜/趋势/仪表盘等用 `refetchInterval`（30-60s），见各 events 页面 |
 
-**为什么这样**：历史上 QueryClient 无默认值（staleTime=0）→ 43 个查询点每次进页面必重新请求 + 窗口聚焦重刷 + 失败重试 3 次，dev 下"切标签页很久才出内容"。30s 缓存让重复进入直接命中内存缓存，**连 304 条件请求都不发**。
+**为什么这样**：历史上 QueryClient 无默认值（staleTime=0）→ 43 个查询点每次进页面必重新请求 + 窗口聚焦重刷 + 失败重试 3 次，dev 下"切标签页很久才出内容"。`staleTime: 5s` 在缓存命中与新鲜度间折中：React Query 在数据 stale 时挂载仍会**先渲染缓存再后台 refetch**（不白屏），切换 nav 后最多 5s 即可看到新数据；5s 内重复进入命中内存缓存不发请求。
+
+> **注意（2026-08 调整）**：全局 `staleTime` 原为 30s，因用户反馈"切换 tab/nav 长期看不到新数据，只有刷新才有"而调短至 5s。**状态类数据的即时反映不靠 `staleTime: 0`**——路由 loader 用 `ensureQueryData` 时，`staleTime: 0` 会让数据永远 stale，导致每次从列表进入详情都重新请求并等待（白屏）。正确做法：操作类 mutation 的 `onSuccess` 必须 `invalidateQueries` 对应 key（见规则 5；active 查询会立即 refetch，未挂载的 tab 查询标记 stale、切换时挂载即重新请求）。
 
 ## 新增数据页面的硬性规则
 
@@ -24,11 +26,11 @@ const { data, isLoading } = useQuery({
 });
 ```
 
-### 2. 按数据易变度分级设置 staleTime（覆盖全局 30s）
+### 2. 按数据易变度分级设置 staleTime（覆盖全局 5s）
 | 数据类型 | staleTime | 例子 |
 |----------|-----------|------|
 | 低频（几乎不变） | `5 * 60_000` | changelog、个人资料、管理员列表 |
-| 默认（中频） | 不写（继承全局 30s） | 普通列表、详情 |
+| 默认（中频） | 继承全局 5s | 普通列表、详情 |
 | 实时（会持续变化） | `refetchInterval: 30_000~60_000`（配合较短 staleTime） | 得分榜、趋势、仪表盘统计 |
 
 低频率覆盖写法：
@@ -40,6 +42,8 @@ useQuery({
 });
 ```
 **前提**：该数据的修改类 mutation 必须 `invalidateQueries` 对应 key（见规则 5），否则显示旧数据。
+
+> ⚠️ **不要**给路由 loader 使用的查询（如 `eventInfoQueryOptions`）设 `staleTime: 0`：`ensureQueryData` 会在数据 stale 时阻塞路由切换等待网络，造成每次进入都白屏。即时性靠 mutation 的 `invalidateQueries` 保证。
 
 ### 3. 翻页/筛选列表必须 keepPreviousData
 列表切页/改筛选时保留上一页数据占位，禁止整表骨架闪烁：
@@ -86,5 +90,5 @@ const deleteMutation = useMutation({
 cd apps/web
 pnpm exec tsc --noEmit          # 类型检查（含 entity 同步）
 pnpm build                      # 生产构建
-# dev 手动验证：切走再切回数据页，30s 内 Network 面板应无新请求
+# dev 手动验证：切走再切回数据页，5s 内 Network 面板应无新请求（超过 5s 会后台刷新）
 ```

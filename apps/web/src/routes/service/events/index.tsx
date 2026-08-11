@@ -59,7 +59,6 @@ function RouteComponent() {
 							<AppLink
 								to={"/service/events/jeopardy/$id"}
 								params={{ id: row.event.id }}
-								target="_blank"
 							>
 								{row.event.title}
 							</AppLink>
@@ -69,7 +68,6 @@ function RouteComponent() {
 							<AppLink
 								to={"/service/events/awd/$id"}
 								params={{ id: row.event.id }}
-								target="_blank"
 							>
 								{row.event.title}
 							</AppLink>

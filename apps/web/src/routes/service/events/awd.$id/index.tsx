@@ -44,6 +44,10 @@ function RouteComponent() {
 	const invalidate = () => {
 		queryClient.invalidateQueries({ queryKey: ["eventInfo", id] });
 		queryClient.invalidateQueries({ queryKey: ["awd-gameboxes", id] });
+		queryClient.invalidateQueries({ queryKey: ["awd-scores", id] });
+		queryClient.invalidateQueries({ queryKey: ["awd-wg", id] });
+		queryClient.invalidateQueries({ queryKey: ["awd-ssh", id] });
+		queryClient.invalidateQueries({ queryKey: ["announcements", id] });
 	};
 
 	const joinEventMutation = useMutation({

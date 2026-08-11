@@ -8,6 +8,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { match } from "ts-pattern";
 
 import { serviceApi } from "@/api";
+import { eventInfoQueryOptions } from "@/api/queries";
 import { SubmitWriteup, useMsgInlineBanner } from "@/components";
 import { ParticipantMode } from "@/entity";
 import type { EventInfo } from "..";
@@ -44,10 +45,9 @@ function RouteComponent() {
 
 	const banner = useMsgInlineBanner();
 
-	const { data, isLoading, isError, error } = useQuery({
-		queryKey: ["event", id],
-		queryFn: () => serviceApi.events.get(id),
-	});
+	const { data, isLoading, isError, error } = useQuery(
+		eventInfoQueryOptions(id),
+	);
 
 	const eventData: EventInfo | undefined = data?.data;
 	const ev = eventData?.event;
@@ -66,15 +66,23 @@ function RouteComponent() {
 					? "Ongoing"
 					: "TBD";
 
+	// 统一失效：join/leave/建队/退队后，本页与各 tab 页（challenges/instances/scoreboard/trend/announcement）都要重新获取。
+	const invalidate = () => {
+		queryClient.invalidateQueries({ queryKey: ["eventInfo", id] });
+		queryClient.invalidateQueries({ queryKey: ["eventChallenges", id] });
+		queryClient.invalidateQueries({ queryKey: ["event_instances", id] });
+		queryClient.invalidateQueries({ queryKey: ["event_scoreboard", id] });
+		queryClient.invalidateQueries({ queryKey: ["event_trend", id] });
+		queryClient.invalidateQueries({ queryKey: ["announcements", id] });
+	};
+
 	// 统一命名 join/leave mutation；把隐藏消息放到 onMutate（清空）和 onError（展示）
 	const joinEventMutation = useMutation({
 		mutationFn: serviceApi.events.join,
 		onMutate: () => {
 			banner.hideBanner();
 		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["event", id] });
-		},
+		onSuccess: invalidate,
 
 		onError: (error) => {
 			banner.showErrorBanner(error);
@@ -86,9 +94,7 @@ function RouteComponent() {
 		onMutate: () => {
 			banner.hideBanner();
 		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["event", id] });
-		},
+		onSuccess: invalidate,
 
 		onError: (error) => {
 			banner.showErrorBanner(error);
@@ -100,10 +106,8 @@ function RouteComponent() {
 	const [teamName, setTeamName] = useState("");
 	const createEventTeamMutation = useMutation({
 		mutationFn: serviceApi.events.createTeam,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["event", id] });
-			// 报名成功
-		},
+		onSuccess: invalidate,
+		// 报名成功
 
 		onError: (error) => {
 			banner.showErrorBanner(error);
@@ -111,9 +115,7 @@ function RouteComponent() {
 	});
 	const quitEventTeamMutation = useMutation({
 		mutationFn: serviceApi.events.quitTeam,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["event", id] });
-		},
+		onSuccess: invalidate,
 
 		onError: (error) => {
 			banner.showErrorBanner(error);
@@ -121,9 +123,7 @@ function RouteComponent() {
 	});
 	const joinEventTeamMutation = useMutation({
 		mutationFn: serviceApi.events.joinTeam,
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["event", id] });
-		},
+		onSuccess: invalidate,
 
 		onError: (error) => {
 			banner.showErrorBanner(error);

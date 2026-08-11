@@ -1,13 +1,13 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use sea_orm::Condition;
-
-use crate::api::dto::map_dto_vec;
 
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, prelude::*, sea_orm_utils::query_query},
-    entity::{challenge_instances, sea_orm_active_enums::InstanceStatus},
+    entity::{
+        challenge_instances, challenges, events, sea_orm_active_enums::InstanceStatus, users,
+    },
 };
 
 /// GET /api/admin/instances
@@ -18,7 +18,6 @@ pub async fn get_instances(
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<InstancesDto>> {
     let mut query_params = query_params.0;
-    // const filterKeys = ["id", "status", "ref", "flag", "challenge_id", "user_id"];
 
     let mappings = [
         FilterMapping {
@@ -79,9 +78,60 @@ pub async fn get_instances(
     )
     .await?;
 
+    // 批量查询展示名称（题目名/赛事标题/用户昵称），避免逐行 N+1 查询。
+    let mut challenge_titles: HashMap<Uuid, String> = HashMap::new();
+    let mut event_titles: HashMap<Uuid, String> = HashMap::new();
+    let mut user_names: HashMap<Uuid, String> = HashMap::new();
+    if !items.is_empty() {
+        let challenge_ids: Vec<Uuid> = items.iter().map(|i| i.challenge_id).collect();
+        challenges::Entity::find()
+            .filter(challenges::Column::Id.is_in(challenge_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .for_each(|c| {
+                challenge_titles.insert(c.id, c.name);
+            });
+
+        let event_ids: Vec<Uuid> = items.iter().map(|i| i.event_id).collect();
+        events::Entity::find()
+            .filter(events::Column::Id.is_in(event_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .for_each(|e| {
+                event_titles.insert(e.id, e.title);
+            });
+
+        let user_ids: Vec<Uuid> = items.iter().map(|i| i.user_id).collect();
+        users::Entity::find()
+            .filter(users::Column::Id.is_in(user_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .for_each(|u| {
+                user_names.insert(u.id, u.nickname);
+            });
+    }
+
+    let dtos: Vec<InstancesDto> = items
+        .into_iter()
+        .map(|m| {
+            let challenge_id = m.challenge_id;
+            let event_id = m.event_id;
+            let user_id = m.user_id;
+            let dto = InstancesDto::from(m);
+            dto.with_names(
+                challenge_titles.get(&challenge_id).cloned(),
+                event_titles.get(&event_id).cloned(),
+                user_names.get(&user_id).cloned(),
+            )
+        })
+        .collect();
+
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
 /// GET /api/admin/instances/{instance_id}

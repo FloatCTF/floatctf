@@ -11,6 +11,13 @@ export const Route = createFileRoute("/admin/instances")({
     loader: AdminRouteGuard,
 });
 
+// admin 列表展示名称字段（后端 InstancesDto 批量填充，缺失时回落为原始 ID）
+type InstanceRow = Instances & {
+    challenge_title?: string;
+    event_title?: string;
+    user_name?: string;
+};
+
 function RouteComponent() {
     const columns = [
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
@@ -20,20 +27,33 @@ function RouteComponent() {
             field: "status",
             sortBy: true,
         },
-        { accessorKey: "event_id", header: "Event", field: "event_id", sortBy: true },
+        {
+            accessorKey: "event_title",
+            header: "Event",
+            field: "event_id",
+            sortBy: true,
+            renderCell: (row: InstanceRow) => {
+                return <span>{row.event_title ?? row.event_id}</span>;
+            },
+        },
         { accessorKey: "identifier", header: "Identifier", field: "identifier", sortBy: true },
         { accessorKey: "flag", header: "Flag", field: "flag" },
         {
-            accessorKey: "challenge_id",
-            header: "Challenge ID",
+            accessorKey: "challenge_title",
+            header: "Challenge",
             field: "challenge_id",
+            renderCell: (row: InstanceRow) => {
+                return <span>{row.challenge_title ?? row.challenge_id}</span>;
+            },
         },
         {
-            accessorKey: "gamebox_id",
-            header: "Gamebox ID",
-            field: "gamebox_id",
+            accessorKey: "user_name",
+            header: "User",
+            field: "user_id",
+            renderCell: (row: InstanceRow) => {
+                return <span>{row.user_name ?? row.user_id}</span>;
+            },
         },
-        { accessorKey: "user_id", header: "User ID", field: "user_id" },
         {
             accessorKey: "destroy_at",
             header: "Destroy At",

@@ -177,8 +177,7 @@ function RouteComponent() {
 	];
 
 	const columns = [
-		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
+		{ accessorKey: "name", header: "Name", field: "name", rowHeader: true, sortBy: true },
 		{
 			accessorKey: "safe_name",
 			header: "Safe Name",

@@ -175,8 +175,8 @@ fn gamebox_template_meta_is_parseable() {
         "awdp/exploit.py"
     );
     assert_eq!(
-        meta.awdp.as_ref().unwrap().source_code_dir.as_deref(),
-        Some("/var/www/html")
+        meta.awdp.as_ref().unwrap().source_code_dir.as_str(),
+        "/var/www/html"
     );
     assert!(!meta.gamebox.healthchecks.is_empty());
     // No legacy fields

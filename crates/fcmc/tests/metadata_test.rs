@@ -545,7 +545,8 @@ fn gamebox_parse_with_awdp() {
     let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     let awdp = meta.awdp.as_ref().unwrap();
     assert_eq!(awdp.exploit_script, "awdp/exploit.py");
-    assert_eq!(awdp.source_code_dir.as_deref(), Some("/var/www/html"));
+    // source_code_dir 在 [awdp] manifest 内为必填 String（不再 Option）。
+    assert_eq!(awdp.source_code_dir.as_str(), "/var/www/html");
     let norm = meta.normalize().unwrap();
     assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
     assert_eq!(norm.source_code_dir.as_deref(), Some("/var/www/html"));
@@ -564,10 +565,32 @@ description = "d"
 username = "u"
 
 [awdp]
+source_code_dir = "/var/www/html"
 exploit_script = "scripts/x.py"
 "#;
     let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    // exploit_script 必须位于 awdp/ 前缀下（plan §13/§77 traversal & prefix 规则）。
     assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));
+}
+
+#[test]
+fn gamebox_reject_awdp_missing_source_code_dir() {
+    // [awdp] 出现则内部字段全部必填：缺 source_code_dir 必须 fail（plan §77）。
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::Parse(_)));
 }
 
 #[test]

@@ -21,7 +21,7 @@ use crate::modules::event::awd::{
 };
 use fcmc::AwdContainerRuntime;
 
-/// 运行recovery for all active AWD events on startup。
+/// 启动时对全部活跃 AWD 赛事执行恢复。
 pub async fn recover_all(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
@@ -233,7 +233,7 @@ async fn recover_event(
     Ok(recovered)
 }
 
-/// 处理a network error: pause event, record error state。
+/// 处理网络错误：暂停赛事并记录错误态。
 pub async fn handle_network_error(
     db: &DatabaseConnection,
     event_id: Uuid,

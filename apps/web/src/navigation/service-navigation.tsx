@@ -32,16 +32,15 @@ const item = (
 });
 
 /**
- * Player (service) information architecture (GitHub Settings / Primer-style).
+ * 选手端（service）信息架构（GitHub Settings / Primer 风格）。
  *
- * - Top Users is the service landing (`/service` redirects there), kept in a
- *   label-less section like the admin Dashboard.
- * - Events/Challenges/Challenge Sets/Discussions/Writeups use segment-prefix
- *   matching so their detail routes activate the right leaf; the sidebar is
- *   hidden on event-detail pages by the service layout, but the leaf still
- *   behaves correctly on the list pages.
- * - segment boundaries keep `/service/challenges` from matching
- *   `/service/challenge_sets` and vice versa.
+ * - Top Users 为选手端落地页（`/service` 重定向至此），放在无标签分区，
+ *   与管理端 Dashboard 类似。
+ * - Events/Challenges/Challenge Sets/Discussions/Writeups 用路径段前缀匹配，
+ *   使详情路由高亮正确叶子；赛事详情页由 service layout 隐藏侧栏，
+ *   但列表页叶子行为仍正确。
+ * - 段边界保证 `/service/challenges` 不会误匹配
+ *   `/service/challenge_sets`，反之亦然。
  */
 export const serviceNavigation: NavigationSection[] = [
 	{

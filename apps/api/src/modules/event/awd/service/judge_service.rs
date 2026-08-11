@@ -55,7 +55,7 @@ impl JudgeBatchStatus {
     }
 }
 
-/// 创建a judge batch for a round: one task per (non-banned) team × template。
+/// 为某一轮创建裁判批次：每个（未封禁）战队 × 模板一条任务。
 pub async fn create_batch(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -396,7 +396,7 @@ async fn set_batch_status(
     Ok(())
 }
 
-/// 统计pending tasks for a batch。
+/// 统计某批次中的待处理任务数。
 pub async fn pending_task_count(db: &DatabaseConnection, batch_id: Uuid) -> AwdResult<i64> {
     let tasks = awd_judge_tasks::Entity::find()
         .filter(awd_judge_tasks::Column::BatchId.eq(batch_id))

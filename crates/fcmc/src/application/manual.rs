@@ -1,5 +1,4 @@
-//! Detailed usage manual for fcmc — printed by `fcmc help --agent` (AI-facing)
-//! and `fcmc help <command>`.
+//! 手工/运维向容器操作用例。
 
 /// Full agent manual. 这份文档面向 AI 助手/自动化工具：包含全部子命令、
 /// 全部选项、meta.toml 契约、包目录布局、镜像命名、代理、运行时检查与常见错误。
@@ -381,13 +380,13 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
 ================================================================================
 "#;
 
-/// Print the full agent manual (used by `fcmc help --agent`).
+/// 打印完整 agent 手册（`fcmc help --agent`）。
 pub fn print_agent_manual() {
     print!("{AGENT_MANUAL}");
 }
 
-/// Print a single-command detailed page (`fcmc help <command>`).
-/// Returns an error string for unknown commands so the CLI can exit non-zero.
+/// 打印单命令详解页（`fcmc help <command>`）。
+/// 对未知命令返回错误字符串，便于 CLI 非零退出。
 pub fn print_command_manual(command: &str) -> Result<(), String> {
     match command {
         "check" => {
@@ -413,8 +412,8 @@ pub fn print_command_manual(command: &str) -> Result<(), String> {
     }
 }
 
-/// Print the section of AGENT_MANUAL between `start_marker` and `end_marker`
-/// (start inclusive, end exclusive), used by the per-command pages.
+/// 打印 AGENT_MANUAL 中 `start_marker` 与 `end_marker` 之间的段落
+/// （含 start、不含 end），供分命令页面使用。
 fn print_agent_section(start_marker: &str, end_marker: &str) {
     let lines: Vec<&str> = AGENT_MANUAL.lines().collect();
     let start = lines

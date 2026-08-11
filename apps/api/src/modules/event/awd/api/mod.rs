@@ -10,7 +10,7 @@ pub mod player;
 
 use actix_web::web;
 
-/// 注册AWD admin routes **inside** `scope("/events")`。
+/// 在 `scope("/events")` **内部**注册 AWD 管理端路由。
 ///
 /// 最终路径：`/api/admin/events/{event_id}/awd/...` 与 `POST /api/admin/events/awd`。
 /// 注意：必须与 common 的 /events scope 同组挂载（bootstrap routes.rs），
@@ -44,7 +44,7 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::delete_event_gamebox);
 }
 
-/// 注册AWD admin routes at the `/api/admin` top level (no events/ prefix)。
+/// 在 `/api/admin` 顶层注册 AWD 管理端路由（无 events/ 前缀）。
 ///
 /// Final paths: `/api/admin/awd/...`（平台 AWD Networking §73 + GameBox 库）。
 pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
@@ -61,7 +61,7 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::hide_gamebox);
 }
 
-/// 注册AWD player routes **inside** `scope("/events")`。
+/// 在 `scope("/events")` **内部**注册 AWD 选手端路由。
 ///
 /// 最终路径：`/api/events/{event_id}/awd/...`
 /// 同样必须与 common 的 /events scope 同组挂载（bootstrap routes.rs）。
@@ -75,7 +75,7 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(player::event_stream);
 }
 
-/// 注册AWD internal routes (FlagServer / JudgeServer)。
+/// 注册 AWD 内部路由（FlagServer / JudgeServer）。
 ///
 /// 最终路径：`/internal/awd/events/...`
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {

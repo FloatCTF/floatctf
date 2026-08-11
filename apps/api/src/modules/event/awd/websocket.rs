@@ -209,7 +209,7 @@ pub fn event_resumed(event_id: Uuid) -> AwdEvent {
     AwdEvent::new("event.resumed", event_id, serde_json::json!({}))
 }
 
-/// 发布a network error event。
+/// 发布网络错误事件。
 pub fn network_error(event_id: Uuid, error_msg: &str) -> AwdEvent {
     AwdEvent::new(
         "network.error",

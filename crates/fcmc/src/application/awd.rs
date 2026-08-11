@@ -1,11 +1,4 @@
-//! AWD event orchestration.
-//!
-//! High-level operations for managing AWD event networks, infrastructure
-//! containers, and GameBox instances.
-//!
-//! Note: GameBox package manifests no longer carry `image_tag` / Docker healthchecks /
-//! scoring. Callers (platform API) must supply the resolved image ref and runtime
-//! resource limits from GameBoxRevision / EventGameBox.
+//! AWD 相关应用用例。
 
 use anyhow::{Context, Result};
 use bollard::Docker;
@@ -16,7 +9,7 @@ use crate::runtime::awd::{
     AwdContainerRuntime, DockerRuntime, EventNetworkSpec, GameBoxResetSpec, GameBoxSpec,
 };
 
-/// AWD application context.
+/// AWD 应用上下文。
 pub struct AwdApp {
     runtime: DockerRuntime,
 }

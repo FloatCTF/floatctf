@@ -1,7 +1,7 @@
 /**
- * AWD admin + player API clients (unified event routes).
- * Admin:  /api/admin/events/{eventId}/awd/...  (create: POST /api/admin/events/awd)
- * Player: /api/events/{eventId}/awd/...
+ * AWD 管理端 + 选手端 API 客户端（统一赛事路由）。
+ * 管理端：/api/admin/events/{eventId}/awd/...（创建：POST /api/admin/events/awd）
+ * 选手端：/api/events/{eventId}/awd/...
  */
 import {
 	type QueryParams,
@@ -30,7 +30,7 @@ export type AwdEventStatus = {
 };
 
 export type AwdEventConfigInput = {
-	/** PATCH optimistic-lock version; omitted on first create. */
+	/** PATCH 乐观锁版本；首次创建可省略。 */
 	expected_updated_at?: string;
 	round_duration_secs: number;
 	free_reset_count: number;
@@ -152,7 +152,7 @@ export type WireGuardConfigResponse = {
 	config: string;
 };
 
-// ── AWD Network Control Plane（§4-§7 / §22-§24 / §64-§67 / §73）──
+// ── AWD 网络控制面（§4-§7 / §22-§24 / §64-§67 / §73）──
 
 /** 平台网络设置 + 容量预览（GET /admin/awd/network）。 */
 export type PlatformNetworkSettings = {
@@ -248,7 +248,7 @@ export type NetworkAllocationRequest = {
 	wireguard_listen_port?: number;
 };
 
-/** Admin AWD lifecycle (SuperAdmin). */
+/** 管理端 AWD 生命周期（SuperAdmin）。 */
 export const awdAdminApi = {
 	getStatus: async (
 		eventId: string,
@@ -358,7 +358,7 @@ export const awdAdminApi = {
 		const res = await admin_api.get(`/awd/gameboxes`, { params });
 		return res.data;
 	},
-	/** POST multipart field `package_zip` — synchronous build. */
+	/** POST multipart 字段 `package_zip`——同步构建。 */
 	importGamebox: async (
 		file: File | Blob,
 	): Promise<UniResponse<ImportGameBoxResponse>> => {
@@ -444,7 +444,7 @@ export const awdAdminApi = {
 		const res = await admin_api.get(`/awd/network/allocations`);
 		return res.data;
 	},
-	// ── Event Network（§22/§64）──
+	// ── 赛事网络（§22/§64）──
 	/** 未分配时后端返回 404（data=null）。 */
 	getEventNetwork: async (
 		eventId: string,
@@ -530,7 +530,7 @@ export const awdAdminApi = {
 	},
 };
 
-/** Player AWD endpoints (User JWT). */
+/** 选手端 AWD 接口（用户 JWT）。 */
 export const awdPlayerApi = {
 	gameboxes: async (eventId: string): Promise<UniResponse<AwdGameBox[]>> => {
 		const res = await service_api.get(`/events/${eventId}/awd/gameboxes`);

@@ -52,7 +52,7 @@ struct CheckReport {
     notes: Vec<(String, String)>,
 }
 
-/// 运行a manual precheck on an event。
+/// 对赛事执行人工预检。
 pub async fn run_precheck(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -913,7 +913,7 @@ async fn read_configuration_generation(
     Ok(row.configuration_generation)
 }
 
-/// 计算a configuration revision hash for verification tracking。
+/// 计算配置修订哈希，用于验证跟踪。
 fn compute_revision(net: &awd_event_networks::Model) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

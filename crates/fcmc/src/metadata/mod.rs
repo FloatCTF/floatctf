@@ -1,4 +1,4 @@
-//! Challenge / GameBox metadata parsing (TOML, config shapes).
+//! 包元数据：Challenge / GameBox / 模板 / 身份规范。
 
 mod challenge;
 mod gamebox;
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // Shared types
 // ---------------------------------------------------------------------------
 
-/// Soft resource recommendation for operators / Event prefills.
+/// 给运营/赛事预填用的软资源建议。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RecommendedResources {

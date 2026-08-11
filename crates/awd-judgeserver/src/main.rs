@@ -1,23 +1,21 @@
-//! AWD JudgeServer — standalone worker for executing health-check scripts.
+//! AWD JudgeServer — 独立 worker，执行健康检查/裁判脚本。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! 1. Platform sends judge batches (list of tasks) to JudgeServer
-//! 2. JudgeServer executes each task's script locally as a subprocess
-//! 3. Script receives target IP via command-line args
-//! 4. Script checks the target GameBox's services over the network
-//! 5. Each task result is immediately POSTed back to the platform
-//!    （失败按指数退避重试，且复用同一 callback_id，见 P3-9）
-//! 6. Judge 脚本执行时使用最小 env 白名单（PATH/HOME/LANG + JUDGE_*，见 P3-12）
+//! 1. 平台向 JudgeServer 下发裁判批次（任务列表）
+//! 2. JudgeServer 将各任务脚本作为本地子进程执行
+//! 3. 脚本经命令行参数接收目标 IP
+//! 4. 脚本经网络检查目标 GameBox 服务
+//! 5. 每个任务结果立即 POST 回平台
 //!
-//! # Configuration (env vars)
+//! # 配置（环境变量）
 //!
-//! - `PLATFORM_INTERNAL_URL` — base URL of the FloatCTF platform
-//! - `EVENT_ID` — UUID of the AWD event
-//! - `INTERNAL_TOKEN` — Bearer token for platform auth
-//! - `LISTEN_ADDR` — bind address (default "0.0.0.0:8082")
-//! - `MAX_CONCURRENT` — max concurrent script executions (default 5)
-//! - `WORK_DIR` — directory for temporary script files (default "/tmp/judge")
+//! - `PLATFORM_INTERNAL_URL` — FloatCTF 平台基址
+//! - `EVENT_ID` — AWD 赛事 UUID
+//! - `INTERNAL_TOKEN` — 平台鉴权 Bearer 令牌
+//! - `LISTEN_ADDR` — 监听地址（默认 `"0.0.0.0:8082"`）
+//! - `MAX_CONCURRENT` — 最大并发脚本数（默认 5）
+//! - `WORK_DIR` — 临时脚本目录（默认 `"/tmp/judge"`）
 
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use reqwest::Client;
@@ -69,7 +67,7 @@ struct AppState {
     work_dir: String,
 }
 
-/// POST /batch — receive and execute a batch of judge tasks.
+/// POST /batch — 接收并执行一批裁判任务。
 async fn handle_batch(
     state: web::Data<AppState>,
     request: HttpRequest,
@@ -122,7 +120,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-/// Execute one judge task: write script to file, run as subprocess, callback.
+/// 执行单个裁判任务：写脚本文件、子进程运行、回调结果。
 async fn execute_single_task(state: &AppState, task: JudgeTask) {
     tracing::info!("Executing task {} for {}", task.id, task.target_ip);
 
@@ -299,7 +297,7 @@ fn build_script_env(host_env: impl Iterator<Item = (String, String)>) -> Vec<(St
         .collect()
 }
 
-/// POST the task result back to the platform.
+/// 将任务结果 POST 回平台。
 ///
 /// 失败时按指数退避自动重试（最多 `CALLBACK_MAX_ATTEMPTS` 次）。
 /// **每次重试复用同一个 `result`（同一 callback_id / 同一 callback identity）**：
@@ -442,7 +440,7 @@ mod tests {
     }
 }
 
-/// GET /health — liveness check.
+/// GET /health — 存活检查。
 async fn health() -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
 }

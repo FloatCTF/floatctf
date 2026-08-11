@@ -1,4 +1,4 @@
-//! Bollard-backed unified container runtime.
+//! Docker 运行时实现（bollard）。
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -16,7 +16,7 @@ use super::model::{
     NetworkSpec,
 };
 
-/// Unified Docker runtime used by Jeopardy instances, AWD, and CLI.
+/// 统一 Docker 运行时，供 Jeopardy 实例、AWD 与 CLI 使用。
 #[async_trait]
 pub trait ContainerRuntime: Send + Sync {
     async fn create_network(&self, spec: NetworkSpec) -> anyhow::Result<NetworkHandle>;
@@ -55,7 +55,7 @@ pub trait ContainerRuntime: Send + Sync {
     async fn logs(&self, id_or_name: &str, limit: usize) -> anyhow::Result<Vec<String>>;
 }
 
-/// Default Docker implementation of [`ContainerRuntime`].
+/// [`ContainerRuntime`] 的默认 Docker 实现。
 pub struct DockerContainerRuntime {
     docker: Docker,
 }
@@ -388,11 +388,11 @@ impl ContainerRuntime for DockerContainerRuntime {
 
 pub use super::model::DEFAULT_STOP_TIMEOUT as STOP_TIMEOUT_DEFAULT;
 
-/// Convert a mode-agnostic [`ContainerSpec`] into a bollard container-create body.
+/// 将与赛制无关的 [`ContainerSpec`] 转为 bollard 容器创建体。
 ///
-/// Pure conversion, kept separate from the Docker API call so the mapping rules
-/// (CPU quota math, healthcheck nanosecond conversion, port/network wiring) are
-/// unit-testable without a running daemon.
+/// 纯转换，与 Docker API 调用分离，使映射规则
+/// （CPU 配额计算、健康检查纳秒换算、端口/网络接线）
+/// 可在无 daemon 时做单元测试。
 pub(crate) fn spec_to_create_body(spec: ContainerSpec) -> bollard::secret::ContainerCreateBody {
     use bollard::secret::{HostConfig, NetworkingConfig};
 

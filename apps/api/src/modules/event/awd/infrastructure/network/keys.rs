@@ -22,7 +22,7 @@ impl std::fmt::Debug for WgKeyPair {
     }
 }
 
-/// 生成a new WireGuard keypair (`wg genkey` + `wg pubkey`)。
+/// 生成新的 WireGuard 密钥对（`wg genkey` + `wg pubkey`）。
 pub fn generate_keypair() -> WgKeyPair {
     let secret = StaticSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
@@ -32,7 +32,7 @@ pub fn generate_keypair() -> WgKeyPair {
     }
 }
 
-/// 派生a public key from a Base64 private key (`wg pubkey`)。
+/// 由 Base64 私钥派生公钥（`wg pubkey`）。
 pub fn public_from_private(private_key_b64: &str) -> Result<String, String> {
     let bytes = STANDARD
         .decode(private_key_b64.trim())

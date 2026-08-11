@@ -248,7 +248,7 @@ function ChallengeTile({
     );
 }
 
-// Responsive grid that auto-fills available width (Primer/GitHub-like)
+// 自适应网格，自动填满可用宽度（Primer/GitHub 风格）
 export function ChallengeGrid({
     items,
     className,

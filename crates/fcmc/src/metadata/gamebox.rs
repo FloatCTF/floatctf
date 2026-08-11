@@ -1,40 +1,4 @@
-//! GameBox portable package manifest (`meta.toml`).
-//!
-//! Contract (strict `deny_unknown_fields`):
-//!
-//! ```toml
-//! name = "TTT1"
-//! version = "1.0.0"
-//! author = "your_email"
-//! category = "web"
-//! description = "hello floatctf"
-//! # optional safe_name = "ttt1"
-//!
-//! [gamebox]
-//! username = "floatctf"
-//!
-//! [[gamebox.healthchecks]]
-//! type = "http"
-//! port = 80
-//! path = "/"
-//! expected_status = 200
-//!
-//! [[gamebox.healthchecks]]
-//! type = "tcp"
-//! port = 3306
-//!
-//! [judge]
-//! script = "judge/check.py"
-//!
-//! [gamebox.recommended_resources]
-//! cpu_millis = 1000
-//! memory_bytes = 536870912
-//! pids_limit = 100
-//! ```
-//!
-//! Removed from the portable manifest (platform / event concerns):
-//! `image_tag`, `image_ref`, scoring fields, Docker-style healthcheck, `services`,
-//! `schema_version`, and the old `[gamebox.resources]` key.
+//! GameBox 包元数据模型与解析。
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -98,9 +62,9 @@ pub enum GameBoxMetaError {
 // Types
 // ---------------------------------------------------------------------------
 
-/// Top-level GameBox package manifest (`meta.toml`).
+/// GameBox 包顶层清单（`meta.toml`）。
 ///
-/// Also exported as [`GameBoxManifest`].
+/// 亦导出为 [`GameBoxManifest`]。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GameBoxMeta {
@@ -119,7 +83,7 @@ pub struct GameBoxMeta {
     pub judge: Option<JudgeManifest>,
 }
 
-/// Alias preferred by some callers / plan docs.
+/// 部分调用方/计划文档偏好的别名。
 pub type GameBoxManifest = GameBoxMeta;
 
 /// `[gamebox]` section.
@@ -136,10 +100,10 @@ pub struct GameBoxSection {
     pub recommended_resources: Option<RecommendedResources>,
 }
 
-/// Back-compat alias — prefer [`GameBoxSection`].
+/// 向后兼容别名——优先使用 [`GameBoxSection`]。
 pub type GameBoxConfig = GameBoxSection;
 
-/// Tagged healthcheck union (`type = "http" | "tcp"`).
+/// 带标签的健康检查联合体（`type = "http" | "tcp"`）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum GameBoxHealthcheck {
@@ -167,14 +131,14 @@ pub struct JudgeManifest {
     pub script: String,
 }
 
-/// Shared soft resource recommendation (see [`crate::metadata::RecommendedResources`]).
+/// 共享的软资源建议（见 [`crate::metadata::RecommendedResources`]）。
 pub use super::RecommendedResources;
 
 // ---------------------------------------------------------------------------
 // Canonical normalized spec (stable JSON for spec_digest)
 // ---------------------------------------------------------------------------
 
-/// Canonical, fully-materialised view used for `spec_json` / digest.
+/// 用于 `spec_json` / digest 的规范、完全物化视图。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NormalizedGameBoxSpec {
     pub name: String,
@@ -208,15 +172,15 @@ pub enum NormalizedHealthcheck {
 
 pub use crate::metadata::identity::{ArtifactKind, build_artifact_image_ref, derive_safe_name};
 
-/// Validate an explicit `safe_name` (identity rules) mapped to
-/// [`GameBoxMetaError`] so the public error type stays stable.
+/// 校验显式 `safe_name`（身份规则），错误映射为
+/// [`GameBoxMetaError`]，保持对外错误类型稳定。
 pub fn validate_safe_name(s: &str) -> Result<(), GameBoxMetaError> {
     crate::metadata::identity::validate_safe_name(s)
         .map_err(|_| GameBoxMetaError::InvalidSafeName(s.to_string()))
 }
 
-/// Parse a package version as SemVer **without** build metadata (`+…` rejected),
-/// mapped to [`GameBoxMetaError`]. Prerelease (`1.0.0-rc.1`) is allowed.
+/// 将包版本解析为 SemVer，**不含** build metadata（拒绝 `+…`），
+/// 映射为 [`GameBoxMetaError`]。允许预发布（`1.0.0-rc.1`）。
 pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaError> {
     if version.contains('+') {
         return Err(GameBoxMetaError::VersionBuildMetadata(version.to_string()));
@@ -233,7 +197,7 @@ pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaErr
 // Judge path helper
 // ---------------------------------------------------------------------------
 
-/// Validate a judge script path: relative, starts with `judge/`, no `..`, not absolute.
+/// 校验裁判脚本路径：相对路径、以 `judge/` 开头、无 `..`、非绝对路径。
 pub fn validate_judge_path(path: &str) -> Result<(), GameBoxMetaError> {
     if path.is_empty() {
         return Err(GameBoxMetaError::InvalidJudgePath(
@@ -279,15 +243,15 @@ pub fn validate_judge_path(path: &str) -> Result<(), GameBoxMetaError> {
 // Image ref helper (platform prefix + identity)
 // ---------------------------------------------------------------------------
 
-/// Build the canonical GameBox image reference (delegates to the shared
-/// [`build_artifact_image_ref`] implementation).
+/// 构建规范 GameBox 镜像引用（委托共享的
+/// [`build_artifact_image_ref`] 实现）。
 ///
 /// ```text
-/// {registry_prefix}/gameboxes/{safe_name}:{version}
+/// `{registry_prefix}/gameboxes/{safe_name}:{version}`
 /// ```
 ///
-/// `registry_prefix` comes from **platform config**, never from `meta.toml`.
-/// CLI default when none is supplied: `"floatctf"`.
+/// `registry_prefix` 来自**平台配置**，绝不来自 `meta.toml`。
+/// CLI 未提供时的默认值：`"floatctf"`。
 pub fn build_gamebox_image_ref(registry_prefix: &str, safe_name: &str, version: &str) -> String {
     build_artifact_image_ref(ArtifactKind::GameBox, registry_prefix, safe_name, version)
 }

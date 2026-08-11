@@ -80,7 +80,7 @@ pub async fn get_scoreboard(
     Ok(scores)
 }
 
-/// 获取score history for a specific team。
+/// 获取指定战队的得分历史。
 pub async fn get_team_score_history(
     db: &DatabaseConnection,
     event_id: Uuid,

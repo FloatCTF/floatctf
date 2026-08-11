@@ -90,8 +90,8 @@ export function HierarchicalSideBar({
 		() => new Set(),
 	);
 
-	// A manual collapse applies only to the current location. A new descendant or
-	// a refresh reveals the route-required ancestry again.
+	// 手动折叠仅作用于当前 location。新的子孙路由或
+	// 刷新会再次展开路由要求的祖先节点。
 	useEffect(() => {
 		setManualCollapsed(new Set());
 	}, [pathname]);

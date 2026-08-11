@@ -1,4 +1,4 @@
-//! CLI argument parsing tests.
+//! CLI 集成测试。
 
 use clap::Parser;
 use fcmc::{Args, Commands, GenFormat};

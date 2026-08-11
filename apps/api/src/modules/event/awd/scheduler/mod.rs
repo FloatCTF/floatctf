@@ -41,7 +41,7 @@ pub fn automatic_precheck_at(
     (execute_at >= now).then(|| execute_at.fixed_offset())
 }
 
-/// 创建the one-shot automatic precheck task once per AWD Event。
+/// 每场 AWD 赛事创建一次一次性自动预检任务。
 /// 返回 `None` for near-term Events and when the task already exists。
 pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     db: &C,

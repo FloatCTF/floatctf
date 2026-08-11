@@ -22,12 +22,12 @@ use crate::modules::event::awd::{
     repo::{ban_repo, wireguard_repo},
 };
 
-/// 生成a peer keypair (client private + public)。
+/// 生成对等体密钥对（客户端私钥 + 公钥）。
 pub fn generate_peer_keypair() -> WgKeyPair {
     generate_keypair()
 }
 
-/// 生成a complete WireGuard client configuration。
+/// 生成完整 WireGuard 客户端配置。
 pub fn build_client_config(
     peer_ip: &str,
     peer_private_key: &str,
@@ -51,8 +51,8 @@ PersistentKeepalive = 25
     )
 }
 
-/// 分配the next available host address from a team's WireGuard subnet。
-/// 返回 the /32 address string。
+/// 从战队 WireGuard 子网分配下一个可用主机地址。
+/// 返回 /32 地址字符串。
 pub fn allocate_peer_ip(wireguard_subnet: &Ipv4Cidr, next_host: u32) -> AwdResult<(String, u32)> {
     let ip = wireguard_subnet.nth_host(next_host).ok_or_else(|| {
         AwdError::Network(format!(
@@ -63,7 +63,7 @@ pub fn allocate_peer_ip(wireguard_subnet: &Ipv4Cidr, next_host: u32) -> AwdResul
     Ok((format!("{}/32", ip), next_host + 1))
 }
 
-/// 确保the user has an active WG peer; create one with pure-Rust keys if missing。
+/// 确保用户有活跃 WG 对等体；缺失则用纯 Rust 密钥创建。
 ///
 /// 返回 `(peer_model, plaintext_private_key)` for config rendering only。
 async fn load_event_network(
@@ -196,7 +196,7 @@ fn decrypt_peer_private_key(
     String::from_utf8(bytes).map_err(|e| AwdError::Crypto(e.to_string()))
 }
 
-/// 加载all active peers for an event from DB and return their configs。
+/// 从数据库加载赛事全部活跃对等体并返回其配置。
 pub async fn load_active_peers(
     db: &DatabaseConnection,
     event_id: Uuid,

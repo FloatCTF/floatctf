@@ -16,7 +16,7 @@ use crate::modules::event::awd::{
     service::{firewall_service, round_service},
 };
 
-/// 启动an AWD event: validate status, create first round, set hardening phase + policy。
+/// 启动 AWD 赛事：校验状态、创建首轮、设置 hardening 阶段与策略。
 pub async fn start_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,

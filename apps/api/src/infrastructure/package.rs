@@ -205,7 +205,7 @@ fn find_meta_tomls(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), PackageErro
     Ok(())
 }
 
-/// 校验required package layout under `package_root`: meta.toml + src/Dockerfile。
+/// 校验 `package_root` 下的必需包布局：meta.toml + src/Dockerfile。
 pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
     let meta = package_root.join("meta.toml");
     if !meta.is_file() {

@@ -2,8 +2,8 @@ import type { Settings } from "@/entity";
 import { type UniResponse, admin_api } from "@/api/axios";
 
 /**
- * API DTO for admin settings endpoints.
- * Extends the generated DB entity with computed fields that are not columns.
+ * 管理端 settings 接口的 API DTO。
+ * 在生成实体上扩展非列的计算字段。
  */
 export type SettingsDto = Settings & {
 	resolved_value: string;

@@ -1,4 +1,4 @@
-//! Configuration validation logic.
+//! 包/环境检查用例。
 
 use std::path::Path;
 
@@ -9,7 +9,7 @@ use crate::metadata::{
     ArtifactKind, ChallengeFlagConfig, ChallengeMeta, GameBoxMeta, build_artifact_image_ref,
 };
 
-/// Result of a configuration check.
+/// a configuration check的结果。
 #[derive(Debug)]
 pub struct CheckResult {
     pub passed: bool,
@@ -40,11 +40,11 @@ impl std::fmt::Display for CheckLevel {
     }
 }
 
-/// Check a Challenge package directory (v1 manifest).
+/// 检查 Challenge 包目录（v1 清单）。
 ///
-/// Validates:
-/// - `meta.toml` parse + semantic rules (version, safe_name, flag, docker port/resources, attachment path)
-/// - attachment file exists under the package root (when configured)
+/// 校验：
+/// - `meta.toml` 解析 + 语义规则（version、safe_name、flag、docker 端口/资源、附件路径）
+/// - 配置了附件时，附件文件须在包根下存在
 pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
     let meta_path = dir.join("meta.toml");
     let mut messages = Vec::new();
@@ -178,12 +178,12 @@ pub fn check_challenge(dir: &Path) -> Result<CheckResult> {
     Ok(CheckResult { passed, messages })
 }
 
-/// Check a GameBox package directory (new portable manifest).
+/// 检查 GameBox 包目录（可移植清单）。
 ///
-/// Validates:
-/// - `meta.toml` parse + semantic rules (version, safe_name, healthchecks, judge path, …)
-/// - `src/Dockerfile` exists
-/// - If `[judge]` is set, the script file exists under the package root
+/// 校验：
+/// - `meta.toml` 解析 + 语义规则（version、safe_name、healthchecks、judge 路径等）
+/// - 存在 `src/Dockerfile`
+/// - 若配置了 `[judge]`，脚本文件须在包根下存在
 pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
     let meta_path = dir.join("meta.toml");
     let mut messages = Vec::new();
@@ -318,7 +318,7 @@ pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
     Ok(CheckResult { passed, messages })
 }
 
-/// Print check results to stdout.
+/// 将检查结果打印到 stdout。
 pub fn print_check_result(result: &CheckResult) {
     println!("\n================ 配置检查报告 ================\n");
 
@@ -337,11 +337,11 @@ pub fn print_check_result(result: &CheckResult) {
     println!("==============================================\n");
 }
 
-/// Runtime check: create a test container, print access info, and keep it alive
-/// until the user presses Enter (or Ctrl+C), then stop and remove it.
+/// 运行时检查：创建测试容器、打印访问信息，并保持存活
+/// 直到用户按 Enter（或 Ctrl+C），随后停止并删除。
 ///
-/// Image ref is derived via `build_artifact_image_ref(Challenge, "floatctf", …)`;
-/// dynamic flags are injected as `FLAG` env (static flags are baked into the image).
+/// 镜像引用由 `build_artifact_image_ref(Challenge, "floatctf", …)` 派生；
+/// 动态 flag 经 `FLAG` 环境变量注入（静态 flag 打进镜像）。
 pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,
@@ -460,13 +460,13 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Runtime check for a GameBox: start a test container and print the SSH
-/// credentials (docker IP + user + password) so the user can connect and test.
-/// Keeps the container alive until Enter (or Ctrl+C), then stops and removes it.
+/// GameBox 运行时检查：启动测试容器并打印 SSH
+/// 凭据（docker IP + 用户 + 口令）供用户连接测试。
+/// 保持容器存活直到 Enter（或 Ctrl+C），随后停止并删除。
 ///
-/// Image ref is derived via `build_artifact_image_ref(GameBox, "floatctf", …)`;
-/// SSH credentials are passed as `GAMEBOX_USERNAME` / `GAMEBOX_USERPASS` env
-/// (the entrypoint contract from examples/test_g).
+/// 镜像引用由 `build_artifact_image_ref(GameBox, "floatctf", …)` 派生；
+/// SSH 凭据经 `GAMEBOX_USERNAME` / `GAMEBOX_USERPASS` 环境变量传入
+/// （与 examples/test_g 的 entrypoint 契约一致）。
 pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,

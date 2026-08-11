@@ -1,4 +1,4 @@
-//! Unified Docker container + image runtime.
+//! 容器与镜像运行时抽象（Docker 等）。
 
 pub mod awd;
 pub mod docker;

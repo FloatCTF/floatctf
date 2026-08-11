@@ -48,7 +48,7 @@ function RouteComponent() {
 
         ws.onopen = () => {
             terminal.writeln("\x1b[32m● Connected\x1b[0m\r\n");
-            // Send initial terminal size immediately
+            // 立即发送初始终端尺寸
             const { cols, rows } = terminal;
             ws.send(JSON.stringify({ type: "resize", cols, rows }));
         };
@@ -83,13 +83,13 @@ function RouteComponent() {
             }
         });
 
-        // Attach terminal to container
+        // 将终端挂到容器
         if (containerRef.current) {
             terminal.open(containerRef.current);
             fitAddon.fit();
         }
 
-        // ResizeObserver to keep terminal fitted
+        // ResizeObserver 保持终端尺寸适配
         const observer = new ResizeObserver(() => {
             try {
                 fitAddon.fit();

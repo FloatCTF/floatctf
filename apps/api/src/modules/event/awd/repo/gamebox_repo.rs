@@ -98,7 +98,7 @@ pub async fn update_instance_status(
     Ok(())
 }
 
-/// 更新 current container（Reset/Deploy 成功后调用）。不改变 logical identity。
+/// 更新当前容器（Reset/Deploy 成功后调用）。不改变逻辑身份。
 pub async fn set_instance_container(
     db: &DatabaseConnection,
     id: Uuid,

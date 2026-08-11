@@ -14,14 +14,14 @@ use crate::{
     entity::weapons,
 };
 
-/// 注册player weapon routes under an existing `/weapons` scope。
+/// 在已有 `/weapons` 作用域下注册选手端武器库路由。
 ///
 /// 最终路径：`/api/weapons`
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(get_weapons_player);
 }
 
-/// 注册admin weapon routes under an existing `/weapons` scope。
+/// 在已有 `/weapons` 作用域下注册管理端武器库路由。
 ///
 /// 最终路径：`/api/admin/weapons/**`
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {

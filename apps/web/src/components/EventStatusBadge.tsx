@@ -16,7 +16,7 @@ export function computeEventStatus(
 	if (Number.isNaN(start)) return "unknown";
 	if (start > nowMs) return "upcoming";
 	if (endTime == null || endTime === "") {
-		// Practice / open-ended: never ended by wall clock
+		// 练习/开放式：不因墙钟判定结束
 		return "ongoing";
 	}
 	const end = new Date(endTime).getTime();

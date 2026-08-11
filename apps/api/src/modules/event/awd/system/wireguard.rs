@@ -9,7 +9,7 @@ use crate::modules::event::awd::{
 };
 use tracing::info;
 
-/// 创建a WireGuard interface with the given private key and listen port。
+/// 使用给定私钥与监听端口创建 WireGuard 接口。
 pub async fn create_interface(
     runner: &dyn CommandRunner,
     iface: &str,
@@ -84,7 +84,7 @@ pub async fn create_interface(
     Ok(())
 }
 
-/// 删除a WireGuard interface。
+/// 删除 WireGuard 接口。
 pub async fn delete_interface(runner: &dyn CommandRunner, iface: &str) -> AwdResult<()> {
     // Bring down first（best-effort：接口可能已处于 down 状态，Phase 0 P0-4 吞错扫描）。
     let _ = runner
@@ -124,7 +124,7 @@ pub async fn add_peer(
     Ok(())
 }
 
-/// 移除a peer from a WireGuard interface。
+/// 从 WireGuard 接口移除对等体。
 pub async fn remove_peer(
     runner: &dyn CommandRunner,
     iface: &str,

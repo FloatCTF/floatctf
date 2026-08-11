@@ -1,8 +1,6 @@
-//! fcmc — FloatCTF container / metadata crate.
+//! `fcmc` — FloatCTF 容器/元数据客户端库与 CLI 核心。
 //!
-//! - `metadata` — Challenge / GameBox package manifests
-//! - `runtime` — Docker container lifecycle, image build/push/pull, AWD Specs
-//! - `application` — CLI orchestration (check / build / gen)
+//! 提供 Challenge/GameBox 元数据解析、镜像运行时、构建与检查等能力。
 
 pub mod application;
 pub mod metadata;

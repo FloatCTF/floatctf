@@ -1,15 +1,15 @@
-//! Shared runtime models for container and network operations.
+//! 运行时领域模型（健康检查、端口、容器规格等）。
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Default stop timeout used by Jeopardy-style graceful stops.
+/// Jeopardy 风格优雅停止使用的默认 stop 超时。
 pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// AWD / bulk cleanup prefers an immediate signal.
+/// AWD / 批量清理偏好立即信号。
 pub const IMMEDIATE_STOP_TIMEOUT: Duration = Duration::from_secs(0);
 
-/// Generic Docker network creation request.
+/// 通用 Docker 网络创建请求。
 #[derive(Debug, Clone)]
 pub struct NetworkSpec {
     pub name: String,
@@ -21,14 +21,14 @@ pub struct NetworkSpec {
     pub check_duplicate: bool,
 }
 
-/// Handle returned after network create/inspect.
+/// 网络 create/inspect 后返回的句柄。
 #[derive(Debug, Clone)]
 pub struct NetworkHandle {
     pub network_id: String,
     pub network_name: String,
 }
 
-/// High-level network inspect view.
+/// 高层网络 inspect 视图。
 #[derive(Debug, Clone)]
 pub struct NetworkInspect {
     pub network_id: String,
@@ -38,7 +38,7 @@ pub struct NetworkInspect {
     pub subnet: Option<String>,
 }
 
-/// Port publish on the host.
+/// 宿主端口发布。
 #[derive(Debug, Clone)]
 pub struct PortBinding {
     pub container_port: String, // e.g. "80/tcp"
@@ -46,7 +46,7 @@ pub struct PortBinding {
     pub host_port: Option<String>,
 }
 
-/// Resource + security limits for a container.
+/// 容器资源与安全限制。
 #[derive(Debug, Clone, Default)]
 pub struct ResourceLimits {
     pub cpu_millis: Option<i64>,
@@ -57,7 +57,7 @@ pub struct ResourceLimits {
     pub extra_hosts: Vec<String>,
 }
 
-/// Optional Docker healthcheck configuration.
+/// 可选的 Docker 健康检查配置。
 #[derive(Debug, Clone)]
 pub struct HealthcheckSpec {
     pub test: Vec<String>,
@@ -67,7 +67,7 @@ pub struct HealthcheckSpec {
     pub start_period_secs: i64,
 }
 
-/// Generic container create request (mode-agnostic).
+/// 通用容器创建请求（与赛制无关）。
 #[derive(Debug, Clone)]
 pub struct ContainerSpec {
     pub name: String,
@@ -85,14 +85,14 @@ pub struct ContainerSpec {
     pub healthcheck: Option<HealthcheckSpec>,
 }
 
-/// Handle returned after create/start.
+/// create/start 后返回的句柄。
 #[derive(Debug, Clone)]
 pub struct ContainerHandle {
     pub container_id: String,
     pub container_name: String,
 }
 
-/// Inspect view shared by Jeopardy and AWD.
+/// Jeopardy 与 AWD 共用的检查视图。
 #[derive(Debug, Clone)]
 pub struct ContainerState {
     pub container_id: String,
@@ -108,7 +108,7 @@ pub struct ContainerState {
     pub ip_address: Option<String>,
 }
 
-/// Filter for listing containers.
+/// 列出容器时的过滤条件。
 #[derive(Debug, Clone, Default)]
 pub struct ContainerFilter {
     pub all: bool,

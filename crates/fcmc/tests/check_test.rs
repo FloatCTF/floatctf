@@ -1,7 +1,4 @@
-//! 配置校验逻辑（application/check.rs）测试。
-//!
-//! 所有用例在临时目录中构造 meta.toml，验证 check_challenge / check_gamebox
-//! 对成功、缺失附件、无 Docker、非法资源值、坏 TOML 等场景的判定。
+//! check 用例集成测试。
 
 use fcmc::application::check::{CheckLevel, check_challenge, check_gamebox};
 
@@ -47,7 +44,7 @@ description = "desc"
 username = "ctf"
 "#;
 
-/// Valid gamebox package layout: meta + src/Dockerfile (+ optional judge).
+/// 合法 gamebox 包布局：meta + src/Dockerfile（可选 judge）。
 fn setup_valid_gamebox_pkg(dir: &std::path::Path, meta: &str) {
     write_meta(dir, meta);
     std::fs::create_dir_all(dir.join("src")).unwrap();

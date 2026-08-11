@@ -88,7 +88,7 @@ impl TaskScheduler {
     async fn fetch_and_run(&self) -> Result<()> {
         // 这里的 SQL 变化：NOW() + INTERVAL '5 seconds'
         // 提前把未来 5 秒内要执行的任务全部锁住并取出来
-        // 只取出is_enabled=true的任务
+        // 只取出 is_enabled=true 的任务
         let sql = r#"
                 UPDATE scheduled_tasks
                 SET status = 'running',

@@ -41,7 +41,7 @@ pub async fn find_round_by_id(
     awd_rounds::Entity::find_by_id(id).one(db).await
 }
 
-/// 创建a new round in a transaction, ensuring at most one active round。
+/// 在事务中创建新轮次，确保最多一个活跃轮次。
 pub async fn create_round(
     db: &(impl ConnectionTrait + Send),
     event_id: Uuid,

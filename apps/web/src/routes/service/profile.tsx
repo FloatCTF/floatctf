@@ -30,7 +30,7 @@ function RouteComponent() {
 	const [originalProfile, setOriginalProfile] = useState<Partial<Users>>({});
 	const banner = useMsgBanner();
 
-	// Avatar upload state
+	// 头像上传状态
 	const [pendingFile, setPendingFile] = useState<File | null>(null);
 	const [previewUrl, setPreviewUrl] = useState<string>("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -75,7 +75,7 @@ function RouteComponent() {
 		setPendingFile(file);
 		setPreviewUrl(URL.createObjectURL(file));
 
-		// Clear input so selecting the same file again triggers onChange
+		// 清空 input，以便再次选择同一文件仍触发 onChange
 		e.target.value = "";
 	};
 
@@ -91,7 +91,7 @@ function RouteComponent() {
 		setPreviewUrl("");
 	};
 
-	// Cleanup object URL on unmount
+	// 卸载时释放 object URL
 	useEffect(() => {
 		return () => {
 			if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -109,7 +109,7 @@ function RouteComponent() {
 		return <div>Loading...</div>;
 	}
 
-	// Determine the avatar source: pending preview > server avatar
+	// 头像源：待上传预览 > 服务端头像
 	const avatarSrc = previewUrl || data?.avatar || "";
 
 	return (

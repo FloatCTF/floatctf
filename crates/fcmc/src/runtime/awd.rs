@@ -1,8 +1,4 @@
-//! AWD container runtime — unified Docker lifecycle for AWD events.
-//!
-//! Provides the `AwdContainerRuntime` trait and its `Docker` implementation
-//! for managing event networks, infrastructure containers, and GameBox
-//! instances with AWD security constraints.
+//! AWD 相关运行时辅助。
 
 use bollard::Docker;
 use std::collections::HashMap;

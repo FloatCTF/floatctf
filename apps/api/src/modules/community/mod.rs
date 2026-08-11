@@ -6,7 +6,7 @@ pub mod like;
 
 use actix_web::web::ServiceConfig;
 
-/// 注册player discussion routes under an existing `/discussions` scope。
+/// 在已有 `/discussions` 作用域下注册选手端讨论路由。
 ///
 /// 最终路径：`/api/discussions/**`
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
@@ -23,7 +23,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(comment::player::delete_comment);
 }
 
-/// 注册admin discussion routes under an existing `/discussions` scope。
+/// 在已有 `/discussions` 作用域下注册管理端讨论路由。
 ///
 /// 最终路径：`/api/admin/discussions/**`
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {

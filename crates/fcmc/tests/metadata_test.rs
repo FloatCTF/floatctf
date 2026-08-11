@@ -1,4 +1,4 @@
-//! Metadata parsing and validation tests.
+//! 元数据解析集成测试。
 
 use fcmc::{
     ArtifactKind, ChallengeFlagConfig, ChallengeMeta, ChallengeMetaError, GameBoxHealthcheck,

@@ -2,10 +2,10 @@ import { serviceApi } from "@/api";
 import { queryOptions } from "@tanstack/react-query";
 
 /**
- * Query options factory for event info.
- * Used in route loaders (ensureQueryData) and components (useQuery).
+ * 赛事信息 query options 工厂。
+ * 用于路由 loader（ensureQueryData）与组件（useQuery）。
  *
- * Key: ["eventInfo", id] — must match existing key exactly.
+ * Key: ["eventInfo", id] — 必须与既有 key 完全一致。
  */
 export const eventInfoQueryOptions = (id: string) =>
 	queryOptions({

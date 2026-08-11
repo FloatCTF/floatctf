@@ -351,7 +351,7 @@ impl EventPublisher for HybridEventPublisher {
     }
 }
 
-/// 解析publisher wiring from the static TOML configuration。
+/// 从静态 TOML 配置解析 publisher 接线。
 pub fn build_realtime(
     capacity: usize,
     redis_url: Option<&str>,

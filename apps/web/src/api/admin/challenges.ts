@@ -34,7 +34,7 @@ export const challengeAdminApi = {
 		});
 		return res.data;
 	},
-	// package zip：meta.toml + src/** + attachment/**
+	// 包 zip：meta.toml + src/** + attachment/**
 	importChallenge: async (
 		file: File,
 	): Promise<UniResponse<ImportChallengeResponse>> => {

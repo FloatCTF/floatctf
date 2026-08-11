@@ -61,7 +61,7 @@ const sections: NavigationSection[] = [
 	},
 ];
 
-// Mock window.scrollTo for jsdom (TanStack Router scroll restoration)
+// 为 jsdom mock window.scrollTo（TanStack Router 滚动恢复）
 beforeEach(() => {
 	window.scrollTo = vi.fn();
 	// jsdom 无 URL 时 localStorage 不可用：安装内存 shim 供持久化测试使用

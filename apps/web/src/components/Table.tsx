@@ -54,9 +54,9 @@ export type MutationColumn = {
     header: string;
     field: string;
     render: ReactElement;
-    /** Only shown in the Add dialog (immutable identity fields, etc.). */
+    /** 仅在新增对话框展示（不可变身份字段等）。 */
     createOnly?: boolean;
-    /** Only shown in the Modify dialog. */
+    /** 仅在修改对话框展示。 */
     editOnly?: boolean;
 };
 export type BannerState = {
@@ -137,7 +137,7 @@ export const GenericTable = <T extends object>({
         [onSelectedRowIdsChange],
     );
 
-    // query
+    // 查询
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(disablePagination ? 100 : 10);
     const [filter, setFilter] = useState("");
@@ -152,7 +152,7 @@ export const GenericTable = <T extends object>({
         refetchOnWindowFocus: false,
         placeholderData: keepPreviousData,
     });
-    // add actions to columns
+    // 向列追加操作
     const safeGetRowId = (row: T) => {
         function hasIdField(obj: unknown): obj is { id: string } {
             return typeof obj === "object" && obj !== null && "id" in obj;
@@ -293,12 +293,12 @@ export const GenericTable = <T extends object>({
     const [originalRow, setOriginalRow] = useState<Partial<T> | null>(null);
     const banner = externalBanner ?? useMsgBanner();
 
-    // add or modify
+    // 新增或修改
     const [isOpen, setIsOpen] = useState(false);
     const [dialogMode, setDialogMode] = useState<"add" | "modify">("add");
     const onDialogClose = useCallback(() => setIsOpen(false), []);
 
-    // mutation
+    // 变更
     const deleteMutation = useMutation({
         mutationFn: removeFn,
         onSuccess: () => {

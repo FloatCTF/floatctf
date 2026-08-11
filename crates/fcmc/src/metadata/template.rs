@@ -1,11 +1,8 @@
-//! Template generation — writes template files to disk.
-//!
-//! This module contains the file generation logic and template strings.
-//! It does NOT depend on Docker, bollard, or any runtime.
+//! 元数据模板相关类型。
 
 use anyhow::{Context, Result};
 
-/// Generate a Challenge template directory (package manifest v1).
+/// 生成 Challenge 模板目录（包清单 v1）。
 pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
@@ -163,7 +160,7 @@ if __name__ == "__main__":
     Ok(())
 }
 
-/// Generate a GameBox template directory (new portable package format).
+/// 生成 GameBox 模板目录（可移植包格式）。
 pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
@@ -308,7 +305,7 @@ if (isset($url)) {
     Ok(())
 }
 
-/// Generate a basic GameBox template directory (AWD base image sources).
+/// 生成基础 GameBox 模板目录（AWD 基础镜像源）。
 pub fn generate_gamebox_basic_template(name: &str, output_dir: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;

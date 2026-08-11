@@ -125,7 +125,7 @@ pub async fn all_healthy(
     Ok(results.iter().all(|r| r.ok))
 }
 
-/// 解析IP:port to SocketAddr (best-effort validation helper)。
+/// 将 IP:port 解析为 SocketAddr（尽力校验辅助）。
 #[allow(dead_code)]
 pub fn parse_socket(ip: &str, port: u16) -> AwdResult<SocketAddr> {
     format!("{ip}:{port}")

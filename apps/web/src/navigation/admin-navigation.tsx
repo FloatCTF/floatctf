@@ -41,14 +41,14 @@ const item = (
 });
 
 /**
- * Admin information architecture (GitHub Settings / Primer-style).
+ * 管理端信息架构（GitHub Settings / Primer 风格）。
  *
- * - Sections are static labels; groups toggle; leaves navigate.
- * - Event detail pages and Docker tabs stay inside page-level navigation;
- *   the sidebar only expresses stable global IA.
- * - All Events matches the list plus Jeopardy/AWD detail routes via an
- *   explicit pattern (never a blanket startsWith) so future
- *   `/admin/events/*` pages require an IA decision to be categorized.
+ * - Section 为静态标签；group 可折叠；leaf 负责导航。
+ * - 赛事详情页与 Docker 标签留在页内导航；
+ *   侧栏只表达稳定的全局信息架构。
+ * - 「全部赛事」通过显式模式匹配列表与 Jeopardy/AWD 详情
+ *   （禁止笼统 startsWith），未来 `/admin/events/*` 页面
+ *   须先做 IA 决策再归类。
  */
 export const adminNavigation: NavigationSection[] = [
 	{

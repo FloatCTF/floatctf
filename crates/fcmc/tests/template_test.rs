@@ -1,6 +1,4 @@
-//! Template generation tests.
-//!
-//! All tests use temporary directories and clean up automatically.
+//! 元数据模板相关集成测试。
 
 use fcmc::metadata::template;
 use fcmc::{ChallengeMeta, GameBoxMeta};
@@ -61,14 +59,14 @@ fn challenge_template_meta_is_v1_and_roundtrips() {
     assert_eq!(res.pids_limit, 100);
 }
 
-/// The generated entrypoint must write FLAG into the flag file and `unset` it
-/// in the SAME shell before `exec` — otherwise the app process could read the
-/// real flag via getenv / /proc/<pid>/environ.
+/// 生成的 entrypoint 必须把 FLAG 写入 flag 文件，并在同一 shell 中
+/// `unset` 后再 `exec`——否则应用进程可能经 getenv /
+/// `/proc/<pid>/environ` 读到真实 flag。
 ///
-/// The real script writes to `/flag` (container root path); a plain non-root
-/// dev shell cannot write there, so we run a tempdir-scoped copy with the
-/// target rewritten to `./flag` — this still exercises the shell-scoping
-/// contract (write before unset before exec).
+/// 真实脚本写入 `/flag`（容器根路径）；普通非 root
+/// 开发 shell 无法写入，故在临时目录副本上把目标改写为
+/// `./flag`——仍覆盖 shell 作用域契约
+/// （先写、再 unset、再 exec）。
 #[cfg(unix)]
 #[test]
 fn entrypoint_script_flag_contract() {
@@ -104,8 +102,8 @@ fn entrypoint_script_flag_contract() {
     );
 }
 
-/// Verbatim contract markers in the generated script: write to `/flag`, then
-/// `unset FLAG`, then `exec "$@"` — in order, one shell, no subshell helper.
+/// 生成脚本中的字面契约标记：写入 `/flag`，然后
+/// 依次 `unset FLAG`，再 `exec "$@"`——同一 shell，无子 shell 辅助。
 #[test]
 fn entrypoint_script_contract_markers() {
     let tmp = tempfile::TempDir::new().unwrap();

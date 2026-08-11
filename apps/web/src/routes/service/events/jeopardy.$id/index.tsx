@@ -102,7 +102,7 @@ function RouteComponent() {
 		mutationFn: serviceApi.events.createTeam,
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["event", id] });
-			// join success
+			// 报名成功
 		},
 
 		onError: (error) => {

@@ -21,7 +21,7 @@ export const Route = createFileRoute("/service/challenges/$id/")({
 	loader: async ({ context, params }) => {
 		await ServiceRouteGuard();
 		await context.queryClient.ensureQueryData(challengeQueryOptions(params.id));
-		// Best-effort instance prefetch (may 404 for non-dynamic challenges)
+		// 尽力预取实例（非动态题可能 404）
 		void context.queryClient
 			.ensureQueryData(challengeInstanceQueryOptions(params.id))
 			.catch(() => {});
@@ -70,7 +70,7 @@ function RouteComponent() {
 		mutationFn: serviceApi.submit.submit,
 		onSuccess: (_data) => {
 			banner.showBanner("success", "Flag is correct!");
-			// close in the backend
+			// 由后端关闭
 			challengeStatus.isRunning = false;
 			challengeStatus.instance = {} as Instances;
 		},
@@ -165,7 +165,7 @@ function RouteComponent() {
 										instance_id: challengeStatus.instance.id,
 										flag: challengeStatus.flag,
 									});
-									// need clear the flag value
+									// 需要清空 flag 输入
 									challengeStatus.flag = "";
 								}}
 							>

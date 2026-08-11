@@ -1,4 +1,4 @@
-//! Docker image build logic.
+//! 包构建用例。
 
 use std::path::Path;
 
@@ -10,18 +10,18 @@ use crate::metadata::{
 };
 use crate::runtime::{DockerContainerRuntime, ImageBuildRequest, ImageRuntime};
 
-/// Default registry prefix used by the CLI when no `-t/--tag` is supplied.
-/// Platform imports must pass an explicit tag from config — never hardcode this in API code.
+/// CLI 未提供 `-t/--tag` 时使用的默认 registry 前缀。
+/// 平台导入必须从配置传入显式 tag——禁止在 API 代码中写死。
 pub const DEFAULT_CLI_REGISTRY_PREFIX: &str = "floatctf";
 
-/// Build a Challenge Docker image.
+/// 构建 Challenge Docker 镜像。
 ///
-/// Image tag is **no longer** in `meta.toml`. Resolution order:
+/// 镜像 tag **不再**写在 `meta.toml`。解析顺序：
 /// 1. Explicit `tag` argument (CLI `-t/--tag` or caller-supplied)
 /// 2. Constructed via [`build_artifact_image_ref`] with
 ///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
 ///
-/// Only `src/` is the build context — `meta.toml` and `attachment/` are excluded.
+/// 仅 `src/` 为 build context——排除 `meta.toml` 与 `attachment/`。
 ///
 /// `proxy` accepts `[ip:]port`（缺省 ip 用 `host.docker.internal`）；`None` 时不注入代理。
 pub async fn build_challenge(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -> Result<()> {
@@ -83,14 +83,14 @@ pub async fn build_challenge(dir: &Path, tag: Option<&str>, proxy: Option<&str>)
     Ok(())
 }
 
-/// Build a GameBox Docker image.
+/// 构建 GameBox Docker 镜像。
 ///
-/// Image tag is **no longer** in `meta.toml`. Resolution order:
+/// 镜像 tag **不再**写在 `meta.toml`。解析顺序：
 /// 1. Explicit `tag` argument (CLI `-t/--tag` or caller-supplied)
 /// 2. Constructed via [`build_gamebox_image_ref`] with
 ///    `registry_prefix = "floatctf"` (CLI default only) + resolved `safe_name` + `version`
 ///
-/// Platform/API imports must always supply an explicit tag from platform config.
+/// 平台/API 导入必须始终从平台配置提供显式 tag。
 ///
 /// `proxy` accepts `[ip:]port`（缺省 ip 用 `host.docker.internal`）；`None` 时不注入代理。
 pub async fn build_gamebox(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -> Result<()> {
@@ -149,7 +149,7 @@ pub async fn build_gamebox(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -
     Ok(())
 }
 
-/// Resolve the CLI `--proxy [ip:]port` argument: without an ip, default to
+/// 解析 CLI `--proxy [ip:]port`：未给 ip 时默认
 /// `host.docker.internal`. Returns `None` when the flag is absent.
 fn resolve_build_proxy(proxy: Option<&str>) -> Option<String> {
     let p = proxy.map(str::trim).filter(|p| !p.is_empty())?;

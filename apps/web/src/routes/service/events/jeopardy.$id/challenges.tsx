@@ -81,7 +81,7 @@ function RouteComponent() {
 		// DataTable 行 key 需要 id；后端不返回，合成 challenge.id。
 		return rows.map((row) => ({ ...row, id: row.challenge.id }));
 	}, [data?.data, selected]);
-	// TODO: add filter to GenericTable
+	// TODO：为 GenericTable 增加筛选
 	const filteredItems = categories.filter(
 		(item) =>
 			item.text === selected?.text || // 保证选中的值始终显示
@@ -247,7 +247,7 @@ function ChallengeDialog({
 		}
 	}, [instance_data, open]);
 	const banner = useMsgBanner();
-	// Launch mutation
+	// 启动实例 mutation
 	const launchMutation = useMutation({
 		mutationFn: (challenge_id: string) =>
 			serviceApi.events.launchSingleInstance(eventId, challenge_id),
@@ -276,7 +276,7 @@ function ChallengeDialog({
 			queryClient.invalidateQueries({
 				queryKey: ["eventChallenges", eventId],
 			});
-			// close in the backend
+			// 由后端关闭
 			challengeStatus.isRunning = false;
 			challengeStatus.instance = {} as Instances;
 		},

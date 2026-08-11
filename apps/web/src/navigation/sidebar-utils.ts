@@ -17,7 +17,7 @@ function rulePath(item: NavigationItem, rule: NavigationMatchRule): string {
 	return normalizePath("path" in rule && rule.path ? rule.path : item.href);
 }
 
-/** Segment matching treats `/events` and `/events/...` as related, but not `/events-old`. */
+/** 段匹配将 `/events` 与 `/events/...` 视为相关，但不匹配 `/events-old`。 */
 export function matchNavigationItem(
 	item: NavigationItem,
 	pathname: string,
@@ -73,7 +73,7 @@ function findCandidates(
 	}
 }
 
-/** Resolve one active leaf and every group on its recursive ancestry. */
+/** 解析唯一激活叶子及其递归祖先上的全部 group。 */
 export function findActiveNavigationPath(
 	sections: readonly NavigationSection[],
 	pathname: string,
@@ -127,7 +127,7 @@ function filterNodes(
 	return compactSeparators(visible);
 }
 
-/** Recursively removes unauthorized nodes, empty groups, and empty sections. */
+/** 递归移除无权限节点、空 group 与空 section。 */
 export function filterNavigationSections(
 	sections: readonly NavigationSection[],
 	context: NavigationVisibilityContext,

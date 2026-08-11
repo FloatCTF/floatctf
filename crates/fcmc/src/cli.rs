@@ -1,4 +1,4 @@
-//! CLI argument definitions.
+//! fcmc 命令行入口与参数定义。
 
 use clap::{Parser, ValueEnum};
 

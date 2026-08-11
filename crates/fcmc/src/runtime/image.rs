@@ -1,7 +1,4 @@
-//! Generic image build / push / pull / inspect APIs (Docker via bollard).
-//!
-//! Domain-agnostic: no GameBox/Challenge knowledge. Callers supply the target
-//! ref, labels, and registry auth from platform configuration.
+//! 镜像检查、打 tag、推送等操作。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -75,7 +72,7 @@ pub struct ImageInspect {
     pub repo_digests: Vec<String>,
 }
 
-/// Registry credentials supplied by the platform (never from meta.toml).
+/// 由平台提供的镜像仓库凭据（绝不来自 meta.toml）。
 #[derive(Debug, Clone, Default)]
 pub struct RegistryAuth {
     pub username: Option<String>,
@@ -111,15 +108,15 @@ pub enum ImageError {
 // Image ref helpers
 // ---------------------------------------------------------------------------
 
-/// Split an image reference into `(repository, tag_or_none)`.
+/// 将镜像引用拆为 `(repository, tag_or_none)`。
 ///
-/// Handles:
+/// 处理：
 /// - `nginx:latest`
 /// - `floatctf/gameboxes/ttt1:1.0.0`
 /// - `registry.example.com:5000/foo/bar:1.0`
-/// - `repo@sha256:…` → tag_or_none is `None` (digest form); repository is before `@`
+/// - `repo@sha256:…` → tag_or_none 为 `None`（digest 形式）；repository 在 `@` 前
 ///
-/// Tag is taken from the **last path component** only, so host:port is preserved.
+/// tag 仅取自**最后路径分量**，从而保留 host:port。
 pub fn split_image_ref(image_ref: &str) -> (String, Option<String>) {
     if let Some((repo, _digest)) = image_ref.split_once('@') {
         return (repo.to_string(), None);
@@ -142,15 +139,15 @@ pub fn split_image_ref(image_ref: &str) -> (String, Option<String>) {
     }
 }
 
-/// Repository part of an image ref (strip tag or digest).
+/// 镜像引用的仓库部分（去掉 tag 或 digest）。
 pub fn image_repository(image_ref: &str) -> String {
     split_image_ref(image_ref).0
 }
 
-/// Pick the `RepoDigest` entry matching the repository of `image_ref`.
+/// 选取与 `image_ref` 仓库匹配的 `RepoDigest` 条目。
 ///
 /// `repo_digests` entries look like `registry.example.com/foo/bar@sha256:abc`.
-/// Returns the full `repo@sha256:…` string when found.
+/// 找到时返回完整 `repo@sha256:…` 字符串。
 pub fn pick_repo_digest(repo_digests: &[String], image_ref: &str) -> Option<String> {
     let repo = image_repository(image_ref);
     repo_digests
@@ -177,7 +174,7 @@ pub fn pick_repo_digest(repo_digests: &[String], image_ref: &str) -> Option<Stri
 // Trait
 // ---------------------------------------------------------------------------
 
-/// Generic image lifecycle (build / tag / push / pull / inspect / remove).
+/// 通用镜像生命周期（build / tag / push / pull / inspect / remove）。
 #[async_trait]
 pub trait ImageRuntime: Send + Sync {
     async fn build_image(&self, req: ImageBuildRequest) -> Result<ImageBuildResult, ImageError>;

@@ -30,7 +30,7 @@ pub fn discover_package_root(extract_root: &Path) -> AwdResult<PathBuf> {
     package::discover_package_root(extract_root).map_err(awd_map)
 }
 
-/// 校验required package layout under `package_root`。
+/// 校验 `package_root` 下的必需包布局。
 pub fn require_package_layout(package_root: &Path) -> AwdResult<()> {
     package::require_package_layout(package_root).map_err(awd_map)
 }

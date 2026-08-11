@@ -158,7 +158,7 @@ function RouteComponent() {
 		{
 			header: "Family",
 			field: "family",
-			// Identity is immutable after create — only show on Add.
+			// 身份在创建后不可变——仅在新增时展示。
 			createOnly: true,
 			render: (
 				<Select
@@ -292,7 +292,7 @@ function RouteComponent() {
 			createFn={adminApi.events.create}
 			removeFn={adminApi.events.remove}
 			patchFn={async (data) => {
-				// Never send immutable mode identity on patch (backend rejects changes too).
+				// 绝不send immutable mode identity on patch (backend rejects changes too).
 				const {
 					family: _family,
 					purpose: _purpose,

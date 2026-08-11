@@ -130,7 +130,7 @@ pub async fn issue_flag(
     })
 }
 
-/// 校验that a flag submission context is valid。
+/// 校验 Flag 提交上下文是否合法。
 /// 返回 (attacker_team_id, victim_team_id, gamebox_instance_id, flag_issue)。
 pub async fn validate_submission(
     db: &DatabaseConnection,

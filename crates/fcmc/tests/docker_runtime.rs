@@ -1,7 +1,4 @@
-//! Docker runtime integration tests.
-//!
-//! These tests require a running Docker daemon and are ignored by default.
-//! Run with: cargo test --test docker_runtime -- --ignored
+//! Docker 运行时集成测试。
 
 use bollard::Docker;
 use fcmc::{

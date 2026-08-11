@@ -27,7 +27,7 @@ function RouterNavItem({
 	children: React.ReactNode;
 }) {
 	const matchRoute = useMatchRoute();
-	// TanStack path typing is strict; cast for dynamic AWD sub-routes.
+	// TanStack 路径类型严格；动态 AWD 子路由需断言。
 	const path = to as never;
 	const params = { id } as never;
 	const isActive = matchRoute({ to: path, params, fuzzy: false });
@@ -48,7 +48,7 @@ function RouteComponent() {
 	});
 	const eventInfo = data?.data;
 	useTitle(`${eventInfo?.event.title ?? "AWD Event"} | FloatCTF`);
-	// Realtime + poll snapshot fallback (R7-B stream)
+	// 实时流 + 轮询快照回退（R7-B stream）
 	const stream = useAwdEventStream({ eventId: id });
 
 	if (isLoading) {

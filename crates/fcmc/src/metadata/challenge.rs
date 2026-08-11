@@ -1,31 +1,4 @@
-//! Challenge package manifest (`meta.toml`) — v1.
-//!
-//! Contract (strict `deny_unknown_fields`):
-//!
-//! ```toml
-//! name = "Easy Web 01"
-//! version = "1.0.0"
-//! author = "your_email@example.com"
-//! category = "web"
-//! description = "Challenge description"
-//! # optional: safe_name = "easy-web-01"
-//! # optional: attachment = "attachment/src.zip"
-//!
-//! [flag]
-//! type = "dynamic"          # "dynamic" | "static"
-//!
-//! [docker]
-//! port = 80
-//!
-//! [docker.recommended_resources]
-//! cpu_millis = 500
-//! memory_bytes = 268435456
-//! pids_limit = 100
-//! ```
-//!
-//! Removed from the portable manifest (legacy / platform concerns):
-//! `image_tag`, `env_var`, `is_nc`, `schema_version`, string ports (`"80/tcp"`),
-//! and `[flag] value = ""` (empty-string dynamic markers).
+//! Challenge 包元数据模型与解析。
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -85,9 +58,9 @@ pub enum ChallengeMetaError {
 // Types
 // ---------------------------------------------------------------------------
 
-/// Top-level Challenge package manifest (`meta.toml`).
+/// Challenge 包顶层清单（`meta.toml`）。
 ///
-/// Also exported as [`ChallengeManifest`].
+/// 亦导出为 [`ChallengeManifest`]。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ChallengeMeta {
@@ -108,15 +81,15 @@ pub struct ChallengeMeta {
     pub docker: Option<ChallengeDockerConfig>,
 }
 
-/// Alias preferred by some callers / plan docs.
+/// 部分调用方/计划文档偏好的别名。
 pub type ChallengeManifest = ChallengeMeta;
 
-/// `[flag]` section — flag type contract.
+/// `[flag]` 段——flag 类型契约。
 ///
-/// serde's internally-tagged enums silently ignore `deny_unknown_fields`, so
-/// deserialization goes through a strict intermediate struct (see the manual
-/// [`Deserialize`] impl) that rejects legacy/unknown keys such as `env_var`
-/// and `value` on a dynamic flag.
+/// serde 内部标签枚举会静默忽略 `deny_unknown_fields`，故
+/// 反序列化经严格中间结构体（见手工
+/// [`Deserialize`] 实现），拒绝历史/未知键如 `env_var`
+/// 以及动态 flag 上的 `value`。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ChallengeFlagConfig {
@@ -157,7 +130,7 @@ impl<'de> Deserialize<'de> for ChallengeFlagConfig {
     }
 }
 
-/// `[docker]` section.
+/// `[docker]` 段。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ChallengeDockerConfig {
@@ -172,9 +145,9 @@ pub struct ChallengeDockerConfig {
 // Canonical normalized spec (stable JSON for spec_digest)
 // ---------------------------------------------------------------------------
 
-/// Canonical, fully-materialised view used for `spec_json` / digest.
+/// 用于 `spec_json` / digest 的规范、完全物化视图。
 ///
-/// MUST NOT contain the static flag value (secret).
+/// **不得**包含静态 flag 明文（密钥）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NormalizedChallengeSpec {
     pub name: String,
@@ -195,8 +168,8 @@ pub struct NormalizedChallengeSpec {
 // Attachment path helper
 // ---------------------------------------------------------------------------
 
-/// Validate an attachment path: non-empty, relative, under `attachment/`,
-/// no `..`, not a directory.
+/// 校验附件路径：非空、相对路径、位于 `attachment/` 下，
+/// 不含 `..`，且不是目录。
 fn validate_attachment_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());

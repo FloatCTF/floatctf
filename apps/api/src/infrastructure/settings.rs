@@ -113,13 +113,13 @@ pub async fn init_settings(db: &DbConn, config: &AppConfig) {
     seed_default_settings(db, config).await;
 }
 
-/// 加载all settings into a `key -> raw value` map。
+/// 加载全部 settings，得到 `key -> 原始 value` 映射。
 async fn load_settings_map(db: &DbConn) -> HashMap<String, String> {
     let rows = settings::Entity::find().all(db).await.unwrap_or_default();
     rows.into_iter().map(|s| (s.key, s.value)).collect()
 }
 
-/// 解析`{{KEY}}` references in `value` against the DB settings。
+/// 按数据库 settings 解析 `value` 中的 `{{KEY}}` 引用。
 ///
 /// 解析后的值仅用于 API 响应与消费方；数据库里始终保存原始模板，
 /// 便于管理端继续编辑 `{{WORK_DIR}}/xxx` 形式。

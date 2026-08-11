@@ -39,7 +39,7 @@ pub use player::{
 
 use actix_web::web::{self, ServiceConfig, scope};
 
-/// 注册player common event routes under an existing `/events` scope。
+/// 在已有 `/events` 作用域下注册选手端公共赛事路由。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(player::get_events)
         .service(player::get_event_challenges)
@@ -58,7 +58,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(player::quit_team);
 }
 
-/// 注册admin common event CRUD under an existing `/events` scope。
+/// 在已有 `/events` 作用域下注册管理端公共赛事 CRUD。
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(admin::create_event)
         .service(admin::delete_event)

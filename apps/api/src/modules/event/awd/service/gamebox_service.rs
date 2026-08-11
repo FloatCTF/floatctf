@@ -97,7 +97,7 @@ pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> Aw
     Ok(candidate)
 }
 
-/// 校验an explicit safe_name (no auto-suffix)。
+/// 校验显式 safe_name（不加自动后缀）。
 pub fn validate_identity_safe_name(safe_name: &str) -> AwdResult<()> {
     validate_safe_name(safe_name).map_err(AwdError::Validation)
 }

@@ -322,6 +322,18 @@ pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
                     });
                     passed = false;
                 }
+                match &awdp.source_code_dir {
+                    Some(dir) => messages.push(CheckMessage {
+                        level: CheckLevel::Ok,
+                        section: "AWDP".into(),
+                        message: format!("source_code_dir = {dir}（打包源码提供给选手）"),
+                    }),
+                    None => messages.push(CheckMessage {
+                        level: CheckLevel::Warn,
+                        section: "AWDP".into(),
+                        message: "未配置 source_code_dir（选手将拿不到源码包）".into(),
+                    }),
+                }
             } else {
                 messages.push(CheckMessage {
                     level: CheckLevel::Warn,

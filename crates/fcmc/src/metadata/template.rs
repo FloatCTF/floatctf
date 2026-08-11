@@ -124,10 +124,12 @@ path = "/"
 expected_status = 200
 
 [judge]
-script = "judge/check.py"
+check_script = "judge/check.py"
 
 # optional: AWD-P 攻击脚本（必须位于 awdp/ 目录下）
 [awdp]
+# zip file and provide the path to user
+source_code_dir = "/var/www/html"
 exploit_script = "awdp/exploit.py"
 
 [gamebox.recommended_resources]

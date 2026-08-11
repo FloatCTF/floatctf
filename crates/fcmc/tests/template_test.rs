@@ -174,6 +174,10 @@ fn gamebox_template_meta_is_parseable() {
         meta.awdp.as_ref().unwrap().exploit_script,
         "awdp/exploit.py"
     );
+    assert_eq!(
+        meta.awdp.as_ref().unwrap().source_code_dir.as_deref(),
+        Some("/var/www/html")
+    );
     assert!(!meta.gamebox.healthchecks.is_empty());
     // No legacy fields
     let raw = std::fs::read_to_string(tmp.path().join("gb-roundtrip/meta.toml")).unwrap();

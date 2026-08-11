@@ -42,6 +42,6 @@ pub use gamebox::{
     AwdpManifest, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta,
     GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedGameBoxSpec, NormalizedHealthcheck,
     build_gamebox_image_ref, validate_awdp_path, validate_judge_path, validate_safe_name,
-    validate_version,
+    validate_source_code_dir, validate_version,
 };
 pub use identity::{ArtifactKind, build_artifact_image_ref, derive_safe_name};

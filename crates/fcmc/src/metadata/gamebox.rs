@@ -57,6 +57,9 @@ pub enum GameBoxMetaError {
     #[error("invalid awdp exploit script path '{0}': {1}")]
     InvalidExploitPath(String, String),
 
+    #[error("invalid awdp source_code_dir '{0}': {1}")]
+    InvalidSourceCodeDir(String, String),
+
     #[error("recommended_resources.{0} must be > 0")]
     InvalidResource(String),
 }
@@ -134,6 +137,8 @@ fn default_expected_status() -> u16 {
 #[serde(deny_unknown_fields)]
 pub struct JudgeManifest {
     /// Relative path that must start with `judge/` (e.g. `judge/check.py`).
+    /// 兼容键名：`script`（规范）与 `check_script`（用户偏好）均可解析。
+    #[serde(alias = "check_script")]
     pub script: String,
 }
 
@@ -143,6 +148,10 @@ pub struct JudgeManifest {
 pub struct AwdpManifest {
     /// Relative path that must start with `awdp/` (e.g. `awdp/exploit.py`).
     pub exploit_script: String,
+    /// Container-internal source directory (absolute path, e.g. `/var/www/html`)
+    /// that the platform packages into a source zip provided to players.
+    #[serde(default)]
+    pub source_code_dir: Option<String>,
 }
 
 /// 共享的软资源建议（见 [`crate::metadata::RecommendedResources`]）。
@@ -166,6 +175,7 @@ pub struct NormalizedGameBoxSpec {
     pub recommended_resources: RecommendedResources,
     pub judge_script: Option<String>,
     pub exploit_script: Option<String>,
+    pub source_code_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -224,6 +234,35 @@ pub fn validate_awdp_path(path: &str) -> Result<(), GameBoxMetaError> {
     validate_script_path(path, "awdp/", |p, msg| {
         GameBoxMetaError::InvalidExploitPath(p.to_string(), msg.into())
     })
+}
+
+/// 校验 AWD-P 源码目录：容器内绝对路径（以 `/` 开头）、无 `..`、不以 `/` 结尾（除根）。
+pub fn validate_source_code_dir(dir: &str) -> Result<(), GameBoxMetaError> {
+    if dir.is_empty() {
+        return Err(GameBoxMetaError::InvalidSourceCodeDir(
+            dir.to_string(),
+            "empty path".into(),
+        ));
+    }
+    if !dir.starts_with('/') {
+        return Err(GameBoxMetaError::InvalidSourceCodeDir(
+            dir.to_string(),
+            "must be an absolute container path (start with '/')".into(),
+        ));
+    }
+    if dir.contains("..") {
+        return Err(GameBoxMetaError::InvalidSourceCodeDir(
+            dir.to_string(),
+            "must not contain '..'".into(),
+        ));
+    }
+    if dir.len() > 1 && dir.ends_with('/') {
+        return Err(GameBoxMetaError::InvalidSourceCodeDir(
+            dir.to_string(),
+            "must not end with '/'".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_script_path(
@@ -368,6 +407,9 @@ impl GameBoxMeta {
 
         if let Some(ref awdp) = self.awdp {
             validate_awdp_path(&awdp.exploit_script)?;
+            if let Some(ref dir) = awdp.source_code_dir {
+                validate_source_code_dir(dir)?;
+            }
         }
 
         if let Some(ref res) = self.gamebox.recommended_resources {
@@ -457,6 +499,7 @@ impl GameBoxMeta {
             recommended_resources,
             judge_script: self.judge.as_ref().map(|j| j.script.clone()),
             exploit_script: self.awdp.as_ref().map(|a| a.exploit_script.clone()),
+            source_code_dir: self.awdp.as_ref().and_then(|a| a.source_code_dir.clone()),
         })
     }
 }
@@ -721,12 +764,41 @@ port = 3306
     }
 
     #[test]
+    fn judge_accepts_check_script_alias() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[judge]
+check_script = "judge/check.py"
+"#;
+        let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
+        assert_eq!(meta.judge.as_ref().unwrap().script, "judge/check.py");
+    }
+
+    #[test]
     fn awdp_path_rules() {
         assert!(validate_awdp_path("awdp/exploit.py").is_ok());
         assert!(validate_awdp_path("/awdp/exploit.py").is_err());
         assert!(validate_awdp_path("awdp/../x.py").is_err());
         assert!(validate_awdp_path("scripts/exploit.py").is_err());
         assert!(validate_awdp_path("awdp/").is_err());
+    }
+
+    #[test]
+    fn source_code_dir_rules() {
+        assert!(validate_source_code_dir("/var/www/html").is_ok());
+        assert!(validate_source_code_dir("/").is_ok());
+        assert!(validate_source_code_dir("var/www").is_err());
+        assert!(validate_source_code_dir("/var/www/../html").is_err());
+        assert!(validate_source_code_dir("/var/www/html/").is_err());
+        assert!(validate_source_code_dir("").is_err());
     }
 
     #[test]
@@ -746,16 +818,38 @@ script = "judge/check.py"
 
 [awdp]
 exploit_script = "awdp/exploit.py"
+source_code_dir = "/var/www/html"
 "#;
         let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
         assert_eq!(meta.judge.as_ref().unwrap().script, "judge/check.py");
-        assert_eq!(
-            meta.awdp.as_ref().unwrap().exploit_script,
-            "awdp/exploit.py"
-        );
+        let awdp = meta.awdp.as_ref().unwrap();
+        assert_eq!(awdp.exploit_script, "awdp/exploit.py");
+        assert_eq!(awdp.source_code_dir.as_deref(), Some("/var/www/html"));
         let norm = meta.normalize().unwrap();
         assert_eq!(norm.judge_script.as_deref(), Some("judge/check.py"));
         assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
+        assert_eq!(norm.source_code_dir.as_deref(), Some("/var/www/html"));
+    }
+
+    #[test]
+    fn parse_with_awdp_no_source_dir() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+"#;
+        let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
+        assert_eq!(meta.awdp.as_ref().unwrap().source_code_dir, None);
+        let norm = meta.normalize().unwrap();
+        assert_eq!(norm.source_code_dir, None);
     }
 
     #[test]
@@ -775,5 +869,25 @@ exploit_script = "judge/exploit.py"
 "#;
         let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
         assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));
+    }
+
+    #[test]
+    fn reject_bad_source_code_dir() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+source_code_dir = "var/www/html"
+"#;
+        let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+        assert!(matches!(err, GameBoxMetaError::InvalidSourceCodeDir(_, _)));
     }
 }

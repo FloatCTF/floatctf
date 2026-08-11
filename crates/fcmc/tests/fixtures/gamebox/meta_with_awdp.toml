@@ -18,6 +18,7 @@ script = "judge/check.py"
 
 [awdp]
 exploit_script = "awdp/exploit.py"
+source_code_dir = "/var/www/html"
 
 [gamebox.recommended_resources]
 cpu_millis = 1000

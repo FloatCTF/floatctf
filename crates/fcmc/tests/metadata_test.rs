@@ -545,8 +545,10 @@ fn gamebox_parse_with_awdp() {
     let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     let awdp = meta.awdp.as_ref().unwrap();
     assert_eq!(awdp.exploit_script, "awdp/exploit.py");
+    assert_eq!(awdp.source_code_dir.as_deref(), Some("/var/www/html"));
     let norm = meta.normalize().unwrap();
     assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
+    assert_eq!(norm.source_code_dir.as_deref(), Some("/var/www/html"));
 }
 
 #[test]
@@ -566,6 +568,26 @@ exploit_script = "scripts/x.py"
 "#;
     let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
     assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));
+}
+
+#[test]
+fn gamebox_reject_bad_source_code_dir() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+source_code_dir = "var/www/html"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidSourceCodeDir(_, _)));
 }
 
 #[test]

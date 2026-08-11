@@ -27,6 +27,7 @@ function RouteComponent() {
             field: "status",
             sortBy: true,
         },
+        { accessorKey: "identifier", header: "Identifier", field: "identifier", sortBy: true },
         {
             accessorKey: "event_title",
             header: "Event",
@@ -34,16 +35,6 @@ function RouteComponent() {
             sortBy: true,
             renderCell: (row: InstanceRow) => {
                 return <span>{row.event_title ?? row.event_id}</span>;
-            },
-        },
-        { accessorKey: "identifier", header: "Identifier", field: "identifier", sortBy: true },
-        { accessorKey: "flag", header: "Flag", field: "flag" },
-        {
-            accessorKey: "challenge_title",
-            header: "Challenge",
-            field: "challenge_id",
-            renderCell: (row: InstanceRow) => {
-                return <span>{row.challenge_title ?? row.challenge_id}</span>;
             },
         },
         {
@@ -54,6 +45,15 @@ function RouteComponent() {
                 return <span>{row.user_name ?? row.user_id}</span>;
             },
         },
+        {
+            accessorKey: "challenge_title",
+            header: "Challenge",
+            field: "challenge_id",
+            renderCell: (row: InstanceRow) => {
+                return <span>{row.challenge_title ?? row.challenge_id}</span>;
+            },
+        },
+        { accessorKey: "flag", header: "Flag", field: "flag" },
         {
             accessorKey: "destroy_at",
             header: "Destroy At",

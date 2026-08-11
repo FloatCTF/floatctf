@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 
+use crate::api::FilterMapping;
+use crate::api::sea_orm_utils::{apply_filters, paginate_query};
 use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     entity::{awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase},
@@ -25,6 +27,7 @@ use crate::{
         },
     },
 };
+use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
 
 // ────────────────────────────────────────────────────────────────────────────
 // helpers
@@ -58,9 +61,12 @@ async fn flag_prefix(ctx: &ReqCtx) -> String {
 #[derive(Debug, Deserialize)]
 struct CatalogQuery {
     capability: Option<String>,
+    page: Option<u64>,
+    limit: Option<u64>,
+    filter: Option<String>,
 }
 
-/// GET /api/service/gameboxes?capability=awdp —— AWDP-capable 安全目录。
+/// GET /api/service/gameboxes?capability=awdp —— AWDP-capable 安全目录（支持分页/过滤）。
 /// 只返回安全展示字段（禁止 exploit/source key/source_code_dir/credentials）。
 #[get("gameboxes")]
 pub async fn list_catalog(
@@ -76,21 +82,47 @@ pub async fn list_catalog(
     }
     let db = ctx.db.get_ref();
 
-    let rows = gameboxes::Entity::find()
+    // AWDP capability = 完整五列（source.zip 产物存在，DB CHECK 保证全有/全无），
+    // 直接下沉到 WHERE，保证分页计数只统计 AWDP-capable 行。
+    let stmt = gameboxes::Entity::find()
         .filter(gameboxes::Column::Hidden.eq(false))
         .filter(gameboxes::Column::BuildStatus.eq(Some(
             crate::modules::gamebox::BUILD_STATUS_READY.to_string(),
         )))
-        .order_by_asc(gameboxes::Column::Name)
-        .all(db)
-        .await?;
+        .filter(gameboxes::Column::AwdpSourceArtifactKey.is_not_null())
+        .order_by_asc(gameboxes::Column::Name);
+
+    // 过滤：与 challenges 列表同款 FilterMapping（name/category/description）。
+    let mappings = [
+        FilterMapping {
+            key: "name",
+            column: Box::new(|v: &str| Condition::all().add(gameboxes::Column::Name.contains(v))),
+        },
+        FilterMapping {
+            key: "category",
+            column: Box::new(|v: &str| {
+                Condition::all().add(gameboxes::Column::Category.contains(v))
+            }),
+        },
+        FilterMapping {
+            key: "description",
+            column: Box::new(|v: &str| {
+                Condition::all().add(gameboxes::Column::Description.contains(v))
+            }),
+        },
+    ];
+    let stmt = apply_filters(stmt, query.filter.clone(), &mappings);
+
+    let (rows, total) = if let (Some(limit), Some(page)) = (query.limit, query.page) {
+        paginate_query(stmt, db, limit, page).await?
+    } else {
+        let rows = stmt.all(db).await?;
+        let total = rows.len();
+        (rows, total)
+    };
 
     let mut out = Vec::new();
     for gb in rows {
-        // AWDP capability = 完整五列（source.zip 产物存在，DB CHECK 保证全有/全无）。
-        if gb.awdp_source_artifact_key.is_none() {
-            continue;
-        }
         let active_training = match run_repo::find_active_practice_for(db, gb.id, user.id).await? {
             Some(run) => {
                 let score = score_repo::my_total(db, run.id, Some(user.id), None).await?;
@@ -115,7 +147,15 @@ pub async fn list_catalog(
             active_training,
         });
     }
-    UniResponse::ok(out.into()).into()
+
+    let meta = QueryParams {
+        offset: None,
+        limit: query.limit,
+        page: query.page,
+        filter: query.filter.clone(),
+        total: Some(total),
+    };
+    UniResponse::ok_meta(Some(out.into()), Some(meta)).into()
 }
 
 /// POST /api/service/gameboxes/{gamebox_id}/awdp/runs —— Start Training（幂等）。

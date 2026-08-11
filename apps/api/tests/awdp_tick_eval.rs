@@ -94,6 +94,25 @@ async fn seed_event_and_gamebox(
     tag: &str,
     exploit_content: &str,
 ) -> (Uuid, Uuid, Uuid) {
+    seed_event_and_gamebox_with_judge(
+        db,
+        tag,
+        exploit_content,
+        r#"import json, sys
+print(json.dumps([{"gamebox_ip": ip, "success": True} for ip in sys.argv[1:]], ensure_ascii=False))
+sys.exit(0)
+"#,
+    )
+    .await
+}
+
+/// 与 `seed_event_and_gamebox` 相同，但 judge 脚本内容可自定义（§87 分支需要）。
+async fn seed_event_and_gamebox_with_judge(
+    db: &sea_orm::DatabaseConnection,
+    tag: &str,
+    exploit_content: &str,
+    judge_content: &str,
+) -> (Uuid, Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -167,13 +186,7 @@ async fn seed_event_and_gamebox(
             {"type": "http", "port": 80, "path": "/", "expected_status": 200}
         ]))),
         judge_script_name: Set(Some("check.py".into())),
-        judge_script_content: Set(Some(
-            r#"import json, sys
-print(json.dumps([{"gamebox_ip": ip, "success": True} for ip in sys.argv[1:]], ensure_ascii=False))
-sys.exit(0)
-"#
-            .to_string(),
-        )),
+        judge_script_content: Set(Some(judge_content.to_string())),
         judge_args_json: Set(None),
         judge_timeout_secs: Set(None),
         judge_retry_interval_secs: Set(None),
@@ -384,6 +397,12 @@ async fn tick_driven_rounds_and_scoring() {
         .expect("worker r2");
     assert!(n2 >= 2, "processed {n2}");
 
+    // §85：duplicate tick 不得重复物化回合（仍是 6 个）。
+    let rounds_a = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_a)
+        .await
+        .unwrap();
+    assert_eq!(rounds_a.len(), 6, "duplicate tick 不得创建重复 round");
+
     // 事件 A：exploit 成功 → VULNERABLE +0。
     let evals_a = evaluation_repo::list_for_run(&db, run_a).await.unwrap();
     let r2_a = evals_a
@@ -511,4 +530,287 @@ async fn tick_starts_pending_event_at_start_time() {
     assert!(run.break_ends_at.is_some());
 
     let _ = events::Entity::delete_by_id(event.id).exec(&db).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §86 Patch eligibility：failed patch / R2 无新 patch → NO_PATCH
+// ────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn patch_eligibility_requires_current_round_patch() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+    cleanup_leftovers(&db).await;
+
+    // exploit 恒失败 → 有合法 APPLIED patch 时 PATCHED +score。
+    let (event_id, run_id, gb_id) = seed_event_and_gamebox(&db, "elig", EXPLOIT_ALWAYS_FAIL).await;
+    let user_id = seed_user(&db, "elig").await;
+    let sub = Subject::user(user_id);
+    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, sub, "flag")
+        .await
+        .expect("start");
+
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick to fix");
+    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_id)
+        .await
+        .unwrap();
+    assert_eq!(rounds.len(), 6);
+
+    // Round 1：apply 一个失败 patch → 不算 APPLIED → NO_PATCH（§86 failed patch）。
+    open_round(&db, run_id, 1).await;
+    let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
+        &db,
+        &docker,
+        run_id,
+        inst.instance_id,
+        "#!/bin/sh\necho boom >&2\nexit 1\n",
+        sub,
+    )
+    .await
+    .expect("failing patch");
+    assert_eq!(
+        r,
+        floatctf::modules::event::awdp::service::patch_service::PatchResult::Failed
+    );
+    expire_round(&db, run_id, 1).await;
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick r1");
+    let n = evaluation::worker_round(&db, &docker, 4)
+        .await
+        .expect("worker");
+    assert_eq!(n, 1, "processed 1 eval");
+    let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
+    let e1 = evals
+        .iter()
+        .find(|e| {
+            e.kind == floatctf::entity::sea_orm_active_enums::AwdpEvaluationKind::Official
+                && e.fix_round_id == Some(rounds[0].id)
+        })
+        .expect("round1 eval");
+    assert_eq!(
+        e1.status,
+        AwdpEvaluationStatus::NoPatch,
+        "failed patch → 不算 APPLIED → NO_PATCH"
+    );
+    let score = score_repo::my_total(&db, run_id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(score, 0, "round1 +0");
+
+    // Round 2：成功 patch → APPLIED → eligible → PATCHED +score（§86 applied）。
+    open_round(&db, run_id, 2).await;
+    let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
+        &db,
+        &docker,
+        run_id,
+        inst.instance_id,
+        "#!/bin/sh\nexit 0\n",
+        sub,
+    )
+    .await
+    .expect("good patch");
+    assert_eq!(
+        r,
+        floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
+    );
+    expire_round(&db, run_id, 2).await;
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick r2");
+    evaluation::worker_round(&db, &docker, 4)
+        .await
+        .expect("worker r2");
+    let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
+    let e2 = evals
+        .iter()
+        .find(|e| e.fix_round_id == Some(rounds[1].id))
+        .expect("round2 eval");
+    assert_eq!(
+        e2.status,
+        AwdpEvaluationStatus::Patched,
+        "applied → eligible"
+    );
+    let run_row = run_repo::require_by_id(&db, run_id).await.unwrap();
+    let score = score_repo::my_total(&db, run_id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(score, run_row.fix_round_score, "PATCHED +fix_round_score");
+
+    // Round 3：无新 patch（即便 R2 patch 仍在容器里生效）→ NO_PATCH（§86）。
+    open_round(&db, run_id, 3).await;
+    expire_round(&db, run_id, 3).await;
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick r3");
+    evaluation::worker_round(&db, &docker, 4)
+        .await
+        .expect("worker r3");
+    let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
+    let e3 = evals
+        .iter()
+        .find(|e| e.fix_round_id == Some(rounds[2].id))
+        .expect("round3 eval");
+    assert_eq!(
+        e3.status,
+        AwdpEvaluationStatus::NoPatch,
+        "R2 无新 patch（即使 R1/R2 patch 仍有效）→ NO_PATCH"
+    );
+    let score3 = score_repo::my_total(&db, run_id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(score3, run_row.fix_round_score, "round3 不加分");
+
+    let _ = events::Entity::delete_by_id(event_id).exec(&db).await;
+    let _ = runtime::stop_instance(&db, &docker, inst.instance_id, sub).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §87 Official evaluation：SERVICE_DOWN / FUNCTIONAL_BROKEN 分支
+// ────────────────────────────────────────────────────────────────────────────
+
+const JUDGE_ALWAYS_FAIL: &str = r#"import json, sys
+print(json.dumps([{"gamebox_ip": ip, "success": False, "error": "internal error"} for ip in sys.argv[1:]], ensure_ascii=False))
+sys.exit(1)
+"#;
+
+#[tokio::test]
+async fn official_eval_service_down_and_functional_broken() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+    cleanup_leftovers(&db).await;
+
+    // 事件 A：health PASS + judge FAIL → FUNCTIONAL_BROKEN。
+    let (ev_a, run_a, gb_a) =
+        seed_event_and_gamebox_with_judge(&db, "fbk", EXPLOIT_ALWAYS_FAIL, JUDGE_ALWAYS_FAIL).await;
+    let user_a = seed_user(&db, "fbk").await;
+    let sub_a = Subject::user(user_a);
+    let inst_a = runtime::start_instance(&db, &docker, JWT_SECRET, run_a, gb_a, sub_a, "flag")
+        .await
+        .expect("start A");
+
+    // 事件 B：容器停止 → health FAIL → SERVICE_DOWN。
+    let (ev_b, run_b, gb_b) = seed_event_and_gamebox(&db, "svd", EXPLOIT_ALWAYS_FAIL).await;
+    let user_b = seed_user(&db, "svd").await;
+    let sub_b = Subject::user(user_b);
+    let inst_b = runtime::start_instance(&db, &docker, JWT_SECRET, run_b, gb_b, sub_b, "flag")
+        .await
+        .expect("start B");
+
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick to fix");
+    let rounds_a = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_a)
+        .await
+        .unwrap();
+
+    // 两个 run 都在 Round 1 先 apply patch（避免 NO_PATCH 短路，直达 health/judge 分支）。
+    open_round(&db, run_a, 1).await;
+    open_round(&db, run_b, 1).await;
+    let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
+        &db,
+        &docker,
+        run_a,
+        inst_a.instance_id,
+        "#!/bin/sh\nexit 0\n",
+        sub_a,
+    )
+    .await
+    .expect("patch A");
+    let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
+        &db,
+        &docker,
+        run_b,
+        inst_b.instance_id,
+        "#!/bin/sh\nexit 0\n",
+        sub_b,
+    )
+    .await
+    .expect("patch B");
+
+    // 事件 B：停止容器（宿主端口映射消失 → 探针失败）。
+    runtime::stop_instance(&db, &docker, inst_b.instance_id, sub_b)
+        .await
+        .expect("stop B container");
+
+    expire_round(&db, run_a, 1).await;
+    expire_round(&db, run_b, 1).await;
+    tick_service::tick_once(&db, &docker, JWT_SECRET)
+        .await
+        .expect("tick r1");
+    let n = evaluation::worker_round(&db, &docker, 4)
+        .await
+        .expect("worker");
+    assert_eq!(n, 2, "processed 2 evals");
+
+    let evals_a = evaluation_repo::list_for_run(&db, run_a).await.unwrap();
+    let e_a = evals_a
+        .iter()
+        .find(|e| e.fix_round_id == Some(rounds_a[0].id))
+        .expect("eval A");
+    assert_eq!(
+        e_a.status,
+        AwdpEvaluationStatus::FunctionalBroken,
+        "health PASS + judge FAIL → FUNCTIONAL_BROKEN"
+    );
+    assert!(e_a.exploit_result.is_none(), "judge FAIL 不跑 exploit");
+
+    let evals_b = evaluation_repo::list_for_run(&db, run_b).await.unwrap();
+    let e_b = evals_b
+        .iter()
+        .filter(|e| e.kind == floatctf::entity::sea_orm_active_enums::AwdpEvaluationKind::Official)
+        .next()
+        .expect("eval B");
+    assert_eq!(
+        e_b.status,
+        AwdpEvaluationStatus::ServiceDown,
+        "health FAIL → SERVICE_DOWN"
+    );
+
+    // 两个分支都不加分。
+    assert_eq!(
+        score_repo::my_total(&db, run_a, Some(user_a), None)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        score_repo::my_total(&db, run_b, Some(user_b), None)
+            .await
+            .unwrap(),
+        0
+    );
+
+    let _ = events::Entity::delete_by_id(ev_a).exec(&db).await;
+    let _ = events::Entity::delete_by_id(ev_b).exec(&db).await;
+    let _ = runtime::stop_instance(&db, &docker, inst_a.instance_id, sub_a).await;
+    let _ = runtime::stop_instance(&db, &docker, inst_b.instance_id, sub_b).await;
 }

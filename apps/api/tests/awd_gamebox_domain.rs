@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use floatctf::entity::{
     awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_team_networks,
-    event_teams, events, gameboxes, sea_orm_active_enums,
+    awdp_event_gameboxes, event_teams, events, gameboxes, sea_orm_active_enums,
     sea_orm_active_enums::{
         AwdEventStatus, AwdPhase, EventFamily, EventPurpose, GameboxStatus, ParticipantMode,
     },
@@ -564,5 +564,164 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
         .exec(&db)
         .await
         .expect("cleanup user");
+    cleanup_domain_fixtures(&db).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GameBox 库删除（仿 challenges delete_challenge）
+// ────────────────────────────────────────────────────────────────────────────
+
+fn tmp_gameboxes_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("fctf-gb-del-{tag}-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    dir
+}
+
+#[tokio::test]
+async fn delete_unreferenced_gamebox_removes_row_and_dir() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup_domain_fixtures(&db).await;
+
+    let (gb_id,) = seed_gamebox_with_revision(&db, "del-ok", "img:v1").await;
+    let gb = gameboxes::Entity::find_by_id(gb_id)
+        .one(&db)
+        .await
+        .expect("db")
+        .expect("gamebox");
+    let dir = tmp_gameboxes_dir("del-ok");
+    let safe_dir = dir.join(&gb.safe_name);
+    std::fs::create_dir_all(&safe_dir).expect("create safe dir");
+
+    let affected = floatctf::modules::gamebox::library::delete_gamebox_with_references_checked(
+        &db, &dir, gb_id,
+    )
+    .await
+    .expect("未引用应删除成功");
+
+    assert_eq!(affected, 1);
+    assert!(
+        gameboxes::Entity::find_by_id(gb_id)
+            .one(&db)
+            .await
+            .expect("db")
+            .is_none(),
+        "记录应被删除"
+    );
+    assert!(!safe_dir.exists(), "磁盘 package 目录应被清理");
+    std::fs::remove_dir_all(&dir).ok();
+    cleanup_domain_fixtures(&db).await;
+}
+
+#[tokio::test]
+async fn delete_awd_referenced_gamebox_rejected() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup_domain_fixtures(&db).await;
+
+    let (gb_id,) = seed_gamebox_with_revision(&db, "del-ref", "img:v1").await;
+    let event_id = seed_running_event(&db, "del-ref").await;
+    seed_event_gamebox(&db, event_id, gb_id, 10, 100).await;
+
+    let dir = tmp_gameboxes_dir("del-ref");
+    let err = floatctf::modules::gamebox::library::delete_gamebox_with_references_checked(
+        &db, &dir, gb_id,
+    )
+    .await
+    .expect_err("被 AWD 赛事引用应拒绝");
+
+    match err {
+        floatctf::modules::gamebox::GameboxError::Conflict(msg) => {
+            assert!(msg.contains("已被引用"), "message: {msg}");
+        }
+        other => panic!("expected Conflict, got {other:?}"),
+    }
+    assert!(
+        gameboxes::Entity::find_by_id(gb_id)
+            .one(&db)
+            .await
+            .expect("db")
+            .is_some(),
+        "记录应保留"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    cleanup_domain_fixtures(&db).await;
+}
+
+#[tokio::test]
+async fn delete_awdp_referenced_gamebox_rejected() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup_domain_fixtures(&db).await;
+
+    let (gb_id,) = seed_gamebox_with_revision(&db, "del-awdp", "img:v1").await;
+    let now = chrono::Utc::now();
+    let event_id = Uuid::new_v4();
+    events::ActiveModel {
+        id: Set(event_id),
+        family: Set(EventFamily::Awdp),
+        purpose: Set(EventPurpose::Practice),
+        participant_mode: Set(ParticipantMode::Individual),
+        system_key: Set(None),
+        title: Set("awd-gb-domain-del-awdp".into()),
+        description: Set(None),
+        start_time: Set(now.into()),
+        end_time: Set(Some((now + chrono::Duration::hours(1)).into())),
+        hidden: Set(true),
+        allow_join: Set(false),
+        rules: Set(String::new()),
+        flag_prefix: Set(None),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert events");
+
+    awdp_event_gameboxes::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        gamebox_id: Set(gb_id),
+        enabled: Set(true),
+        hidden: Set(false),
+        cpu_millis: Set(1000),
+        memory_bytes: Set(512 * 1024 * 1024),
+        pids_limit: Set(100),
+        healthcheck_override_json: Set(None),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert awdp_event_gameboxes");
+
+    let dir = tmp_gameboxes_dir("del-awdp");
+    let err = floatctf::modules::gamebox::library::delete_gamebox_with_references_checked(
+        &db, &dir, gb_id,
+    )
+    .await
+    .expect_err("被 AWDP 赛事引用应拒绝");
+
+    match err {
+        floatctf::modules::gamebox::GameboxError::Conflict(msg) => {
+            assert!(msg.contains("AWDP"), "message: {msg}");
+        }
+        other => panic!("expected Conflict, got {other:?}"),
+    }
+    assert!(
+        gameboxes::Entity::find_by_id(gb_id)
+            .one(&db)
+            .await
+            .expect("db")
+            .is_some(),
+        "记录应保留"
+    );
+    std::fs::remove_dir_all(&dir).ok();
     cleanup_domain_fixtures(&db).await;
 }

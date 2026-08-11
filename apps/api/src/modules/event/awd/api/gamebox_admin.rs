@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::{
     api::{
-        AppError, FilterMapping, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard,
-        prelude::*, sea_orm_utils::query_query,
+        AppError, FilterMapping, UniResponse, UniResult, dto::DeleteItemsRequest,
+        extractor::auth::SuperAdminJwtGuard, prelude::*, sea_orm_utils::query_query,
     },
     entity::{awd_event_gameboxes, gameboxes},
     infrastructure::settings::{get_setting, resolve_dir_path},
@@ -343,6 +343,50 @@ pub async fn hide_gamebox(
         .await
         .map_err(AppError::from)?;
     UniResponse::ok_none().into()
+}
+
+/// DELETE /api/admin/awd/gameboxes —— 批量删除 GameBox（仿 challenges delete_challenge）。
+///
+/// 被任何赛事（AWD/AWDP）或 AWDP Run 引用的 GameBox 拒绝删除（RESTRICT 友好化），
+/// 磁盘 package 目录 `GAMEBOXES_DIR/{safe_name}` 一并清理；删除写入审计日志。
+#[delete("/awd/gameboxes")]
+pub async fn delete_gamebox_library(
+    user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    req: web::Json<DeleteItemsRequest>,
+) -> UniResult<u64> {
+    let user = user.into_inner();
+    let req = req.into_inner();
+    let gameboxes_dir = get_setting(&ctx.db, "GAMEBOXES_DIR")
+        .await
+        .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
+    let gameboxes_dir = resolve_dir_path(&gameboxes_dir);
+
+    let mut deleted_count = 0u64;
+    for gamebox_id in req.id_list {
+        deleted_count += gamebox_lib_repo::delete_gamebox_with_references_checked(
+            ctx.db.get_ref(),
+            &gameboxes_dir,
+            gamebox_id,
+        )
+        .await
+        .map_err(AppError::from)?;
+    }
+
+    ctx.log
+        .add_log(
+            "INFO",
+            "GAMEBOX",
+            "DELETE",
+            format!("{} 删除 {} 个 GameBox", user.username, deleted_count).as_str(),
+            json!({ "deleted_count": deleted_count }),
+            None,
+            user.id.into(),
+            Some(&ctx.req),
+        )
+        .await;
+
+    UniResponse::ok(deleted_count.into()).into()
 }
 
 // ────────────────────────────────────────────────────────────────────────────

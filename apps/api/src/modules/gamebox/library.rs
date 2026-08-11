@@ -5,11 +5,12 @@
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
 };
+use std::path::Path;
 use uuid::Uuid;
 
-use crate::entity::gameboxes;
+use crate::entity::{awd_event_gameboxes, awdp_event_gameboxes, awdp_runs, gameboxes};
 use crate::modules::gamebox::{
     GameboxError, GameboxResult,
     identity::{slugify, validate_safe_name},
@@ -177,6 +178,55 @@ pub async fn set_gamebox_hidden(
     .update(db)
     .await?;
     Ok(Some(()))
+}
+
+/// 删除 GameBox 库条目（仿 challenges delete_challenge：磁盘目录 + DB 记录）。
+///
+/// 被任何赛事（AWD/AWDP）或 AWDP Run 引用时拒绝删除（外键 RESTRICT 的友好化，
+/// 避免裸 FK 错误）；磁盘 package 目录 `gameboxes_dir/{safe_name}` 一并清理。
+/// 返回删除的行数（0 表示记录不存在）。
+pub async fn delete_gamebox_with_references_checked(
+    db: &DatabaseConnection,
+    gameboxes_dir: &Path,
+    id: Uuid,
+) -> GameboxResult<u64> {
+    let gb = find_gamebox_by_id(db, id)
+        .await
+        .map_err(|e| GameboxError::Database(e.to_string()))?
+        .ok_or_else(|| GameboxError::NotFound("GameBox not found".into()))?;
+
+    let awd_refs = awd_event_gameboxes::Entity::find()
+        .filter(awd_event_gameboxes::Column::GameboxId.eq(id))
+        .count(db)
+        .await
+        .map_err(|e| GameboxError::Database(e.to_string()))?;
+    let awdp_refs = awdp_event_gameboxes::Entity::find()
+        .filter(awdp_event_gameboxes::Column::GameboxId.eq(id))
+        .count(db)
+        .await
+        .map_err(|e| GameboxError::Database(e.to_string()))?;
+    let run_refs = awdp_runs::Entity::find()
+        .filter(awdp_runs::Column::GameboxId.eq(id))
+        .count(db)
+        .await
+        .map_err(|e| GameboxError::Database(e.to_string()))?;
+    if awd_refs + awdp_refs + run_refs > 0 {
+        return Err(GameboxError::Conflict(format!(
+            "GameBox {} 已被引用（AWD 赛事 {awd_refs} / AWDP 赛事 {awdp_refs} / AWDP Run {run_refs}），请先解除挂载后再删除",
+            gb.name
+        )));
+    }
+
+    let gb_dir = gameboxes_dir.join(&gb.safe_name);
+    if gb_dir.exists() {
+        std::fs::remove_dir_all(&gb_dir)
+            .map_err(|e| GameboxError::Internal(format!("delete gamebox dir error: {e}")))?;
+    }
+    let r = gameboxes::Entity::delete_by_id(id)
+        .exec(db)
+        .await
+        .map_err(|e| GameboxError::Database(e.to_string()))?;
+    Ok(r.rows_affected)
 }
 
 // ---------------------------------------------------------------------------

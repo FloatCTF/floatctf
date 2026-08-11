@@ -397,6 +397,13 @@ export const awdAdminApi = {
 		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
 		return res.data;
 	},
+	// 批量删除（仿 challenges.remove）：仅未被赛事 / AWDP Run 引用的可删
+	removeGamebox: async (id_list: string[]): Promise<UniResponse<number>> => {
+		const res = await admin_api.delete(`/awd/gameboxes`, {
+			data: { id_list },
+		});
+		return res.data;
+	},
 	scanGameboxes: async (): Promise<UniResponse<GameBoxScanItem[]>> => {
 		const res = await admin_api.post(`/awd/gameboxes/scan`);
 		return res.data;

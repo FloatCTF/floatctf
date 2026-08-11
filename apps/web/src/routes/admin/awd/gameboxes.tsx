@@ -26,8 +26,8 @@ import type {
 } from "@/api/awd";
 import { type QueryParams, type UniResponse } from "@/api/axios";
 import { GenericTable, useMsgBanner } from "@/components";
-import { AdminRouteGuard } from "../route";
 import { useSelectedRowIds } from "@/util";
+import { AdminRouteGuard } from "../route";
 
 export const Route = createFileRoute("/admin/awd/gameboxes")({
 	component: RouteComponent,
@@ -177,7 +177,13 @@ function RouteComponent() {
 	];
 
 	const columns = [
-		{ accessorKey: "name", header: "Name", field: "name", rowHeader: true, sortBy: true },
+		{
+			accessorKey: "name",
+			header: "Name",
+			field: "name",
+			rowHeader: true,
+			sortBy: true,
+		},
 		{
 			accessorKey: "safe_name",
 			header: "Safe Name",
@@ -187,9 +193,7 @@ function RouteComponent() {
 			accessorKey: "version",
 			header: "Version",
 			field: "version",
-			renderCell: (row: GameBoxLibraryDto) => (
-				<span>{row.version ?? "-"}</span>
-			),
+			renderCell: (row: GameBoxLibraryDto) => <span>{row.version ?? "-"}</span>,
 		},
 		{
 			accessorKey: "image_ref",
@@ -266,6 +270,7 @@ function RouteComponent() {
 				queryFn={queryFn}
 				createFn={createFn}
 				patchFn={patchFn}
+				removeFn={adminApi.awd.removeGamebox}
 				mutationColumns={mutationColumns}
 				mutationData={mutationData}
 				columnActions={columnActions}
@@ -311,10 +316,7 @@ export function ScanButton() {
 			setIsOpen(true);
 			queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
 		} catch (e) {
-			banner.showBanner(
-				"critical",
-				(e as Error).message || "扫描失败，请重试",
-			);
+			banner.showBanner("critical", (e as Error).message || "扫描失败，请重试");
 		} finally {
 			setLoading(false);
 		}
@@ -384,9 +386,7 @@ export function ScanButton() {
 							// @ts-ignore
 							getRowId={(row) => row.safe_name}
 							// @ts-ignore
-							data={table
-								.getRowModel()
-								.rows.map((row) => row.original)}
+							data={table.getRowModel().rows.map((row) => row.original)}
 						/>
 					</Table.Container>
 				</Dialog>
@@ -405,9 +405,7 @@ export function CheckButton({
 	gamebox_id_list?: string[];
 }) {
 	const idsToCheck: string[] | undefined =
-		gamebox_id_list && gamebox_id_list.length > 0
-			? gamebox_id_list
-			: undefined;
+		gamebox_id_list && gamebox_id_list.length > 0 ? gamebox_id_list : undefined;
 	const [isOpen, setIsOpen] = useState(false);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const onDialogClose = useCallback(() => setIsOpen(false), []);
@@ -480,9 +478,7 @@ export function CheckButton({
 				header: "Package Dir",
 				field: "package_dir",
 				renderCell: (row: GameBoxCheckResult) => {
-					return (
-						<span>{row.package_dir ? <CheckIcon /> : <></>}</span>
-					);
+					return <span>{row.package_dir ? <CheckIcon /> : <></>}</span>;
 				},
 			},
 		],
@@ -540,8 +536,7 @@ function ImportButton() {
 	const queryClient = useQueryClient();
 
 	const importMutation = useMutation({
-		mutationFn: (vars: { file: File }) =>
-			adminApi.awd.importGamebox(vars.file),
+		mutationFn: (vars: { file: File }) => adminApi.awd.importGamebox(vars.file),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
 			setMessage({ type: "success", text: "上传成功 🎉" });

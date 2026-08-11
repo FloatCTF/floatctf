@@ -58,7 +58,8 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::check_gameboxes)
         .service(gamebox_admin::build_gamebox)
         .service(gamebox_admin::update_gamebox)
-        .service(gamebox_admin::hide_gamebox);
+        .service(gamebox_admin::hide_gamebox)
+        .service(gamebox_admin::delete_gamebox_library);
 }
 
 /// 在 `scope("/events")` **内部**注册 AWD 选手端路由。

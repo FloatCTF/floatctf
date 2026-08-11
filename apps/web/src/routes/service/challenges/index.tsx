@@ -17,19 +17,6 @@ function RouteComponent() {
 	useTitle("Challenges | FloatCTF");
 	const columns = [
 		{
-			accessorKey: "id",
-			header: "ID",
-			field: "id",
-			rowHeader: true,
-			renderCell: (row: ChallengesListItem) => {
-				return (
-					<AppLink to={"/service/challenges/$id"} params={{ id: row.id }}>
-						{row.id}
-					</AppLink>
-				);
-			},
-		},
-		{
 			accessorKey: "name",
 			header: "Name",
 			field: "name",

@@ -9,6 +9,13 @@ import type { Instances } from "@/entity";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 
+/** 列表页展示类型：实例基础字段 + 关联名称（后端计算字段）。 */
+type InstanceRow = Instances & {
+	challenge_title?: string;
+	event_title?: string;
+	user_name?: string;
+};
+
 export const Route = createFileRoute("/service/instances")({
 	component: RouteComponent,
 });
@@ -35,17 +42,17 @@ function RouteComponent() {
 
 	const columns = [
 		{
-			accessorKey: "challenge_id",
+			accessorKey: "challenge_title",
 			header: "Challenge",
-			field: "challenge_id",
+			field: "challenge_title",
 			rowHeader: true,
-			renderCell: (row: Instances) => {
+			renderCell: (row: InstanceRow) => {
 				return row.challenge_id ? (
 					<AppLink
 						to={"/service/challenges/$id"}
 						params={{ id: row.challenge_id }}
 					>
-						{row.challenge_id}
+						{row.challenge_title ?? row.challenge_id}
 					</AppLink>
 				) : (
 					<span>—</span>
@@ -58,9 +65,12 @@ function RouteComponent() {
 			field: "status",
 		},
 		{
-			accessorKey: "event_id",
+			accessorKey: "event_title",
 			header: "Event",
-			field: "event_id",
+			field: "event_title",
+			renderCell: (row: InstanceRow) => {
+				return <span>{row.event_title ?? row.event_id}</span>;
+			},
 		},
 		{
 			accessorKey: "identifier",
@@ -68,9 +78,12 @@ function RouteComponent() {
 			field: "identifier",
 		},
 		{
-			accessorKey: "user_id",
+			accessorKey: "user_name",
 			header: "User",
-			field: "user_id",
+			field: "user_name",
+			renderCell: (row: InstanceRow) => {
+				return <span>{row.user_name ?? row.user_id}</span>;
+			},
 		},
 		{
 			accessorKey: "destroy_at",

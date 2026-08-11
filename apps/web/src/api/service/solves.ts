@@ -8,6 +8,7 @@ import { type QueryParams, type UniResponse, service_api } from "../axios";
 export type SolveResult = ChallengeSolves & {
 	nickname: string;
 	avatar?: string;
+	challenge_name: string;
 };
 
 export const solveServiceApi = {

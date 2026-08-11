@@ -13,6 +13,7 @@ import type { UniResponse } from "@/api/axios";
 import { useMsgBanner } from "@/components";
 import type { Challenges, Instances } from "@/entity";
 import type { ChallengesListItem } from "@/types/challengeDto";
+import { DatetimeToShow } from "@/util";
 import type { AxiosError } from "axios";
 
 export const Route = createFileRoute("/service/challenge_sets/$id/")({
@@ -70,14 +71,10 @@ function RouteComponent() {
 
 	const columns = [
 		{
-			accessorKey: "id",
-			header: "ID",
-			field: "id",
-		},
-		{
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
+			rowHeader: true,
 			renderCell: (row: ChallengesListItem) => {
 				return (
 					<button
@@ -119,6 +116,14 @@ function RouteComponent() {
 						onFilterChange={setFilter}
 					/>
 				);
+			},
+		},
+		{
+			accessorKey: "updated_at",
+			field: "updated_at",
+			header: "Updated At",
+			renderCell: (row: ChallengesListItem) => {
+				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
 	];

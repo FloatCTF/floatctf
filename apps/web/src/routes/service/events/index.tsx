@@ -17,7 +17,7 @@ export const Route = createFileRoute("/service/events/")({
 	component: RouteComponent,
 });
 
-const filterKeys = ["id", "title", "type", "allow_join"];
+const filterKeys = ["title", "family", "allow_join"];
 
 export type EventInfo = {
 	id: string;
@@ -41,12 +41,6 @@ function RouteComponent() {
 	const banner = useMsgBanner({});
 
 	const columns = [
-		{
-			accessorKey: "event.id",
-			header: "ID",
-			field: "event.id",
-			rowHeader: true,
-		},
 		{
 			accessorKey: "event.title",
 			header: "Title",

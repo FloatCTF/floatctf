@@ -14,22 +14,10 @@ function RouteComponent() {
 	const subject = "Challenge Sets";
 	const columns = [
 		{
-			accessorKey: "id",
-			header: "ID",
-			field: "id",
-			rowHeader: true,
-			renderCell: (row: ChallengeSets) => {
-				return (
-					<AppLink to="/service/challenge_sets/$id" params={{ id: row.id }}>
-						{row.id}
-					</AppLink>
-				);
-			},
-		},
-		{
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
+			rowHeader: true,
 			renderCell: (row: ChallengeSets) => {
 				return (
 					<AppLink to="/service/challenge_sets/$id" params={{ id: row.id }}>
@@ -46,12 +34,12 @@ function RouteComponent() {
 			sortBy: true,
 		},
 		{
-			accessorKey: "created_at",
-			header: "Created At",
-			field: "created_at",
+			accessorKey: "updated_at",
+			header: "Updated At",
+			field: "updated_at",
 			sortBy: true,
 			renderCell: (row: ChallengeSets) => {
-				return <span>{DatetimeToShow(row.created_at)}</span>;
+				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
 	];

@@ -19,21 +19,10 @@ function RouteComponent() {
 
 	const columns = [
 		{
-			accessorKey: "id",
-			header: "ID",
-			field: "writeup.id",
-			rowHeader: true,
-			sortBy: true,
-			renderCell: (row: ChallengeWriteupResult) => (
-				<AppLink to="/service/writeups/$id" params={{ id: row.writeup.id }}>
-					{row.writeup.id}
-				</AppLink>
-			),
-		},
-		{
 			accessorKey: "challenge",
 			header: "Challenge",
 			field: "challenge.name",
+			rowHeader: true,
 			sortBy: true,
 			renderCell: (row: ChallengeWriteupResult) => (
 				<AppLink to="/service/challenges/$id" params={{ id: row.challenge.id }}>
@@ -71,12 +60,12 @@ function RouteComponent() {
 			),
 		},
 		{
-			accessorKey: "created_at",
-			header: "Created At",
-			field: "writeup.created_at",
+			accessorKey: "updated_at",
+			header: "Updated At",
+			field: "writeup.updated_at",
 			sortBy: true,
 			renderCell: (row: ChallengeWriteupResult) => (
-				<span>{DatetimeToShow(row.writeup.created_at)}</span>
+				<span>{DatetimeToShow(row.writeup.updated_at)}</span>
 			),
 		},
 	];

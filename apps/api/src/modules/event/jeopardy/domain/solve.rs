@@ -2,16 +2,26 @@
 
 use uuid::Uuid;
 
-/// Who receives credit for a Jeopardy solve and how Instance is scoped.
+/// Who receives credit for a Jeopardy solve and how instances are scoped.
+///
+/// Driven by [`crate::entity::sea_orm_active_enums::ParticipantMode`]:
+/// - Individual → [`SolveSubject::User`]
+/// - Team → [`SolveSubject::Team`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolveSubject {
-    /// Jeopardy single: per User.
+    /// Per-user ownership / scoring (Individual participant mode).
     User,
-    /// Jeopardy team: per Team (submitting user still recorded).
+    /// Per-team ownership / scoring (Team participant mode; acting user still recorded).
     Team,
 }
 
-/// Input for a formal Jeopardy flag submission (not practice).
+impl SolveSubject {
+    pub fn is_team(self) -> bool {
+        matches!(self, Self::Team)
+    }
+}
+
+/// Input for a formal Jeopardy flag submission (competition scoring path).
 #[derive(Debug, Clone)]
 pub struct JeopardySubmitRequest {
     pub event_id: Uuid,

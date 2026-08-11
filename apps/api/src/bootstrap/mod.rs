@@ -20,7 +20,6 @@ use crate::{
         LogService, WebDb, WebDocker, WebRustfs, audit::AuditService, database, docker,
         seed_default_settings, storage,
     },
-    modules::event::EventModuleRegistry,
     modules::event::awd::crypto::AwdCrypto,
 };
 
@@ -210,7 +209,6 @@ pub async fn run() -> Result<(), BootstrapError> {
         audit_service.clone(),
         publisher.clone(),
         task_scheduler_arc.clone(),
-        EventModuleRegistry::new(),
     ));
 
     // AWD container runtime + crypto
@@ -242,8 +240,6 @@ pub async fn run() -> Result<(), BootstrapError> {
             .wrap(cors)
             // New centralized state
             .app_data(app_state.clone())
-            // Same registry instance as AppState (handlers may extract either)
-            .app_data(web::Data::new(app_state.get_ref().event_registry.clone()))
             .app_data(awd_deps.clone())
             // Concrete hub for SSE / WS fan-out (subscribe)
             .app_data(web::Data::from(broadcast_hub.clone()))

@@ -22,14 +22,15 @@ use crate::{
         users,
     },
     infrastructure::{WebDb, WebDocker},
-    modules::event::{
-        jeopardy::{
-            application::context::EventContextBuilder,
-            domain::{
-                scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
-            },
+    modules::event::jeopardy::{
+        application::{
+            context::EventContextBuilder, instance as jeopardy_instance,
+            scoreboard as jeopardy_scoreboard, trend as jeopardy_trend,
+            writeup as jeopardy_writeup,
         },
-        registry::event_registry,
+        domain::{
+            scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
+        },
     },
 };
 
@@ -251,10 +252,15 @@ pub async fn list_event_challenges(
                 .count(db.get_ref())
                 .await?;
 
-            let (solved, solved_no) = event_registry()
-                .challenge_solve_status(db, &event, user, c.id)
-                .await
-                .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
+            let (solved, solved_no) = jeopardy_instance::challenge_solve_status(
+                db.get_ref(),
+                event.id,
+                c.id,
+                user.id,
+                &event.participant_mode,
+            )
+            .await
+            .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
 
             let current_points =
                 calculate_next_dynamic_score(db.get_ref(), event_challenge.points, solved_count)
@@ -296,8 +302,7 @@ pub async fn list_event_instances(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    let instances = event_registry()
-        .get_instances(&event_ctx)
+    let instances = jeopardy_instance::get_instances(&event_ctx)
         .await
         .map_err(|e| AppError::BadRequest(format!("get_instances error: {}", e)))?;
 
@@ -333,8 +338,7 @@ pub async fn get_challenge_instance(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    event_registry()
-        .get_instance_by_challenge_id(&event_ctx, challenge_id)
+    jeopardy_instance::get_instance_by_challenge_id(&event_ctx, challenge_id)
         .await
         .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))
 }
@@ -561,7 +565,7 @@ pub async fn leave_event(
     Ok((event, rows))
 }
 
-// ── Scoreboard / trend adapters (EventModuleRegistry) ─────────────────────
+// ── Scoreboard / trend adapters (Jeopardy application) ─────────────────────
 
 pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<ScoreboardItem>> {
     let event = events::Entity::find_by_id(event_id)
@@ -569,8 +573,7 @@ pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<Sco
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_scoreboard(&db, &event)
+    jeopardy_scoreboard::get_scoreboard(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
@@ -581,8 +584,7 @@ pub async fn get_trend(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<TrendIte
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_trend(&db, &event)
+    jeopardy_trend::get_trend(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
@@ -629,8 +631,7 @@ pub async fn own_writeup_file_url(
         .await?
         .ok_or(AppError::NotFound(format!("event {} not found", event_id)))?;
 
-    event_registry()
-        .own_writeup_file_url(db, &event, user)
+    jeopardy_writeup::own_writeup_file_url(db, &event, user)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)))?
         .ok_or(AppError::NotFound("Has no wp".into()))

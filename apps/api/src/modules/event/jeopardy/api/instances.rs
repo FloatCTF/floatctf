@@ -11,8 +11,9 @@ use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
     entity::{challenge_instances, events, sea_orm_active_enums::InstanceStatus},
     modules::event::{
-        EventModuleRegistry, common::domain::practice_event::require_practice_jeopardy_event,
+        common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::context::EventContextBuilder,
+        jeopardy::application::instance as jeopardy_instance,
     },
 };
 
@@ -121,7 +122,6 @@ pub struct LaunchInstanceRequest {
 pub async fn launch_instance(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    registry: web::Data<EventModuleRegistry>,
     lir: Json<LaunchInstanceRequest>,
 ) -> UniResult<InstancesDto> {
     let user = user.into_inner();
@@ -148,9 +148,7 @@ pub async fn launch_instance(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    let instance = registry
-        .as_ref()
-        .launch_instance(&event_ctx, lir.challenge_id)
+    let instance = jeopardy_instance::launch_instance(&event_ctx, lir.challenge_id)
         .await
         .map_err(|e| AppError::BadRequest(format!("when launch instance:{}", e)))?;
 
@@ -175,7 +173,6 @@ pub async fn launch_instance(
 pub async fn destroy_instance(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    registry: web::Data<EventModuleRegistry>,
     instance_id: Path<Uuid>,
 ) -> UniResult<()> {
     let user = user.into_inner();
@@ -201,9 +198,7 @@ pub async fn destroy_instance(
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context:{}", e)))?;
-    registry
-        .as_ref()
-        .destroy_instance(&event_ctx, instance_id)
+    jeopardy_instance::destroy_instance(&event_ctx, instance_id)
         .await
         .map_err(|e| AppError::BadRequest(format!("destroy_instance:{}", e)))?;
 

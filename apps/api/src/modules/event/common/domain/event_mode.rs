@@ -131,42 +131,6 @@ impl EventMode {
     pub fn is_awd(&self) -> bool {
         self.family == EventFamily::Awd
     }
-
-    /// Derive Jeopardy internal variant (not persisted / not API).
-    pub fn jeopardy_variant(&self) -> Option<JeopardyVariant> {
-        if !self.is_jeopardy() {
-            return None;
-        }
-        Some(match (&self.purpose, &self.participant_mode) {
-            (EventPurpose::Practice, _) => JeopardyVariant::Practice,
-            (EventPurpose::Competition, ParticipantMode::Individual) => {
-                JeopardyVariant::IndividualCompetition
-            }
-            (EventPurpose::Competition, ParticipantMode::Team) => JeopardyVariant::TeamCompetition,
-        })
-    }
-}
-
-/// Jeopardy-only derived variant (never persisted, never in API).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum JeopardyVariant {
-    Practice,
-    IndividualCompetition,
-    TeamCompetition,
-}
-
-impl JeopardyVariant {
-    pub fn allow_repeat_solve(self) -> bool {
-        matches!(self, Self::Practice)
-    }
-
-    pub fn requires_team(self) -> bool {
-        matches!(self, Self::TeamCompetition)
-    }
-
-    pub fn contributes_to_official_score(self) -> bool {
-        !matches!(self, Self::Practice)
-    }
 }
 
 /// System-managed Practice event key.
@@ -230,22 +194,5 @@ mod tests {
             let err = EventMode::new(family, purpose, participant_mode);
             assert!(err.is_err(), "expected invalid: {err:?}");
         }
-    }
-
-    #[test]
-    fn jeopardy_variant_mapping() {
-        assert_eq!(
-            EventMode::jeopardy_practice().jeopardy_variant(),
-            Some(JeopardyVariant::Practice)
-        );
-        assert_eq!(
-            EventMode::jeopardy_individual_competition().jeopardy_variant(),
-            Some(JeopardyVariant::IndividualCompetition)
-        );
-        assert_eq!(
-            EventMode::jeopardy_team_competition().jeopardy_variant(),
-            Some(JeopardyVariant::TeamCompetition)
-        );
-        assert_eq!(EventMode::awd_team_competition().jeopardy_variant(), None);
     }
 }

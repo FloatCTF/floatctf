@@ -55,13 +55,10 @@ floatctf-api/
 │   │   ├── instances.rs
 │   │   ├── users.rs
 │   │   └── ...
-│   └── strategies/                 # Event strategies
-│       └── event/
-│           ├── implementations/
-│           │   ├── jeopardy_practice.rs
-│           │   ├── jeopardy_single.rs
-│           │   └── jeopardy_team.rs
-│           └── trait_def.rs
+│   └── modules/event/              # EventFamily × Purpose × ParticipantMode
+│       ├── common/                 # CRUD, EventMode, capabilities
+│       ├── jeopardy/               # Jeopardy engine (use cases by Purpose/Participant)
+│       └── awd/                    # AWD engine (separate stack)
 ```
 
 ## Technology Stack

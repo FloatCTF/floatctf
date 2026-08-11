@@ -136,7 +136,7 @@ function RouteComponent() {
 			<div className="flex flex-col gap-3 flex-1 min-w-[320px]">
 				{/* 右侧：操作 */}
 				<div className="flex flex-col gap-3">
-					{/* 队伍区（参考 JeopardyTeam） */}
+					{/* 队伍区（参考 Jeopardy Team 参赛形态） */}
 					<section className="p-3 rounded border flex gap-5">
 						{status !== "upcoming" && joined && (
 							<SubmitWriteup eventId={id} teamId={myTeam?.team.id} />

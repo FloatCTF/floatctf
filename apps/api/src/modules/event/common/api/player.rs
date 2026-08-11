@@ -68,7 +68,9 @@ pub async fn get_event_capabilities(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
-    let caps = crate::modules::event::EventModuleRegistry::capabilities_for_event(&event);
+    let caps = crate::modules::event::common::domain::capability::EventCapabilities::for_mode(
+        &event.mode_unchecked(),
+    );
     UniResponse::ok(Some(caps)).into()
 }
 

@@ -11,7 +11,6 @@ use crate::core::AppConfig;
 use crate::infrastructure::audit::AuditService;
 use crate::infrastructure::logging::LogService;
 use crate::infrastructure::realtime::EventPublisher;
-use crate::modules::event::EventModuleRegistry;
 use crate::modules::event::awd::crypto::AwdCrypto;
 use crate::modules::event::awd::infrastructure::firewall::FirewallRuntime;
 use crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime;
@@ -40,10 +39,6 @@ pub struct AppState {
     pub publisher: Arc<dyn EventPublisher>,
     /// Task scheduler.
     pub scheduler: Arc<TaskScheduler>,
-    /// Competition mode registry (Jeopardy modes + capability dispatch).
-    pub event_registry: EventModuleRegistry,
-    /// Domain service aggregation.
-    pub modules: ModuleServices,
 }
 
 /// AWD-specific dependencies.
@@ -79,11 +74,7 @@ impl AppState {
         audit: AuditService,
         publisher: Arc<dyn EventPublisher>,
         scheduler: Arc<TaskScheduler>,
-        event_registry: EventModuleRegistry,
     ) -> Self {
-        let modules = ModuleServices {
-            event: event_registry.clone(),
-        };
         Self {
             config,
             db,
@@ -93,14 +84,6 @@ impl AppState {
             audit,
             publisher,
             scheduler,
-            event_registry,
-            modules,
         }
     }
-}
-
-/// Aggregated domain services (expand as modules grow DI needs).
-#[derive(Clone, Default)]
-pub struct ModuleServices {
-    pub event: crate::modules::event::EventModuleRegistry,
 }

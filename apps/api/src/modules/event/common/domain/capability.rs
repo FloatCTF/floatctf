@@ -39,3 +39,30 @@ impl EventCapabilities {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::event::common::domain::event_mode::EventMode;
+
+    #[test]
+    fn all_valid_modes_have_capabilities() {
+        for mode in [
+            EventMode::jeopardy_practice(),
+            EventMode::jeopardy_individual_competition(),
+            EventMode::jeopardy_team_competition(),
+            EventMode::awd_team_competition(),
+        ] {
+            let caps = EventCapabilities::for_mode(&mode);
+            assert_eq!(caps.participant_mode, mode.participant_mode);
+            if mode.is_jeopardy() {
+                assert!(caps.supports_instances);
+                assert!(caps.supports_standard_flag_submission);
+                assert!(!caps.supports_gameboxes);
+            } else {
+                assert!(!caps.supports_instances);
+                assert!(caps.supports_gameboxes);
+            }
+        }
+    }
+}

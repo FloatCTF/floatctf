@@ -1,13 +1,12 @@
 use crate::api::prelude::*;
-use actix_web::web;
 
 use crate::{
     entity::{event_teams, event_writeup, events},
     modules::event::{
-        EventModuleRegistry,
         common::domain::practice_event::require_practice_jeopardy_event,
-        jeopardy::application::context::{
-            EventContextBuilder, SubmitFlagRequest as ModeSubmitFlag,
+        jeopardy::application::{
+            context::{EventContextBuilder, SubmitFlagRequest as ModeSubmitFlag},
+            submit as jeopardy_submit,
         },
     },
 };
@@ -28,7 +27,6 @@ pub struct SubmitFlagRequest {
 pub async fn submit_flag(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    registry: web::Data<EventModuleRegistry>,
     sfr: Json<SubmitFlagRequest>,
 ) -> UniResult<()> {
     let user = user.into_inner();
@@ -56,17 +54,15 @@ pub async fn submit_flag(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    registry
-        .get_ref()
-        .submit_flag(
-            &event_ctx,
-            ModeSubmitFlag {
-                instance_id: sfr.instance_id,
-                flag: sfr.flag.clone(),
-            },
-        )
-        .await
-        .map_err(|e| AppError::BadRequest(format!("submit flag error: {}", e)))?;
+    jeopardy_submit::submit_flag(
+        &event_ctx,
+        ModeSubmitFlag {
+            instance_id: sfr.instance_id,
+            flag: sfr.flag.clone(),
+        },
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(format!("submit flag error: {}", e)))?;
 
     if let Some(_event_id) = sfr.event_id {
         ctx.log

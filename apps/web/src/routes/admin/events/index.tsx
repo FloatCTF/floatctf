@@ -50,6 +50,16 @@ function RouteComponent() {
 						</AppLink>
 					);
 				}
+				if (row.family === EventFamily.Awdp) {
+					return (
+						<AppLink
+							to={"/admin/events/awdp/$id"}
+							params={{ id: row.id }}
+						>
+							{row.id}
+						</AppLink>
+					);
+				}
 				return <span>{row.id}</span>;
 			},
 		},
@@ -171,6 +181,7 @@ function RouteComponent() {
 				>
 					<Select.Option value={EventFamily.Jeopardy}>jeopardy</Select.Option>
 					<Select.Option value={EventFamily.Awd}>awd</Select.Option>
+					<Select.Option value={EventFamily.Awdp}>awdp</Select.Option>
 				</Select>
 			),
 		},

@@ -8,6 +8,9 @@ pub mod common;
 pub mod awd;
 pub(crate) mod jeopardy;
 
+/// AWD Plus 模块骨架（引擎未实现，见模块内文档）。
+pub mod awdp;
+
 mod error;
 
 pub use error::{EventError, EventResult};

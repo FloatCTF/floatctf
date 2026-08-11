@@ -63,6 +63,18 @@ impl EventMode {
                 EventFamily::Awd,
                 EventPurpose::Competition,
                 ParticipantMode::Team
+            ) | (
+                EventFamily::Awdp,
+                EventPurpose::Practice,
+                ParticipantMode::Individual
+            ) | (
+                EventFamily::Awdp,
+                EventPurpose::Competition,
+                ParticipantMode::Individual
+            ) | (
+                EventFamily::Awdp,
+                EventPurpose::Competition,
+                ParticipantMode::Team
             )
         );
         if ok {
@@ -108,6 +120,33 @@ impl EventMode {
         }
     }
 
+    /// AWD Plus（攻防+）战队竞赛模式。骨架期仅开放身份组合，引擎未实现。
+    pub fn awdp_team_competition() -> Self {
+        Self {
+            family: EventFamily::Awdp,
+            purpose: EventPurpose::Competition,
+            participant_mode: ParticipantMode::Team,
+        }
+    }
+
+    /// AWD Plus（攻防+）个人竞赛模式。骨架期仅开放身份组合，引擎未实现。
+    pub fn awdp_individual_competition() -> Self {
+        Self {
+            family: EventFamily::Awdp,
+            purpose: EventPurpose::Competition,
+            participant_mode: ParticipantMode::Individual,
+        }
+    }
+
+    /// AWD Plus（攻防+）个人练习模式。骨架期仅开放身份组合，引擎未实现。
+    pub fn awdp_practice() -> Self {
+        Self {
+            family: EventFamily::Awdp,
+            purpose: EventPurpose::Practice,
+            participant_mode: ParticipantMode::Individual,
+        }
+    }
+
     pub fn is_practice(&self) -> bool {
         self.purpose == EventPurpose::Practice
     }
@@ -130,6 +169,10 @@ impl EventMode {
 
     pub fn is_awd(&self) -> bool {
         self.family == EventFamily::Awd
+    }
+
+    pub fn is_awdp(&self) -> bool {
+        self.family == EventFamily::Awdp
     }
 }
 
@@ -157,6 +200,9 @@ mod tests {
             EventMode::jeopardy_individual_competition(),
             EventMode::jeopardy_team_competition(),
             EventMode::awd_team_competition(),
+            EventMode::awdp_team_competition(),
+            EventMode::awdp_individual_competition(),
+            EventMode::awdp_practice(),
         ] {
             assert!(mode.validate().is_ok(), "{mode:?}");
             assert!(
@@ -192,6 +238,11 @@ mod tests {
                 EventFamily::Awd,
                 EventPurpose::Practice,
                 ParticipantMode::Individual,
+            ),
+            (
+                EventFamily::Awdp,
+                EventPurpose::Practice,
+                ParticipantMode::Team,
             ),
             (
                 EventFamily::Jeopardy,

@@ -23,7 +23,8 @@ impl EventCapabilities {
         let (supports_instances, supports_standard_flag_submission, awd_engine) = match mode.family
         {
             EventFamily::Jeopardy => (true, true, false),
-            EventFamily::Awd => (false, false, true),
+            // AWD 与 AWD Plus 均属攻防类：骨架期复用攻防能力位（引擎未实现）。
+            EventFamily::Awd | EventFamily::Awdp => (false, false, true),
         };
 
         Self {
@@ -52,6 +53,9 @@ mod tests {
             EventMode::jeopardy_individual_competition(),
             EventMode::jeopardy_team_competition(),
             EventMode::awd_team_competition(),
+            EventMode::awdp_team_competition(),
+            EventMode::awdp_individual_competition(),
+            EventMode::awdp_practice(),
         ] {
             let caps = EventCapabilities::for_mode(&mode);
             assert_eq!(caps.participant_mode, mode.participant_mode);

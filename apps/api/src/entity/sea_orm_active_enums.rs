@@ -92,6 +92,8 @@ pub enum EventFamily {
     Jeopardy,
     #[sea_orm(string_value = "awd")]
     Awd,
+    #[sea_orm(string_value = "awdp")]
+    Awdp,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_purpose")]

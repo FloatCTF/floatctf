@@ -66,6 +66,15 @@ function RouteComponent() {
 								{row.event.title}
 							</AppLink>
 						);
+					case EventFamily.Awdp:
+						return (
+							<AppLink
+								to={"/service/events/awdp/$id"}
+								params={{ id: row.event.id }}
+							>
+								{row.event.title}
+							</AppLink>
+						);
 					default:
 						return <span>{row.event.title}</span>;
 				}

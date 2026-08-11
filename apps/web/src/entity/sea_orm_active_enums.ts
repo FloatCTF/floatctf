@@ -40,6 +40,7 @@ export enum BanStatus {
 export enum EventFamily {
   Jeopardy = 'jeopardy',
   Awd = 'awd',
+  Awdp = 'awdp',
 }
 
 export enum EventPurpose {

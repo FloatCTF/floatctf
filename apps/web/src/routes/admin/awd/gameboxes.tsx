@@ -6,7 +6,6 @@ import {
 	Dialog,
 	Stack,
 	TextInput,
-	Textarea,
 	ToggleSwitch,
 	useConfirm,
 } from "@primer/react";
@@ -51,7 +50,7 @@ function RouteComponent() {
 		onError: banner.showErrorBanner,
 	});
 
-	// 编辑表单：身份 + 可编辑运行参数（digest/镜像 pin/build 状态由系统管理，不在此列）
+	// 编辑表单：身份 + 可编辑运行参数（digest/镜像 pin/build 状态/judge/health 由导入决定，不在此列）
 	const mutationData = useReactive<Partial<GameBoxLibraryDto>>({
 		name: "",
 		category: "other",
@@ -61,12 +60,6 @@ function RouteComponent() {
 		cpu_millis: undefined,
 		memory_bytes: undefined,
 		pids_limit: undefined,
-		healthchecks_json: undefined,
-		judge_script_name: "",
-		judge_script_content: "",
-		judge_args_json: undefined,
-		judge_timeout_secs: undefined,
-		judge_retry_interval_secs: undefined,
 	});
 
 	// 数字输入：空 → null（清空），非法输入保持不变
@@ -75,14 +68,6 @@ function RouteComponent() {
 		const n = Number(v);
 		return Number.isNaN(n) ? undefined : n;
 	};
-
-	// JSON 字段控件值：编辑后为字符串原文；未编辑时回显已格式化 JSON
-	const jsonValue = (v: unknown) =>
-		typeof v === "string"
-			? v
-			: v !== undefined && v !== null
-				? JSON.stringify(v, null, 2)
-				: "";
 
 	const mutationColumns = [
 		{
@@ -188,91 +173,6 @@ function RouteComponent() {
 				/>
 			),
 		},
-		{
-			header: "healthchecks_json",
-			field: "healthchecks_json",
-			render: (
-				<Textarea
-					value={jsonValue(mutationData.healthchecks_json)}
-					rows={4}
-					onChange={(e) => {
-						mutationData.healthchecks_json = e.target.value;
-					}}
-					placeholder={'健康检查 JSON，如 [{"port":80,"path":"/health","expected_status":200}]；留空清空'}
-				/>
-			),
-		},
-		{
-			header: "judge_script_name",
-			field: "judge_script_name",
-			render: (
-				<TextInput
-					value={mutationData.judge_script_name ?? ""}
-					onChange={(e) => {
-						mutationData.judge_script_name = e.target.value;
-					}}
-					placeholder="判题脚本文件名，如 check.py"
-				/>
-			),
-		},
-		{
-			header: "judge_script_content",
-			field: "judge_script_content",
-			render: (
-				<Textarea
-					value={mutationData.judge_script_content ?? ""}
-					rows={6}
-					onChange={(e) => {
-						mutationData.judge_script_content = e.target.value;
-					}}
-					placeholder="判题脚本内容"
-				/>
-			),
-		},
-		{
-			header: "judge_args_json",
-			field: "judge_args_json",
-			render: (
-				<Textarea
-					value={jsonValue(mutationData.judge_args_json)}
-					rows={3}
-					onChange={(e) => {
-						mutationData.judge_args_json = e.target.value;
-					}}
-					placeholder='判题参数 JSON，如 ["--flag"]；留空清空'
-				/>
-			),
-		},
-		{
-			header: "judge_timeout_secs",
-			field: "judge_timeout_secs",
-			render: (
-				<TextInput
-					value={mutationData.judge_timeout_secs ?? ""}
-					onChange={(e) => {
-						mutationData.judge_timeout_secs = toNumOrNull(
-							e.target.value,
-						);
-					}}
-					placeholder="判题超时（秒）；留空继承赛事默认"
-				/>
-			),
-		},
-		{
-			header: "judge_retry_interval_secs",
-			field: "judge_retry_interval_secs",
-			render: (
-				<TextInput
-					value={mutationData.judge_retry_interval_secs ?? ""}
-					onChange={(e) => {
-						mutationData.judge_retry_interval_secs = toNumOrNull(
-							e.target.value,
-						);
-					}}
-					placeholder="判题重试间隔（秒）；留空继承赛事默认"
-				/>
-			),
-		},
 	];
 
 	const columns = [
@@ -353,18 +253,6 @@ function RouteComponent() {
 			recommended_cpu_millis: data.cpu_millis,
 			recommended_memory_bytes: data.memory_bytes,
 			recommended_pids_limit: data.pids_limit,
-			healthchecks_json: data.healthchecks_json as
-				| string
-				| null
-				| undefined,
-			judge_script_name: data.judge_script_name,
-			judge_script_content: data.judge_script_content,
-			judge_args_json: data.judge_args_json as
-				| string
-				| null
-				| undefined,
-			judge_timeout_secs: data.judge_timeout_secs,
-			judge_retry_interval_secs: data.judge_retry_interval_secs,
 		});
 		return res;
 	};

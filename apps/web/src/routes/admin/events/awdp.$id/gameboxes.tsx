@@ -49,7 +49,9 @@ function RouteComponent() {
 			header: "Source Dir",
 			field: "awdp_source_code_dir",
 			renderCell: (row: AwdpAdminEventGameBoxDto) => (
-				<span className="font-mono text-xs">{row.awdp_source_code_dir ?? "-"}</span>
+				<span className="font-mono text-xs">
+					{row.awdp_source_code_dir ?? "-"}
+				</span>
 			),
 		},
 		{
@@ -76,11 +78,12 @@ function RouteComponent() {
 				queryFn={(params?: QueryParams) =>
 					awdpAdminApi.listEventGameboxes(id, params)
 				}
-				removeFn={(ids) =>
-					awdpAdminApi
-						.detachGamebox(id, ids[0])
-						.then((r) => ({ ...r, data: 0 }))
-				}
+				removeFn={async (ids) => {
+					for (const egId of ids) {
+						await awdpAdminApi.detachGamebox(id, egId);
+					}
+					return { code: 0, message: "ok", data: ids.length };
+				}}
 				customActions={customActions}
 				disableAdd
 				filterKeys={["name", "safe_name", "category"]}

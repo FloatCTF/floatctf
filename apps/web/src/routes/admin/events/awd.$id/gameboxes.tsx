@@ -91,11 +91,12 @@ function RouteComponent() {
 				queryFn={(params?: QueryParams) =>
 					adminApi.awd.listEventGameboxes(id, params)
 				}
-				removeFn={(ids) =>
-					adminApi.awd
-						.removeEventGamebox(id, ids[0])
-						.then((r) => ({ ...r, data: 0 }))
-				}
+				removeFn={async (ids) => {
+					for (const eventGameboxId of ids) {
+						await adminApi.awd.removeEventGamebox(id, eventGameboxId);
+					}
+					return { code: 0, message: "ok", data: ids.length };
+				}}
 				columnActions={columnActions}
 				customActions={customActions}
 				disableAdd

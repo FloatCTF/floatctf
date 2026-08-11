@@ -30,6 +30,14 @@ pub enum Relation {
     AwdResetRecords,
     #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
     AwdWireguardPeers,
+    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
+    AwdpBreaks,
+    #[sea_orm(has_many = "super::awdp_instances::Entity")]
+    AwdpInstances,
+    #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
+    AwdpPatchSubmissions,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
     #[sea_orm(has_many = "super::challenge_instances::Entity")]
     ChallengeInstances,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
@@ -71,6 +79,30 @@ impl Related<super::awd_reset_records::Entity> for Entity {
 impl Related<super::awd_wireguard_peers::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdWireguardPeers.def()
+    }
+}
+
+impl Related<super::awdp_breaks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpBreaks.def()
+    }
+}
+
+impl Related<super::awdp_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpInstances.def()
+    }
+}
+
+impl Related<super::awdp_patch_submissions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpPatchSubmissions.def()
+    }
+}
+
+impl Related<super::awdp_score_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpScoreEvents.def()
     }
 }
 

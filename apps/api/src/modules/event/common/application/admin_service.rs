@@ -55,6 +55,9 @@ fn generate_safe_name(original: &str) -> String {
 pub struct CreateEventRequest {
     pub family: EventFamily,
     pub participant_mode: ParticipantMode,
+    /// 用途：默认 Competition；awdp family 允许显式 Practice（有界练习，end_time 必填）。
+    #[serde(default)]
+    pub purpose: Option<EventPurpose>,
     pub title: String,
     pub description: Option<String>,
     pub hidden: bool,
@@ -137,8 +140,17 @@ pub async fn create_event(
     db: &DatabaseConnection,
     req: CreateEventRequest,
 ) -> Result<events::Model, AppError> {
-    // Ordinary admin create is always Competition; Practice is system-managed.
-    let purpose = EventPurpose::Competition;
+    // 普通赛事创建固定 Competition（Practice 仅系统托管 / AWDP 显式允许）。
+    // AWDP practice 是有界练习（end_time 必填，与 break+fix 时长一致由 awdp 配置同步）。
+    let purpose = match req.purpose {
+        Some(p) if req.family == EventFamily::Awdp => p,
+        Some(_) => {
+            return Err(AppError::Validation(
+                "purpose 仅 awdp family 允许显式指定（其余固定 competition）".into(),
+            ));
+        }
+        None => EventPurpose::Competition,
+    };
     let mode = EventMode::new(
         req.family.clone(),
         purpose.clone(),

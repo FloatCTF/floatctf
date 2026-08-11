@@ -120,6 +120,23 @@ impl From<crate::modules::gamebox::GameboxError> for AppError {
     }
 }
 
+impl From<crate::modules::event::awdp::AwdpError> for AppError {
+    fn from(value: crate::modules::event::awdp::AwdpError) -> Self {
+        match value {
+            crate::modules::event::awdp::AwdpError::NotFound(m) => AppError::NotFound(m),
+            crate::modules::event::awdp::AwdpError::Forbidden(m) => AppError::Forbidden(m),
+            crate::modules::event::awdp::AwdpError::Validation(m) => AppError::Validation(m),
+            crate::modules::event::awdp::AwdpError::InvalidState(m) => AppError::InvalidState(m),
+            crate::modules::event::awdp::AwdpError::Conflict(m) => AppError::Conflict(m),
+            crate::modules::event::awdp::AwdpError::Database(m) => AppError::Database(m),
+            crate::modules::event::awdp::AwdpError::Docker(m) => {
+                AppError::Internal(format!("Docker: {m}"))
+            }
+            crate::modules::event::awdp::AwdpError::Internal(m) => AppError::Internal(m),
+        }
+    }
+}
+
 /// 处理器结果类型（名称保留以稳定调用点）。
 pub type UniResult<T> = Result<UniResponse<T>, AppError>;
 

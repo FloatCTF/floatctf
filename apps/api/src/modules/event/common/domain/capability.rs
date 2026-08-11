@@ -20,23 +20,42 @@ pub struct EventCapabilities {
 
 impl EventCapabilities {
     pub fn for_mode(mode: &EventMode) -> Self {
-        let (supports_instances, supports_standard_flag_submission, awd_engine) = match mode.family
-        {
-            EventFamily::Jeopardy => (true, true, false),
-            // AWD 与 AWD Plus 均属攻防类：骨架期复用攻防能力位（引擎未实现）。
-            EventFamily::Awd | EventFamily::Awdp => (false, false, true),
-        };
-
-        Self {
-            participant_mode: mode.participant_mode.clone(),
-            supports_instances,
-            supports_standard_flag_submission,
-            supports_teams: mode.is_team(),
-            supports_wireguard: awd_engine,
-            supports_gameboxes: awd_engine,
-            supports_rounds: awd_engine,
-            supports_judge: awd_engine,
-            supports_reset: awd_engine,
+        match mode.family {
+            EventFamily::Jeopardy => Self {
+                participant_mode: mode.participant_mode.clone(),
+                supports_instances: true,
+                supports_standard_flag_submission: true,
+                supports_teams: mode.is_team(),
+                supports_wireguard: false,
+                supports_gameboxes: false,
+                supports_rounds: false,
+                supports_judge: false,
+                supports_reset: false,
+            },
+            EventFamily::Awd => Self {
+                participant_mode: mode.participant_mode.clone(),
+                supports_instances: false,
+                supports_standard_flag_submission: false,
+                supports_teams: mode.is_team(),
+                supports_wireguard: true,
+                supports_gameboxes: true,
+                supports_rounds: true,
+                supports_judge: true,
+                supports_reset: true,
+            },
+            // AWDP：通用 instances（按需启动）+ GameBox + Fix rounds + 评估 + reset；
+            // 无 WireGuard（V1 沿用 Challenge 的随机 high port 暴露模型）。
+            EventFamily::Awdp => Self {
+                participant_mode: mode.participant_mode.clone(),
+                supports_instances: true,
+                supports_standard_flag_submission: false,
+                supports_teams: mode.is_team(),
+                supports_wireguard: false,
+                supports_gameboxes: true,
+                supports_rounds: true,
+                supports_judge: true,
+                supports_reset: true,
+            },
         }
     }
 }
@@ -63,9 +82,15 @@ mod tests {
                 assert!(caps.supports_instances);
                 assert!(caps.supports_standard_flag_submission);
                 assert!(!caps.supports_gameboxes);
-            } else {
+            } else if mode.is_awd() {
                 assert!(!caps.supports_instances);
                 assert!(caps.supports_gameboxes);
+                assert!(caps.supports_wireguard);
+            } else {
+                assert!(caps.supports_instances);
+                assert!(caps.supports_gameboxes);
+                assert!(!caps.supports_wireguard, "AWDP V1 不使用 WireGuard");
+                assert!(!caps.supports_standard_flag_submission);
             }
         }
     }

@@ -4,25 +4,19 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "instances")]
+#[sea_orm(table_name = "awdp_fix_rounds")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub owner_user_id: Option<Uuid>,
-    pub owner_team_id: Option<Uuid>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub image_ref: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub container_id: Option<String>,
-    #[sea_orm(column_type = "Text", unique)]
-    pub container_name: String,
+    pub event_id: Uuid,
+    pub sequence: i32,
+    pub starts_at: DateTimeWithTimeZone,
+    pub cutoff_at: DateTimeWithTimeZone,
     #[sea_orm(column_type = "Text")]
-    pub runtime_state: String,
-    pub runtime_generation: i64,
-    pub created_at: DateTimeWithTimeZone,
+    pub status: String,
     pub started_at: Option<DateTimeWithTimeZone>,
-    pub stopped_at: Option<DateTimeWithTimeZone>,
-    pub expires_at: Option<DateTimeWithTimeZone>,
+    pub finished_at: Option<DateTimeWithTimeZone>,
+    pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }
 
@@ -30,31 +24,23 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::awdp_evaluations::Entity")]
     AwdpEvaluations,
-    #[sea_orm(has_one = "super::awdp_instances::Entity")]
-    AwdpInstances,
     #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
     AwdpPatchSubmissions,
-    #[sea_orm(has_many = "super::instance_endpoints::Entity")]
-    InstanceEndpoints,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
     #[sea_orm(
-        belongs_to = "super::users::Entity",
-        from = "Column::OwnerUserId",
-        to = "super::users::Column::Id",
+        belongs_to = "super::events::Entity",
+        from = "Column::EventId",
+        to = "super::events::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    Users,
+    Events,
 }
 
 impl Related<super::awdp_evaluations::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpEvaluations.def()
-    }
-}
-
-impl Related<super::awdp_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpInstances.def()
     }
 }
 
@@ -64,15 +50,15 @@ impl Related<super::awdp_patch_submissions::Entity> for Entity {
     }
 }
 
-impl Related<super::instance_endpoints::Entity> for Entity {
+impl Related<super::awdp_score_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::InstanceEndpoints.def()
+        Relation::AwdpScoreEvents.def()
     }
 }
 
-impl Related<super::users::Entity> for Entity {
+impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Users.def()
+        Relation::Events.def()
     }
 }
 

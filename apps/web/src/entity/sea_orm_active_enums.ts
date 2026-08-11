@@ -31,6 +31,29 @@ export enum AwdPhase {
   Pause = 'pause',
 }
 
+export enum AwdpEvaluationKind {
+  Manual = 'manual',
+  Official = 'official',
+}
+
+export enum AwdpEvaluationStatus {
+  Pending = 'pending',
+  Running = 'running',
+  NoPatch = 'no_patch',
+  ServiceDown = 'service_down',
+  FunctionalBroken = 'functional_broken',
+  Vulnerable = 'vulnerable',
+  Patched = 'patched',
+  PlatformError = 'platform_error',
+}
+
+export enum AwdpPhase {
+  Pending = 'pending',
+  Break = 'break',
+  Fix = 'fix',
+  Ended = 'ended',
+}
+
 export enum BanStatus {
   Active = 'active',
   PendingUnban = 'pending_unban',

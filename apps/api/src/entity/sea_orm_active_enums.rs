@@ -74,6 +74,57 @@ pub enum AwdPhase {
     Pause,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awdp_evaluation_kind"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpEvaluationKind {
+    #[sea_orm(string_value = "manual")]
+    Manual,
+    #[sea_orm(string_value = "official")]
+    Official,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awdp_evaluation_status"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpEvaluationStatus {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "running")]
+    Running,
+    #[sea_orm(string_value = "no_patch")]
+    NoPatch,
+    #[sea_orm(string_value = "service_down")]
+    ServiceDown,
+    #[sea_orm(string_value = "functional_broken")]
+    FunctionalBroken,
+    #[sea_orm(string_value = "vulnerable")]
+    Vulnerable,
+    #[sea_orm(string_value = "patched")]
+    Patched,
+    #[sea_orm(string_value = "platform_error")]
+    PlatformError,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "awdp_phase")]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpPhase {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "break")]
+    Break,
+    #[sea_orm(string_value = "fix")]
+    Fix,
+    #[sea_orm(string_value = "ended")]
+    Ended,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "ban_status")]
 #[serde(rename_all = "snake_case")]
 pub enum BanStatus {

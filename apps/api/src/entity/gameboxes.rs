@@ -70,11 +70,19 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
     AwdEventGameboxes,
+    #[sea_orm(has_many = "super::awdp_event_gameboxes::Entity")]
+    AwdpEventGameboxes,
 }
 
 impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdEventGameboxes.def()
+    }
+}
+
+impl Related<super::awdp_event_gameboxes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpEventGameboxes.def()
     }
 }
 

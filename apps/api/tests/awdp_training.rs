@@ -252,3 +252,172 @@ async fn start_training_idempotent_and_train_again() {
     .await;
     cleanup(&db).await;
 }
+
+/// 容器刚启动时内部服务需要数秒就绪；取 flag 带重试（最多 12 次 × 500ms）。
+async fn fetch_flag_with_retry(url: &str) -> String {
+    for _ in 0..12 {
+        match reqwest::get(url).await {
+            Ok(resp) => match resp.text().await {
+                Ok(body) => {
+                    let flag = body.trim().to_string();
+                    if !flag.is_empty() {
+                        return flag;
+                    }
+                }
+                Err(_) => {}
+            },
+            Err(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    panic!("flag endpoint not ready: {url}");
+}
+
+#[tokio::test]
+async fn train_again_preserves_old_run_history() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+    cleanup(&db).await;
+
+    let user_id = seed_user(&db, "hist").await;
+    let gb_id = seed_trainable_gamebox(&db, "hist").await;
+
+    // 1. 第一个训练 run：Break 得分 + Fix 回合物化。
+    let run = practice_service::start_training(&db, &docker, JWT_SECRET, user_id, gb_id, "flag")
+        .await
+        .expect("start training");
+    let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
+    let view = floatctf::modules::event::awdp::service::runtime::get_my_instance_view(
+        &db, run.id, gb_id, subject,
+    )
+    .await
+    .unwrap()
+    .expect("instance view");
+    let ep = &view.endpoints[0];
+    let flag = fetch_flag_with_retry(&format!(
+        "http://{}:{}/flag.php",
+        ep.public_host, ep.public_port
+    ))
+    .await;
+    let r = floatctf::modules::event::awdp::service::break_service::submit_flag(
+        &db, JWT_SECRET, run.id, gb_id, &flag, subject,
+    )
+    .await
+    .expect("break submit");
+    assert!(r.accepted && r.scored, "first break: {r:?}");
+    let break_total = score_repo::my_total(&db, run.id, Some(user_id), None)
+        .await
+        .unwrap();
+    let run_row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(break_total, run_row.break_score, "break score once");
+
+    // Break→Fix：实例 reset pristine + 回合物化（历史数据基础）。
+    floatctf::modules::event::awdp::service::event_service::transition_break_to_fix(
+        &db, &docker, JWT_SECRET, run.id,
+    )
+    .await
+    .expect("break to fix");
+    let rounds_old = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(rounds_old.len(), 6, "默认 3600/600 = 6 rounds");
+
+    // 结束旧 run。
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Ended,
+        run_repo::PhaseTransitionPatch {
+            finished_at: Some(chrono::Utc::now()),
+            next_action_at: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // 2. Train Again → 新 run（§79 ended 后创建新 run）。
+    let new_run = practice_service::train_again(&db, &docker, JWT_SECRET, user_id, run.id, "flag")
+        .await
+        .expect("train again");
+    assert_ne!(new_run.id, run.id, "新 run");
+
+    // 3. 旧 run 历史完全保留（§79 old run remains immutable）。
+    let old = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(
+        old.phase,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Ended
+    );
+    let rounds_after = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        rounds_after.len(),
+        6,
+        "旧 run 的 rounds 保留不变（含 starts_at/cutoff_at）"
+    );
+    for (before, after) in rounds_old.iter().zip(rounds_after.iter()) {
+        assert_eq!(before.id, after.id);
+        assert_eq!(before.starts_at, after.starts_at);
+        assert_eq!(before.cutoff_at, after.cutoff_at);
+    }
+    let score_after = score_repo::my_total(&db, run.id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        score_after, break_total,
+        "旧 run 分数保留（break_score 不因新 run 变化）"
+    );
+    let breaks = floatctf::modules::event::awdp::repo::break_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(breaks.len(), 1, "旧 run 的 break 记录保留");
+
+    // 4. 新 run 是干净的：无 rounds、无 score、实例正在运行。
+    let new_rounds =
+        floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, new_run.id)
+            .await
+            .unwrap();
+    assert!(new_rounds.is_empty(), "新 run 无历史 rounds");
+    let new_score = score_repo::my_total(&db, new_run.id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(new_score, 0, "新 run 分数从零开始");
+    let new_instances =
+        floatctf::modules::event::awdp::repo::instance_repo::list_for_run(&db, new_run.id)
+            .await
+            .unwrap();
+    assert_eq!(new_instances.len(), 1);
+    assert_eq!(new_instances[0].0.runtime_state, "running");
+
+    // 清理。
+    let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
+        &db,
+        &docker,
+        view.instance_id,
+        subject,
+    )
+    .await;
+    let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
+        &db,
+        &docker,
+        new_instances[0].0.id,
+        subject,
+    )
+    .await;
+    cleanup(&db).await;
+}

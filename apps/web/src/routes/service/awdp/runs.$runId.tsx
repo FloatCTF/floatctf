@@ -5,7 +5,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { useMemo } from "react";
 
-import { type GameBoxCatalogDto, awdpRunApi } from "@/api/awdpRuns";
+import { awdpRunApi } from "@/api/awdpRuns";
 import {
 	AwdpWorkbench,
 	type AwdpWorkbenchViewModel,
@@ -55,27 +55,13 @@ function RouteComponent() {
 		enabled: phase === "ended",
 	});
 
-	// GameBox 名称/分类来自真实目录接口（run DTO 只含 gamebox_id）。
-	const catalogQuery = useQuery({
-		queryKey: ["gamebox-catalog"],
-		queryFn: () => awdpRunApi.gameboxCatalog(),
-		staleTime: 5 * 60_000,
-	});
-	const catalogById = useMemo(() => {
-		const m = new Map<string, GameBoxCatalogDto>();
-		for (const gb of catalogQuery.data?.data ?? []) {
-			m.set(gb.id, gb);
-		}
-		return m;
-	}, [catalogQuery.data]);
-
+	// GameBox 名称/分类由 run DTO 直接提供（后端实现补充字段）。
 	const viewModel = useMemo<AwdpWorkbenchViewModel | null>(() => {
 		if (!run) {
 			return null;
 		}
-		const meta = catalogById.get(run.gamebox_id);
 		return {
-			title: `GameBox Training — ${meta?.name ?? "AWDP"}`,
+			title: `GameBox Training — ${run.gamebox_name}`,
 			phase: run.phase,
 			phaseEndsAt:
 				run.phase === "break"
@@ -94,8 +80,8 @@ function RouteComponent() {
 			gameboxes: run.instances.map((inst) => ({
 				id: inst.gamebox_id,
 				gamebox_id: inst.gamebox_id,
-				name: meta?.name ?? inst.gamebox_id,
-				category: meta?.category ?? "-",
+				name: run.gamebox_name,
+				category: run.gamebox_category,
 				broken: inst.broken,
 				enabled: true,
 				source_code_dir: run.source_code_dir,
@@ -116,14 +102,7 @@ function RouteComponent() {
 			scoreHistory: scoresQuery.data?.data?.history ?? [],
 			isPractice: true,
 		};
-	}, [
-		run,
-		catalogById,
-		roundsQuery.data,
-		evalsQuery.data,
-		scoresQuery.data,
-		needTimeline,
-	]);
+	}, [run, roundsQuery.data, evalsQuery.data, scoresQuery.data, needTimeline]);
 
 	const invalidate = () => {
 		queryClient.invalidateQueries({ queryKey: ["awdp-run", runId] });
@@ -151,7 +130,7 @@ function RouteComponent() {
 			},
 			onDownloadSource: async (gameboxId: string) => {
 				const res = await awdpRunApi.sourceUrl(runId, gameboxId);
-				return res.data?.url;
+				return res.data;
 			},
 			onTrainAgain: async () => {
 				const res = await awdpRunApi.restartTraining(runId);

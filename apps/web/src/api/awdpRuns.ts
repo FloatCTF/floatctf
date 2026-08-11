@@ -1,5 +1,6 @@
 import {
 	type AwdpEndpoint,
+	type AwdpInstance,
 	type AwdpPhase,
 	type AwdpRoundDto,
 	type BreakSubmitResponse,
@@ -48,7 +49,11 @@ export type GameBoxCatalogDto = {
 	recommended_memory_bytes: number;
 	recommended_pids_limit: number;
 	/** 当前用户同 gamebox 的 active Practice Run（若有）。 */
-	active_training: { run_id: string; phase: AwdpPhase } | null;
+	active_training: {
+		run_id: string;
+		phase: AwdpPhase;
+		score: number;
+	} | null;
 };
 
 /** Run 内逻辑实例。 */
@@ -65,6 +70,10 @@ export type RunInstanceDto = {
 export type AwdpRunDto = {
 	run_id: string;
 	gamebox_id: string;
+	/** 后端实现补充：practice run 的 GameBox 展示信息（无需再查目录）。 */
+	gamebox_name: string;
+	gamebox_category: string;
+	gamebox_description: string;
 	event_id: string | null;
 	phase: AwdpPhase;
 	break_duration_secs: number;
@@ -115,10 +124,7 @@ export type AwdpRunScoresDto = {
 	history: ScoreEventDto[];
 };
 
-/** source presigned URL 响应（§C.2：GET .../source → UniResponse<{url:string}>）。 */
-export type SourceUrlResponse = {
-	url: string;
-};
+/** source presigned URL 响应（后端实现：直接返回 URL 字符串，非对象）。 */
 
 // ────────────────────────────────────────────────────────────────────────────
 // Client
@@ -148,19 +154,19 @@ export const awdpRunApi = {
 		return res.data;
 	},
 	stopRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto | null>>(
+		const res = await service_api.post<UniResponse<null>>(
 			`/service/awdp/runs/${runId}/stop`,
 		);
 		return res.data;
 	},
 	resetRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto | null>>(
+		const res = await service_api.post<UniResponse<AwdpRunDto>>(
 			`/service/awdp/runs/${runId}/reset`,
 		);
 		return res.data;
 	},
 	restartTraining: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto | null>>(
+		const res = await service_api.post<UniResponse<AwdpRunDto>>(
 			`/service/awdp/runs/${runId}/restart-training`,
 		);
 		return res.data;
@@ -208,31 +214,31 @@ export const awdpRunApi = {
 		return res.data;
 	},
 	sourceUrl: async (runId: string, gameboxId: string) => {
-		const res = await service_api.get<UniResponse<SourceUrlResponse>>(
+		const res = await service_api.get<UniResponse<string>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/source`,
 		);
 		return res.data;
 	},
 	startInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<RunInstanceDto>>(
+		const res = await service_api.post<UniResponse<AwdpInstance>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
 		);
 		return res.data;
 	},
 	stopInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<RunInstanceDto | null>>(
+		const res = await service_api.post<UniResponse<null>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/stop`,
 		);
 		return res.data;
 	},
 	resetInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<RunInstanceDto>>(
+		const res = await service_api.post<UniResponse<AwdpInstance>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/reset`,
 		);
 		return res.data;
 	},
 	getInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.get<UniResponse<RunInstanceDto | null>>(
+		const res = await service_api.get<UniResponse<AwdpInstance | null>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
 		);
 		return res.data;

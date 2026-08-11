@@ -7,4 +7,5 @@ export type JeopardyChallengeSolves = {
   obtained_points: number;
   bonus_points: number;
   created_at: string;
+  updated_at: string;
 };

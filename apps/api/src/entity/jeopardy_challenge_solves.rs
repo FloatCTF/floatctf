@@ -17,6 +17,7 @@ pub struct Model {
     #[sea_orm(column_type = "Double")]
     pub bonus_points: f64,
     pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -31,8 +32,8 @@ pub enum Relation {
     Challenges,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
-        from = "Column::TeamId",
-        to = "super::event_teams::Column::Id",
+        from = "(Column::EventId, Column::TeamId)",
+        to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]

@@ -37,8 +37,8 @@ pub enum Relation {
     Challenges,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
-        from = "Column::TeamId",
-        to = "super::event_teams::Column::Id",
+        from = "(Column::EventId, Column::TeamId)",
+        to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]

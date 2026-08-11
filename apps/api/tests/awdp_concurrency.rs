@@ -276,7 +276,7 @@ async fn advisory_lock_mutual_exclusion() {
         tokio::time::sleep(Duration::from_millis(1200)).await;
         lock.release().await;
     });
-    let _ = rx.await.expect("task1 holds lock");
+    rx.await.expect("task1 holds lock");
 
     // 不同 instance：task1 仍持锁时立即获得（不同 key 不互斥）。
     let start = std::time::Instant::now();

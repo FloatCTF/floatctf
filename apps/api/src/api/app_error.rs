@@ -8,7 +8,7 @@ use sea_orm::DbErr;
 use thiserror::Error;
 
 use super::response::UniResponse;
-use crate::modules::event::awd_team::AwdError;
+use crate::modules::event::awd::AwdError;
 
 /// Unified application error with structured HTTP responses.
 #[derive(Debug, Error)]

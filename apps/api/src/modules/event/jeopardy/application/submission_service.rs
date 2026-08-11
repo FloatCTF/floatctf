@@ -10,7 +10,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, instances, sea_orm_active_enums::InstanceStatus, users},
+    entity::{challenge_instances, challenges, sea_orm_active_enums::InstanceStatus, users},
     infrastructure::settings::get_setting,
     modules::event::jeopardy::{
         application::instance_service::InstanceService,
@@ -64,8 +64,8 @@ impl JeopardySubmissionService {
 
         let txn = self.db.begin().await?;
 
-        let instance = instances::Entity::find_by_id(req.instance_id)
-            .filter(instances::Column::Status.eq(InstanceStatus::Running))
+        let instance = challenge_instances::Entity::find_by_id(req.instance_id)
+            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
             .one(&txn)
             .await?
             .ok_or_else(|| anyhow!("no instance"))?;
@@ -73,9 +73,7 @@ impl JeopardySubmissionService {
         // Team instances are launched by one member but any teammate may submit.
         // Ownership is enforced via team membership + event join checks at the strategy layer.
 
-        let challenge_id = instance
-            .challenge_id
-            .ok_or_else(|| anyhow!("instance has no challenge_id: {}", instance.id))?;
+        let challenge_id = instance.challenge_id;
 
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&txn)
@@ -155,7 +153,7 @@ fn is_unique_violation(msg: &str) -> bool {
     lower.contains("duplicate key") || lower.contains("unique constraint")
 }
 
-/// Practice mode: record challenge_solves (no event scoring), then destroy instance.
+/// Practice mode: record jeopardy_challenge_solves on practice event (0 points), then destroy instance.
 pub async fn submit_practice(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -165,17 +163,16 @@ pub async fn submit_practice(
 ) -> Result<()> {
     use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter, Set};
 
-    use crate::entity::challenge_solves;
+    use crate::entity::jeopardy_challenge_solves;
 
-    let instance = instances::Entity::find_by_id(instance_id)
-        .filter(instances::Column::Status.eq(InstanceStatus::Running))
+    let instance = challenge_instances::Entity::find_by_id(instance_id)
+        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
         .one(db)
         .await?
         .ok_or_else(|| anyhow!("no instance"))?;
 
-    let challenge_id = instance
-        .challenge_id
-        .ok_or_else(|| anyhow!("instance has no challenge_id: {}", instance.id))?;
+    let challenge_id = instance.challenge_id;
+    let event_id = instance.event_id;
 
     let challenge = challenges::Entity::find_by_id(challenge_id)
         .one(db)
@@ -186,17 +183,22 @@ pub async fn submit_practice(
         return Err(anyhow!("flag is not correct"));
     }
 
-    let already = challenge_solves::Entity::find()
-        .filter(challenge_solves::Column::ChallengeId.eq(challenge.id))
-        .filter(challenge_solves::Column::UserId.eq(user.id))
+    let already = jeopardy_challenge_solves::Entity::find()
+        .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+        .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(challenge.id))
+        .filter(jeopardy_challenge_solves::Column::UserId.eq(user.id))
+        .filter(jeopardy_challenge_solves::Column::TeamId.is_null())
         .one(db)
         .await?;
 
     if already.is_none() {
-        challenge_solves::ActiveModel {
-            event_id: Set(None),
+        jeopardy_challenge_solves::ActiveModel {
+            event_id: Set(event_id),
             challenge_id: Set(challenge.id),
             user_id: Set(user.id),
+            team_id: Set(None),
+            obtained_points: Set(0.0),
+            bonus_points: Set(0.0),
             ..Default::default()
         }
         .insert(db)

@@ -8,8 +8,9 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        challenges, event_challenge_solves, event_challenges, event_instances, event_team_members,
-        event_teams, event_writeup, events, instances, sea_orm_active_enums::InstanceStatus, users,
+        challenge_instances, challenges, event_team_members, event_teams, event_writeup, events,
+        jeopardy_challenge_solves, jeopardy_event_challenges, sea_orm_active_enums::InstanceStatus,
+        users,
     },
     infrastructure::WebDb,
     modules::event::jeopardy::{
@@ -52,14 +53,9 @@ impl JeopardyTeamServices {
         &self,
         ctx: &EventContext,
         challenge_id: Uuid,
-    ) -> Result<instances::Model> {
+    ) -> Result<challenge_instances::Model> {
         ctx.should_user_joined().await?;
         ctx.should_ongoing()?;
-        debug_assert_eq!(
-            self.policy().instance_ref_label(),
-            "JeopardyTeam",
-            "team mode ref label"
-        );
         core::jeopardy_launch(ctx, challenge_id, SolveSubject::Team).await
     }
 
@@ -77,7 +73,7 @@ impl JeopardyTeamServices {
         &self,
         ctx: &EventContext,
         challenge_id: Uuid,
-    ) -> Result<instances::Model> {
+    ) -> Result<challenge_instances::Model> {
         ctx.should_user_joined().await?;
         ctx.should_ongoing_or_ended()?;
 
@@ -91,23 +87,14 @@ impl JeopardyTeamServices {
             .await?
             .ok_or(anyhow!("you are not in any team"))?;
 
-        let (_event_instance, instance) = event_instances::Entity::find()
-            .filter(
-                event_instances::Column::EventId
-                    .eq(ctx.event.id)
-                    .and(event_instances::Column::TeamId.eq(team_member.team_id)),
-            )
-            .find_also_related(instances::Entity)
-            .filter(
-                instances::Column::Status
-                    .eq(InstanceStatus::Running)
-                    .and(instances::Column::ChallengeId.eq(challenge_id)),
-            )
+        challenge_instances::Entity::find()
+            .filter(challenge_instances::Column::EventId.eq(ctx.event.id))
+            .filter(challenge_instances::Column::TeamId.eq(team_member.team_id))
+            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+            .filter(challenge_instances::Column::ChallengeId.eq(challenge_id))
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(anyhow!("no instance"))?;
-
-        instance.ok_or(anyhow!("no instance"))
+            .ok_or(anyhow!("no instance"))
     }
 
     pub async fn get_instances(&self, ctx: &EventContext) -> Result<Vec<ModeInstanceResult>> {
@@ -121,36 +108,22 @@ impl JeopardyTeamServices {
             .await?
             .ok_or(anyhow!("you are not in any team"))?;
 
-        let data = event_instances::Entity::find()
-            .filter(event_instances::Column::EventId.eq(ctx.event.id))
-            .filter(event_instances::Column::TeamId.eq(team_member.team_id))
-            .find_also_related(instances::Entity)
+        let data = challenge_instances::Entity::find()
+            .filter(challenge_instances::Column::EventId.eq(ctx.event.id))
+            .filter(challenge_instances::Column::TeamId.eq(team_member.team_id))
+            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+            .find_also_related(challenges::Entity)
             .all(ctx.db.get_ref())
             .await?;
 
-        let mut instances_out = Vec::new();
-        for (_ei, inst_opt) in data {
-            if let Some(instance) = inst_opt {
-                if instance.status != InstanceStatus::Running {
-                    continue;
-                }
-                let challenge_name = if let Some(cid) = instance.challenge_id {
-                    challenges::Entity::find_by_id(cid)
-                        .one(ctx.db.get_ref())
-                        .await?
-                        .map(|c| c.name)
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                instances_out.push(ModeInstanceResult {
-                    instance,
-                    challenge_name,
-                    nickname: "team_".to_string(),
-                });
-            }
-        }
-        Ok(instances_out)
+        Ok(data
+            .into_iter()
+            .map(|(instance, challenge_opt)| ModeInstanceResult {
+                instance,
+                challenge_name: challenge_opt.map(|c| c.name).unwrap_or_default(),
+                nickname: "team_".to_string(),
+            })
+            .collect())
     }
 
     pub async fn get_scoreboard(
@@ -160,13 +133,16 @@ impl JeopardyTeamServices {
     ) -> Result<Vec<ScoreboardItem>> {
         let event_id = event.id;
 
-        let event_challenges = event_challenges::Entity::find()
-            .filter(event_challenges::Column::EventId.eq(event_id))
-            .filter(event_challenges::Column::Hidden.eq(false))
+        let jeopardy_event_challenges = jeopardy_event_challenges::Entity::find()
+            .filter(jeopardy_event_challenges::Column::EventId.eq(event_id))
+            .filter(jeopardy_event_challenges::Column::Hidden.eq(false))
             .all(db.get_ref())
             .await?;
 
-        let challenge_ids: Vec<Uuid> = event_challenges.iter().map(|ec| ec.challenge_id).collect();
+        let challenge_ids: Vec<Uuid> = jeopardy_event_challenges
+            .iter()
+            .map(|ec| ec.challenge_id)
+            .collect();
 
         let challenges = challenges::Entity::find()
             .filter(challenges::Column::Id.is_in(challenge_ids.clone()))
@@ -180,10 +156,10 @@ impl JeopardyTeamServices {
             .all(db.get_ref())
             .await?;
 
-        let solves = event_challenge_solves::Entity::find()
-            .filter(event_challenge_solves::Column::EventId.eq(event_id))
-            .order_by_asc(event_challenge_solves::Column::ChallengeId)
-            .order_by_asc(event_challenge_solves::Column::CreatedAt)
+        let solves = jeopardy_challenge_solves::Entity::find()
+            .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+            .order_by_asc(jeopardy_challenge_solves::Column::ChallengeId)
+            .order_by_asc(jeopardy_challenge_solves::Column::CreatedAt)
             .all(db.get_ref())
             .await?;
 
@@ -203,7 +179,7 @@ impl JeopardyTeamServices {
         let mut scoreboard = Vec::new();
         for (no, event_team) in event_teams.iter().enumerate() {
             let mut challenges = Vec::new();
-            for ec in event_challenges.iter() {
+            for ec in jeopardy_event_challenges.iter() {
                 let solved = team_solved.contains(&(event_team.id, ec.challenge_id));
                 let order_for_user = solve_order
                     .get(&(event_team.id, ec.challenge_id))
@@ -234,9 +210,9 @@ impl JeopardyTeamServices {
 
     pub async fn get_trend(&self, db: &WebDb, event: &events::Model) -> Result<Vec<TrendItem>> {
         let event_id = event.id;
-        let solves = event_challenge_solves::Entity::find()
-            .filter(event_challenge_solves::Column::EventId.eq(event_id))
-            .order_by_asc(event_challenge_solves::Column::CreatedAt)
+        let solves = jeopardy_challenge_solves::Entity::find()
+            .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+            .order_by_asc(jeopardy_challenge_solves::Column::CreatedAt)
             .all(db.get_ref())
             .await?;
 
@@ -258,7 +234,8 @@ impl JeopardyTeamServices {
             .map(|t| (t.id, t))
             .collect();
 
-        let mut team_solves_map: HashMap<Uuid, Vec<event_challenge_solves::Model>> = HashMap::new();
+        let mut team_solves_map: HashMap<Uuid, Vec<jeopardy_challenge_solves::Model>> =
+            HashMap::new();
         for solve in solves {
             if let Some(tid) = solve.team_id {
                 team_solves_map.entry(tid).or_default().push(solve);

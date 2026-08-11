@@ -30,8 +30,8 @@ pub enum Relation {
     AwdResetRecords,
     #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
     AwdWireguardPeers,
-    #[sea_orm(has_many = "super::challenge_solves::Entity")]
-    ChallengeSolves,
+    #[sea_orm(has_many = "super::challenge_instances::Entity")]
+    ChallengeInstances,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
     #[sea_orm(has_many = "super::discussion_comments::Entity")]
@@ -40,10 +40,6 @@ pub enum Relation {
     DiscussionLikes,
     #[sea_orm(has_many = "super::discussions::Entity")]
     Discussions,
-    #[sea_orm(has_many = "super::event_challenge_solves::Entity")]
-    EventChallengeSolves,
-    #[sea_orm(has_many = "super::event_instances::Entity")]
-    EventInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
     EventLogs,
     #[sea_orm(has_many = "super::event_team_members::Entity")]
@@ -52,8 +48,8 @@ pub enum Relation {
     EventUsers,
     #[sea_orm(has_many = "super::event_writeup::Entity")]
     EventWriteup,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
+    #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
+    JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::logs::Entity")]
     Logs,
 }
@@ -76,9 +72,9 @@ impl Related<super::awd_wireguard_peers::Entity> for Entity {
     }
 }
 
-impl Related<super::challenge_solves::Entity> for Entity {
+impl Related<super::challenge_instances::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ChallengeSolves.def()
+        Relation::ChallengeInstances.def()
     }
 }
 
@@ -106,18 +102,6 @@ impl Related<super::discussions::Entity> for Entity {
     }
 }
 
-impl Related<super::event_challenge_solves::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::EventChallengeSolves.def()
-    }
-}
-
-impl Related<super::event_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::EventInstances.def()
-    }
-}
-
 impl Related<super::event_logs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventLogs.def()
@@ -142,9 +126,9 @@ impl Related<super::event_writeup::Entity> for Entity {
     }
 }
 
-impl Related<super::instances::Entity> for Entity {
+impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::JeopardyChallengeSolves.def()
     }
 }
 

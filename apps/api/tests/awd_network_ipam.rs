@@ -15,11 +15,12 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use std::sync::Arc;
 use uuid::Uuid;
 
+use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 use floatctf::entity::{
     awd_events, awd_network_settings, event_teams, events, sea_orm_active_enums,
     sea_orm_active_enums::AwdEventStatus,
 };
-use floatctf::modules::event::awd_team::{
+use floatctf::modules::event::awd::{
     AwdError,
     crypto::AwdCrypto,
     domain::network::Ipv4Cidr,
@@ -59,10 +60,16 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
 async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
         id: Set(event_id),
         title: Set(format!("awd-network-ipam-{tag}")),
         start_time: Set(chrono::Utc::now().into()),
-        end_time: Set((chrono::Utc::now() + chrono::Duration::hours(1)).into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+        )),
         ..Default::default()
     };
     parent.insert(db).await.expect("insert events");

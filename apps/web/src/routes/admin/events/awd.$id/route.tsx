@@ -12,7 +12,7 @@ import { adminApi } from "@/api";
 import {
 	type Challenges,
 	type EventChallenges,
-	EventType,
+	EventFamily,
 	type Events,
 } from "@/entity";
 import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
@@ -96,7 +96,7 @@ function RouteComponent() {
 						<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
 							Ops
 						</RouterNavItem>
-						{event.type === EventType.AwdTeam && (
+						{event.family === EventFamily.Awd && (
 							<RouterNavItem to="/admin/events/awd/$id/teams" params={{ id }}>
 								Teams
 							</RouterNavItem>

@@ -20,7 +20,8 @@ function RouteComponent() {
             field: "status",
             sortBy: true,
         },
-        { accessorKey: "ref", header: "Ref", field: "ref", sortBy: true },
+        { accessorKey: "event_id", header: "Event", field: "event_id", sortBy: true },
+        { accessorKey: "identifier", header: "Identifier", field: "identifier", sortBy: true },
         { accessorKey: "flag", header: "Flag", field: "flag" },
         {
             accessorKey: "challenge_id",
@@ -46,7 +47,7 @@ function RouteComponent() {
     const filterKeys = [
         "id",
         "status",
-        "ref",
+        "identifier", "event_id",
         "flag",
         "challenge_id",
         "user_id",

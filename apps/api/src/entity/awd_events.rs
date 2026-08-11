@@ -56,6 +56,40 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
+    AwdEventGameboxes,
+    #[sea_orm(has_one = "super::awd_event_networks::Entity")]
+    AwdEventNetworks,
+    #[sea_orm(has_many = "super::awd_flag_issues::Entity")]
+    AwdFlagIssues,
+    #[sea_orm(has_many = "super::awd_flag_submissions::Entity")]
+    AwdFlagSubmissions,
+    #[sea_orm(has_many = "super::awd_gamebox_instances::Entity")]
+    AwdGameboxInstances,
+    #[sea_orm(has_many = "super::awd_internal_token_rotations::Entity")]
+    AwdInternalTokenRotations,
+    #[sea_orm(has_many = "super::awd_judge_batches::Entity")]
+    AwdJudgeBatches,
+    #[sea_orm(has_many = "super::awd_judge_tasks::Entity")]
+    AwdJudgeTasks,
+    #[sea_orm(has_many = "super::awd_orphan_resources::Entity")]
+    AwdOrphanResources,
+    #[sea_orm(has_many = "super::awd_precheck_runs::Entity")]
+    AwdPrecheckRuns,
+    #[sea_orm(has_many = "super::awd_reset_records::Entity")]
+    AwdResetRecords,
+    #[sea_orm(has_many = "super::awd_rounds::Entity")]
+    AwdRounds,
+    #[sea_orm(has_many = "super::awd_runtime_resources::Entity")]
+    AwdRuntimeResources,
+    #[sea_orm(has_many = "super::awd_score_events::Entity")]
+    AwdScoreEvents,
+    #[sea_orm(has_many = "super::awd_team_bans::Entity")]
+    AwdTeamBans,
+    #[sea_orm(has_many = "super::awd_team_networks::Entity")]
+    AwdTeamNetworks,
+    #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
+    AwdWireguardPeers,
     #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
@@ -64,6 +98,108 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
+}
+
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEventGameboxes.def()
+    }
+}
+
+impl Related<super::awd_event_networks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEventNetworks.def()
+    }
+}
+
+impl Related<super::awd_flag_issues::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdFlagIssues.def()
+    }
+}
+
+impl Related<super::awd_flag_submissions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdFlagSubmissions.def()
+    }
+}
+
+impl Related<super::awd_gamebox_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdGameboxInstances.def()
+    }
+}
+
+impl Related<super::awd_internal_token_rotations::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdInternalTokenRotations.def()
+    }
+}
+
+impl Related<super::awd_judge_batches::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdJudgeBatches.def()
+    }
+}
+
+impl Related<super::awd_judge_tasks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdJudgeTasks.def()
+    }
+}
+
+impl Related<super::awd_orphan_resources::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdOrphanResources.def()
+    }
+}
+
+impl Related<super::awd_precheck_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdPrecheckRuns.def()
+    }
+}
+
+impl Related<super::awd_reset_records::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdResetRecords.def()
+    }
+}
+
+impl Related<super::awd_rounds::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdRounds.def()
+    }
+}
+
+impl Related<super::awd_runtime_resources::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdRuntimeResources.def()
+    }
+}
+
+impl Related<super::awd_score_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdScoreEvents.def()
+    }
+}
+
+impl Related<super::awd_team_bans::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdTeamBans.def()
+    }
+}
+
+impl Related<super::awd_team_networks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdTeamNetworks.def()
+    }
+}
+
+impl Related<super::awd_wireguard_peers::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdWireguardPeers.def()
+    }
 }
 
 impl Related<super::events::Entity> for Entity {

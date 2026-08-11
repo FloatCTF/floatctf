@@ -7,7 +7,7 @@ import { EventStatusBadge, GenericTable, useMsgBanner } from "@/components";
 import {
 	type EventTeamMembers,
 	type EventTeams,
-	EventType,
+	EventFamily,
 	type Events,
 } from "@/entity";
 import { AppLink } from "@/navigation";
@@ -53,9 +53,8 @@ function RouteComponent() {
 			field: "event.title",
 			rowHeader: true,
 			renderCell: (row: EventInfo) => {
-				switch (row.event.type) {
-					case EventType.JeopardySingle:
-					case EventType.JeopardyTeam:
+				switch (row.event.family) {
+					case EventFamily.Jeopardy:
 						return (
 							<AppLink
 								to={"/service/events/jeopardy/$id"}
@@ -65,7 +64,7 @@ function RouteComponent() {
 								{row.event.title}
 							</AppLink>
 						);
-					case EventType.AwdTeam:
+					case EventFamily.Awd:
 						return (
 							<AppLink
 								to={"/service/events/awd/$id"}
@@ -80,7 +79,8 @@ function RouteComponent() {
 				}
 			},
 		},
-		{ accessorKey: "event.type", header: "Type", field: "event.type" },
+		{ accessorKey: "event.family", header: "Family", field: "event.family" },
+		{ accessorKey: "event.participant_mode", header: "Participant", field: "event.participant_mode" },
 		{
 			accessorKey: "status",
 			header: "Status",

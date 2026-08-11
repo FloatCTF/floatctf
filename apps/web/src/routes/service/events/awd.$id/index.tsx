@@ -289,7 +289,7 @@ function RouteComponent() {
 						<dt className="font-bold">ID</dt>
 						<dd className="font-medium break-all">{ev.id}</dd>
 						<dt className="font-bold">Type</dt>
-						<dd className="font-medium">{ev.type}</dd>
+						<dd className="font-medium">{ev.family} / {ev.participant_mode}</dd>
 						<dt className="font-bold">Start</dt>
 						<dd className="font-medium">{formatDate(ev.start_time)}</dd>
 						<dt className="font-bold">End</dt>

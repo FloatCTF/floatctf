@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crate::modules::event::awd_team::AwdResult;
+use crate::modules::event::awd::AwdResult;
 
 /// 限流 scope 类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,12 +73,10 @@ impl RateLimiter {
             .timestamps
             .retain(|t| now.duration_since(*t) < window);
         if bucket.timestamps.len() >= limit as usize {
-            return Err(crate::modules::event::awd_team::AwdError::Forbidden(
-                format!(
-                    "rate limit exceeded for {scope:?} ({} per {}s)",
-                    limit, window_secs
-                ),
-            ));
+            return Err(crate::modules::event::awd::AwdError::Forbidden(format!(
+                "rate limit exceeded for {scope:?} ({} per {}s)",
+                limit, window_secs
+            )));
         }
         bucket.timestamps.push(now);
         Ok(())

@@ -11,7 +11,7 @@ import { useReactive } from "ahooks";
 
 import { adminApi } from "@/api";
 import { EventStatusBadge, GenericTable } from "@/components";
-import { EventType, type Events } from "@/entity";
+import { EventFamily, ParticipantMode, type Events } from "@/entity";
 import { AppLink } from "@/navigation";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { DatetimeToShow } from "@/util";
@@ -30,34 +30,33 @@ function RouteComponent() {
 			field: "id",
 			rowHeader: true,
 			renderCell: (row: Events) => {
-				switch (row.type) {
-					case EventType.JeopardySingle:
-					case EventType.JeopardyTeam:
-						return (
-							<AppLink
-								to={"/admin/events/jeopardy/$id"}
-								params={{ id: row.id }}
-								target="_blank"
-							>
-								{row.id}
-							</AppLink>
-						);
-					case EventType.AwdTeam:
-						return (
-							<AppLink
-								to={"/admin/events/awd/$id"}
-								params={{ id: row.id }}
-								target="_blank"
-							>
-								{row.id}
-							</AppLink>
-						);
-					default:
-						return <span>{row.id}</span>;
+				if (row.family === EventFamily.Jeopardy) {
+					return (
+						<AppLink
+							to={"/admin/events/jeopardy/$id"}
+							params={{ id: row.id }}
+							target="_blank"
+						>
+							{row.id}
+						</AppLink>
+					);
 				}
+				if (row.family === EventFamily.Awd) {
+					return (
+						<AppLink
+							to={"/admin/events/awd/$id"}
+							params={{ id: row.id }}
+							target="_blank"
+						>
+							{row.id}
+						</AppLink>
+					);
+				}
+				return <span>{row.id}</span>;
 			},
 		},
-		{ accessorKey: "type", header: "Type", field: "type", sortBy: true },
+		{ accessorKey: "family", header: "Family", field: "family", sortBy: true },
+		{ accessorKey: "participant_mode", header: "Participant", field: "participant_mode", sortBy: true },
 		{ accessorKey: "title", header: "Title", field: "title" },
 		{
 			accessorKey: "status",
@@ -107,8 +106,9 @@ function RouteComponent() {
 			},
 		},
 	];
-	const mutationEvent = useReactive<Partial<Events>>({
-		type: EventType.JeopardySingle,
+	const mutationEvent = useReactive<Partial<Events> & { family: EventFamily; participant_mode: ParticipantMode }>({
+		family: EventFamily.Jeopardy,
+		participant_mode: ParticipantMode.Individual,
 		title: "",
 		description: "",
 		hidden: false,
@@ -118,7 +118,6 @@ function RouteComponent() {
 		flag_prefix: "flag",
 		allow_join: false,
 	});
-	const eventType = ["jeopardy_single", "jeopardy_team", "awd_team"];
 	const mutationColumns = [
 		{
 			header: "Title",
@@ -157,20 +156,43 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Type",
-			field: "type",
+			header: "Family",
+			field: "family",
 			render: (
 				<Select
-					value={mutationEvent.type}
+					value={mutationEvent.family}
 					onChange={(e) => {
-						mutationEvent.type = e.target.value as EventType;
+						const family = e.target.value as EventFamily;
+						mutationEvent.family = family;
+						if (family === EventFamily.Awd) {
+							mutationEvent.participant_mode = ParticipantMode.Team;
+						}
 					}}
 				>
-					{eventType.map((type) => (
-						<Select.Option key={type} value={type}>
-							{type}
-						</Select.Option>
-					))}
+					<Select.Option value={EventFamily.Jeopardy}>jeopardy</Select.Option>
+					<Select.Option value={EventFamily.Awd}>awd</Select.Option>
+				</Select>
+			),
+		},
+		{
+			header: "Participant",
+			field: "participant_mode",
+			render: (
+				<Select
+					value={mutationEvent.participant_mode}
+					disabled={mutationEvent.family === EventFamily.Awd}
+					onChange={(e) => {
+						mutationEvent.participant_mode = e.target.value as ParticipantMode;
+					}}
+				>
+					{mutationEvent.family === EventFamily.Awd ? (
+						<Select.Option value={ParticipantMode.Team}>team</Select.Option>
+					) : (
+						<>
+							<Select.Option value={ParticipantMode.Individual}>individual</Select.Option>
+							<Select.Option value={ParticipantMode.Team}>team</Select.Option>
+						</>
+					)}
 				</Select>
 			),
 		},
@@ -257,7 +279,7 @@ function RouteComponent() {
 			),
 		},
 	];
-	const filterKeys = ["id", "type", "title", "hidden", "allow_join"];
+	const filterKeys = ["id", "family", "purpose", "participant_mode", "title", "hidden", "allow_join"];
 	return (
 		<GenericTable
 			subject="Events"

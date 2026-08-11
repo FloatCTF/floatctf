@@ -13,7 +13,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, instances, sea_orm_active_enums::InstanceStatus, users},
+    entity::{challenge_instances, challenges, sea_orm_active_enums::InstanceStatus, users},
     infrastructure::settings::get_setting,
 };
 
@@ -41,18 +41,19 @@ impl InstanceService {
         Self::new(db, runtime)
     }
 
-    /// Launch a challenge instance for `user_id`（单版本：使用 Challenge 当前版本字段）。
+    /// Launch a challenge instance for `user_id` under `event_id`（单版本：使用 Challenge 当前版本字段）。
     ///
     /// Order: ensure pinned image → start container (if docker challenge) →
     /// insert Running row → schedule auto-destroy.
     pub async fn launch(
         &self,
+        event_id: Uuid,
         challenge_id: Uuid,
         identifier: String,
         user_id: Uuid,
-        r#ref: String,
+        team_id: Option<Uuid>,
         flag_prefix: Option<String>,
-    ) -> anyhow::Result<instances::Model> {
+    ) -> anyhow::Result<challenge_instances::Model> {
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&self.db)
             .await?
@@ -125,13 +126,14 @@ impl InstanceService {
             .parse::<i64>()?;
 
         let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
-        let new_instance = instances::ActiveModel {
+        let new_instance = challenge_instances::ActiveModel {
             status: Set(InstanceStatus::Running),
             flag: Set(flag),
             content: Set(content.into()),
             user_id: Set(user_id),
-            challenge_id: Set(challenge_id.into()),
-            r#ref: Set(r#ref),
+            challenge_id: Set(challenge_id),
+            event_id: Set(event_id),
+            team_id: Set(team_id),
             destroy_at: Set(destroy_at.clone().into()),
             identifier: Set(identifier),
             ..Default::default()
@@ -198,7 +200,7 @@ impl InstanceService {
         Ok(report)
     }
 
-    async fn destroy_model(&self, instance: instances::Model) -> anyhow::Result<()> {
+    async fn destroy_model(&self, instance: challenge_instances::Model) -> anyhow::Result<()> {
         let previous_status = instance.status.clone();
         let result = self.remove_runtime_if_needed(&instance).await;
         match result {
@@ -236,23 +238,21 @@ impl InstanceService {
     }
 
     /// Decide whether the instance had a docker runtime from its challenge's current version.
-    async fn remove_runtime_if_needed(&self, instance: &instances::Model) -> anyhow::Result<()> {
-        let is_docker = match instance.challenge_id {
-            Some(challenge_id) => {
-                let challenge = challenges::Entity::find_by_id(challenge_id)
-                    .one(&self.db)
-                    .await?
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "challenge {} not found for instance {}",
-                            challenge_id,
-                            instance.id
-                        )
-                    })?;
-                challenge.container_port.is_some()
-            }
-            None => false,
-        };
+    async fn remove_runtime_if_needed(
+        &self,
+        instance: &challenge_instances::Model,
+    ) -> anyhow::Result<()> {
+        let challenge = challenges::Entity::find_by_id(instance.challenge_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| {
+                anyhow!(
+                    "challenge {} not found for instance {}",
+                    instance.challenge_id,
+                    instance.id
+                )
+            })?;
+        let is_docker = challenge.container_port.is_some();
 
         if is_docker {
             self.runtime.stop_and_remove(&instance.identifier).await?;

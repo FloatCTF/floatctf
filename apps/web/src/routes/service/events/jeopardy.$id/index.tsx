@@ -9,7 +9,7 @@ import { match } from "ts-pattern";
 
 import { serviceApi } from "@/api";
 import { SubmitWriteup, useMsgInlineBanner } from "@/components";
-import { EventType } from "@/entity";
+import { ParticipantMode } from "@/entity";
 import type { EventInfo } from "..";
 
 export const Route = createFileRoute("/service/events/jeopardy/$id/")({
@@ -21,17 +21,17 @@ function parseMs(iso?: string): number {
 	return dayjs.utc(iso).valueOf(); // 始终按 UTC 解析
 }
 
-function getEventStatus(
-	startISO?: string,
-	endISO?: string,
-	nowMs = Date.now(),
-) {
-	const s = parseMs(startISO);
-	const e = parseMs(endISO);
-	if (Number.isNaN(s) || Number.isNaN(e)) return "unknown" as const;
-	if (s > nowMs) return "upcoming" as const;
-	if (e < nowMs) return "ended" as const;
-	return "ongoing" as const;
+function getEventStatus(start?: string | null, end?: string | null) {
+	if (!start) return "unknown";
+	const now = Date.now();
+	const s = new Date(start).getTime();
+	if (Number.isNaN(s)) return "unknown";
+	if (s > now) return "upcoming";
+	if (end == null || end === "") return "ongoing";
+	const e = new Date(end).getTime();
+	if (Number.isNaN(e)) return "unknown";
+	if (e < now) return "ended";
+	return "ongoing";
 }
 
 function formatDate(iso?: string) {
@@ -181,8 +181,8 @@ function RouteComponent() {
 			<div className="flex flex-col gap-3 flex-13">
 				{/* 右侧：操作 */}
 				<div className="flex flex-col gap-3 min-w-[320px]">
-					{match(ev.type)
-						.with(EventType.JeopardySingle, () => (
+					{match(ev.participant_mode)
+						.with(ParticipantMode.Individual, () => (
 							<section className="p-3 rounded border flex  items-center min-h-[72px]">
 								{status === "upcoming" && (
 									<Button
@@ -208,7 +208,7 @@ function RouteComponent() {
 								)}
 							</section>
 						))
-						.with(EventType.JeopardyTeam, () => (
+						.with(ParticipantMode.Team, () => (
 							<section className="p-3 rounded border flex gap-5">
 								{status !== "upcoming" && eventData.joined && (
 									<SubmitWriteup
@@ -342,7 +342,7 @@ function RouteComponent() {
 						<dd className="font-medium break-all">{ev.id}</dd>
 
 						<dt className="font-bold">Type</dt>
-						<dd className="font-medium">{ev.type}</dd>
+						<dd className="font-medium">{ev.family} / {ev.participant_mode}</dd>
 
 						<dt className="font-bold">Start</dt>
 						<dd className="font-medium">{formatDate(ev.start_time)}</dd>

@@ -12,7 +12,7 @@ use crate::{
         prelude::*,
         sea_orm_utils::{CrossFilterMapping, paginate_query, resolve_cross_filters},
     },
-    entity::{challenges, event_challenges, events},
+    entity::{challenges, events, jeopardy_event_challenges},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,9 +58,9 @@ pub async fn add_challenge(
             )))?;
 
         // 查询是否已存在 event_challenge
-        if let Some(existing) = event_challenges::Entity::find()
-            .filter(event_challenges::Column::EventId.eq(event.id))
-            .filter(event_challenges::Column::ChallengeId.eq(challenge.id))
+        if let Some(existing) = jeopardy_event_challenges::Entity::find()
+            .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+            .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
             .one(ctx.db.get_ref())
             .await?
         {
@@ -78,7 +78,7 @@ pub async fn add_challenge(
             }
 
             let points = 100.0;
-            let new_event_challenge = event_challenges::ActiveModel {
+            let new_event_challenge = jeopardy_event_challenges::ActiveModel {
                 event_id: Set(event.id),
                 challenge_id: Set(challenge.id),
                 points: Set(points),
@@ -124,9 +124,9 @@ pub async fn remove_challenge(
     let event_id = event_id.into_inner();
     let dir = dir.into_inner();
 
-    let deleted_count = event_challenges::Entity::delete_many()
-        .filter(event_challenges::Column::EventId.eq(event_id))
-        .filter(event_challenges::Column::ChallengeId.is_in(dir.id_list))
+    let deleted_count = jeopardy_event_challenges::Entity::delete_many()
+        .filter(jeopardy_event_challenges::Column::EventId.eq(event_id))
+        .filter(jeopardy_event_challenges::Column::ChallengeId.is_in(dir.id_list))
         .exec(ctx.db.get_ref())
         .await?
         .rows_affected;
@@ -149,15 +149,15 @@ pub async fn remove_challenge(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventChallengeResult {
-    pub event_challenge: event_challenges::Model,
+    pub event_challenge: jeopardy_event_challenges::Model,
     pub challenge: challenges::Model,
 }
 
 /// GET /api/admin/events/{event_id}/challenges
 ///
 /// 注意：不能直接用 query_query<E>，因为它返回 Vec<E::Model> 只支持单表。
-/// 这里返回的是 EventChallengeResult（event_challenges + challenges 两表 join 的复合结构），
-/// 所以只能在 event_challenges 上做过滤 + 分页，再逐条取关联的 challenge。
+/// 这里返回的是 EventChallengeResult（jeopardy_event_challenges + challenges 两表 join 的复合结构），
+/// 所以只能在 jeopardy_event_challenges 上做过滤 + 分页，再逐条取关联的 challenge。
 /// name/category 属于 challenges 表的列，通过 resolve_cross_filters 预查出匹配的
 /// challenge ID 列表，再作为 is_in 约束加到主查询上。
 #[get("")]
@@ -195,13 +195,13 @@ pub async fn get_challenges(
     )
     .await?;
 
-    // 主表 event_challenges 字段通过 FilterMapping 过滤
+    // 主表 jeopardy_event_challenges 字段通过 FilterMapping 过滤
     let mappings = [
         FilterMapping {
             key: "challenge_id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    event_challenges::Column::ChallengeId
+                    jeopardy_event_challenges::Column::ChallengeId
                         .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
@@ -209,17 +209,19 @@ pub async fn get_challenges(
         FilterMapping {
             key: "hidden",
             column: Box::new(|v| {
-                Condition::all()
-                    .add(event_challenges::Column::Hidden.eq(v.parse::<bool>().unwrap_or(false)))
+                Condition::all().add(
+                    jeopardy_event_challenges::Column::Hidden
+                        .eq(v.parse::<bool>().unwrap_or(false)),
+                )
             }),
         },
     ];
 
-    let mut stmt = event.find_related(event_challenges::Entity);
+    let mut stmt = event.find_related(jeopardy_event_challenges::Entity);
 
     // 将跨表过滤结果作为 is_in 约束
     if let Some(ids) = cross_ids {
-        stmt = stmt.filter(event_challenges::Column::ChallengeId.is_in(ids));
+        stmt = stmt.filter(jeopardy_event_challenges::Column::ChallengeId.is_in(ids));
     }
 
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
@@ -278,14 +280,14 @@ pub async fn hidden_challenges(
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let event_challenge = event_challenges::Entity::find()
-            .filter(event_challenges::Column::EventId.eq(event.id))
-            .filter(event_challenges::Column::ChallengeId.eq(challenge.id))
+        let event_challenge = jeopardy_event_challenges::Entity::find()
+            .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+            .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let mut event_challenge: event_challenges::ActiveModel = event_challenge.into();
+        let mut event_challenge: jeopardy_event_challenges::ActiveModel = event_challenge.into();
         event_challenge.hidden = Set(true);
 
         let event_challenge = event_challenge.update(ctx.db.get_ref()).await?;
@@ -299,14 +301,15 @@ pub async fn hidden_challenges(
                 .await?
                 .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-            let event_challenge = event_challenges::Entity::find()
-                .filter(event_challenges::Column::EventId.eq(event.id))
-                .filter(event_challenges::Column::ChallengeId.eq(challenge.id))
+            let event_challenge = jeopardy_event_challenges::Entity::find()
+                .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+                .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
                 .one(ctx.db.get_ref())
                 .await?
                 .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-            let mut event_challenge: event_challenges::ActiveModel = event_challenge.into();
+            let mut event_challenge: jeopardy_event_challenges::ActiveModel =
+                event_challenge.into();
             event_challenge.hidden = Set(true);
 
             let event_challenge = event_challenge.update(ctx.db.get_ref()).await?;
@@ -361,14 +364,14 @@ pub async fn open_challenges(
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let event_challenge = event_challenges::Entity::find()
-            .filter(event_challenges::Column::EventId.eq(event.id))
-            .filter(event_challenges::Column::ChallengeId.eq(challenge.id))
+        let event_challenge = jeopardy_event_challenges::Entity::find()
+            .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+            .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let mut event_challenge: event_challenges::ActiveModel = event_challenge.into();
+        let mut event_challenge: jeopardy_event_challenges::ActiveModel = event_challenge.into();
         event_challenge.hidden = Set(false);
 
         let event_challenge = event_challenge.update(ctx.db.get_ref()).await?;
@@ -382,14 +385,15 @@ pub async fn open_challenges(
                 .await?
                 .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-            let event_challenge = event_challenges::Entity::find()
-                .filter(event_challenges::Column::EventId.eq(event.id))
-                .filter(event_challenges::Column::ChallengeId.eq(challenge.id))
+            let event_challenge = jeopardy_event_challenges::Entity::find()
+                .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+                .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
                 .one(ctx.db.get_ref())
                 .await?
                 .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-            let mut event_challenge: event_challenges::ActiveModel = event_challenge.into();
+            let mut event_challenge: jeopardy_event_challenges::ActiveModel =
+                event_challenge.into();
             event_challenge.hidden = Set(false);
 
             let event_challenge = event_challenge.update(ctx.db.get_ref()).await?;

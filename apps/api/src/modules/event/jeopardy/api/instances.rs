@@ -9,11 +9,14 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{events, instances, sea_orm_active_enums::InstanceStatus},
-    modules::event::{EventModuleRegistry, jeopardy::application::context::EventContextBuilder},
+    entity::{challenge_instances, events, sea_orm_active_enums::InstanceStatus},
+    modules::event::{
+        EventModuleRegistry, common::domain::practice_event::require_practice_jeopardy_event,
+        jeopardy::application::context::EventContextBuilder,
+    },
 };
 
-/// GET /api/instances
+/// GET /api/instances — Practice instances for current user
 #[get("")]
 pub async fn get_instances(
     user: UserJwtGuard,
@@ -23,43 +26,51 @@ pub async fn get_instances(
     let user = user.into_inner();
     let mut query_params = query_params.0;
 
+    let practice = require_practice_jeopardy_event(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
     let mappings = [
         FilterMapping {
             key: "id",
             column: Box::new(|v| {
-                Condition::all()
-                    .add(instances::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())))
+                Condition::all().add(
+                    challenge_instances::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                )
             }),
         },
         FilterMapping {
             key: "status",
             column: Box::new(|v| {
                 Condition::all().add(
-                    instances::Column::Status
+                    challenge_instances::Column::Status
                         .eq(serde_json::from_str(v).unwrap_or(InstanceStatus::Running)),
                 )
             }),
         },
         FilterMapping {
-            key: "ref",
-            column: Box::new(|v| Condition::all().add(instances::Column::Ref.contains(v))),
+            key: "identifier",
+            column: Box::new(|v| {
+                Condition::all().add(challenge_instances::Column::Identifier.contains(v))
+            }),
         },
         FilterMapping {
             key: "challenge_id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    instances::Column::ChallengeId.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                    challenge_instances::Column::ChallengeId
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
         },
     ];
 
-    let stmt = instances::Entity::find()
-        .filter(instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(instances::Column::Ref.eq("JeopardyPractice"))
-        .filter(instances::Column::UserId.eq(user.id));
+    let stmt = challenge_instances::Entity::find()
+        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+        .filter(challenge_instances::Column::EventId.eq(practice.id))
+        .filter(challenge_instances::Column::UserId.eq(user.id));
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
-    let stmt = stmt.order_by_desc(instances::Column::UpdatedAt);
+    let stmt = stmt.order_by_desc(challenge_instances::Column::UpdatedAt);
 
     let (mut items, total_items) =
         if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
@@ -88,8 +99,8 @@ pub async fn get_instance(
     let instance_id = instance_id.into_inner();
     let user = user.into_inner();
 
-    let mut model = instances::Entity::find_by_id(instance_id)
-        .filter(instances::Column::UserId.eq(user.id))
+    let mut model = challenge_instances::Entity::find_by_id(instance_id)
+        .filter(challenge_instances::Column::UserId.eq(user.id))
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
@@ -103,7 +114,6 @@ pub async fn get_instance(
 pub struct LaunchInstanceRequest {
     event_id: Option<Uuid>,
     challenge_id: Uuid,
-    // for team
 }
 
 /// POST /api/instances/launch
@@ -123,7 +133,7 @@ pub async fn launch_instance(
             .await?
             .ok_or(AppError::NotFound("no event".into()))?
             .into(),
-        None => None,
+        None => None, // builder resolves practice:jeopardy
     };
 
     let event_ctx = EventContextBuilder::new()
@@ -148,7 +158,7 @@ pub async fn launch_instance(
             "INSTANCE",
             "LAUNCH",
             format!("启动题目 {} 的实例", lir.challenge_id).as_str(),
-            json!({"event_id": lir.event_id}),
+            json!({"event_id": lir.event_id, "resolved_event_id": event_ctx.event.id}),
             user.id.into(),
             None,
             Some(&ctx.req),
@@ -168,12 +178,24 @@ pub async fn destroy_instance(
 ) -> UniResult<()> {
     let user = user.into_inner();
     let instance_id = instance_id.into_inner();
-    // InstanceLifecycle via mode registry (practice sentinel Event when no event_id on instance path)
+
+    // Load instance to resolve its event (Practice or competition).
+    let instance = challenge_instances::Entity::find_by_id(instance_id)
+        .filter(challenge_instances::Column::UserId.eq(user.id))
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+
+    let event = events::Entity::find_by_id(instance.event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound("event for instance not found".into()))?;
+
     let event_ctx = EventContextBuilder::new()
         .db(ctx.db.clone())
         .docker(ctx.docker.clone())
         .user(user.clone())
-        .event(None)
+        .event(Some(event))
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context:{}", e)))?;

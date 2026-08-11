@@ -38,6 +38,14 @@ pub enum Relation {
         on_delete = "Restrict"
     )]
     AwdEventGameboxes,
+    #[sea_orm(
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    AwdEvents,
     #[sea_orm(has_many = "super::awd_flag_issues::Entity")]
     AwdFlagIssues,
     #[sea_orm(has_many = "super::awd_flag_submissions::Entity")]
@@ -56,19 +64,17 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     EventTeams,
-    #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
 }
 
 impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdEventGameboxes.def()
+    }
+}
+
+impl Related<super::awd_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEvents.def()
     }
 }
 
@@ -105,12 +111,6 @@ impl Related<super::awd_score_events::Entity> for Entity {
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
-    }
-}
-
-impl Related<super::events::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Events.def()
     }
 }
 

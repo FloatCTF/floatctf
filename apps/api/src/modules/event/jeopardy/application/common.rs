@@ -3,7 +3,7 @@
 pub use anyhow::{Context, Result, anyhow};
 
 use crate::{
-    entity::{instances, users},
+    entity::{challenge_instances, users},
     infrastructure::settings::get_setting,
     infrastructure::{WebDb, WebDocker},
     modules::event::jeopardy::application::instance_service::InstanceService,
@@ -17,15 +17,23 @@ use uuid::Uuid;
 pub async fn launch_instance(
     db: &WebDb,
     docker: &WebDocker,
+    event_id: Uuid,
     challenge_id: Uuid,
     identifier: String,
     user_id: Uuid,
-    r#ref: String,
+    team_id: Option<Uuid>,
     flag_prefix: Option<String>,
-) -> anyhow::Result<instances::Model> {
+) -> anyhow::Result<challenge_instances::Model> {
     let service = InstanceService::with_docker(db.get_ref().clone(), docker.get_ref().clone());
     service
-        .launch(challenge_id, identifier, user_id, r#ref, flag_prefix)
+        .launch(
+            event_id,
+            challenge_id,
+            identifier,
+            user_id,
+            team_id,
+            flag_prefix,
+        )
         .await
 }
 

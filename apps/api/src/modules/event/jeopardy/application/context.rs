@@ -10,8 +10,12 @@ use uuid::Uuid;
 
 use crate::{
     core::AppConfig,
-    entity::{event_teams, event_users, events, instances, users},
+    entity::{challenge_instances, event_teams, event_users, events, users},
     infrastructure::{WebDb, WebDocker},
+    modules::event::common::domain::practice_event::require_practice_jeopardy_event,
+    modules::event::common::domain::time_state::{
+        EventTimeStatus as CommonEventTimeStatus, event_time_status_of,
+    },
 };
 
 /// Single-request context for Jeopardy mode operations.
@@ -96,10 +100,9 @@ impl EventContextBuilder {
         let user = self.user.context("user is required")?;
         let event = match self.event {
             Some(e) => e,
-            None => events::Entity::find_by_id(Uuid::nil())
-                .one(db.get_ref())
-                .await?
-                .ok_or_else(|| anyhow!("Practice Event not found"))?,
+            None => require_practice_jeopardy_event(db.get_ref())
+                .await
+                .map_err(|e| anyhow!("Practice Event not found: {e}"))?,
         };
 
         let team = if let Some(t) = self.team {
@@ -148,13 +151,16 @@ pub enum EventTimeStatus {
 
 impl EventContext {
     pub fn time_status(&self) -> EventTimeStatus {
-        let now = Utc::now();
-        if now < self.event.start_time {
-            EventTimeStatus::NotStarted
-        } else if now > self.event.end_time {
-            EventTimeStatus::Ended
-        } else {
-            EventTimeStatus::Ongoing
+        match event_time_status_of(&self.event, Utc::now()) {
+            crate::modules::event::common::domain::time_state::EventTimeStatus::NotStarted => {
+                EventTimeStatus::NotStarted
+            }
+            crate::modules::event::common::domain::time_state::EventTimeStatus::Ongoing => {
+                EventTimeStatus::Ongoing
+            }
+            crate::modules::event::common::domain::time_state::EventTimeStatus::Ended => {
+                EventTimeStatus::Ended
+            }
         }
     }
 
@@ -198,7 +204,7 @@ pub struct SubmitFlagRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModeInstanceResult {
-    pub instance: instances::Model,
+    pub instance: challenge_instances::Model,
     pub challenge_name: String,
     pub nickname: String,
 }

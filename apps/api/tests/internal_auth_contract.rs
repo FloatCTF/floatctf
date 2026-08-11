@@ -12,7 +12,7 @@ mod common;
 use common::{Method, Route, api_reachable, call, json_code};
 use std::path::Path;
 
-const INTERNAL_RS: &str = "src/modules/event/awd_team/api/internal.rs";
+const INTERNAL_RS: &str = "src/modules/event/awd/api/internal.rs";
 
 fn read_internal_source() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(INTERNAL_RS);

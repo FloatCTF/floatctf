@@ -144,7 +144,7 @@ where
 /// 跨表过滤映射
 ///
 /// 当 filter 中的某些 key 属于关联表而非主查询表时使用。
-/// 例如：主查询在 `event_challenges` 上，但需要按 `challenges.name` 过滤。
+/// 例如：主查询在 `jeopardy_event_challenges` 上，但需要按 `challenges.name` 过滤。
 ///
 /// 配合 [`resolve_cross_filters`] 使用。
 pub struct CrossFilterMapping {
@@ -160,7 +160,7 @@ pub struct CrossFilterMapping {
 ///
 /// # 示例
 ///
-/// 主表 `event_challenges`，需要按 `challenges` 表的 `name` / `category` 过滤：
+/// 主表 `jeopardy_event_challenges`，需要按 `challenges` 表的 `name` / `category` 过滤：
 ///
 /// ```ignore
 /// use crate::api::sea_orm_utils::{CrossFilterMapping, resolve_cross_filters};
@@ -185,9 +185,9 @@ pub struct CrossFilterMapping {
 ///     |m| m.id,   // 从 challenges::Model 提取 id
 /// ).await?;
 ///
-/// let mut stmt = event.find_related(event_challenges::Entity);
+/// let mut stmt = event.find_related(jeopardy_event_challenges::Entity);
 /// if let Some(ids) = ids {
-///     stmt = stmt.filter(event_challenges::Column::ChallengeId.is_in(ids));
+///     stmt = stmt.filter(jeopardy_event_challenges::Column::ChallengeId.is_in(ids));
 /// }
 /// ```
 pub async fn resolve_cross_filters<E>(

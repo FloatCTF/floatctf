@@ -1,4 +1,4 @@
-import type { EventType } from './sea_orm_active_enums';
+import type { EventFamily, EventPurpose, ParticipantMode } from './sea_orm_active_enums';
 
 export type EventLogs = {
   id: string;
@@ -6,9 +6,11 @@ export type EventLogs = {
   user_id?: string;
   team_id?: string;
   ip_address?: string;
-  type: EventType;
   level: string;
   action: string;
   details: string;
   created_at: string;
+  family: EventFamily;
+  purpose: EventPurpose;
+  participant_mode: ParticipantMode;
 };

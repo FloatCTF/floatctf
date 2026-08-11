@@ -11,11 +11,12 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 use floatctf::entity::{
     awd_event_networks, awd_events, events, sea_orm_active_enums,
     sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
 };
-use floatctf::modules::event::awd_team::{AwdError, domain::AwdEventStatusExt, repo::event_repo};
+use floatctf::modules::event::awd::{AwdError, domain::AwdEventStatusExt, repo::event_repo};
 
 fn db_url() -> String {
     std::env::var("DATABASE_URL")
@@ -32,7 +33,7 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
     }
 }
 
-fn base_awd_event(event_id: Uuid, tag: &str) -> awd_events::ActiveModel {
+fn base_awd_event(event_id: Uuid, _tag: &str) -> awd_events::ActiveModel {
     awd_events::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -77,10 +78,16 @@ async fn seed_event_network<C: ConnectionTrait + Send>(
 async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, awd_events::Model) {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
         id: Set(event_id),
         title: Set(format!("awd-transition-test-{tag}")),
         start_time: Set(chrono::Utc::now().into()),
-        end_time: Set((chrono::Utc::now() + chrono::Duration::hours(1)).into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+        )),
         ..Default::default()
     };
     parent.insert(conn).await.expect("insert parent events row");
@@ -320,7 +327,7 @@ async fn legal_transitions_smoke_across_table() {
 
 #[tokio::test]
 async fn configuration_generation_gates_start() {
-    use floatctf::modules::event::awd_team::{
+    use floatctf::modules::event::awd::{
         infrastructure::{firewall::NoopFirewallRuntime, network::NoopNetworkRuntime},
         service::event_service,
     };

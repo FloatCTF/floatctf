@@ -7,7 +7,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::{
-    event_challenge_solves, event_challenges, event_team_members, event_teams, event_users,
+    event_team_members, event_teams, event_users, jeopardy_challenge_solves,
+    jeopardy_event_challenges,
 };
 
 use crate::modules::event::jeopardy::domain::solve::SolveSubject;
@@ -34,10 +35,10 @@ pub async fn already_solved<C: ConnectionTrait>(
     subject: SolveSubject,
 ) -> Result<bool, sea_orm::DbErr> {
     match subject {
-        SolveSubject::User => Ok(event_challenge_solves::Entity::find()
-            .filter(event_challenge_solves::Column::EventId.eq(event_id))
-            .filter(event_challenge_solves::Column::ChallengeId.eq(challenge_id))
-            .filter(event_challenge_solves::Column::UserId.eq(user_id))
+        SolveSubject::User => Ok(jeopardy_challenge_solves::Entity::find()
+            .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+            .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(challenge_id))
+            .filter(jeopardy_challenge_solves::Column::UserId.eq(user_id))
             .one(db)
             .await?
             .is_some()),
@@ -45,10 +46,10 @@ pub async fn already_solved<C: ConnectionTrait>(
             let team_id = team_id.ok_or_else(|| {
                 sea_orm::DbErr::Custom("team_id required for team solve check".into())
             })?;
-            Ok(event_challenge_solves::Entity::find()
-                .filter(event_challenge_solves::Column::EventId.eq(event_id))
-                .filter(event_challenge_solves::Column::ChallengeId.eq(challenge_id))
-                .filter(event_challenge_solves::Column::TeamId.eq(team_id))
+            Ok(jeopardy_challenge_solves::Entity::find()
+                .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+                .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(challenge_id))
+                .filter(jeopardy_challenge_solves::Column::TeamId.eq(team_id))
                 .one(db)
                 .await?
                 .is_some())
@@ -61,9 +62,9 @@ pub async fn solved_count<C: ConnectionTrait>(
     event_id: Uuid,
     challenge_id: Uuid,
 ) -> Result<u64, sea_orm::DbErr> {
-    event_challenge_solves::Entity::find()
-        .filter(event_challenge_solves::Column::EventId.eq(event_id))
-        .filter(event_challenge_solves::Column::ChallengeId.eq(challenge_id))
+    jeopardy_challenge_solves::Entity::find()
+        .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+        .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(challenge_id))
         .count(db)
         .await
 }
@@ -74,7 +75,7 @@ pub async fn find_event_challenge_points<C: ConnectionTrait>(
     challenge_id: Uuid,
 ) -> Result<Option<f64>, sea_orm::DbErr> {
     Ok(
-        event_challenges::Entity::find_by_id((event_id, challenge_id))
+        jeopardy_event_challenges::Entity::find_by_id((event_id, challenge_id))
             .one(db)
             .await?
             .map(|ec| ec.points),
@@ -128,7 +129,7 @@ pub async fn insert_solve<C: ConnectionTrait>(
     team_id: Option<Uuid>,
     points: f64,
 ) -> Result<(), sea_orm::DbErr> {
-    event_challenge_solves::ActiveModel {
+    jeopardy_challenge_solves::ActiveModel {
         event_id: Set(event_id),
         challenge_id: Set(challenge_id),
         user_id: Set(user_id),

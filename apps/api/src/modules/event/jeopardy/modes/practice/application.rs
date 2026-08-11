@@ -5,14 +5,14 @@ use bollard::Docker;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
 use uuid::Uuid;
 
-use crate::entity::{instances, sea_orm_active_enums::InstanceStatus, users};
+use crate::entity::{challenge_instances, sea_orm_active_enums::InstanceStatus, users};
 use crate::modules::event::jeopardy::{
     application::{
         common,
         context::{EventContext, ModeInstanceResult, SubmitFlagRequest},
         instance_service::InstanceService,
     },
-    domain::{policy::JeopardyModePolicy, scoreboard::ScoreboardItem, trend::TrendItem},
+    domain::{scoreboard::ScoreboardItem, trend::TrendItem},
     submit_practice,
 };
 use crate::{entity::events, infrastructure::WebDb};
@@ -58,17 +58,15 @@ impl JeopardyPracticeServices {
         &self,
         db: &WebDb,
         docker: &crate::infrastructure::WebDocker,
+        event_id: Uuid,
         challenge_id: Uuid,
         user_id: Uuid,
-    ) -> Result<instances::Model> {
-        let policy = self.policy();
-        let running_instances_count = instances::Entity::find()
-            .filter(
-                instances::Column::Status
-                    .eq(InstanceStatus::Running)
-                    .and(instances::Column::UserId.eq(user_id))
-                    .and(instances::Column::Ref.eq("JeopardyPractice")),
-            )
+        flag_prefix: Option<String>,
+    ) -> Result<challenge_instances::Model> {
+        let running_instances_count = challenge_instances::Entity::find()
+            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+            .filter(challenge_instances::Column::UserId.eq(user_id))
+            .filter(challenge_instances::Column::EventId.eq(event_id))
             .count(db.get_ref())
             .await?;
 
@@ -79,13 +77,11 @@ impl JeopardyPracticeServices {
             ));
         }
 
-        if let Some(running_instance) = instances::Entity::find()
-            .filter(
-                instances::Column::Status
-                    .eq(InstanceStatus::Running)
-                    .and(instances::Column::ChallengeId.eq(challenge_id))
-                    .and(instances::Column::UserId.eq(user_id)),
-            )
+        if let Some(running_instance) = challenge_instances::Entity::find()
+            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+            .filter(challenge_instances::Column::ChallengeId.eq(challenge_id))
+            .filter(challenge_instances::Column::UserId.eq(user_id))
+            .filter(challenge_instances::Column::EventId.eq(event_id))
             .one(db.get_ref())
             .await?
         {
@@ -97,15 +93,16 @@ impl JeopardyPracticeServices {
             let challenge_id_prefix = common::get_uuid_prefix(&challenge_id);
             format!("JP-{}-{}", user_id_prefix, challenge_id_prefix)
         };
-        // 单版本模型：Practice 直接使用 Challenge 当前版本（ready 校验在 instance_service）
+
         common::launch_instance(
             db,
             docker,
+            event_id,
             challenge_id,
             identifier,
             user_id,
-            policy.instance_ref_label().into(),
             None,
+            flag_prefix,
         )
         .await
     }
@@ -114,9 +111,16 @@ impl JeopardyPracticeServices {
         &self,
         ctx: &EventContext,
         challenge_id: Uuid,
-    ) -> Result<instances::Model> {
-        self.launch_instance(&ctx.db, &ctx.docker, challenge_id, ctx.user.id)
-            .await
+    ) -> Result<challenge_instances::Model> {
+        self.launch_instance(
+            &ctx.db,
+            &ctx.docker,
+            ctx.event.id,
+            challenge_id,
+            ctx.user.id,
+            ctx.event.flag_prefix.clone(),
+        )
+        .await
     }
 
     pub fn instance_service(&self, db: DatabaseConnection, docker: Docker) -> InstanceService {
@@ -127,7 +131,7 @@ impl JeopardyPracticeServices {
         &self,
         _ctx: &EventContext,
         _challenge_id: Uuid,
-    ) -> Result<instances::Model> {
+    ) -> Result<challenge_instances::Model> {
         Err(anyhow!("no need to implement"))
     }
 
@@ -140,21 +144,29 @@ impl JeopardyPracticeServices {
         _db: &WebDb,
         _event: &events::Model,
     ) -> Result<Vec<ScoreboardItem>> {
-        Err(anyhow!("event type not supported"))
+        Err(anyhow!("practice has no official event scoreboard"))
     }
 
     pub async fn get_trend(&self, _db: &WebDb, _event: &events::Model) -> Result<Vec<TrendItem>> {
-        Err(anyhow!("event type not supported"))
+        Err(anyhow!("practice has no official event trend"))
     }
 
     pub async fn challenge_solve_status(
         &self,
-        _db: &sea_orm::DatabaseConnection,
-        _event_id: Uuid,
-        _challenge_id: Uuid,
-        _user_id: Uuid,
+        db: &sea_orm::DatabaseConnection,
+        event_id: Uuid,
+        challenge_id: Uuid,
+        user_id: Uuid,
     ) -> Result<(bool, u64)> {
-        Err(anyhow!("event type not supported"))
+        use crate::entity::jeopardy_challenge_solves;
+        let solved = jeopardy_challenge_solves::Entity::find()
+            .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+            .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(challenge_id))
+            .filter(jeopardy_challenge_solves::Column::UserId.eq(user_id))
+            .one(db)
+            .await?
+            .is_some();
+        Ok((solved, if solved { 1 } else { 0 }))
     }
 
     pub async fn own_writeup_file_url(

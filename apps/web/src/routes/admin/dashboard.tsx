@@ -416,7 +416,7 @@ function StatBlocks({
 
 function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 	const state = eventState(event);
-	const isAwd = event.event_type === "awd_team";
+	const isAwd = event.event_type.startsWith("awd/");
 	const href = isAwd
 		? `/admin/events/awd/${event.event_id}`
 		: `/admin/events/jeopardy/${event.event_id}`;

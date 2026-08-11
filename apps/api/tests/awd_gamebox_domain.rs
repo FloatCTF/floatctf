@@ -16,7 +16,9 @@ use uuid::Uuid;
 use floatctf::entity::{
     awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_team_networks,
     event_teams, events, gameboxes, sea_orm_active_enums,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus},
+    sea_orm_active_enums::{
+        AwdEventStatus, AwdPhase, EventFamily, EventPurpose, GameboxStatus, ParticipantMode,
+    },
 };
 
 fn db_url() -> String {
@@ -57,11 +59,16 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
     let event_id = Uuid::new_v4();
     events::ActiveModel {
         id: Set(event_id),
-        r#type: Set(floatctf::entity::sea_orm_active_enums::EventType::AwdTeam),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
         title: Set(format!("awd-gb-domain-{tag}")),
         hidden: Set(true),
         start_time: Set(chrono::Utc::now().into()),
-        end_time: Set((chrono::Utc::now() + chrono::Duration::hours(1)).into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+        )),
         ..Default::default()
     }
     .insert(db)
@@ -137,7 +144,7 @@ async fn seed_team_network(
     team_id: Uuid,
     subnet: &str,
 ) -> Uuid {
-    use floatctf::modules::event::awd_team::crypto::AwdCrypto;
+    use floatctf::modules::event::awd::crypto::AwdCrypto;
     let crypto = AwdCrypto::from_config_secret().expect("crypto configured");
     let aad = AwdCrypto::build_aad(event_id, "ssh_password");
     let blob = crypto
@@ -346,7 +353,7 @@ fn configure_crypto_once() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        floatctf::modules::event::awd_team::crypto::AwdCrypto::configure_secret(
+        floatctf::modules::event::awd::crypto::AwdCrypto::configure_secret(
             floatctf::core::secret::Secret::new("test-master-secret-12345678"),
         );
     });
@@ -366,29 +373,28 @@ async fn update_identity_does_not_touch_package() {
 
     let (gb_id,) = seed_gamebox_with_revision(&db, "edit", "img:v1").await;
 
-    let updated =
-        floatctf::modules::event::awd_team::service::gamebox_service::update_gamebox_identity(
-            &db,
-            gb_id,
-            floatctf::modules::event::awd_team::repo::gamebox_lib_repo::GameBoxIdentityPatch {
-                name: Some("new-name".into()),
-                category: Some("pwn".into()),
-                description: Some("desc".into()),
-                hidden: Some(true),
-                username: None,
-                recommended_cpu_millis: None,
-                recommended_memory_bytes: None,
-                recommended_pids_limit: None,
-                healthchecks_json: None,
-                judge_script_name: None,
-                judge_script_content: None,
-                judge_args_json: None,
-                judge_timeout_secs: None,
-                judge_retry_interval_secs: None,
-            },
-        )
-        .await
-        .expect("update identity");
+    let updated = floatctf::modules::event::awd::service::gamebox_service::update_gamebox_identity(
+        &db,
+        gb_id,
+        floatctf::modules::event::awd::repo::gamebox_lib_repo::GameBoxIdentityPatch {
+            name: Some("new-name".into()),
+            category: Some("pwn".into()),
+            description: Some("desc".into()),
+            hidden: Some(true),
+            username: None,
+            recommended_cpu_millis: None,
+            recommended_memory_bytes: None,
+            recommended_pids_limit: None,
+            healthchecks_json: None,
+            judge_script_name: None,
+            judge_script_content: None,
+            judge_args_json: None,
+            judge_timeout_secs: None,
+            judge_retry_interval_secs: None,
+        },
+    )
+    .await
+    .expect("update identity");
     assert_eq!(updated.name, "new-name");
     assert_eq!(updated.category, "pwn");
     assert!(updated.hidden);
@@ -417,7 +423,7 @@ async fn event_scores_are_independent_per_event() {
         return;
     };
     cleanup_domain_fixtures(&db).await;
-    use floatctf::modules::event::awd_team::service::gamebox_service;
+    use floatctf::modules::event::awd::service::gamebox_service;
 
     let (gb_id,) = seed_gamebox_with_revision(&db, "score", "img:v1").await;
     let event_a = seed_running_event(&db, "score-a").await;
@@ -458,7 +464,7 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
     };
     cleanup_domain_fixtures(&db).await;
     configure_crypto_once();
-    use floatctf::modules::event::awd_team::service::reset_service::{
+    use floatctf::modules::event::awd::service::reset_service::{
         ResetActor, ResetContext, execute_reset,
     };
 

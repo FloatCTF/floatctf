@@ -7,7 +7,10 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::event::common::api::EventLogsDto;
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{event_logs, sea_orm_active_enums::EventType},
+    entity::{
+        event_logs,
+        sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
+    },
 };
 
 /// GET /api/admin/events/{event_id}/logs
@@ -44,11 +47,29 @@ pub async fn get_event_logs(
             }),
         },
         FilterMapping {
-            key: "type",
+            key: "family",
             column: Box::new(|v| {
                 Condition::all().add(
-                    event_logs::Column::Type
-                        .eq(serde_json::from_str(v).unwrap_or(EventType::JeopardyPractice)),
+                    event_logs::Column::Family
+                        .eq(serde_json::from_str(v).unwrap_or(EventFamily::Jeopardy)),
+                )
+            }),
+        },
+        FilterMapping {
+            key: "purpose",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    event_logs::Column::Purpose
+                        .eq(serde_json::from_str(v).unwrap_or(EventPurpose::Competition)),
+                )
+            }),
+        },
+        FilterMapping {
+            key: "participant_mode",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    event_logs::Column::ParticipantMode
+                        .eq(serde_json::from_str(v).unwrap_or(ParticipantMode::Individual)),
                 )
             }),
         },

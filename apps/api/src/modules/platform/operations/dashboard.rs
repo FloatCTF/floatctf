@@ -19,8 +19,9 @@ use uuid::Uuid;
 
 use crate::api::{extractor::auth::SuperAdminJwtGuard, prelude::*};
 use crate::entity::{
-    announcements, awd_events, challenge_solves, challenges, discussions, events, gameboxes,
-    instances, logs, scheduled_tasks, sea_orm_active_enums::AwdEventStatus, users, weapons,
+    announcements, awd_events, challenge_instances, challenges, discussions, events, gameboxes,
+    jeopardy_challenge_solves, logs, scheduled_tasks, sea_orm_active_enums::AwdEventStatus, users,
+    weapons,
 };
 
 /// AWD 状态机中表示“出问题、需要管理员介入”的异常态。
@@ -95,7 +96,7 @@ pub struct DashboardEventDto {
     pub title: String,
     pub event_type: String,
     pub start_time: DateTime<FixedOffset>,
-    pub end_time: DateTime<FixedOffset>,
+    pub end_time: Option<DateTime<FixedOffset>>,
     pub hidden: bool,
     pub awd: Option<DashboardAwdDto>,
 }
@@ -149,7 +150,7 @@ pub async fn get_dashboard_summary(
         weapons: weapons::Entity::find().count(db).await? as usize,
         announcements: announcements::Entity::find().count(db).await? as usize,
         discussions: discussions::Entity::find().count(db).await? as usize,
-        instances: instances::Entity::find().count(db).await? as usize,
+        instances: challenge_instances::Entity::find().count(db).await? as usize,
         gameboxes: gameboxes::Entity::find().count(db).await? as usize,
     };
 
@@ -171,7 +172,12 @@ pub async fn get_dashboard_summary(
         .map(|e| DashboardEventDto {
             event_id: e.id,
             title: e.title,
-            event_type: snake_str(&e.r#type),
+            event_type: format!(
+                "{}/{}/{}",
+                snake_str(&e.family),
+                snake_str(&e.purpose),
+                snake_str(&e.participant_mode)
+            ),
             start_time: e.start_time,
             end_time: e.end_time,
             hidden: e.hidden,
@@ -243,8 +249,8 @@ pub async fn get_dashboard_summary(
     };
 
     // ── 近期活动 ──
-    let solve_rows = challenge_solves::Entity::find()
-        .order_by_desc(challenge_solves::Column::CreatedAt)
+    let solve_rows = jeopardy_challenge_solves::Entity::find()
+        .order_by_desc(jeopardy_challenge_solves::Column::CreatedAt)
         .limit(8)
         .all(db)
         .await?;

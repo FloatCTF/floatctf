@@ -1,15 +1,9 @@
-//! Declared capabilities per competition mode (for API/frontend branching).
+//! Declared capabilities per EventMode (for API/frontend branching).
 
 use serde::Serialize;
 
-use crate::entity::sea_orm_active_enums::EventType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ParticipantMode {
-    Individual,
-    Team,
-}
+use crate::entity::sea_orm_active_enums::{EventFamily, ParticipantMode};
+use crate::modules::event::common::domain::event_mode::EventMode;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EventCapabilities {
@@ -25,52 +19,23 @@ pub struct EventCapabilities {
 }
 
 impl EventCapabilities {
-    pub fn for_event_type(event_type: &EventType) -> Self {
-        match event_type {
-            EventType::JeopardyPractice => Self {
-                participant_mode: ParticipantMode::Individual,
-                supports_instances: true,
-                supports_standard_flag_submission: true,
-                supports_teams: false,
-                supports_wireguard: false,
-                supports_gameboxes: false,
-                supports_rounds: false,
-                supports_judge: false,
-                supports_reset: false,
-            },
-            EventType::JeopardySingle => Self {
-                participant_mode: ParticipantMode::Individual,
-                supports_instances: true,
-                supports_standard_flag_submission: true,
-                supports_teams: false,
-                supports_wireguard: false,
-                supports_gameboxes: false,
-                supports_rounds: false,
-                supports_judge: false,
-                supports_reset: false,
-            },
-            EventType::JeopardyTeam => Self {
-                participant_mode: ParticipantMode::Team,
-                supports_instances: true,
-                supports_standard_flag_submission: true,
-                supports_teams: true,
-                supports_wireguard: false,
-                supports_gameboxes: false,
-                supports_rounds: false,
-                supports_judge: false,
-                supports_reset: false,
-            },
-            EventType::AwdTeam => Self {
-                participant_mode: ParticipantMode::Team,
-                supports_instances: false,
-                supports_standard_flag_submission: false,
-                supports_teams: true,
-                supports_wireguard: true,
-                supports_gameboxes: true,
-                supports_rounds: true,
-                supports_judge: true,
-                supports_reset: true,
-            },
+    pub fn for_mode(mode: &EventMode) -> Self {
+        let (supports_instances, supports_standard_flag_submission, awd_engine) = match mode.family
+        {
+            EventFamily::Jeopardy => (true, true, false),
+            EventFamily::Awd => (false, false, true),
+        };
+
+        Self {
+            participant_mode: mode.participant_mode.clone(),
+            supports_instances,
+            supports_standard_flag_submission,
+            supports_teams: mode.is_team(),
+            supports_wireguard: awd_engine,
+            supports_gameboxes: awd_engine,
+            supports_rounds: awd_engine,
+            supports_judge: awd_engine,
+            supports_reset: awd_engine,
         }
     }
 }

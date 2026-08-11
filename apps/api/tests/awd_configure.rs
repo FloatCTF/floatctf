@@ -11,10 +11,10 @@ use uuid::Uuid;
 
 use floatctf::entity::{
     awd_events, events, scheduled_tasks,
-    sea_orm_active_enums::{AwdEventStatus, AwdPhase, EventType},
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::{
-    awd_team::{
+    awd::{
         AwdError, scheduler,
         service::config_service::{self, AwdEventConfigPatch},
     },
@@ -45,10 +45,13 @@ async fn seed_event<C: sea_orm::ConnectionTrait + Send>(
     let now = Utc::now();
     events::ActiveModel {
         id: Set(event_id),
-        r#type: Set(EventType::AwdTeam),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
         title: Set(format!("awd-configure-{}", event_id.simple())),
         start_time: Set((now + Duration::hours(4)).into()),
-        end_time: Set((now + Duration::hours(8)).into()),
+        end_time: Set(Some((now + Duration::hours(8)).fixed_offset())),
         ..Default::default()
     }
     .insert(db)
@@ -238,7 +241,6 @@ async fn parent_start_time_change_reschedules_auto_precheck() {
         &txn,
         event_id,
         PatchEventRequest {
-            r#type: None,
             title: None,
             description: None,
             hidden: None,

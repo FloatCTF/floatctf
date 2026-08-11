@@ -9,7 +9,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::event_team_members;
-use crate::modules::event::awd_team::{AwdError, AwdResult};
+use crate::modules::event::awd::{AwdError, AwdResult};
 
 /// Find user's team for an event.
 pub async fn find_user_team(

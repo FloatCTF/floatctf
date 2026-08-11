@@ -8,7 +8,7 @@ use crate::modules::challenge::catalog::ChallengesDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenges, instances, sea_orm_active_enums::InstanceStatus},
+    entity::{challenge_instances, challenges, sea_orm_active_enums::InstanceStatus},
 };
 
 /// GET /api/challenges
@@ -93,11 +93,17 @@ pub async fn get_challenge_instance(
     let user = user.into_inner();
     let challenge_id = challenge_id.into_inner();
 
-    let instance = instances::Entity::find()
-        .filter(instances::Column::ChallengeId.eq(challenge_id))
-        .filter(instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(instances::Column::UserId.eq(user.id))
-        .filter(instances::Column::Ref.eq("JeopardyPractice"))
+    let practice =
+        crate::modules::event::common::domain::practice_event::require_practice_jeopardy_event(
+            ctx.db.get_ref(),
+        )
+        .await
+        .map_err(|e| crate::api::AppError::Internal(e.to_string()))?;
+    let instance = challenge_instances::Entity::find()
+        .filter(challenge_instances::Column::ChallengeId.eq(challenge_id))
+        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+        .filter(challenge_instances::Column::UserId.eq(user.id))
+        .filter(challenge_instances::Column::EventId.eq(practice.id))
         .one(ctx.db.get_ref())
         .await?;
 

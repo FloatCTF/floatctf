@@ -58,29 +58,27 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::challenge_instances::Entity")]
+    ChallengeInstances,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
-    #[sea_orm(has_many = "super::challenge_solves::Entity")]
-    ChallengeSolves,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
-    #[sea_orm(has_many = "super::event_challenge_solves::Entity")]
-    EventChallengeSolves,
-    #[sea_orm(has_many = "super::event_challenges::Entity")]
-    EventChallenges,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
+    #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
+    JeopardyChallengeSolves,
+    #[sea_orm(has_many = "super::jeopardy_event_challenges::Entity")]
+    JeopardyEventChallenges,
+}
+
+impl Related<super::challenge_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ChallengeInstances.def()
+    }
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ChallengeSetItems.def()
-    }
-}
-
-impl Related<super::challenge_solves::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeSolves.def()
     }
 }
 
@@ -90,21 +88,15 @@ impl Related<super::challenge_writeup::Entity> for Entity {
     }
 }
 
-impl Related<super::event_challenge_solves::Entity> for Entity {
+impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallengeSolves.def()
+        Relation::JeopardyChallengeSolves.def()
     }
 }
 
-impl Related<super::event_challenges::Entity> for Entity {
+impl Related<super::jeopardy_event_challenges::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallenges.def()
-    }
-}
-
-impl Related<super::instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::JeopardyEventChallenges.def()
     }
 }
 
@@ -119,10 +111,14 @@ impl Related<super::challenge_sets::Entity> for Entity {
 
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
-        super::event_challenges::Relation::Events.def()
+        super::jeopardy_event_challenges::Relation::Events.def()
     }
     fn via() -> Option<RelationDef> {
-        Some(super::event_challenges::Relation::Challenges.def().rev())
+        Some(
+            super::jeopardy_event_challenges::Relation::Challenges
+                .def()
+                .rev(),
+        )
     }
 }
 

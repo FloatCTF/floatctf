@@ -16,9 +16,9 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenges, event_announcements, event_challenge_solves, event_challenges,
-        event_team_members, event_teams, event_users, events, instances,
-        sea_orm_active_enums::{EventTeamMemberRole, EventType},
+        challenge_instances, challenges, event_announcements, event_team_members, event_teams,
+        event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
         users,
     },
     infrastructure::{WebDb, WebDocker},
@@ -66,7 +66,7 @@ pub struct EventChallengeResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventInstanceResult {
-    pub instance: instances::Model,
+    pub instance: challenge_instances::Model,
     pub challenge_name: String,
     pub user_nickname: String,
 }
@@ -92,20 +92,44 @@ impl EventStatus {
             .await?
             .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-        let now = Utc::now();
-        if now < event.start_time {
-            Ok(Self::NotStarted)
-        } else if now > event.end_time {
-            Ok(Self::Ended)
-        } else {
-            Ok(Self::Ongoing)
-        }
+        use crate::modules::event::common::domain::time_state::{
+            EventTimeStatus, event_time_status_of,
+        };
+        Ok(match event_time_status_of(&event, Utc::now()) {
+            EventTimeStatus::NotStarted => Self::NotStarted,
+            EventTimeStatus::Ongoing => Self::Ongoing,
+            EventTimeStatus::Ended => Self::Ended,
+        })
     }
 
     /// Variant that accepts `WebDb` (legacy call sites).
     pub async fn check_web(db: &WebDb, event_id: &Uuid) -> Result<Self, AppError> {
         Self::check(db.get_ref(), event_id).await
     }
+}
+
+fn require_competition(event: &events::Model) -> Result<(), AppError> {
+    if event.purpose != EventPurpose::Competition {
+        return Err(AppError::BadRequest(
+            "UnsupportedForPurpose: only competition events support join/team".into(),
+        ));
+    }
+    if event.system_key.is_some() {
+        return Err(AppError::BadRequest(
+            "system-managed events cannot be joined".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_team_mode(event: &events::Model) -> Result<(), AppError> {
+    require_competition(event)?;
+    if event.participant_mode != ParticipantMode::Team {
+        return Err(AppError::BadRequest(
+            "UnsupportedForParticipantMode: team operations require team participant mode".into(),
+        ));
+    }
+    Ok(())
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────
@@ -212,8 +236,8 @@ pub async fn list_event_challenges(
     }
 
     let c_ec = event
-        .find_related(event_challenges::Entity)
-        .filter(event_challenges::Column::Hidden.eq(false))
+        .find_related(jeopardy_event_challenges::Entity)
+        .filter(jeopardy_event_challenges::Column::Hidden.eq(false))
         .find_also_related(challenges::Entity)
         .all(db.get_ref())
         .await?;
@@ -221,9 +245,9 @@ pub async fn list_event_challenges(
     let mut result = Vec::new();
     for (event_challenge, challenge) in c_ec {
         if let Some(c) = challenge {
-            let solved_count = event_challenge_solves::Entity::find()
-                .filter(event_challenge_solves::Column::EventId.eq(event_id))
-                .filter(event_challenge_solves::Column::ChallengeId.eq(c.id))
+            let solved_count = jeopardy_challenge_solves::Entity::find()
+                .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+                .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(c.id))
                 .count(db.get_ref())
                 .await?;
 
@@ -293,7 +317,7 @@ pub async fn get_challenge_instance(
     event_id: Uuid,
     challenge_id: Uuid,
     user: users::Model,
-) -> Result<instances::Model, AppError> {
+) -> Result<challenge_instances::Model, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
@@ -329,6 +353,8 @@ pub async fn create_team(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+
+    require_team_mode(&event)?;
 
     match EventStatus::check_web(db, &event.id).await? {
         EventStatus::Ongoing | EventStatus::Ended => {
@@ -410,6 +436,12 @@ pub async fn join_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<event_teams::Model, AppError> {
+    let event = events::Entity::find_by_id(event_id)
+        .one(db)
+        .await?
+        .ok_or(AppError::NotFound("event not found".to_string()))?;
+    require_team_mode(&event)?;
+
     let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
         .one(db)
         .await?;
@@ -474,6 +506,8 @@ pub async fn join_event(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+
+    require_competition(&event)?;
 
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow join".to_string()));
@@ -619,11 +653,11 @@ pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
             column: Box::new(|v| Condition::all().add(events::Column::Title.contains(v))),
         },
         FilterMapping {
-            key: "type",
+            key: "family",
             column: Box::new(|v| {
                 Condition::all().add(
-                    events::Column::Type
-                        .eq(serde_json::from_str(v).unwrap_or(EventType::JeopardyPractice)),
+                    events::Column::Family
+                        .eq(serde_json::from_str(v).unwrap_or(EventFamily::Jeopardy)),
                 )
             }),
         },

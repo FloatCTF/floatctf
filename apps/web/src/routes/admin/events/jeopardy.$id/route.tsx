@@ -7,7 +7,7 @@ import { adminApi } from "@/api";
 import {
     type Challenges,
     type EventChallenges,
-    EventType,
+    ParticipantMode,
     type Events,
 } from "@/entity";
 import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
@@ -54,7 +54,7 @@ function RouteComponent() {
                 <RouterNavItem to="/admin/events/jeopardy/$id" params={{ id }}>
                     Challenges
                 </RouterNavItem>
-                {event?.type === EventType.JeopardySingle && (
+                {event?.participant_mode === ParticipantMode.Individual && (
                     <RouterNavItem
                         to="/admin/events/jeopardy/$id/users"
                         params={{ id }}
@@ -63,7 +63,7 @@ function RouteComponent() {
                     </RouterNavItem>
                 )}
 
-                {event?.type === EventType.JeopardyTeam && (
+                {event?.participant_mode === ParticipantMode.Team && (
                     <RouterNavItem
                         to="/admin/events/jeopardy/$id/teams"
                         params={{ id }}

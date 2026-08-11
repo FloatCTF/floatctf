@@ -1,14 +1,18 @@
-//! Competition mode registry — dispatch to mode services by EventType.
+//! Competition mode registry — dispatch Jeopardy ops by EventMode (AWD is separate stack).
 
 use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 use crate::{
-    entity::{events, instances, sea_orm_active_enums::EventType, users},
+    entity::sea_orm_active_enums::EventFamily,
+    entity::{challenge_instances, events, users},
     infrastructure::WebDb,
+    modules::event::common::domain::{
+        capability::EventCapabilities,
+        event_mode::{EventMode, JeopardyVariant},
+    },
 };
 
-use super::common::domain::capability::EventCapabilities;
 use super::jeopardy::application::{
     common as jeopardy_common,
     context::{EventContext, ModeInstanceResult, SubmitFlagRequest},
@@ -19,7 +23,7 @@ use super::jeopardy::modes::{
     JeopardyPracticeServices, JeopardySingleServices, JeopardyTeamServices,
 };
 
-/// Mode service entry points for all competition types.
+/// Mode service entry points for Jeopardy competition types.
 #[derive(Clone, Default)]
 pub struct EventModuleRegistry {
     pub jeopardy_practice: JeopardyPracticeServices,
@@ -32,46 +36,61 @@ impl EventModuleRegistry {
         Self::default()
     }
 
-    pub fn capabilities_for(event_type: &EventType) -> EventCapabilities {
-        EventCapabilities::for_event_type(event_type)
+    pub fn capabilities_for(mode: &EventMode) -> EventCapabilities {
+        EventCapabilities::for_mode(mode)
     }
 
-    /// Resolve Jeopardy mode services by event type (AWD is separate stack).
-    pub fn for_event_type(&self, event_type: &EventType) -> Option<JeopardyModeHandle<'_>> {
-        match event_type {
-            EventType::JeopardyPractice => {
+    pub fn capabilities_for_event(event: &events::Model) -> EventCapabilities {
+        Self::capabilities_for(&event.mode_unchecked())
+    }
+
+    /// Resolve Jeopardy mode services by EventMode (AWD returns None).
+    pub fn for_mode(&self, mode: &EventMode) -> Option<JeopardyModeHandle<'_>> {
+        match mode.jeopardy_variant()? {
+            JeopardyVariant::Practice => {
                 Some(JeopardyModeHandle::Practice(&self.jeopardy_practice))
             }
-            EventType::JeopardySingle => Some(JeopardyModeHandle::Single(&self.jeopardy_single)),
-            EventType::JeopardyTeam => Some(JeopardyModeHandle::Team(&self.jeopardy_team)),
-            EventType::AwdTeam => None,
+            JeopardyVariant::IndividualCompetition => {
+                Some(JeopardyModeHandle::Single(&self.jeopardy_single))
+            }
+            JeopardyVariant::TeamCompetition => Some(JeopardyModeHandle::Team(&self.jeopardy_team)),
         }
     }
 
-    fn unsupported_awd(op: &str) -> anyhow::Error {
-        anyhow!(
-            "UnsupportedForEventType: AWD events do not support '{op}' via the generic Event API; use /api/events/{{id}}/awd"
-        )
+    pub fn for_event(&self, event: &events::Model) -> Option<JeopardyModeHandle<'_>> {
+        self.for_mode(&event.mode_unchecked())
+    }
+
+    fn require_jeopardy(event: &events::Model, op: &str) -> Result<()> {
+        if event.family != EventFamily::Jeopardy {
+            return Err(anyhow!(
+                "UnsupportedForFamily: AWD events do not support '{op}' via the generic Event API; use /api/events/{{id}}/awd"
+            ));
+        }
+        Ok(())
+    }
+
+    fn handle_for<'a>(&'a self, event: &events::Model, op: &str) -> Result<JeopardyModeHandle<'a>> {
+        Self::require_jeopardy(event, op)?;
+        self.for_event(event).ok_or_else(|| {
+            anyhow!(
+                "UnsupportedForMode: no Jeopardy handler for event {}",
+                event.id
+            )
+        })
     }
 
     pub async fn submit_flag(&self, ctx: &EventContext, sfr: SubmitFlagRequest) -> Result<()> {
-        match &ctx.event.r#type {
-            EventType::JeopardyPractice => {
-                self.jeopardy_practice.submit_from_context(ctx, &sfr).await
-            }
-            EventType::JeopardySingle => {
+        match self.handle_for(&ctx.event, "submit flag")? {
+            JeopardyModeHandle::Practice(s) => s.submit_from_context(ctx, &sfr).await,
+            JeopardyModeHandle::Single(s) => {
                 let instance_id = sfr.instance_id.ok_or(anyhow!("no instance_id"))?;
-                self.jeopardy_single
-                    .submit_flag(ctx, instance_id, &sfr.flag)
-                    .await
+                s.submit_flag(ctx, instance_id, &sfr.flag).await
             }
-            EventType::JeopardyTeam => {
+            JeopardyModeHandle::Team(s) => {
                 let instance_id = sfr.instance_id.ok_or(anyhow!("no instance_id"))?;
-                self.jeopardy_team
-                    .submit_flag(ctx, instance_id, &sfr.flag)
-                    .await
+                s.submit_flag(ctx, instance_id, &sfr.flag).await
             }
-            EventType::AwdTeam => Err(Self::unsupported_awd("submit flag via /api/submit/flag")),
         }
     }
 
@@ -79,39 +98,24 @@ impl EventModuleRegistry {
         &self,
         ctx: &EventContext,
         challenge_id: Uuid,
-    ) -> Result<instances::Model> {
-        match &ctx.event.r#type {
-            EventType::JeopardyPractice => {
-                self.jeopardy_practice
-                    .launch_from_context(ctx, challenge_id)
-                    .await
-            }
-            EventType::JeopardySingle => {
-                self.jeopardy_single
-                    .launch_instance(ctx, challenge_id)
-                    .await
-            }
-            EventType::JeopardyTeam => self.jeopardy_team.launch_instance(ctx, challenge_id).await,
-            EventType::AwdTeam => Err(Self::unsupported_awd("launch_instance")),
+    ) -> Result<challenge_instances::Model> {
+        match self.handle_for(&ctx.event, "launch_instance")? {
+            JeopardyModeHandle::Practice(s) => s.launch_from_context(ctx, challenge_id).await,
+            JeopardyModeHandle::Single(s) => s.launch_instance(ctx, challenge_id).await,
+            JeopardyModeHandle::Team(s) => s.launch_instance(ctx, challenge_id).await,
         }
     }
 
     pub async fn destroy_instance(&self, ctx: &EventContext, instance_id: Uuid) -> Result<()> {
-        match &ctx.event.r#type {
-            EventType::AwdTeam => Err(Self::unsupported_awd("destroy_instance")),
-            _ => {
-                jeopardy_common::destroy_instance(&ctx.db, &ctx.docker, instance_id, &ctx.user)
-                    .await
-            }
-        }
+        Self::require_jeopardy(&ctx.event, "destroy_instance")?;
+        jeopardy_common::destroy_instance(&ctx.db, &ctx.docker, instance_id, &ctx.user).await
     }
 
     pub async fn get_instances(&self, ctx: &EventContext) -> Result<Vec<ModeInstanceResult>> {
-        match &ctx.event.r#type {
-            EventType::JeopardyPractice => self.jeopardy_practice.get_instances(ctx).await,
-            EventType::JeopardySingle => self.jeopardy_single.get_instances(ctx).await,
-            EventType::JeopardyTeam => self.jeopardy_team.get_instances(ctx).await,
-            EventType::AwdTeam => Err(Self::unsupported_awd("get_instances")),
+        match self.handle_for(&ctx.event, "get_instances")? {
+            JeopardyModeHandle::Practice(s) => s.get_instances(ctx).await,
+            JeopardyModeHandle::Single(s) => s.get_instances(ctx).await,
+            JeopardyModeHandle::Team(s) => s.get_instances(ctx).await,
         }
     }
 
@@ -119,24 +123,15 @@ impl EventModuleRegistry {
         &self,
         ctx: &EventContext,
         challenge_id: Uuid,
-    ) -> Result<instances::Model> {
-        match &ctx.event.r#type {
-            EventType::JeopardyPractice => {
-                self.jeopardy_practice
-                    .get_instance_by_challenge_id(ctx, challenge_id)
-                    .await
+    ) -> Result<challenge_instances::Model> {
+        match self.handle_for(&ctx.event, "get_instance_by_challenge_id")? {
+            JeopardyModeHandle::Practice(s) => {
+                s.get_instance_by_challenge_id(ctx, challenge_id).await
             }
-            EventType::JeopardySingle => {
-                self.jeopardy_single
-                    .get_instance_by_challenge_id(ctx, challenge_id)
-                    .await
+            JeopardyModeHandle::Single(s) => {
+                s.get_instance_by_challenge_id(ctx, challenge_id).await
             }
-            EventType::JeopardyTeam => {
-                self.jeopardy_team
-                    .get_instance_by_challenge_id(ctx, challenge_id)
-                    .await
-            }
-            EventType::AwdTeam => Err(Self::unsupported_awd("get_instance_by_challenge_id")),
+            JeopardyModeHandle::Team(s) => s.get_instance_by_challenge_id(ctx, challenge_id).await,
         }
     }
 
@@ -145,20 +140,18 @@ impl EventModuleRegistry {
         db: &WebDb,
         event: &events::Model,
     ) -> Result<Vec<ScoreboardItem>> {
-        match &event.r#type {
-            EventType::JeopardyPractice => self.jeopardy_practice.get_scoreboard(db, event).await,
-            EventType::JeopardySingle => self.jeopardy_single.get_scoreboard(db, event).await,
-            EventType::JeopardyTeam => self.jeopardy_team.get_scoreboard(db, event).await,
-            EventType::AwdTeam => Err(Self::unsupported_awd("get_scoreboard")),
+        match self.handle_for(event, "get_scoreboard")? {
+            JeopardyModeHandle::Practice(s) => s.get_scoreboard(db, event).await,
+            JeopardyModeHandle::Single(s) => s.get_scoreboard(db, event).await,
+            JeopardyModeHandle::Team(s) => s.get_scoreboard(db, event).await,
         }
     }
 
     pub async fn get_trend(&self, db: &WebDb, event: &events::Model) -> Result<Vec<TrendItem>> {
-        match &event.r#type {
-            EventType::JeopardyPractice => self.jeopardy_practice.get_trend(db, event).await,
-            EventType::JeopardySingle => self.jeopardy_single.get_trend(db, event).await,
-            EventType::JeopardyTeam => self.jeopardy_team.get_trend(db, event).await,
-            EventType::AwdTeam => Err(Self::unsupported_awd("get_trend")),
+        match self.handle_for(event, "get_trend")? {
+            JeopardyModeHandle::Practice(s) => s.get_trend(db, event).await,
+            JeopardyModeHandle::Single(s) => s.get_trend(db, event).await,
+            JeopardyModeHandle::Team(s) => s.get_trend(db, event).await,
         }
     }
 
@@ -169,23 +162,19 @@ impl EventModuleRegistry {
         user: &users::Model,
         challenge_id: Uuid,
     ) -> Result<(bool, u64)> {
-        match &event.r#type {
-            EventType::JeopardyPractice => {
-                self.jeopardy_practice
-                    .challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
+        match self.handle_for(event, "challenge_solve_status")? {
+            JeopardyModeHandle::Practice(s) => {
+                s.challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
                     .await
             }
-            EventType::JeopardySingle => {
-                self.jeopardy_single
-                    .challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
+            JeopardyModeHandle::Single(s) => {
+                s.challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
                     .await
             }
-            EventType::JeopardyTeam => {
-                self.jeopardy_team
-                    .challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
+            JeopardyModeHandle::Team(s) => {
+                s.challenge_solve_status(db.get_ref(), event.id, challenge_id, user.id)
                     .await
             }
-            EventType::AwdTeam => Err(Self::unsupported_awd("challenge_solve_status")),
         }
     }
 
@@ -195,23 +184,13 @@ impl EventModuleRegistry {
         event: &events::Model,
         user: &users::Model,
     ) -> Result<Option<String>> {
-        match &event.r#type {
-            EventType::JeopardyPractice => {
-                self.jeopardy_practice
-                    .own_writeup_file_url(db, event, user)
-                    .await
-            }
-            EventType::JeopardySingle => {
-                self.jeopardy_single
-                    .own_writeup_file_url(db, event, user)
-                    .await
-            }
-            EventType::JeopardyTeam => {
-                self.jeopardy_team
-                    .own_writeup_file_url(db, event, user)
-                    .await
-            }
-            EventType::AwdTeam => Ok(None),
+        if event.family != EventFamily::Jeopardy {
+            return Ok(None);
+        }
+        match self.handle_for(event, "own_writeup_file_url")? {
+            JeopardyModeHandle::Practice(s) => s.own_writeup_file_url(db, event, user).await,
+            JeopardyModeHandle::Single(s) => s.own_writeup_file_url(db, event, user).await,
+            JeopardyModeHandle::Team(s) => s.own_writeup_file_url(db, event, user).await,
         }
     }
 }
@@ -227,9 +206,6 @@ pub enum JeopardyModeHandle<'a> {
 pub type EventServices = EventModuleRegistry;
 
 /// Construct a registry for non-HTTP call sites (services without request extractors).
-///
-/// Prefer `web::Data<EventModuleRegistry>` / `AppState.event_registry` in handlers —
-/// both are the same zero-config `Default` bag of mode services.
 pub fn event_registry() -> EventModuleRegistry {
     EventModuleRegistry::new()
 }
@@ -237,37 +213,33 @@ pub fn event_registry() -> EventModuleRegistry {
 #[cfg(test)]
 mod e9_boundary_tests {
     use super::*;
-    use crate::entity::sea_orm_active_enums::EventType;
-    use crate::modules::event::common::domain::capability::ParticipantMode;
+    use crate::entity::sea_orm_active_enums::ParticipantMode;
+    use crate::modules::event::common::domain::event_mode::EventMode;
 
     #[test]
-    fn all_event_types_have_capabilities() {
-        for et in [
-            EventType::JeopardyPractice,
-            EventType::JeopardySingle,
-            EventType::JeopardyTeam,
-            EventType::AwdTeam,
+    fn all_valid_modes_have_capabilities() {
+        for mode in [
+            EventMode::jeopardy_practice(),
+            EventMode::jeopardy_individual_competition(),
+            EventMode::jeopardy_team_competition(),
+            EventMode::awd_team_competition(),
         ] {
-            let caps = EventModuleRegistry::capabilities_for(&et);
-            match et {
-                EventType::AwdTeam => {
-                    assert_eq!(caps.participant_mode, ParticipantMode::Team);
-                    assert!(caps.supports_gameboxes);
-                    assert!(caps.supports_wireguard);
-                    assert!(!caps.supports_standard_flag_submission);
-                    assert!(!caps.supports_instances);
-                }
-                EventType::JeopardyTeam => {
-                    assert_eq!(caps.participant_mode, ParticipantMode::Team);
-                    assert!(caps.supports_instances);
-                    assert!(caps.supports_standard_flag_submission);
-                    assert!(!caps.supports_wireguard);
-                }
-                EventType::JeopardyPractice | EventType::JeopardySingle => {
-                    assert_eq!(caps.participant_mode, ParticipantMode::Individual);
-                    assert!(caps.supports_instances);
-                    assert!(caps.supports_standard_flag_submission);
-                }
+            let caps = EventModuleRegistry::capabilities_for(&mode);
+            if mode.is_awd() {
+                assert_eq!(caps.participant_mode, ParticipantMode::Team);
+                assert!(caps.supports_gameboxes);
+                assert!(caps.supports_wireguard);
+                assert!(!caps.supports_standard_flag_submission);
+                assert!(!caps.supports_instances);
+            } else if mode.is_team() {
+                assert_eq!(caps.participant_mode, ParticipantMode::Team);
+                assert!(caps.supports_instances);
+                assert!(caps.supports_standard_flag_submission);
+                assert!(!caps.supports_wireguard);
+            } else {
+                assert_eq!(caps.participant_mode, ParticipantMode::Individual);
+                assert!(caps.supports_instances);
+                assert!(caps.supports_standard_flag_submission);
             }
         }
     }
@@ -275,15 +247,20 @@ mod e9_boundary_tests {
     #[test]
     fn registry_resolves_jeopardy_modes_not_awd() {
         let reg = EventModuleRegistry::new();
-        assert!(reg.for_event_type(&EventType::JeopardyPractice).is_some());
-        assert!(reg.for_event_type(&EventType::JeopardySingle).is_some());
-        assert!(reg.for_event_type(&EventType::JeopardyTeam).is_some());
-        assert!(reg.for_event_type(&EventType::AwdTeam).is_none());
+        assert!(reg.for_mode(&EventMode::jeopardy_practice()).is_some());
+        assert!(
+            reg.for_mode(&EventMode::jeopardy_individual_competition())
+                .is_some()
+        );
+        assert!(
+            reg.for_mode(&EventMode::jeopardy_team_competition())
+                .is_some()
+        );
+        assert!(reg.for_mode(&EventMode::awd_team_competition()).is_none());
     }
 
     #[test]
     fn app_state_field_type_is_default_constructible() {
-        // Ensures AppState can hold registry without external deps.
         let _ = EventModuleRegistry::new();
         let _ = event_registry();
     }

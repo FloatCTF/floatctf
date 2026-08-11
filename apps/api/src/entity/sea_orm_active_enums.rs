@@ -85,6 +85,24 @@ pub enum BanStatus {
     Unbanned,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_family")]
+#[serde(rename_all = "snake_case")]
+pub enum EventFamily {
+    #[sea_orm(string_value = "jeopardy")]
+    Jeopardy,
+    #[sea_orm(string_value = "awd")]
+    Awd,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_purpose")]
+#[serde(rename_all = "snake_case")]
+pub enum EventPurpose {
+    #[sea_orm(string_value = "practice")]
+    Practice,
+    #[sea_orm(string_value = "competition")]
+    Competition,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(
     rs_type = "String",
     db_type = "Enum",
@@ -96,19 +114,6 @@ pub enum EventTeamMemberRole {
     Captain,
     #[sea_orm(string_value = "member")]
     Member,
-}
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_type")]
-#[serde(rename_all = "snake_case")]
-pub enum EventType {
-    #[sea_orm(string_value = "jeopardy_practice")]
-    JeopardyPractice,
-    #[sea_orm(string_value = "jeopardy_single")]
-    JeopardySingle,
-    #[sea_orm(string_value = "jeopardy_team")]
-    JeopardyTeam,
-    #[sea_orm(string_value = "awd_team")]
-    AwdTeam,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "gamebox_status")]
@@ -170,6 +175,15 @@ pub enum JudgeTaskStatus {
     SkippedResetting,
     #[sea_orm(string_value = "skipped_banned")]
     SkippedBanned,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "participant_mode")]
+#[serde(rename_all = "snake_case")]
+pub enum ParticipantMode {
+    #[sea_orm(string_value = "individual")]
+    Individual,
+    #[sea_orm(string_value = "team")]
+    Team,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "precheck_status")]

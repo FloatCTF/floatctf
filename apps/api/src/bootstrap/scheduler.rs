@@ -8,7 +8,7 @@ use crate::{
     infrastructure::LogService,
     infrastructure::realtime::EventPublisher,
     infrastructure::{WebDb, WebDocker, WebRustfs},
-    modules::event::awd_team::{
+    modules::event::awd::{
         crypto::AwdCrypto,
         infrastructure::firewall::FirewallRuntime,
         scheduler::{
@@ -28,7 +28,7 @@ pub async fn build_task_scheduler(
     docker: WebDocker,
     rustfs: WebRustfs,
     logger: LogService,
-    network: Arc<dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime>,
+    network: Arc<dyn crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime>,
     firewall: Arc<dyn FirewallRuntime>,
     crypto: Arc<AwdCrypto>,
     publisher: Arc<dyn EventPublisher>,

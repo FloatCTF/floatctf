@@ -20,7 +20,7 @@ function RouteComponent() {
 	const banner = useMsgBanner();
 	const queryClient = useQueryClient();
 
-	const filterKeys = ["id", "status", "ref", "challenge_id", "gamebox_id"];
+	const filterKeys = ["id", "status", "identifier", "challenge_id", "event_id"];
 
 	const mutationInstance = useMutation({
 		mutationFn: serviceApi.instances.destroy,
@@ -58,9 +58,14 @@ function RouteComponent() {
 			field: "status",
 		},
 		{
-			accessorKey: "ref",
-			header: "Ref",
-			field: "ref",
+			accessorKey: "event_id",
+			header: "Event",
+			field: "event_id",
+		},
+		{
+			accessorKey: "identifier",
+			header: "Identifier",
+			field: "identifier",
 		},
 		{
 			accessorKey: "user_id",

@@ -17,6 +17,14 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    AwdEvents,
     #[sea_orm(has_many = "super::awd_flag_submissions::Entity")]
     AwdFlagSubmissions,
     #[sea_orm(
@@ -35,14 +43,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     AwdRounds,
-    #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
+}
+
+impl Related<super::awd_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdEvents.def()
+    }
 }
 
 impl Related<super::awd_flag_submissions::Entity> for Entity {
@@ -60,12 +66,6 @@ impl Related<super::awd_gamebox_instances::Entity> for Entity {
 impl Related<super::awd_rounds::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdRounds.def()
-    }
-}
-
-impl Related<super::events::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Events.def()
     }
 }
 

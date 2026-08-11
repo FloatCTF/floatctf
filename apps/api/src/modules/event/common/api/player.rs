@@ -8,7 +8,7 @@ use crate::modules::event::common::api::EventUsersDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{apply_filters, prelude::*},
-    entity::{event_announcements, event_teams, event_users, events, instances},
+    entity::{challenge_instances, event_announcements, event_teams, event_users, events},
     modules::event::common::application::player_service::{self as svc},
     modules::platform::files::download::generate_presigned_download_url,
 };
@@ -68,7 +68,7 @@ pub async fn get_event_capabilities(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
-    let caps = crate::modules::event::EventModuleRegistry::capabilities_for(&event.r#type);
+    let caps = crate::modules::event::EventModuleRegistry::capabilities_for_event(&event);
     UniResponse::ok(Some(caps)).into()
 }
 

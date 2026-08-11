@@ -7,7 +7,7 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, prelude::*, sea_orm_utils::query_query},
-    entity::{instances, sea_orm_active_enums::InstanceStatus},
+    entity::{challenge_instances, sea_orm_active_enums::InstanceStatus},
 };
 
 /// GET /api/admin/instances
@@ -24,49 +24,57 @@ pub async fn get_instances(
         FilterMapping {
             key: "id",
             column: Box::new(|v| {
-                Condition::all()
-                    .add(instances::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())))
+                Condition::all().add(
+                    challenge_instances::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                )
             }),
         },
         FilterMapping {
             key: "status",
             column: Box::new(|v| {
                 Condition::all().add(
-                    instances::Column::Status
+                    challenge_instances::Column::Status
                         .eq(serde_json::from_str(v).unwrap_or(InstanceStatus::Running)),
                 )
             }),
         },
         FilterMapping {
             key: "ref",
-            column: Box::new(|v| Condition::all().add(instances::Column::Ref.contains(v))),
+            column: Box::new(|v| {
+                Condition::all().add(challenge_instances::Column::Identifier.contains(v))
+            }),
         },
         FilterMapping {
             key: "flag",
-            column: Box::new(|v| Condition::all().add(instances::Column::Flag.contains(v))),
+            column: Box::new(|v| {
+                Condition::all().add(challenge_instances::Column::Flag.contains(v))
+            }),
         },
         FilterMapping {
             key: "challenge_id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    instances::Column::ChallengeId.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                    challenge_instances::Column::ChallengeId
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
         },
         FilterMapping {
             key: "user_id",
             column: Box::new(|v| {
-                Condition::all()
-                    .add(instances::Column::UserId.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())))
+                Condition::all().add(
+                    challenge_instances::Column::UserId
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                )
             }),
         },
     ];
-    let (items, total_items) = query_query::<instances::Entity>(
+    let (items, total_items) = query_query::<challenge_instances::Entity>(
         ctx.db.get_ref(),
         &mappings,
         &query_params,
         Some(Box::new(|stmt| {
-            stmt.order_by_desc(instances::Column::UpdatedAt)
+            stmt.order_by_desc(challenge_instances::Column::UpdatedAt)
         })),
     )
     .await?;
@@ -84,7 +92,7 @@ pub async fn get_instance(
     instance_id: Path<Uuid>,
 ) -> UniResult<InstancesDto> {
     let instance_id = instance_id.into_inner();
-    let model = instances::Entity::find_by_id(instance_id)
+    let model = challenge_instances::Entity::find_by_id(instance_id)
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;

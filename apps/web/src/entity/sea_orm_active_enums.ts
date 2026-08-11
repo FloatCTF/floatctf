@@ -37,16 +37,19 @@ export enum BanStatus {
   Unbanned = 'unbanned',
 }
 
+export enum EventFamily {
+  Jeopardy = 'jeopardy',
+  Awd = 'awd',
+}
+
+export enum EventPurpose {
+  Practice = 'practice',
+  Competition = 'competition',
+}
+
 export enum EventTeamMemberRole {
   Captain = 'captain',
   Member = 'member',
-}
-
-export enum EventType {
-  JeopardyPractice = 'jeopardy_practice',
-  JeopardySingle = 'jeopardy_single',
-  JeopardyTeam = 'jeopardy_team',
-  AwdTeam = 'awd_team',
 }
 
 export enum GameboxStatus {
@@ -79,6 +82,11 @@ export enum JudgeTaskStatus {
   JudgeTimeout = 'judge_timeout',
   SkippedResetting = 'skipped_resetting',
   SkippedBanned = 'skipped_banned',
+}
+
+export enum ParticipantMode {
+  Individual = 'individual',
+  Team = 'team',
 }
 
 export enum PrecheckStatus {

@@ -1,15 +1,13 @@
 use crate::{
-    entity::{events, scheduled_tasks, sea_orm_active_enums::EventType},
+    entity::scheduled_tasks,
     infrastructure::{WebDb, WebDocker},
+    modules::event::common::domain::practice_event::ensure_practice_jeopardy_event,
     modules::event::jeopardy::InstanceService,
     scheduler::{TaskHandler, TaskKey},
 };
 use async_trait::async_trait;
 
-use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use tracing::{error, info};
-use uuid::Uuid;
 
 pub struct CleanRunningInstancesHandler {
     pub db: WebDb,
@@ -61,6 +59,7 @@ impl TaskHandler for CleanRunningInstancesHandler {
 pub struct CheckPracticeEventHandler {
     pub db: WebDb,
 }
+
 #[async_trait]
 impl TaskHandler for CheckPracticeEventHandler {
     fn trigger_type(&self) -> &'static str {
@@ -71,39 +70,18 @@ impl TaskHandler for CheckPracticeEventHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let practice_event = events::Entity::find_by_id(Uuid::nil())
-            .one(self.db.get_ref())
-            .await?;
-
-        if practice_event.is_some() {
-            info!("{} PraticeEvent already exists", self.task_key());
-            return Ok(());
-        }
-
-        let practice_event = events::ActiveModel {
-            id: Set(Uuid::nil()),
-            r#type: Set(EventType::JeopardyPractice),
-            title: Set("PraticeEvent".into()),
-            description: Set(Some("Practice Event".into())),
-            hidden: Set(true),
-            start_time: Set(Utc::now().into()),
-            end_time: Set((Utc::now() + chrono::Duration::days(36500)).into()),
-            rules: Set("".into()),
-            allow_join: Set(true),
-            flag_prefix: Set(None), // use config settings
-            created_at: Set(Utc::now().into()),
-            updated_at: Set(Utc::now().into()),
-            ..Default::default()
-        };
-
-        let practice_event = practice_event.insert(self.db.get_ref()).await?;
-
         info!(
-            "{} Inserting practice_event: {:?}",
-            self.task_key(),
-            practice_event
+            "{} ensuring practice:jeopardy system event",
+            self.task_key()
         );
-
+        let _ = &task;
+        let practice_event = ensure_practice_jeopardy_event(self.db.get_ref()).await?;
+        info!(
+            "{} practice event ready id={} system_key={:?}",
+            self.task_key(),
+            practice_event.id,
+            practice_event.system_key
+        );
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 //! Challenge catalog module — challenges, sets, writeups, build/import.
 //!
 //! Manages the challenge *catalog* itself (not event-challenge relationships).
-//! `event_challenges` remains under the event module / admin API.
+//! `jeopardy_event_challenges` remains under the event module / admin API.
 
 pub mod build;
 pub mod catalog;

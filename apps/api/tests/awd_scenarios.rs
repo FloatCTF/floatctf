@@ -14,12 +14,13 @@ use sea_orm::{
 use std::sync::Arc;
 use uuid::Uuid;
 
+use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 use floatctf::entity::{
     awd_event_networks, awd_events, awd_rounds, events, sea_orm_active_enums,
     sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
 };
 use floatctf::infrastructure::realtime::NoopEventPublisher;
-use floatctf::modules::event::awd_team::{
+use floatctf::modules::event::awd::{
     domain::firewall_state::DesiredFirewallState,
     infrastructure::{firewall::FirewallRuntime, network::NoopNetworkRuntime},
     repo::event_repo,
@@ -44,10 +45,16 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
 async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
         id: Set(event_id),
         title: Set(format!("awd-scenario-{tag}")),
         start_time: Set(chrono::Utc::now().into()),
-        end_time: Set((chrono::Utc::now() + chrono::Duration::hours(1)).into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(1)).fixed_offset(),
+        )),
         ..Default::default()
     };
     parent.insert(db).await.expect("insert events");
@@ -148,8 +155,7 @@ async fn scenario_a_full_round_loop() {
     };
     let event_id = seed_running_event(&db, "roundloop").await;
     let network = NoopNetworkRuntime;
-    let firewall =
-        floatctf::modules::event::awd_team::infrastructure::firewall::NoopFirewallRuntime;
+    let firewall = floatctf::modules::event::awd::infrastructure::firewall::NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
     // Round 1 start
@@ -205,7 +211,7 @@ async fn scenario_a_full_round_loop() {
 #[tokio::test]
 async fn scenario_e_network_failure_fail_closed() {
     use async_trait::async_trait;
-    use floatctf::modules::event::awd_team::{
+    use floatctf::modules::event::awd::{
         AwdError,
         infrastructure::firewall::{
             FirewallApplyResult, FirewallVerification, ObservedFirewallState,
@@ -275,7 +281,7 @@ async fn scenario_f_multi_event_desired_state() {
         .expect("e1 attack");
 
     let desired =
-        floatctf::modules::event::awd_team::service::firewall_service::build_desired_state(&db, 1)
+        floatctf::modules::event::awd::service::firewall_service::build_desired_state(&db, 1)
             .await
             .expect("build desired");
     let keys: Vec<String> = desired
@@ -284,22 +290,18 @@ async fn scenario_f_multi_event_desired_state() {
         .map(|s| s.to_string())
         .collect();
     // 断言我们的两个赛事都在（不依赖库内无其他赛事）
-    let k1 =
-        floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(&e1)
-            .as_str()
-            .to_string();
-    let k2 =
-        floatctf::modules::event::awd_team::infrastructure::firewall::NftObjectName::event_key(&e2)
-            .as_str()
-            .to_string();
+    let k1 = floatctf::modules::event::awd::infrastructure::firewall::NftObjectName::event_key(&e1)
+        .as_str()
+        .to_string();
+    let k2 = floatctf::modules::event::awd::infrastructure::firewall::NftObjectName::event_key(&e2)
+        .as_str()
+        .to_string();
     assert!(keys.contains(&k1), "e1 missing: {keys:?}");
     assert!(keys.contains(&k2), "e2 missing: {keys:?}");
 
     // 两个赛事 key 都出现 → 渲染含两个 event chain（Event A 更新不影响 Event B）
     let rendered =
-        floatctf::modules::event::awd_team::infrastructure::firewall::render::render_table(
-            &desired,
-        );
+        floatctf::modules::event::awd::infrastructure::firewall::render::render_table(&desired);
     for k in &keys {
         assert!(
             rendered.contains(&format!("chain event_{k}")),
@@ -317,7 +319,7 @@ async fn scenario_f_multi_event_desired_state() {
 #[tokio::test]
 async fn pause_resume_rebuilds_round_end_task() {
     use floatctf::entity::{awd_rounds, scheduled_tasks, sea_orm_active_enums::RoundStatus};
-    use floatctf::modules::event::awd_team::{
+    use floatctf::modules::event::awd::{
         infrastructure::firewall::NoopFirewallRuntime, service::event_service,
     };
 
@@ -416,7 +418,9 @@ async fn seed_submission_fixture(
     use floatctf::entity::{
         awd_event_gameboxes, awd_flag_issues, awd_gamebox_instances, awd_rounds, event_teams,
         gameboxes,
-        sea_orm_active_enums::{AwdPhase, GameboxStatus, RoundStatus},
+        sea_orm_active_enums::{
+            AwdPhase, EventFamily, EventPurpose, GameboxStatus, ParticipantMode, RoundStatus,
+        },
         users,
     };
 
@@ -602,7 +606,7 @@ async fn seed_submission_fixture(
 #[tokio::test]
 async fn load_concurrent_same_flag_scores_once() {
     use floatctf::entity::awd_flag_submissions;
-    use floatctf::modules::event::awd_team::{
+    use floatctf::modules::event::awd::{
         AwdError, domain::score::ScoreEventType, service::submission_service,
     };
 
@@ -674,7 +678,7 @@ async fn load_concurrent_same_flag_scores_once() {
 #[tokio::test]
 async fn load_concurrent_first_blood_scores_once() {
     use floatctf::entity::event_teams;
-    use floatctf::modules::event::awd_team::{
+    use floatctf::modules::event::awd::{
         domain::score::ScoreEventType, repo::score_repo, service::submission_service,
     };
 
@@ -767,7 +771,7 @@ async fn load_concurrent_first_blood_scores_once() {
 /// P5-9-3：judge callback 重试（同一 callback_id 并发写分）→ 只有一次 score mutation。
 #[tokio::test]
 async fn load_concurrent_judge_callback_scores_once() {
-    use floatctf::modules::event::awd_team::{domain::score::ScoreEventType, repo::score_repo};
+    use floatctf::modules::event::awd::{domain::score::ScoreEventType, repo::score_repo};
 
     let Some(db) = connect_or_skip().await else {
         return;

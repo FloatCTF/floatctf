@@ -16,5 +16,3 @@ pub(crate) use domain::scoreboard::{ChallengeScoreboard, ScoreboardItem};
 pub(crate) use domain::scoring::{calculate_next_dynamic_score, dynamic_score};
 pub(crate) use domain::solve::{JeopardySubmitRequest, SolveSubject};
 pub(crate) use domain::trend::{TrendItem, TrendPoint};
-
-pub use modes::JeopardyMode;

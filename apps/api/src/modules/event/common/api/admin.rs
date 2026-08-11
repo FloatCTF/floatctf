@@ -34,7 +34,7 @@ pub async fn create_event(
             "EVENTS",
             "CREATE",
             format!("{} 创建比赛: {}", user.username, event.title).as_str(),
-            json!({"title": event.title, "type": event.r#type}),
+            json!({"title": event.title, "family": event.family, "purpose": event.purpose, "participant_mode": event.participant_mode}),
             None,
             user.id.into(),
             Some(&ctx.req),

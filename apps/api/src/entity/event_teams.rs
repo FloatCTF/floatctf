@@ -34,10 +34,8 @@ pub enum Relation {
     AwdTeamNetworks,
     #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
     AwdWireguardPeers,
-    #[sea_orm(has_many = "super::event_challenge_solves::Entity")]
-    EventChallengeSolves,
-    #[sea_orm(has_many = "super::event_instances::Entity")]
-    EventInstances,
+    #[sea_orm(has_many = "super::challenge_instances::Entity")]
+    ChallengeInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
     EventLogs,
     #[sea_orm(has_many = "super::event_team_members::Entity")]
@@ -52,6 +50,8 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
+    #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
+    JeopardyChallengeSolves,
 }
 
 impl Related<super::awd_gamebox_instances::Entity> for Entity {
@@ -90,15 +90,9 @@ impl Related<super::awd_wireguard_peers::Entity> for Entity {
     }
 }
 
-impl Related<super::event_challenge_solves::Entity> for Entity {
+impl Related<super::challenge_instances::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallengeSolves.def()
-    }
-}
-
-impl Related<super::event_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::EventInstances.def()
+        Relation::ChallengeInstances.def()
     }
 }
 
@@ -123,6 +117,12 @@ impl Related<super::event_writeup::Entity> for Entity {
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Events.def()
+    }
+}
+
+impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::JeopardyChallengeSolves.def()
     }
 }
 

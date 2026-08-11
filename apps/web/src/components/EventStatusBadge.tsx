@@ -3,19 +3,24 @@ import { Label, type LabelProps } from "@primer/react";
 export type EventStatus = "upcoming" | "ongoing" | "ended" | "unknown";
 
 /**
- * 依据赛事 start_time / end_time 计算当前比赛状态（单一数据源）。
- * 语义与 routes/service/events/jeopardy.$id/index.tsx 的 getEventStatus 对齐：
- * upcoming（未开始）/ ongoing（进行中）/ ended（已结束）/ unknown（时间字段缺失或非法）。
+ * 依据赛事 start_time / end_time 计算当前比赛状态。
+ * Practice（end_time 为空）：start 前 upcoming，之后 ongoing（无 ended）。
+ * Competition：标准 start/end 窗口。
  */
 export function computeEventStatus(
 	startTime: string,
-	endTime: string,
+	endTime?: string | null,
 	nowMs: number = Date.now(),
 ): EventStatus {
 	const start = new Date(startTime).getTime();
-	const end = new Date(endTime).getTime();
-	if (Number.isNaN(start) || Number.isNaN(end)) return "unknown";
+	if (Number.isNaN(start)) return "unknown";
 	if (start > nowMs) return "upcoming";
+	if (endTime == null || endTime === "") {
+		// Practice / open-ended: never ended by wall clock
+		return "ongoing";
+	}
+	const end = new Date(endTime).getTime();
+	if (Number.isNaN(end)) return "unknown";
 	if (end < nowMs) return "ended";
 	return "ongoing";
 }
@@ -43,7 +48,7 @@ export function EventStatusBadge({
 	endTime,
 }: {
 	startTime: string;
-	endTime: string;
+	endTime?: string | null;
 }) {
 	const status = computeEventStatus(startTime, endTime);
 	return (

@@ -1,132 +1,351 @@
-import { Button, FormControl, TextInput } from "@primer/react";
+import {
+	Box,
+	Button,
+	FormControl,
+	Label,
+	Spinner,
+	TextInput,
+} from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useReactive } from "ahooks";
-import dayjs from "dayjs";
-import { useEffect } from "react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
 
-import { awdpAdminApi } from "@/api/awdp";
+import { awdpAdminApi, type AwdpEventConfigDto } from "@/api/awdp";
 import { useMsgBanner } from "@/components";
+import { AdminRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/configure")({
 	component: RouteComponent,
+	loader: AdminRouteGuard,
 });
 
-const DEFAULTS = {
-	break_duration_secs: 3600,
-	fix_duration_secs: 3600,
-	fix_round_interval_secs: 600,
-	break_score: 1000,
-	fix_round_score: 150,
+type FormState = {
+	breakDurationSecs: string;
+	fixDurationSecs: string;
+	fixRoundIntervalSecs: string;
+	breakScore: string;
+	fixRoundScore: string;
+};
+
+const DEFAULT_FORM: FormState = {
+	breakDurationSecs: "3600",
+	fixDurationSecs: "3600",
+	fixRoundIntervalSecs: "600",
+	breakScore: "1000",
+	fixRoundScore: "150",
+};
+
+const PHASE_LABEL: Record<string, { text: string; variant: "success" | "accent" | "attention" | "done" }> = {
+	pending: { text: "pending", variant: "attention" },
+	break: { text: "break", variant: "accent" },
+	fix: { text: "fix", variant: "success" },
+	ended: { text: "ended", variant: "done" },
 };
 
 function fmt(iso: string | null | undefined) {
-	return iso ? dayjs.utc(iso).local().format("YYYY-MM-DD HH:mm:ss") : "-";
+	if (!iso) return "-";
+	return new Date(iso).toLocaleString();
 }
 
 function RouteComponent() {
 	const { id } = Route.useParams();
-	const queryClient = useQueryClient();
-	const banner = useMsgBanner();
-	const { data, isLoading } = useQuery({
+	const qc = useQueryClient();
+	const banner = useMsgBanner({});
+	const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+	const [dirty, setDirty] = useState(false);
+	const loadedVersion = useRef<string | null>(null);
+
+	const configQuery = useQuery({
 		queryKey: ["awdp-config", id],
 		queryFn: () => awdpAdminApi.getConfig(id),
 	});
-	const cfg = data?.data?.data;
+	const config: AwdpEventConfigDto | null = configQuery.data?.data ?? null;
 
-	const form = useReactive<Record<string, number>>({ ...DEFAULTS });
 	useEffect(() => {
-		if (cfg) {
-			form.break_duration_secs = cfg.break_duration_secs;
-			form.fix_duration_secs = cfg.fix_duration_secs;
-			form.fix_round_interval_secs = cfg.fix_round_interval_secs;
-			form.break_score = cfg.break_score;
-			form.fix_round_score = cfg.fix_round_score;
+		if (!config) {
+			if (!dirty && loadedVersion.current !== null) {
+				setForm(DEFAULT_FORM);
+				loadedVersion.current = null;
+			}
+			return;
 		}
-	}, [cfg]);
-
-	const locked = cfg ? cfg.phase !== "pending" : true;
+		if (loadedVersion.current === config.updated_at) return;
+		if (dirty && loadedVersion.current !== null) return;
+		setForm({
+			breakDurationSecs: String(config.break_duration_secs),
+			fixDurationSecs: String(config.fix_duration_secs),
+			fixRoundIntervalSecs: String(config.fix_round_interval_secs),
+			breakScore: String(config.break_score),
+			fixRoundScore: String(config.fix_round_score),
+		});
+		loadedVersion.current = config.updated_at;
+	}, [config, dirty]);
 
 	const save = useMutation({
 		mutationFn: () =>
 			awdpAdminApi.updateConfig(id, {
-				expected_updated_at: cfg!.updated_at,
-				break_duration_secs: Number(form.break_duration_secs),
-				fix_duration_secs: Number(form.fix_duration_secs),
-				fix_round_interval_secs: Number(form.fix_round_interval_secs),
-				break_score: Number(form.break_score),
-				fix_round_score: Number(form.fix_round_score),
+				expected_updated_at: loadedVersion.current ?? undefined,
+				break_duration_secs: Number(form.breakDurationSecs),
+				fix_duration_secs: Number(form.fixDurationSecs),
+				fix_round_interval_secs: Number(form.fixRoundIntervalSecs),
+				break_score: Number(form.breakScore),
+				fix_round_score: Number(form.fixRoundScore),
 			}),
 		onSuccess: () => {
-			banner.showBanner("success", "配置已保存");
-			queryClient.invalidateQueries({ queryKey: ["awdp-config", id] });
+			setDirty(false);
+			banner.showBanner("success", "AWDP configuration saved");
+			qc.invalidateQueries({ queryKey: ["awdp-config", id] });
+			qc.invalidateQueries({ queryKey: ["event", id] });
 		},
-		onError: (e) => banner.showErrorBanner(e),
+		onError: (error) => {
+			banner.showErrorBanner(error);
+			void configQuery.refetch();
+		},
 	});
 
-	if (isLoading) {
-		return <div className="p-4">Loading…</div>;
+	if (configQuery.isLoading) return <Spinner size="large" />;
+	if (configQuery.isError) {
+		return <div>Failed to load AWDP configuration.</div>;
 	}
 
-	return (
-		<div className="p-3 max-w-xl">
-			<div className="mb-3 flex gap-4 text-sm">
-				<span>
-					Phase: <b>{cfg?.phase}</b>
-				</span>
-				<span>
-					回合数: <b>{cfg?.total_rounds}</b>
-				</span>
-				<span>配置代数: {cfg?.configuration_generation}</span>
-			</div>
-			<div className="mb-3 grid grid-cols-2 gap-3">
-				<FormControl disabled={locked}>
-					<FormControl.Label>Break Duration (secs)</FormControl.Label>
-					<TextInput value={form.break_duration_secs} onChange={(e) => (form.break_duration_secs = Number(e.target.value))} />
-				</FormControl>
-				<FormControl disabled={locked}>
-					<FormControl.Label>Fix Duration (secs)</FormControl.Label>
-					<TextInput value={form.fix_duration_secs} onChange={(e) => (form.fix_duration_secs = Number(e.target.value))} />
-				</FormControl>
-				<FormControl disabled={locked}>
-					<FormControl.Label>Turn Interval (secs)</FormControl.Label>
-					<TextInput value={form.fix_round_interval_secs} onChange={(e) => (form.fix_round_interval_secs = Number(e.target.value))} />
-				</FormControl>
-				<FormControl disabled={locked}>
-					<FormControl.Label>Break Score</FormControl.Label>
-					<TextInput value={form.break_score} onChange={(e) => (form.break_score = Number(e.target.value))} />
-				</FormControl>
-				<FormControl disabled={locked}>
-					<FormControl.Label>Fix Score / Turn</FormControl.Label>
-					<TextInput value={form.fix_round_score} onChange={(e) => (form.fix_round_score = Number(e.target.value))} />
-				</FormControl>
-			</div>
-			{locked && (
-				<p className="text-sm text-yellow-700 mb-2">
-					赛事已开始（{cfg?.phase}），配置已冻结。
-				</p>
-			)}
-			<Button variant="primary" disabled={locked || save.isPending} onClick={() => save.mutate()}>
-				{save.isPending ? "Saving…" : "Save Config"}
-			</Button>
+	const editable = !config || config.phase === "pending";
+	const remoteChanged = Boolean(
+		config &&
+			loadedVersion.current !== null &&
+			loadedVersion.current !== config.updated_at,
+	);
+	const formReady = !config || loadedVersion.current === config.updated_at;
+	const totalRounds = Math.floor(
+		(Number(form.fixDurationSecs) || 0) / (Number(form.fixRoundIntervalSecs) || 1),
+	);
+	const phaseMeta = config ? PHASE_LABEL[config.phase] : null;
 
-			<section className="rounded border p-3 mt-4 text-sm">
-				<p className="font-bold mb-2">Timeline</p>
-				<dl className="grid grid-cols-[8rem_1fr] gap-y-1">
-					<dt>Started</dt>
-					<dd>{fmt(cfg?.started_at)}</dd>
-					<dt>Break 至</dt>
-					<dd>{fmt(cfg?.break_ends_at)}</dd>
-					<dt>Fix 开始</dt>
-					<dd>{fmt(cfg?.fix_started_at)}</dd>
-					<dt>Fix 至</dt>
-					<dd>{fmt(cfg?.fix_ends_at)}</dd>
-					<dt>Finished</dt>
-					<dd>{fmt(cfg?.finished_at)}</dd>
-					<dt>Next Action</dt>
-					<dd>{fmt(cfg?.next_action_at)}</dd>
-				</dl>
-			</section>
+	const set =
+		(key: keyof FormState) => (event: ChangeEvent<HTMLInputElement>) => {
+			setDirty(true);
+			setForm((current) => ({ ...current, [key]: event.target.value }));
+		};
+	const submit = () => {
+		const fields = [
+			form.breakDurationSecs,
+			form.fixDurationSecs,
+			form.fixRoundIntervalSecs,
+			form.breakScore,
+			form.fixRoundScore,
+		].map(Number);
+		if (fields.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+			banner.showBanner(
+				"critical",
+				"All numeric fields must be non-negative integers.",
+			);
+			return;
+		}
+		const [breakDurationSecs, fixDurationSecs, fixRoundIntervalSecs] = fields;
+		if (breakDurationSecs <= 0 || fixDurationSecs <= 0) {
+			banner.showBanner("critical", "Break/Fix duration must be positive.");
+			return;
+		}
+		if (
+			fixRoundIntervalSecs <= 0 ||
+			fixDurationSecs % fixRoundIntervalSecs !== 0
+		) {
+			banner.showBanner(
+				"critical",
+				"Turn interval must be a positive divisor of Fix duration.",
+			);
+			return;
+		}
+		save.mutate();
+	};
+
+	return (
+		<div className="mt-3" style={{ maxWidth: 920 }}>
+			<banner.BannerComponent className="mb-3" />
+			<Box
+				sx={{
+					p: 4,
+					border: "1px solid",
+					borderColor: "border.default",
+					borderRadius: 2,
+				}}
+			>
+				<div className="d-flex flex-items-center flex-justify-between">
+					<div>
+						<h3 className="m-0">AWDP Configure</h3>
+						<p className="color-fg-muted mb-0 mt-1">
+							Break → Fix 双阶段（默认 1h + 1h / 每回合 10min）。赛事开始前可改；
+							进入 Break 后参数冻结。总回合数 = Fix 时长 ÷ 回合时长。
+						</p>
+					</div>
+					{phaseMeta && (
+						<Label variant={phaseMeta.variant}>{phaseMeta.text}</Label>
+					)}
+				</div>
+
+				{remoteChanged && (
+					<Box sx={{ mt: 3, p: 3, bg: "attention.subtle", borderRadius: 2 }}>
+						The server configuration changed while this form had unsaved edits.
+						<Button
+							className="ml-2"
+							onClick={() => {
+								loadedVersion.current = null;
+								setDirty(false);
+							}}
+						>
+							Reload server values
+						</Button>
+					</Box>
+				)}
+
+				{!editable && config && (
+					<Box
+						sx={{
+							mt: 3,
+							p: 3,
+							bg: "attention.subtle",
+							borderRadius: 2,
+						}}
+					>
+						当前阶段为 <strong>{config.phase}</strong>，AWDP 参数已锁定。
+					</Box>
+				)}
+
+				<Section title="Break & Fix">
+					<NumberField
+						label="Break Duration"
+						caption="Break 阶段时长（秒），默认 3600。"
+						value={form.breakDurationSecs}
+						onChange={set("breakDurationSecs")}
+						min={1}
+						disabled={!editable}
+					/>
+					<NumberField
+						label="Fix Duration"
+						caption="Fix 阶段时长（秒），默认 3600。"
+						value={form.fixDurationSecs}
+						onChange={set("fixDurationSecs")}
+						min={1}
+						disabled={!editable}
+					/>
+					<NumberField
+						label="Turn Interval"
+						caption="每回合时长（秒），默认 600，需整除 Fix 时长。"
+						value={form.fixRoundIntervalSecs}
+						onChange={set("fixRoundIntervalSecs")}
+						min={1}
+						disabled={!editable}
+					/>
+				</Section>
+
+				<Section title="Scoring">
+					<NumberField
+						label="Break Score"
+						caption="Break 阶段一次性得分（每 GameBox）。"
+						value={form.breakScore}
+						onChange={set("breakScore")}
+						min={0}
+						disabled={!editable}
+					/>
+					<NumberField
+						label="Fix Score / Turn"
+						caption="Fix 阶段每回合 PATCHED 得分。"
+						value={form.fixRoundScore}
+						onChange={set("fixRoundScore")}
+						min={0}
+						disabled={!editable}
+					/>
+				</Section>
+
+				<Section title="Timeline">
+					{config ? (
+						<dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
+							<dt className="font-bold">Started</dt>
+							<dd className="font-medium">{fmt(config.started_at)}</dd>
+							<dt className="font-bold">Break 至</dt>
+							<dd className="font-medium">{fmt(config.break_ends_at)}</dd>
+							<dt className="font-bold">Fix 开始</dt>
+							<dd className="font-medium">{fmt(config.fix_started_at)}</dd>
+							<dt className="font-bold">Fix 至</dt>
+							<dd className="font-medium">{fmt(config.fix_ends_at)}</dd>
+							<dt className="font-bold">Finished</dt>
+							<dd className="font-medium">{fmt(config.finished_at)}</dd>
+							<dt className="font-bold">Next Action</dt>
+							<dd className="font-medium">{fmt(config.next_action_at)}</dd>
+						</dl>
+					) : (
+						<p className="text-sm color-fg-muted">
+							尚未创建配置——首次保存后生效。
+						</p>
+					)}
+				</Section>
+
+				<Box sx={{ mt: 4 }}>
+					<Button
+						variant="primary"
+						disabled={!editable || !formReady || remoteChanged || save.isPending}
+						onClick={submit}
+					>
+						{save.isPending ? "Saving…" : "Save AWDP Configuration"}
+					</Button>
+					<span className="ml-3 text-sm color-fg-muted">
+						总回合数：{totalRounds}
+					</span>
+				</Box>
+			</Box>
 		</div>
+	);
+}
+
+function Section({
+	title,
+	children,
+}: { title: string; children: React.ReactNode }) {
+	return (
+		<section className="mt-4">
+			<h4 className="mb-2">{title}</h4>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+					gap: 16,
+				}}
+			>
+				{children}
+			</div>
+		</section>
+	);
+}
+
+type NumberFieldProps = {
+	label: string;
+	caption: string;
+	value: string;
+	onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+	min: number;
+	disabled: boolean;
+};
+
+function NumberField({
+	label,
+	caption,
+	value,
+	onChange,
+	min,
+	disabled,
+}: NumberFieldProps) {
+	return (
+		<FormControl disabled={disabled}>
+			<FormControl.Label>{label}</FormControl.Label>
+			<FormControl.Caption>{caption}</FormControl.Caption>
+			<TextInput
+				type="number"
+				value={value}
+				onChange={onChange}
+				min={min}
+				step={1}
+				required
+				block
+			/>
+		</FormControl>
 	);
 }

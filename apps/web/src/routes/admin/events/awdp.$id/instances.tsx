@@ -1,16 +1,21 @@
 import { Spinner } from "@primer/react";
+import { DataTable, Table } from "@primer/react/experimental";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 
-import { awdpAdminApi } from "@/api/awdp";
+import { awdpAdminApi, type AwdpAdminInstanceDto } from "@/api/awdp";
 import { useAwdpEventStream } from "@/hooks/useAwdpEventStream";
+import { AdminRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/instances")({
 	component: RouteComponent,
+	loader: AdminRouteGuard,
 });
 
 function RouteComponent() {
 	const { id } = Route.useParams();
+	// 实时事件刷新 + 兜底轮询。
 	useAwdpEventStream({ eventId: id });
 	const { data, isLoading } = useQuery({
 		queryKey: ["awdp-admin-instances", id],
@@ -18,55 +23,90 @@ function RouteComponent() {
 		refetchInterval: 5000,
 	});
 
+	const columns = [
+		{
+			accessorKey: "container_name",
+			header: "Container",
+			field: "container_name",
+			rowHeader: true,
+			renderCell: (row: AwdpAdminInstanceDto) => (
+				<span className="font-mono text-xs">{row.container_name}</span>
+			),
+		},
+		{
+			accessorKey: "gamebox_name",
+			header: "GameBox",
+			field: "gamebox_name",
+		},
+		{
+			accessorKey: "owner",
+			header: "Owner",
+			field: "owner",
+			renderCell: (row: AwdpAdminInstanceDto) => (
+				<span className="font-mono text-xs">
+					{row.owner_user_id
+						? `user:${row.owner_user_id.slice(0, 8)}…`
+						: row.owner_team_id
+							? `team:${row.owner_team_id.slice(0, 8)}…`
+							: "-"}
+				</span>
+			),
+		},
+		{
+			accessorKey: "runtime_state",
+			header: "State",
+			field: "runtime_state",
+		},
+		{
+			accessorKey: "runtime_generation",
+			header: "Gen",
+			field: "runtime_generation",
+		},
+		{
+			accessorKey: "endpoints",
+			header: "Endpoints",
+			field: "endpoints",
+			renderCell: (row: AwdpAdminInstanceDto) => (
+				<span className="font-mono text-xs">
+					{row.endpoints
+						.map((e) => `${e.protocol}://${e.public_host}:${e.public_port}`)
+						.join(" ") || "-"}
+				</span>
+			),
+		},
+	];
+
+	const table = useReactTable({
+		data: data?.data ?? [],
+		columns,
+		getCoreRowModel: getCoreRowModel(),
+	});
+
 	if (isLoading) {
-		return (
-			<div className="p-4">
-				<Spinner />
-			</div>
-		);
+		return <Spinner size="large" />;
 	}
-	const rows = data?.data?.data ?? [];
 
 	return (
-		<div className="p-3">
-			<table className="w-full text-sm">
-				<thead>
-					<tr className="text-left text-gray-500">
-						<th className="py-1">Instance</th>
-						<th className="py-1">GameBox</th>
-						<th className="py-1">Owner</th>
-						<th className="py-1">State</th>
-						<th className="py-1">Gen</th>
-						<th className="py-1">Endpoints</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((r) => (
-						<tr key={r.instance_id} className="border-t">
-							<td className="py-1 font-mono text-xs">
-								{r.instance_id.slice(0, 8)}…
-								<span className="text-gray-400"> ({r.container_name})</span>
-							</td>
-							<td className="py-1">{r.gamebox_name}</td>
-							<td className="py-1 font-mono text-xs">
-								{r.owner_user_id ? `user:${r.owner_user_id.slice(0, 8)}` : `team:${r.owner_team_id?.slice(0, 8)}`}
-							</td>
-							<td className="py-1">{r.runtime_state}</td>
-							<td className="py-1">{r.runtime_generation}</td>
-							<td className="py-1 font-mono text-xs">
-								{r.endpoints.map((e) => `${e.protocol}://${e.public_host}:${e.public_port}`).join(" ") || "-"}
-							</td>
-						</tr>
-					))}
-					{rows.length === 0 && (
-						<tr>
-							<td colSpan={6} className="py-2 text-gray-400">
-								暂无实例。
-							</td>
-						</tr>
-					)}
-				</tbody>
-			</table>
+		<div className="m-2">
+			<p className="text-sm opacity-80 mb-2">
+				全部选手实例；公开端口跨 reset 保持稳定，runtime_generation 每次重建 +1。
+			</p>
+			<Table.Container>
+				<DataTable
+					aria-labelledby="awdp-instances"
+					// @ts-ignore
+					columns={columns}
+					data={table
+						.getRowModel()
+						.rows.map((row) => ({
+							...row.original,
+							id: row.original.instance_id,
+						}))}
+				/>
+			</Table.Container>
+			{(data?.data?.length ?? 0) === 0 && (
+				<p className="text-sm opacity-70 mt-2">暂无实例。</p>
+			)}
 		</div>
 	);
 }

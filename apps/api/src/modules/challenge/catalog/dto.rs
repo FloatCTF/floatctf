@@ -30,6 +30,8 @@ pub struct ChallengesDto {
     pub updated_at: DateTimeWithTimeZone,
     /// 当前版本（无 package 时为 None）。
     pub version: Option<String>,
+    /// 包 manifest 作者（spec_json.author，导入时必填）。
+    pub author: Option<String>,
     /// building | ready | failed（无 package 时为 None）。
     pub build_status: Option<String>,
     /// 当前版本镜像 tag（admin 可见）。
@@ -72,6 +74,12 @@ impl From<&challenges::Model> for ChallengesDto {
             created_at: m.created_at,
             updated_at: m.updated_at,
             version: m.version.clone(),
+            author: m
+                .spec_json
+                .as_ref()
+                .and_then(|j| j.get("author"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
             build_status: m.build_status.clone(),
             image_ref: m.image_ref.clone(),
             container_port: m.container_port,

@@ -140,6 +140,8 @@ pub async fn list_catalog(
             description: gb.description.clone(),
             category: gb.category.clone(),
             version: gb.version.clone(),
+            author: gb.username.clone(),
+            updated_at: gb.updated_at,
             awdp_capable: true,
             recommended_cpu_millis: gb.recommended_cpu_millis,
             recommended_memory_bytes: gb.recommended_memory_bytes,

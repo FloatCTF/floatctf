@@ -279,6 +279,9 @@ pub struct GameBoxCatalogDto {
     pub description: String,
     pub category: String,
     pub version: Option<String>,
+    /// 作者（gameboxes.username，zip 包制作人）。
+    pub author: Option<String>,
+    pub updated_at: DateTime<FixedOffset>,
     /// == gameboxes.awdp_source_artifact_key 非空（五列全有，DB CHECK 保证）。
     pub awdp_capable: bool,
     pub recommended_cpu_millis: i64,

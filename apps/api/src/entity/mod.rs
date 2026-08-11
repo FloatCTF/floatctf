@@ -39,6 +39,8 @@ pub mod event_users;
 pub mod event_writeup;
 pub mod events;
 pub mod gameboxes;
+pub mod instance_endpoints;
+pub mod instances;
 pub mod jeopardy_challenge_solves;
 pub mod jeopardy_event_challenges;
 pub mod logs;

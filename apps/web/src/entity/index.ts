@@ -39,6 +39,8 @@ export * from "./event_users";
 export * from "./event_writeup";
 export * from "./events";
 export * from "./gameboxes";
+export * from "./instance_endpoints";
+export * from "./instances";
 export * from "./jeopardy_challenge_solves";
 export * from "./jeopardy_event_challenges";
 export * from "./logs";

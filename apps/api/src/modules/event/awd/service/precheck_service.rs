@@ -180,11 +180,9 @@ pub async fn run_precheck(
             .await
             {
                 Ok(resolved) => {
-                    if let Err(e) =
-                        crate::modules::event::awd::service::healthcheck_probe::parse_healthchecks(
-                            &resolved.effective_healthchecks_json,
-                        )
-                    {
+                    if let Err(e) = crate::modules::gamebox::healthcheck::parse_healthchecks(
+                        &resolved.effective_healthchecks_json,
+                    ) {
                         errors.push((
                             "gamebox_healthchecks".into(),
                             format!("EventGameBox {}: {e}", eg.id),

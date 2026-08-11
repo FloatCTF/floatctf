@@ -3,6 +3,7 @@
 pub mod challenge;
 pub mod community;
 pub mod event;
+pub mod gamebox;
 pub mod identity;
 pub mod platform;
 pub mod weapon;

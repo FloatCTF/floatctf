@@ -37,6 +37,8 @@ pub use super::event_users::Entity as EventUsers;
 pub use super::event_writeup::Entity as EventWriteup;
 pub use super::events::Entity as Events;
 pub use super::gameboxes::Entity as Gameboxes;
+pub use super::instance_endpoints::Entity as InstanceEndpoints;
+pub use super::instances::Entity as Instances;
 pub use super::jeopardy_challenge_solves::Entity as JeopardyChallengeSolves;
 pub use super::jeopardy_event_challenges::Entity as JeopardyEventChallenges;
 pub use super::logs::Entity as Logs;

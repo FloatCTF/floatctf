@@ -373,10 +373,10 @@ async fn update_identity_does_not_touch_package() {
 
     let (gb_id,) = seed_gamebox_with_revision(&db, "edit", "img:v1").await;
 
-    let updated = floatctf::modules::event::awd::service::gamebox_service::update_gamebox_identity(
+    let updated = floatctf::modules::gamebox::update_gamebox_identity_checked(
         &db,
         gb_id,
-        floatctf::modules::event::awd::repo::gamebox_lib_repo::GameBoxIdentityPatch {
+        floatctf::modules::gamebox::GameBoxIdentityPatch {
             name: Some("new-name".into()),
             category: Some("pwn".into()),
             description: Some("desc".into()),

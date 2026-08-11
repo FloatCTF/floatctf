@@ -16,7 +16,8 @@ pub use runtime::awd::{
 // ── Unified low-level runtime ──
 pub use runtime::{
     ContainerFilter, ContainerRuntime, ContainerSpec, DEFAULT_STOP_TIMEOUT, DockerContainerRuntime,
-    IMMEDIATE_STOP_TIMEOUT, NetworkSpec, PortBinding, ResourceLimits,
+    ExecOptions, ExecOutcome, IMMEDIATE_STOP_TIMEOUT, MAX_COPY_BYTES, NetworkSpec, PortBinding,
+    ResourceLimits,
 };
 
 // ── Image runtime ──
@@ -35,8 +36,8 @@ pub use metadata::{
     ChallengeMetaError, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta,
     GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedChallengeSpec,
     NormalizedGameBoxSpec, NormalizedHealthcheck, RecommendedResources, build_artifact_image_ref,
-    build_gamebox_image_ref, derive_safe_name, validate_judge_path, validate_safe_name,
-    validate_version,
+    build_gamebox_image_ref, derive_safe_name, validate_awdp_path, validate_judge_path,
+    validate_safe_name, validate_version,
 };
 
 // ── Re-export runtime model types for external use ──

@@ -8,6 +8,9 @@
 //! 镜像钉扎优先级：
 //!   优先 `gamebox.image_repo_digest`（若有），否则 `image_id`（仅本地），
 //!   再否则回退 `image_ref`（tag）。就绪的 gamebox 至少要有一种钉扎。
+//!
+//! 共享部分（identity 更新 / safe_name / 镜像钉扎 / package / import / healthcheck）
+//! 已迁至 `modules::gamebox`，本文件仅保留 AWD 赛事语义。
 
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
@@ -15,92 +18,8 @@ use uuid::Uuid;
 use crate::entity::{
     awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, gameboxes,
 };
-use crate::modules::event::awd::{
-    AwdError, AwdResult,
-    domain::{slugify, validate_safe_name},
-    repo::{event_gamebox_repo, gamebox_lib_repo},
-    service::gamebox_import_service::BUILD_STATUS_READY,
-};
-
-// ---------------------------------------------------------------------------
-// GameBox 身份
-// ---------------------------------------------------------------------------
-
-/// 更新 GameBox 身份 + 可编辑运行参数（不含 digest/镜像 pin/build 状态）。
-pub async fn update_gamebox_identity(
-    db: &DatabaseConnection,
-    gamebox_id: Uuid,
-    patch: gamebox_lib_repo::GameBoxIdentityPatch,
-) -> AwdResult<gameboxes::Model> {
-    if let Some(v) = patch.recommended_cpu_millis {
-        if v <= 0 {
-            return Err(AwdError::Validation(
-                "recommended_cpu_millis must be > 0".into(),
-            ));
-        }
-    }
-    if let Some(v) = patch.recommended_memory_bytes {
-        if v <= 0 {
-            return Err(AwdError::Validation(
-                "recommended_memory_bytes must be > 0".into(),
-            ));
-        }
-    }
-    if let Some(v) = patch.recommended_pids_limit {
-        if v <= 0 {
-            return Err(AwdError::Validation(
-                "recommended_pids_limit must be > 0".into(),
-            ));
-        }
-    }
-    if let Some(Some(v)) = patch.judge_timeout_secs {
-        if v < 0 {
-            return Err(AwdError::Validation(
-                "judge_timeout_secs must be >= 0".into(),
-            ));
-        }
-    }
-    if let Some(Some(v)) = patch.judge_retry_interval_secs {
-        if v < 0 {
-            return Err(AwdError::Validation(
-                "judge_retry_interval_secs must be >= 0".into(),
-            ));
-        }
-    }
-    gamebox_lib_repo::update_gamebox_identity(db, gamebox_id, patch)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
-}
-
-/// safe_name 生成 + 去重（仅用于 admin 手动创建身份场景；import 不走 -2 后缀）。
-pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> AwdResult<String> {
-    let base = slugify(display_name);
-    let base = if base.is_empty() {
-        "gamebox".to_string()
-    } else {
-        base
-    };
-    let mut candidate = base.clone();
-    let mut i = 1;
-    while gamebox_lib_repo::find_gamebox_by_safe_name(db, &candidate)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .is_some()
-    {
-        candidate = format!("{base}-{i}");
-        i += 1;
-        if i > 1000 {
-            return Err(AwdError::Internal("safe_name 去重溢出".into()));
-        }
-    }
-    Ok(candidate)
-}
-
-/// 校验显式 safe_name（不加自动后缀）。
-pub fn validate_identity_safe_name(safe_name: &str) -> AwdResult<()> {
-    validate_safe_name(safe_name).map_err(AwdError::Validation)
-}
+use crate::modules::event::awd::{AwdError, AwdResult, repo::event_gamebox_repo};
+use crate::modules::gamebox::{BUILD_STATUS_READY, effective_image_ref_from_gamebox};
 
 // ---------------------------------------------------------------------------
 // 单一 resolver
@@ -125,38 +44,10 @@ pub struct ResolvedGameBoxRuntimeSpec {
 
 /// 运行时镜像钉扎：
 /// `image_repo_digest`（完整 `repo@sha256:…`）> `image_id`（仅本地 `sha256:…`）> `image_ref` tag。
-pub fn effective_image_ref_from_gamebox(gamebox: &gameboxes::Model) -> AwdResult<String> {
-    if let Some(ref d) = gamebox.image_repo_digest {
-        if !d.is_empty() {
-            return Ok(d.clone());
-        }
-    }
-    if let Some(ref id) = gamebox.image_id {
-        if !id.is_empty() {
-            return Ok(id.clone());
-        }
-    }
-    if let Some(ref r) = gamebox.image_ref {
-        if !r.is_empty() {
-            // Tag-only is a last resort; ready gameboxes should have id or digest.
-            if gamebox.build_status.as_deref() == Some(BUILD_STATUS_READY) {
-                return Err(AwdError::Validation(format!(
-                    "ready gamebox {} has no image pin (image_repo_digest/image_id)",
-                    gamebox.id
-                )));
-            }
-            return Ok(r.clone());
-        }
-    }
-    Err(AwdError::Validation(format!(
-        "gamebox {} has no usable image reference",
-        gamebox.id
-    )))
-}
-
+/// 实现已迁至 `modules::gamebox::library`。
 impl ResolvedGameBoxRuntimeSpec {
     pub fn effective_image_ref(&self) -> AwdResult<String> {
-        effective_image_ref_from_gamebox(&self.gamebox)
+        effective_image_ref_from_gamebox(&self.gamebox).map_err(AwdError::from)
     }
 
     pub fn judge_script_content(&self) -> Option<&str> {

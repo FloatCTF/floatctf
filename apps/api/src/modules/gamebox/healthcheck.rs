@@ -1,4 +1,4 @@
-//! GameBox 健康检查探针。
+//! GameBox 健康检查探针（共享基础设施）。
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use crate::modules::event::awd::{AwdError, AwdResult};
+use crate::modules::gamebox::{GameboxError, GameboxResult};
 
 /// 单条就绪探针（与 fcmc::NormalizedHealthcheck JSON 形状一致）。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -35,25 +35,44 @@ pub struct ProbeResult {
 }
 
 /// 将 healthchecks_json（数组）解析为类型化探针。
-pub fn parse_healthchecks(json: &serde_json::Value) -> AwdResult<Vec<AppHealthcheck>> {
+pub fn parse_healthchecks(json: &serde_json::Value) -> GameboxResult<Vec<AppHealthcheck>> {
     if json.is_null() {
         return Ok(Vec::new());
     }
     serde_json::from_value(json.clone())
-        .map_err(|e| AwdError::Validation(format!("healthchecks_json invalid: {e}")))
+        .map_err(|e| GameboxError::Validation(format!("healthchecks_json invalid: {e}")))
 }
 
-/// 对 `ip` 执行全部探针。全部通过才返回 Ok。
+/// 对 `ip` 执行全部探针，返回逐条结果（不短路；全部条目都会执行）。
 pub async fn probe_all(
     ip: &str,
     checks: &[AppHealthcheck],
     per_check_timeout: Duration,
-) -> AwdResult<Vec<ProbeResult>> {
+) -> Vec<ProbeResult> {
     let mut out = Vec::with_capacity(checks.len());
     for c in checks {
         out.push(probe_one(ip, c, per_check_timeout).await);
     }
-    Ok(out)
+    out
+}
+
+/// 单条探针；带 `attempts` 次重试（每次间隔 `retry_delay`）。
+/// 返回最后一次尝试的结果。
+pub async fn probe_one_with_retries(
+    ip: &str,
+    check: &AppHealthcheck,
+    per_check_timeout: Duration,
+    attempts: u32,
+    retry_delay: Duration,
+) -> ProbeResult {
+    let mut result = probe_one(ip, check, per_check_timeout).await;
+    let mut attempt = 1u32;
+    while !result.ok && attempt < attempts {
+        tokio::time::sleep(retry_delay).await;
+        result = probe_one(ip, check, per_check_timeout).await;
+        attempt += 1;
+    }
+    result
 }
 
 pub async fn probe_one(ip: &str, check: &AppHealthcheck, t: Duration) -> ProbeResult {
@@ -111,26 +130,25 @@ pub async fn probe_one(ip: &str, check: &AppHealthcheck, t: Duration) -> ProbeRe
     }
 }
 
-/// 便捷方法：全部检查必须通过。
+/// 便捷方法：全部检查必须通过（无重试）。
 pub async fn all_healthy(
     ip: &str,
     healthchecks_json: &serde_json::Value,
     per_check_timeout: Duration,
-) -> AwdResult<bool> {
+) -> GameboxResult<bool> {
     let checks = parse_healthchecks(healthchecks_json)?;
     if checks.is_empty() {
         return Ok(true);
     }
-    let results = probe_all(ip, &checks, per_check_timeout).await?;
+    let results = probe_all(ip, &checks, per_check_timeout).await;
     Ok(results.iter().all(|r| r.ok))
 }
 
 /// 将 IP:port 解析为 SocketAddr（尽力校验辅助）。
-#[allow(dead_code)]
-pub fn parse_socket(ip: &str, port: u16) -> AwdResult<SocketAddr> {
+pub fn parse_socket(ip: &str, port: u16) -> GameboxResult<SocketAddr> {
     format!("{ip}:{port}")
         .parse()
-        .map_err(|e| AwdError::Validation(format!("invalid address {ip}:{port}: {e}")))
+        .map_err(|e| GameboxError::Validation(format!("invalid address {ip}:{port}: {e}")))
 }
 
 #[cfg(test)]

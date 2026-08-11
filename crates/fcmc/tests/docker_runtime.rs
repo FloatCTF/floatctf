@@ -143,3 +143,239 @@ async fn docker_gamebox_create_and_start() {
         .await
         .unwrap();
 }
+
+fn test_image() -> &'static str {
+    "busybox:latest"
+}
+
+/// test_g GameBox（php:apache 长驻进程，需 GAMEBOX_USERNAME/PASS）。
+fn gamebox_image() -> &'static str {
+    "floatctf/gameboxes/test-gg:1.0.2"
+}
+
+async fn ensure_test_image() {
+    use fcmc::ImageRuntime;
+    let docker = Docker::connect_with_local_defaults().unwrap();
+    let rt = DockerContainerRuntime::new(docker);
+    if ImageRuntime::inspect_image(&rt, test_image())
+        .await
+        .is_err()
+    {
+        ImageRuntime::pull_image(&rt, test_image(), None::<fcmc::RegistryAuth>.as_ref())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn docker_exec_captures_output_and_exit_code() {
+    ensure_test_image().await;
+    let docker = Docker::connect_with_local_defaults().unwrap();
+    let rt = DockerContainerRuntime::new(docker);
+
+    let handle = rt
+        .create_and_start(fcmc::ContainerSpec {
+            name: "fcmc-test-exec".into(),
+            image: gamebox_image().into(),
+            env: vec![
+                "FLOATCTF_SOURCE_DIR=/tmp".into(),
+                "GAMEBOX_USERNAME=ctf".into(),
+                "GAMEBOX_USERPASS=testpass".into(),
+            ],
+            labels: Default::default(),
+            network_name: None,
+            fixed_ip: None,
+            port_bindings: vec![],
+            auto_remove: true,
+            resources: fcmc::ResourceLimits::default(),
+            network_mode: None,
+            healthcheck: None,
+        })
+        .await
+        .unwrap();
+
+    // Success path: stdout captured, env injected, exit 0.
+    let ok = rt
+        .exec(
+            &handle.container_id,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "echo out=$FLOATCTF_SOURCE_DIR".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(15),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 64 * 1024,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ok.exit_code, Some(0));
+    assert!(ok.stdout.contains("out=/tmp"), "stdout={:?}", ok.stdout);
+    assert!(!ok.timed_out);
+
+    // Failure path: nonzero exit code + stderr captured.
+    let err = rt
+        .exec(
+            &handle.container_id,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "echo boom >&2; exit 7".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(15),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 64 * 1024,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(err.exit_code, Some(7));
+    assert!(err.stderr.contains("boom"), "stderr={:?}", err.stderr);
+
+    // Missing binary → exit code 127.
+    let missing = rt
+        .exec(
+            &handle.container_id,
+            fcmc::ExecOptions {
+                cmd: vec!["no-such-binary-xyz".into()],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(15),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 64 * 1024,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.exit_code, Some(127));
+
+    rt.stop_and_remove(&handle.container_id, std::time::Duration::from_secs(0))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn docker_copy_from_container_returns_tar() {
+    ensure_test_image().await;
+    let docker = Docker::connect_with_local_defaults().unwrap();
+    let rt = DockerContainerRuntime::new(docker);
+
+    // create only — never started (source extraction pattern).
+    let handle = rt
+        .create_container(fcmc::ContainerSpec {
+            name: "fcmc-test-copy".into(),
+            image: test_image().into(),
+            env: vec![],
+            labels: Default::default(),
+            network_name: None,
+            fixed_ip: None,
+            port_bindings: vec![],
+            auto_remove: true,
+            resources: fcmc::ResourceLimits::default(),
+            network_mode: None,
+            healthcheck: None,
+        })
+        .await
+        .unwrap();
+
+    let tar = rt
+        .copy_from_container(&handle.container_id, "/etc")
+        .await
+        .unwrap();
+    assert!(!tar.is_empty());
+    // tar magic: ustar at offset 257.
+    assert!(tar.len() >= 262 && &tar[257..262] == b"ustar");
+
+    // Missing path → empty archive → error.
+    let err = rt
+        .copy_from_container(&handle.container_id, "/definitely-not-here-xyz")
+        .await;
+    assert!(err.is_err(), "missing path should error, got {:?}", err);
+
+    rt.remove_container(&handle.container_id, true)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn docker_restart_preserves_writable_layer() {
+    ensure_test_image().await;
+    let docker = Docker::connect_with_local_defaults().unwrap();
+    let rt = DockerContainerRuntime::new(docker);
+
+    let handle = rt
+        .create_and_start(fcmc::ContainerSpec {
+            name: "fcmc-test-restart".into(),
+            image: gamebox_image().into(),
+            env: vec![
+                "GAMEBOX_USERNAME=ctf".into(),
+                "GAMEBOX_USERPASS=testpass".into(),
+            ],
+            labels: Default::default(),
+            network_name: None,
+            fixed_ip: None,
+            port_bindings: vec![],
+            auto_remove: true,
+            resources: fcmc::ResourceLimits::default(),
+            network_mode: None,
+            healthcheck: None,
+        })
+        .await
+        .unwrap();
+
+    // Write a marker into the writable layer.
+    let w = rt
+        .exec(
+            &handle.container_id,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "echo patched > /tmp/marker".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(15),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 64 * 1024,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(w.exit_code, Some(0));
+
+    // restart same container → marker survives.
+    rt.restart_container(&handle.container_id, std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+    let r = rt
+        .exec(
+            &handle.container_id,
+            fcmc::ExecOptions {
+                cmd: vec!["cat".into(), "/tmp/marker".into()],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(15),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 64 * 1024,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, Some(0));
+    assert!(r.stdout.contains("patched"), "stdout={:?}", r.stdout);
+
+    rt.stop_and_remove(&handle.container_id, std::time::Duration::from_secs(0))
+        .await
+        .unwrap();
+}

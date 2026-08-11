@@ -105,6 +105,21 @@ impl From<AwdError> for AppError {
     }
 }
 
+impl From<crate::modules::gamebox::GameboxError> for AppError {
+    fn from(value: crate::modules::gamebox::GameboxError) -> Self {
+        match value {
+            crate::modules::gamebox::GameboxError::NotFound(m) => AppError::NotFound(m),
+            crate::modules::gamebox::GameboxError::Validation(m) => AppError::Validation(m),
+            crate::modules::gamebox::GameboxError::Conflict(m) => AppError::Conflict(m),
+            crate::modules::gamebox::GameboxError::Database(m) => AppError::Database(m),
+            crate::modules::gamebox::GameboxError::Docker(m) => {
+                AppError::Internal(format!("Docker: {m}"))
+            }
+            crate::modules::gamebox::GameboxError::Internal(m) => AppError::Internal(m),
+        }
+    }
+}
+
 /// 处理器结果类型（名称保留以稳定调用点）。
 pub type UniResult<T> = Result<UniResponse<T>, AppError>;
 

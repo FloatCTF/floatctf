@@ -92,6 +92,42 @@ pub struct ContainerHandle {
     pub container_name: String,
 }
 
+/// 容器内 exec 参数（AWD-P patch / 运维探测共用）。
+#[derive(Debug, Clone)]
+pub struct ExecOptions {
+    /// 命令及其参数（在容器内执行，如 `["/bin/sh", "patch.sh"]`）。
+    pub cmd: Vec<String>,
+    /// 附加环境变量（`VAR=value` 形式；空列表表示继承容器环境）。
+    pub env: Vec<String>,
+    /// 容器内工作目录。
+    pub workdir: Option<String>,
+    /// 整体超时；超时后 `ExecOutcome::timed_out = true`（部分输出仍返回）。
+    pub timeout: Duration,
+    /// stdout 字节上限（超限截断）。
+    pub stdout_limit: usize,
+    /// stderr 字节上限（超限截断）。
+    pub stderr_limit: usize,
+}
+
+/// exec 执行结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecOutcome {
+    /// exec 进程退出码；超时或 inspect 前仍在运行时为 `None`。
+    pub exit_code: Option<i64>,
+    /// 截断后的 stdout（UTF-8 lossy）。
+    pub stdout: String,
+    /// 截断后的 stderr（UTF-8 lossy）。
+    pub stderr: String,
+    /// 从 start_exec 到流结束/超时的耗时（毫秒）。
+    pub duration_ms: u64,
+    /// 是否因超时中断（此时输出为已收集的部分输出）。
+    pub timed_out: bool,
+}
+
+/// `copy_from_container` 单次导出的硬上限（1 GiB，纵深防御）。
+/// 源码目录打包（AWD-P source.zip）与镜像内文件验证共用。
+pub const MAX_COPY_BYTES: usize = 1 << 30;
+
 /// Jeopardy 与 AWD 共用的检查视图。
 #[derive(Debug, Clone)]
 pub struct ContainerState {

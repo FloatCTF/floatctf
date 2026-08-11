@@ -12,8 +12,8 @@ use futures_util::StreamExt;
 use tracing::{info, warn};
 
 use super::model::{
-    ContainerFilter, ContainerHandle, ContainerSpec, ContainerState, NetworkHandle, NetworkInspect,
-    NetworkSpec,
+    ContainerFilter, ContainerHandle, ContainerSpec, ContainerState, ExecOptions, ExecOutcome,
+    MAX_COPY_BYTES, NetworkHandle, NetworkInspect, NetworkSpec,
 };
 
 /// 统一 Docker 运行时，供 Jeopardy 实例、AWD 与 CLI 使用。
@@ -53,6 +53,21 @@ pub trait ContainerRuntime: Send + Sync {
     async fn list_containers(&self, filter: ContainerFilter)
     -> anyhow::Result<Vec<ContainerState>>;
     async fn logs(&self, id_or_name: &str, limit: usize) -> anyhow::Result<Vec<String>>;
+
+    /// Copy a file/dir out of a (possibly stopped) container as an uncompressed tar
+    /// archive (raw bytes). Used for AWD-P source extraction from a `docker create`
+    /// only (never started) container.
+    async fn copy_from_container(&self, id_or_name: &str, path: &str) -> anyhow::Result<Vec<u8>>;
+
+    /// Run a command inside a **running** container, capturing stdout/stderr with caps.
+    ///
+    /// Exit code is read via `inspect_exec` after the output stream closes. On timeout
+    /// the stream is abandoned and `timed_out = true`; partial output is preserved.
+    async fn exec(&self, id_or_name: &str, options: ExecOptions) -> anyhow::Result<ExecOutcome>;
+
+    /// Restart a container **preserving its writable layer** (unlike reset/recreate).
+    /// AWD-P patch reload: same physical container, patch persists.
+    async fn restart_container(&self, id_or_name: &str, timeout: Duration) -> anyhow::Result<()>;
 }
 
 /// [`ContainerRuntime`] 的默认 Docker 实现。
@@ -383,6 +398,147 @@ impl ContainerRuntime for DockerContainerRuntime {
             lines.push(msg.to_string());
         }
         Ok(lines)
+    }
+
+    async fn copy_from_container(&self, id_or_name: &str, path: &str) -> anyhow::Result<Vec<u8>> {
+        use bollard::query_parameters::DownloadFromContainerOptionsBuilder;
+
+        let options = Some(
+            DownloadFromContainerOptionsBuilder::default()
+                .path(path)
+                .build(),
+        );
+        let mut stream = self.docker.download_from_container(id_or_name, options);
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| anyhow::anyhow!("copy_from_container({id_or_name}:{path}): {e}"))?;
+            buf.extend_from_slice(&chunk);
+            if buf.len() > MAX_COPY_BYTES {
+                return Err(anyhow::anyhow!(
+                    "copy_from_container({id_or_name}:{path}) exceeded {MAX_COPY_BYTES} bytes"
+                ));
+            }
+        }
+        if buf.is_empty() {
+            return Err(anyhow::anyhow!(
+                "copy_from_container({id_or_name}:{path}): empty archive (path missing or no permission)"
+            ));
+        }
+        Ok(buf)
+    }
+
+    async fn exec(&self, id_or_name: &str, options: ExecOptions) -> anyhow::Result<ExecOutcome> {
+        use bollard::container::LogOutput;
+        use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+
+        let create = CreateExecOptions {
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            tty: Some(false),
+            cmd: Some(options.cmd.clone()),
+            // 空 env 表示继承容器环境（Docker API 的 Env=null 语义）。
+            env: if options.env.is_empty() {
+                None
+            } else {
+                Some(options.env.clone())
+            },
+            working_dir: options.workdir.clone(),
+            ..Default::default()
+        };
+        let created = self
+            .docker
+            .create_exec(id_or_name, create)
+            .await
+            .map_err(|e| anyhow::anyhow!("create_exec({id_or_name}): {e}"))?;
+
+        let started = std::time::Instant::now();
+        let results = self
+            .docker
+            .start_exec(
+                &created.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: false,
+                    output_capacity: None,
+                }),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("start_exec({id_or_name}): {e}"))?;
+
+        let mut stdout: Vec<u8> = Vec::new();
+        let mut stderr: Vec<u8> = Vec::new();
+        let mut timed_out = false;
+        let mut stream_error: Option<String> = None;
+
+        if let StartExecResults::Attached { mut output, .. } = results {
+            let deadline = tokio::time::Instant::now() + options.timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    timed_out = true;
+                    break;
+                }
+                match tokio::time::timeout(remaining, output.next()).await {
+                    Ok(Some(Ok(LogOutput::StdOut { message }))) => {
+                        if stdout.len() < options.stdout_limit {
+                            let take = message.len().min(options.stdout_limit - stdout.len());
+                            stdout.extend_from_slice(&message[..take]);
+                        }
+                    }
+                    Ok(Some(Ok(LogOutput::StdErr { message }))) => {
+                        if stderr.len() < options.stderr_limit {
+                            let take = message.len().min(options.stderr_limit - stderr.len());
+                            stderr.extend_from_slice(&message[..take]);
+                        }
+                    }
+                    Ok(Some(Ok(_))) => {}
+                    Ok(Some(Err(e))) => {
+                        stream_error = Some(e.to_string());
+                        break;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        timed_out = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 输出流已关闭后再查退出码（避免拿到 Running=true/ExitCode=null）。
+        let exit_code = self
+            .docker
+            .inspect_exec(&created.id)
+            .await
+            .map(|r| r.exit_code)
+            .map_err(|e| anyhow::anyhow!("inspect_exec({id_or_name}): {e}"))?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        if let Some(msg) = stream_error {
+            return Err(anyhow::anyhow!("exec({id_or_name}) stream error: {msg}"));
+        }
+        Ok(ExecOutcome {
+            exit_code,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            duration_ms,
+            timed_out,
+        })
+    }
+
+    async fn restart_container(&self, id_or_name: &str, timeout: Duration) -> anyhow::Result<()> {
+        use bollard::query_parameters::RestartContainerOptionsBuilder;
+
+        let options = Some(
+            RestartContainerOptionsBuilder::default()
+                .t(timeout.as_secs() as i32)
+                .build(),
+        );
+        self.docker
+            .restart_container(id_or_name, options)
+            .await
+            .map_err(|e| anyhow::anyhow!("restart_container({id_or_name}): {e}"))
     }
 }
 

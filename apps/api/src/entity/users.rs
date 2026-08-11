@@ -48,6 +48,8 @@ pub enum Relation {
     EventUsers,
     #[sea_orm(has_many = "super::event_writeup::Entity")]
     EventWriteup,
+    #[sea_orm(has_many = "super::instances::Entity")]
+    Instances,
     #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
     JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::logs::Entity")]
@@ -123,6 +125,12 @@ impl Related<super::event_users::Entity> for Entity {
 impl Related<super::event_writeup::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventWriteup.def()
+    }
+}
+
+impl Related<super::instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Instances.def()
     }
 }
 

@@ -20,11 +20,12 @@ use crate::{
     infrastructure::settings::{get_setting, resolve_dir_path},
     modules::event::awd::{
         domain::instance_ip_for_offset,
-        repo::{event_gamebox_repo, event_repo, gamebox_lib_repo},
-        service::{
-            gamebox_import_service::{self, BUILD_STATUS_READY, GameBoxScanItem},
-            gamebox_service,
-        },
+        repo::{event_gamebox_repo, event_repo},
+        service::gamebox_service,
+    },
+    modules::gamebox::{
+        self, BUILD_STATUS_READY, GameBoxScanItem, import as gamebox_import,
+        library as gamebox_lib_repo,
     },
 };
 
@@ -97,7 +98,7 @@ pub async fn import_gamebox(
     MultipartForm(form): MultipartForm<ImportGameBoxForm>,
 ) -> UniResult<ImportGameBoxResponse> {
     let zip_path = form.package_zip.file.path();
-    let result = gamebox_import_service::import_gamebox_package(
+    let result = gamebox_import::import_gamebox_package(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         &ctx.config.registry,
@@ -157,7 +158,7 @@ pub async fn check_gameboxes(
     for gb in gameboxes {
         let (docker_ok, dir_ok) = if gb.build_status.as_deref() == Some(BUILD_STATUS_READY) {
             // 镜像检查：当前版本 image pin（RepoDigest > image_id）必须本地可 inspect
-            let docker_ok = match gamebox_service::effective_image_ref_from_gamebox(&gb) {
+            let docker_ok = match gamebox::effective_image_ref_from_gamebox(&gb) {
                 Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
                 Err(_) => false,
             };
@@ -217,7 +218,7 @@ pub async fn build_gamebox(
             .ok_or(AppError::NotFound(format!("gamebox {} not exist", gb_id)))?;
 
         let (is_ok, message) = if gb.build_status.as_deref() == Some(BUILD_STATUS_READY) {
-            match gamebox_service::effective_image_ref_from_gamebox(&gb) {
+            match gamebox::effective_image_ref_from_gamebox(&gb) {
                 Ok(pin) => {
                     let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
                     match ImageRuntime::ensure_image(&runtime, &pin, None).await {
@@ -263,7 +264,7 @@ pub async fn scan_gameboxes(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
 ) -> UniResult<Vec<GameBoxScanItem>> {
-    let items = gamebox_import_service::scan_gameboxes_dir(
+    let items = gamebox_import::scan_gameboxes_dir(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         &ctx.config.registry,
@@ -304,7 +305,7 @@ pub async fn update_gamebox(
         None => None,
     };
 
-    let gb = gamebox_service::update_gamebox_identity(
+    let gb = gamebox::update_gamebox_identity_checked(
         ctx.db.get_ref(),
         gamebox_id,
         gamebox_lib_repo::GameBoxIdentityPatch {
@@ -460,7 +461,7 @@ pub async fn add_event_gamebox(
         .await
         .map_err(AppError::from)?
         .ok_or_else(|| AppError::NotFound("GameBox not found".into()))?;
-    if gb.build_status.as_deref() != Some(gamebox_import_service::BUILD_STATUS_READY) {
+    if gb.build_status.as_deref() != Some(BUILD_STATUS_READY) {
         return Err(AppError::Validation(format!(
             "GameBox '{}' has no ready package; import a package first (status={:?})",
             gb.name, gb.build_status

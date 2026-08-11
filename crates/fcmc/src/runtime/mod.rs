@@ -11,8 +11,9 @@ pub use image::{
     image_repository, pick_repo_digest, split_image_ref,
 };
 pub use model::{
-    ContainerFilter, ContainerSpec, DEFAULT_STOP_TIMEOUT, HealthcheckSpec, IMMEDIATE_STOP_TIMEOUT,
-    NetworkInspect, NetworkSpec, PortBinding, ResourceLimits,
+    ContainerFilter, ContainerSpec, DEFAULT_STOP_TIMEOUT, ExecOptions, ExecOutcome,
+    HealthcheckSpec, IMMEDIATE_STOP_TIMEOUT, MAX_COPY_BYTES, NetworkInspect, NetworkSpec,
+    PortBinding, ResourceLimits,
 };
 // Prefer model handles for generic runtime; re-export model ContainerHandle/State/NetworkHandle
 pub use model::{ContainerHandle, ContainerState, NetworkHandle};

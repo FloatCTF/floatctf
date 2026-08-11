@@ -1,4 +1,4 @@
-//! GameBox 包导入（构建/推送/登记）服务。
+//! GameBox 包导入（构建/推送/登记）服务（共享基础设施，与赛制无关）。
 //!
 //! 流程：
 //! 1. 安全解压 zip → 定位包根 → 要求 meta.toml + src/Dockerfile
@@ -25,16 +25,18 @@ use sea_orm::{
 };
 use tracing::{error, info, warn};
 
+use super::library;
 use crate::core::config::RegistryConfig;
 use crate::entity::gameboxes;
 use crate::infrastructure::package::version_gate_reason;
 use crate::infrastructure::settings::get_setting;
-use crate::modules::event::awd::{
-    AwdError, AwdResult,
-    repo::gamebox_lib_repo,
-    service::gamebox_package::{
+use crate::modules::gamebox::{
+    GameboxError, GameboxResult,
+    library::{create_gamebox_identity, find_gamebox_by_safe_name},
+    package::{
         compute_package_digest, compute_spec_digest, discover_package_root, extract_package_zip,
-        read_judge_script, read_meta_toml, require_package_layout, sanitize_build_error,
+        read_awdp_script, read_judge_script, read_meta_toml, require_package_layout,
+        sanitize_build_error,
     },
 };
 
@@ -57,10 +59,10 @@ pub async fn import_gamebox_package(
     docker: &Docker,
     registry: &RegistryConfig,
     zip_path: &Path,
-) -> AwdResult<ImportGameBoxResult> {
+) -> GameboxResult<ImportGameBoxResult> {
     // ── 1. Extract + discover ──────────────────────────────────────────────
     let tmp = tempfile::tempdir()
-        .map_err(|e| AwdError::Internal(format!("tempdir for gamebox import: {e}")))?;
+        .map_err(|e| GameboxError::Internal(format!("tempdir for gamebox import: {e}")))?;
     extract_package_zip(zip_path, tmp.path())?;
     let package_root = discover_package_root(tmp.path())?;
     require_package_layout(&package_root)?;
@@ -72,9 +74,9 @@ pub async fn import_gamebox_package(
     let normalized = meta.normalize().map_err(map_meta_error)?;
 
     // ── 2. 版本门禁（先比对，任何写操作之前）─────────────────────────────
-    let existing = gamebox_lib_repo::find_gamebox_by_safe_name(db, &safe_name)
+    let existing = library::find_gamebox_by_safe_name(db, &safe_name)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+        .map_err(|e| GameboxError::Database(e.to_string()))?;
     if let Some(reason) = version_gate_reason(
         &version,
         existing.as_ref().and_then(|g| g.version.as_deref()),
@@ -86,7 +88,7 @@ pub async fn import_gamebox_package(
             reason = %reason,
             "GameBox import rejected by version gate"
         );
-        return Err(AwdError::Conflict(reason));
+        return Err(GameboxError::Conflict(reason));
     }
     info!(
         safe_name = %safe_name,
@@ -97,9 +99,9 @@ pub async fn import_gamebox_package(
     let package_digest = compute_package_digest(&package_root)?;
     let spec_digest = compute_spec_digest(&normalized)?;
     let spec_json = serde_json::to_value(&normalized)
-        .map_err(|e| AwdError::Internal(format!("spec_json: {e}")))?;
+        .map_err(|e| GameboxError::Internal(format!("spec_json: {e}")))?;
     let healthchecks_json = serde_json::to_value(&normalized.healthchecks)
-        .map_err(|e| AwdError::Internal(format!("healthchecks_json: {e}")))?;
+        .map_err(|e| GameboxError::Internal(format!("healthchecks_json: {e}")))?;
 
     let (judge_script_name, judge_script_content) = if let Some(ref j) = meta.judge {
         let content = read_judge_script(&package_root, &j.script)?;
@@ -121,11 +123,11 @@ pub async fn import_gamebox_package(
         let txn = db
             .begin()
             .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+            .map_err(|e| GameboxError::Database(e.to_string()))?;
 
         let gamebox = match existing {
             Some(existing) => existing,
-            None => gamebox_lib_repo::create_gamebox_identity(
+            None => library::create_gamebox_identity(
                 &txn,
                 normalized.name.clone(),
                 safe_name.clone(),
@@ -134,7 +136,7 @@ pub async fn import_gamebox_package(
                 false,
             )
             .await
-            .map_err(|e| AwdError::Database(e.to_string()))?,
+            .map_err(|e| GameboxError::Database(e.to_string()))?,
         };
 
         let mut am: gameboxes::ActiveModel = gamebox.clone().into();
@@ -162,11 +164,11 @@ pub async fn import_gamebox_package(
         let gamebox = am
             .update(&txn)
             .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+            .map_err(|e| GameboxError::Database(e.to_string()))?;
 
         txn.commit()
             .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+            .map_err(|e| GameboxError::Database(e.to_string()))?;
         gamebox
     };
 
@@ -209,7 +211,7 @@ pub async fn import_gamebox_package(
             let gamebox = am
                 .update(db)
                 .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
+                .map_err(|e| GameboxError::Database(e.to_string()))?;
 
             // Mirror package into GAMEBOXES_DIR/{safe_name}（与 Challenge 一致）
             mirror_to_gameboxes_dir(db, &safe_name, &package_root).await;
@@ -267,12 +269,12 @@ pub async fn scan_gameboxes_dir(
     db: &DatabaseConnection,
     docker: &Docker,
     registry: &RegistryConfig,
-) -> AwdResult<Vec<GameBoxScanItem>> {
+) -> GameboxResult<Vec<GameBoxScanItem>> {
     use crate::infrastructure::settings::resolve_dir_path;
 
     let dir_str = get_setting(db, "GAMEBOXES_DIR")
         .await
-        .map_err(|e| AwdError::Internal(format!("get setting GAMEBOXES_DIR: {e}")))?;
+        .map_err(|e| GameboxError::Internal(format!("get setting GAMEBOXES_DIR: {e}")))?;
     let root = resolve_dir_path(&dir_str);
     if !root.is_dir() {
         info!(dir = %root.display(), "GAMEBOXES_DIR not found, scan returns empty");
@@ -281,10 +283,11 @@ pub async fn scan_gameboxes_dir(
 
     let runtime = DockerContainerRuntime::new(docker.clone());
     let mut items = Vec::new();
-    let entries = std::fs::read_dir(&root)
-        .map_err(|e| AwdError::Internal(format!("read GAMEBOXES_DIR {}: {e}", root.display())))?;
+    let entries = std::fs::read_dir(&root).map_err(|e| {
+        GameboxError::Internal(format!("read GAMEBOXES_DIR {}: {e}", root.display()))
+    })?;
     for entry in entries {
-        let entry = entry.map_err(|e| AwdError::Internal(format!("read_dir entry: {e}")))?;
+        let entry = entry.map_err(|e| GameboxError::Internal(format!("read_dir entry: {e}")))?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -346,9 +349,9 @@ pub async fn scan_gameboxes_dir(
         };
 
         // 已入库 → 跳过（scan 只补录缺的）
-        let existing = gamebox_lib_repo::find_gamebox_by_safe_name(db, &safe_name)
+        let existing = library::find_gamebox_by_safe_name(db, &safe_name)
             .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+            .map_err(|e| GameboxError::Database(e.to_string()))?;
         if existing.is_some() {
             items.push(GameBoxScanItem {
                 safe_name,
@@ -525,7 +528,7 @@ async fn run_build_and_pin(
     build_req: &ImageBuildRequest,
     canonical_ref: &str,
     temp_tag: &str,
-) -> AwdResult<(String, Option<String>)> {
+) -> GameboxResult<(String, Option<String>)> {
     let built = ImageRuntime::build_image(runtime, build_req.clone())
         .await
         .map_err(map_image_error)?;
@@ -555,7 +558,7 @@ async fn run_build_and_pin(
             .await
             .map_err(map_image_error)?;
         if digest.is_empty() {
-            return Err(AwdError::Docker(
+            return Err(GameboxError::Docker(
                 "DIGEST_UNAVAILABLE: push succeeded but RepoDigest empty".into(),
             ));
         }
@@ -620,40 +623,44 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn map_meta_error(e: fcmc::GameBoxMetaError) -> AwdError {
+fn map_meta_error(e: fcmc::GameBoxMetaError) -> GameboxError {
     use fcmc::GameBoxMetaError::*;
     match &e {
-        UnknownField(_) => AwdError::Validation(format!("MANIFEST_UNKNOWN_FIELD: {e}")),
-        Parse(_) => AwdError::Validation(format!("INVALID_MANIFEST: {e}")),
+        UnknownField(_) => GameboxError::Validation(format!("MANIFEST_UNKNOWN_FIELD: {e}")),
+        Parse(_) => GameboxError::Validation(format!("INVALID_MANIFEST: {e}")),
         EmptyName | EmptyAuthor | EmptyCategory | EmptyUsername => {
-            AwdError::Validation(format!("INVALID_MANIFEST: {e}"))
+            GameboxError::Validation(format!("INVALID_MANIFEST: {e}"))
         }
         InvalidVersion { .. } | VersionBuildMetadata(_) => {
-            AwdError::Validation(format!("INVALID_VERSION: {e}"))
+            GameboxError::Validation(format!("INVALID_VERSION: {e}"))
         }
-        InvalidSafeName(_) => AwdError::Validation(format!("INVALID_SAFE_NAME: {e}")),
-        SafeNameRequired => AwdError::Validation(format!("SAFE_NAME_REQUIRED: {e}")),
-        InvalidJudgePath(_, _) => AwdError::Validation(format!("INVALID_JUDGE_PATH: {e}")),
-        other => AwdError::Validation(format!("INVALID_MANIFEST: {other}")),
+        InvalidSafeName(_) => GameboxError::Validation(format!("INVALID_SAFE_NAME: {e}")),
+        SafeNameRequired => GameboxError::Validation(format!("SAFE_NAME_REQUIRED: {e}")),
+        InvalidJudgePath(_, _) => GameboxError::Validation(format!("INVALID_JUDGE_PATH: {e}")),
+        other => GameboxError::Validation(format!("INVALID_MANIFEST: {other}")),
     }
 }
 
-fn map_image_error(e: ImageError) -> AwdError {
+fn map_image_error(e: ImageError) -> GameboxError {
     match e {
-        ImageError::BuildTimeout => AwdError::Docker("BUILD_TIMEOUT: image build timed out".into()),
-        ImageError::BuildFailed(m) => {
-            AwdError::Docker(format!("BUILD_FAILED: {}", sanitize_build_error(&m)))
+        ImageError::BuildTimeout => {
+            GameboxError::Docker("BUILD_TIMEOUT: image build timed out".into())
         }
-        ImageError::PushFailed(m) => AwdError::Docker(format!(
+        ImageError::BuildFailed(m) => {
+            GameboxError::Docker(format!("BUILD_FAILED: {}", sanitize_build_error(&m)))
+        }
+        ImageError::PushFailed(m) => GameboxError::Docker(format!(
             "REGISTRY_PUSH_FAILED: {}",
             sanitize_build_error(&m)
         )),
-        ImageError::DigestUnavailable(m) => AwdError::Docker(format!("DIGEST_UNAVAILABLE: {m}")),
-        ImageError::RegistryAuthFailed(m) => AwdError::Docker(format!(
+        ImageError::DigestUnavailable(m) => {
+            GameboxError::Docker(format!("DIGEST_UNAVAILABLE: {m}"))
+        }
+        ImageError::RegistryAuthFailed(m) => GameboxError::Docker(format!(
             "REGISTRY_PUSH_FAILED: auth: {}",
             sanitize_build_error(&m)
         )),
-        other => AwdError::Docker(format!(
+        other => GameboxError::Docker(format!(
             "BUILD_FAILED: {}",
             sanitize_build_error(&other.to_string())
         )),

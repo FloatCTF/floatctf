@@ -1,4 +1,3 @@
-import { Button, Label } from "@primer/react";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
@@ -36,16 +35,33 @@ function RouteComponent() {
 			field: "name",
 			rowHeader: true,
 			renderCell: (row: GameBoxCatalogDto) => {
-				if (!row.active_training) {
-					return <span>{row.name}</span>;
+				// 有 active run → 直接进入训练页；否则点击即开始训练。
+				if (row.active_training) {
+					return (
+						<AppLink
+							to={"/service/awdp/runs/$runId"}
+							params={{ runId: row.active_training.run_id }}
+						>
+							{row.name}
+						</AppLink>
+					);
 				}
+				const starting =
+					startMutation.isPending && startMutation.variables === row.id;
 				return (
-					<AppLink
-						to={"/service/awdp/runs/$runId"}
-						params={{ runId: row.active_training.run_id }}
+					<button
+						type="button"
+						disabled={starting}
+						onClick={() => startMutation.mutate(row.id)}
+						style={{
+							color: "#0969da",
+							textDecoration: "underline",
+							cursor: starting ? "default" : "pointer",
+							opacity: starting ? 0.6 : 1,
+						}}
 					>
 						{row.name}
-					</AppLink>
+					</button>
 				);
 			},
 		},
@@ -65,62 +81,6 @@ function RouteComponent() {
 				return <span>{row.version ?? "—"}</span>;
 			},
 		},
-		{
-			accessorKey: "awdp_capable",
-			header: "AWDP",
-			field: "awdp_capable",
-			renderCell: (row: GameBoxCatalogDto) => {
-				return row.awdp_capable ? (
-					<Label variant="accent">AWDP</Label>
-				) : (
-					<span>—</span>
-				);
-			},
-		},
-		{
-			accessorKey: "training",
-			header: "Training",
-			field: "training",
-			renderCell: (row: GameBoxCatalogDto) => {
-				const active = row.active_training;
-				if (!active) {
-					return <span>—</span>;
-				}
-				return (
-					<div className="flex items-center gap-2">
-						<AppLink
-							to={"/service/awdp/runs/$runId"}
-							params={{ runId: active.run_id }}
-						>
-							Continue Training
-						</AppLink>
-						<Label variant="success">{active.phase}</Label>
-					</div>
-				);
-			},
-		},
-		{
-			accessorKey: "actions",
-			header: "Actions",
-			id: "actions",
-			renderCell: (row: GameBoxCatalogDto) => {
-				if (row.active_training) {
-					return null;
-				}
-				const starting =
-					startMutation.isPending && startMutation.variables === row.id;
-				return (
-					<Button
-						variant="primary"
-						size="small"
-						disabled={starting}
-						onClick={() => startMutation.mutate(row.id)}
-					>
-						{starting ? "Starting…" : "Start Training"}
-					</Button>
-				);
-			},
-		},
 	];
 	const filterKeys = ["name", "category", "description"];
 
@@ -129,7 +89,7 @@ function RouteComponent() {
 			<banner.BannerComponent />
 			<GenericTable
 				subject="GameBoxCatalog"
-				subtitle="AWDP 训练场：选择一个 GameBox 开始训练（Break → Fix → Turns）。"
+				subtitle="AWDP 训练场：点击名称开始训练（Break → Fix → Turns）。"
 				columns={columns}
 				filterKeys={filterKeys}
 				queryFn={awdpRunApi.gameboxCatalog}

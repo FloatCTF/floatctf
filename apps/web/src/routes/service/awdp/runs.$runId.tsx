@@ -61,7 +61,8 @@ function RouteComponent() {
 			return null;
 		}
 		return {
-			title: `GameBox Training — ${run.gamebox_name}`,
+			title: run.gamebox_name,
+			description: run.gamebox_description,
 			phase: run.phase,
 			phaseEndsAt:
 				run.phase === "break"

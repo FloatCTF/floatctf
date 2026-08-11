@@ -55,10 +55,6 @@ export const EVAL_STATUS_LABEL: Record<string, string> = {
 	platform_error: "platform error",
 };
 
-function formatDate(iso?: string | null) {
-	return iso ? dayjs.utc(iso).local().format("YYYY-MM-DD HH:mm:ss") : "-";
-}
-
 function fmtTime(iso?: string | null) {
 	return iso ? dayjs.utc(iso).local().format("MM-DD HH:mm:ss") : "-";
 }
@@ -194,6 +190,8 @@ export type AwdpScoreEventView = {
 export type AwdpWorkbenchViewModel = {
 	/** 空字符串则不渲染标题行（competition 由赛事路由头展示）。 */
 	title?: string;
+	/** 标题下方展示的描述（与挑战详情页同款 border-top 分隔）。 */
+	description?: string;
 	phase: AwdpPhase;
 	/** break → break_ends_at；fix → next_action_at（下一 cutoff）。 */
 	phaseEndsAt: string | null;
@@ -676,59 +674,35 @@ export function AwdpWorkbench({
 	});
 
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="h-full w-full flex flex-col gap-2">
+			{/* 顶部：标题 + 描述（与挑战详情页同款：text-2xl + border-top 分隔） */}
+			{viewModel.title ? (
+				<div id="awdp-meta">
+					<p className="font-bold text-2xl">{viewModel.title}</p>
+					{viewModel.description ? (
+						<div className="border-top mt-2 pt-2">{viewModel.description}</div>
+					) : null}
+				</div>
+			) : null}
 			<banner.BannerComponent />
 
-			{/* 顶部：标题（可选）+ Phase + 得分 */}
-			<section className="p-3 rounded border">
-				<div className="flex items-center gap-2 mb-2">
-					{viewModel.title ? (
-						<h3 className="font-bold flex-1">{viewModel.title}</h3>
-					) : null}
-					<Label variant={phaseMeta.variant}>Phase: {phaseMeta.text}</Label>
-					<span className="text-sm font-medium ml-auto">
-						我的得分：
-						<strong className="tabular-nums">{viewModel.score}</strong>
+			{/* 状态条：Phase + Turn + Countdown + 得分 */}
+			<section className="p-3 rounded border flex items-center gap-3">
+				<Label variant={phaseMeta.variant}>Phase: {phaseMeta.text}</Label>
+				{phase === "fix" ? (
+					<span className="text-sm font-medium">
+						Turn {viewModel.currentRound} / {viewModel.totalRounds}
 					</span>
-				</div>
-				<dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2">
-					{active && countdownTarget ? (
-						<>
-							<dt className="font-bold">Countdown</dt>
-							<dd className="font-medium tabular-nums">
-								{formatCountdown(countdown)}
-							</dd>
-						</>
-					) : null}
-					{phase === "fix" ? (
-						<>
-							<dt className="font-bold">Turn</dt>
-							<dd className="font-medium">
-								{viewModel.currentRound} / {viewModel.totalRounds}
-							</dd>
-							<dt className="font-bold">Next Check</dt>
-							<dd className="font-medium tabular-nums">
-								{formatCountdown(countdown)}
-							</dd>
-						</>
-					) : null}
-					<dt className="font-bold">Break Score</dt>
-					<dd className="font-medium">+{viewModel.breakScore} / GameBox</dd>
-					<dt className="font-bold">Fix Score</dt>
-					<dd className="font-medium">+{viewModel.fixRoundScore} / Turn</dd>
-					{active ? (
-						<>
-							<dt className="font-bold">Rounds</dt>
-							<dd className="font-medium">
-								{viewModel.currentRound} / {viewModel.totalRounds}
-							</dd>
-						</>
-					) : null}
-					<dt className="font-bold">Break 至</dt>
-					<dd className="font-medium">{formatDate(viewModel.breakEndsAt)}</dd>
-					<dt className="font-bold">Fix 至</dt>
-					<dd className="font-medium">{formatDate(viewModel.fixEndsAt)}</dd>
-				</dl>
+				) : null}
+				{active && countdownTarget ? (
+					<span className="text-sm font-medium tabular-nums">
+						剩余 {formatCountdown(countdown)}
+					</span>
+				) : null}
+				<span className="text-sm font-medium ml-auto">
+					我的得分：
+					<strong className="tabular-nums">{viewModel.score}</strong>
+				</span>
 			</section>
 
 			{/* pending：短暂过渡态 */}

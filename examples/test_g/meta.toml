@@ -15,7 +15,11 @@ path = "/"
 expected_status = 200
 
 [judge]
-script = "judge/check.py"
+check_script = "judge/check.py"
+
+# optional: awdp
+[awdp]
+exploit_script = "awdp/exploit.py"
 
 [gamebox.recommended_resources]
 cpu_millis = 1000

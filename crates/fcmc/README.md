@@ -122,7 +122,7 @@ fcmc gen --name awd-base --format gamebox --template
 | `src/index.php` | 读 `/flag` 示例 | SSRF curl 示例 |
 | `src/flag` | 占位（动态覆盖） | — |
 | `attachment/` | 附件目录（留空） | — |
-| `judge/check.py` | — | judge 脚本占位（不进镜像） |
+| `judge/check.py` | — | judge 脚本：HTTP 健康检查（多 IP 批量，不进镜像） |
 
 ---
 
@@ -150,7 +150,8 @@ fcmc gen --name awd-base --format gamebox --template
 │   ├── Dockerfile
 │   ├── entrypoint.sh
 │   └── index.php
-└── judge/             # judge 脚本（可选），绝不进镜像
+├── judge/             # judge 脚本（可选），绝不进镜像
+└── awdp/              # AWD-P 攻击脚本（可选），绝不进镜像
 ```
 
 ---

@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::entity::{
-    awdp_event_gameboxes, awdp_events, gameboxes, sea_orm_active_enums::AwdpPhase,
+    awdp_event_gameboxes, awdp_events, awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase,
 };
 use crate::modules::event::awdp::domain::AwdpConfig;
 use crate::modules::event::awdp::service::runtime::InstanceView;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Player
+// Player（competition event 视图）
 // ────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,7 +67,7 @@ impl From<&InstanceView> for InstanceViewDto {
     }
 }
 
-/// 选手侧概览：phase / timing / score / gameboxes。
+/// 选手侧概览：phase / timing / score / gameboxes（competition event 视图）。
 #[derive(Debug, Clone, Serialize)]
 pub struct AwdpOverviewDto {
     pub event_id: Uuid,
@@ -102,12 +102,13 @@ pub struct BreakSubmitResponse {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Admin
+// Admin（配置 + run 汇总）
 // ────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AwdpEventConfigDto {
     pub event_id: Uuid,
+    /// 运行态阶段来自 active run（无 run = pending）。
     pub phase: AwdpPhase,
     pub break_duration_secs: i32,
     pub fix_duration_secs: i32,
@@ -126,8 +127,8 @@ pub struct AwdpEventConfigDto {
     pub next_action_at: Option<DateTime<FixedOffset>>,
 }
 
-impl From<&awdp_events::Model> for AwdpEventConfigDto {
-    fn from(a: &awdp_events::Model) -> Self {
+impl AwdpEventConfigDto {
+    pub fn from_config_and_run(a: &awdp_events::Model, run: Option<&awdp_runs::Model>) -> Self {
         let config = AwdpConfig {
             break_duration_secs: a.break_duration_secs,
             fix_duration_secs: a.fix_duration_secs,
@@ -137,7 +138,7 @@ impl From<&awdp_events::Model> for AwdpEventConfigDto {
         };
         Self {
             event_id: a.event_id,
-            phase: a.phase.clone(),
+            phase: run.map(|r| r.phase.clone()).unwrap_or(AwdpPhase::Pending),
             break_duration_secs: a.break_duration_secs,
             fix_duration_secs: a.fix_duration_secs,
             fix_round_interval_secs: a.fix_round_interval_secs,
@@ -146,15 +147,29 @@ impl From<&awdp_events::Model> for AwdpEventConfigDto {
             total_rounds: config.total_rounds(),
             configuration_generation: a.configuration_generation,
             updated_at: a.updated_at,
-            started_at: a.started_at,
-            break_ends_at: a.break_ends_at,
-            fix_started_at: a.fix_started_at,
-            fix_ends_at: a.fix_ends_at,
-            finished_at: a.finished_at,
-            current_round: a.current_round,
-            next_action_at: a.next_action_at,
+            started_at: run.and_then(|r| r.started_at),
+            break_ends_at: run.and_then(|r| r.break_ends_at),
+            fix_started_at: run.and_then(|r| r.fix_started_at),
+            fix_ends_at: run.and_then(|r| r.fix_ends_at),
+            finished_at: run.and_then(|r| r.finished_at),
+            current_round: run.map(|r| r.current_round).unwrap_or(0),
+            next_action_at: run.and_then(|r| r.next_action_at),
         }
     }
+}
+
+/// 管理端 run 汇总（事件 run 历史 inspect）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpAdminRunDto {
+    pub run_id: Uuid,
+    pub phase: AwdpPhase,
+    pub current_round: i32,
+    pub total_rounds: i32,
+    pub started_at: Option<DateTime<FixedOffset>>,
+    pub finished_at: Option<DateTime<FixedOffset>>,
+    pub next_action_at: Option<DateTime<FixedOffset>>,
+    pub instance_count: usize,
+    pub score_sum: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,7 +246,7 @@ impl From<&InstanceView> for AwdpAdminInstanceDto {
     fn from(v: &InstanceView) -> Self {
         Self {
             instance_id: v.instance_id,
-            event_gamebox_id: v.event_gamebox_id,
+            event_gamebox_id: v.gamebox_id,
             gamebox_name: v.gamebox_name.clone(),
             owner_user_id: None,
             owner_team_id: None,
@@ -250,6 +265,112 @@ impl From<&InstanceView> for AwdpAdminInstanceDto {
                 .collect(),
         }
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Training Ground（/api/service，run 维度）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 安全目录条目（plan §56：禁止 exploit/source key/source_code_dir/credentials）。
+#[derive(Debug, Clone, Serialize)]
+pub struct GameBoxCatalogDto {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub version: Option<String>,
+    /// == gameboxes.awdp_source_artifact_key 非空（五列全有，DB CHECK 保证）。
+    pub awdp_capable: bool,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    /// 当前 user 的 active practice run（若有）。
+    pub active_training: Option<ActiveTrainingDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveTrainingDto {
+    pub run_id: Uuid,
+    pub phase: AwdpPhase,
+    pub score: i64,
+}
+
+/// Practice run 统一 view-model（前端 AwdpWorkbench 数据源）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpRunDto {
+    pub run_id: Uuid,
+    pub gamebox_id: Uuid,
+    pub gamebox_name: String,
+    pub gamebox_category: String,
+    pub gamebox_description: String,
+    pub event_id: Option<Uuid>,
+    pub phase: AwdpPhase,
+    pub break_duration_secs: i32,
+    pub fix_duration_secs: i32,
+    pub fix_round_interval_secs: i32,
+    pub break_score: i64,
+    pub fix_round_score: i64,
+    pub total_rounds: i32,
+    pub started_at: Option<DateTime<FixedOffset>>,
+    pub break_ends_at: Option<DateTime<FixedOffset>>,
+    pub fix_started_at: Option<DateTime<FixedOffset>>,
+    pub fix_ends_at: Option<DateTime<FixedOffset>>,
+    pub finished_at: Option<DateTime<FixedOffset>>,
+    pub current_round: i32,
+    pub next_action_at: Option<DateTime<FixedOffset>>,
+    pub my_score: i64,
+    /// Fix 阶段才返回的源码目录说明。
+    pub source_code_dir: Option<String>,
+    pub instances: Vec<RunInstanceDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunInstanceDto {
+    pub instance_id: Uuid,
+    pub gamebox_id: Uuid,
+    pub runtime_state: String,
+    pub runtime_generation: i64,
+    pub broken: bool,
+    pub endpoints: Vec<EndpointDto>,
+}
+
+impl From<&InstanceView> for RunInstanceDto {
+    fn from(v: &InstanceView) -> Self {
+        Self {
+            instance_id: v.instance_id,
+            gamebox_id: v.gamebox_id,
+            runtime_state: v.runtime_state.clone(),
+            runtime_generation: v.runtime_generation,
+            broken: v.broken,
+            endpoints: v
+                .endpoints
+                .iter()
+                .map(|e| EndpointDto {
+                    protocol: e.protocol.clone(),
+                    container_port: e.container_port,
+                    public_host: e.public_host.clone(),
+                    public_port: e.public_port,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// 我的得分视图（总分 + 明细历史）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpRunScoresDto {
+    pub total: i64,
+    pub history: Vec<AwdpScoreEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpScoreEventDto {
+    pub id: Uuid,
+    pub gamebox_id: Uuid,
+    pub score_type: String,
+    pub fix_round_id: Option<Uuid>,
+    pub delta: i64,
+    pub created_at: DateTime<FixedOffset>,
 }
 
 /// Patch 提交结果。
@@ -282,7 +403,7 @@ pub struct AwdpRoundDto {
 pub struct AwdpEvaluationDto {
     pub id: Uuid,
     pub instance_id: Uuid,
-    pub event_gamebox_id: Uuid,
+    pub gamebox_id: Uuid,
     pub fix_round_id: Option<Uuid>,
     pub round_sequence: Option<i32>,
     pub kind: crate::entity::sea_orm_active_enums::AwdpEvaluationKind,

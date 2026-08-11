@@ -59,6 +59,10 @@ fn configure_player_routes(cfg: &mut ServiceConfig) {
             .configure(crate::modules::event::awd::api::player_routes)
             .configure(crate::modules::event::awdp::api::player_routes),
     );
+    // /api/service scope：AWDP Training Ground（与 /events scope 平级，同风格）。
+    cfg.service(
+        scope("/service").configure(crate::modules::event::awdp::api::configure_training_routes),
+    );
 }
 
 /// 管理端路由，挂在 `/api/admin` 下（原 `api::admin`）。

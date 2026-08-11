@@ -1,7 +1,9 @@
 //! AWDP 选手侧路由（挂 /api/events/{event_id}/awdp/*）。
+//!
+//! URL 保持 event-oriented（plan §59），handler 内经
+//! `run_repo::find_active_competition_for_event` 解析到 active competition run。
 
 use actix_web::web::{self, Json};
-use chrono::Utc;
 use uuid::Uuid;
 
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
@@ -9,13 +11,12 @@ use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     entity::{
-        events,
-        sea_orm_active_enums::{AwdpPhase, ParticipantMode},
+        awdp_runs, events,
+        sea_orm_active_enums::{AwdpPhase, EventFamily, ParticipantMode},
     },
     modules::event::awdp::{
         api::dto::*,
-        domain::config::AwdpConfig,
-        repo::{break_repo, evaluation_repo, event_gamebox_repo, event_repo, score_repo},
+        repo::{evaluation_repo, event_gamebox_repo, event_repo, round_repo, run_repo, score_repo},
         service::{
             break_service, evaluation, patch_service,
             runtime::{self, Subject},
@@ -42,6 +43,20 @@ async fn resolve_subject(ctx: &ReqCtx, event_id: Uuid, user_id: Uuid) -> Result<
     }
 }
 
+/// 解析事件的 active competition run（未开始返回 None）。
+async fn active_run_for_event(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+) -> Result<Option<awdp_runs::Model>, AppError> {
+    Ok(run_repo::find_active_competition_for_event(db, event_id).await?)
+}
+
+async fn flag_prefix_async(ctx: &ReqCtx) -> String {
+    crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "FLAG_PREFIX")
+        .await
+        .unwrap_or_else(|_| "flag".into())
+}
+
 /// GET /api/events/{event_id}/awdp —— 概览（phase/timing/score/gameboxes）。
 #[get("{event_id}/awdp")]
 pub async fn get_overview(
@@ -58,13 +73,22 @@ pub async fn get_overview(
         .one(db)
         .await?
         .ok_or_else(|| AppError::NotFound("event not found".into()))?;
-    if event.family != crate::entity::sea_orm_active_enums::EventFamily::Awdp {
+    if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }
 
-    let awdp = event_repo::ensure_by_event_id(db, event_id, &AwdpConfig::default()).await?;
+    let awdp = event_repo::ensure_by_event_id(
+        db,
+        event_id,
+        &crate::modules::event::awdp::domain::AwdpConfig::default(),
+    )
+    .await?;
+    let run = active_run_for_event(db, event_id).await?;
     let gameboxes = event_gamebox_repo::list_for_event(db, event_id).await?;
-    let my_score = score_repo::my_total(db, event_id, subject.user_id, subject.team_id).await?;
+    let my_score = match &run {
+        Some(run) => score_repo::my_total(db, run.id, subject.user_id, subject.team_id).await?,
+        None => 0,
+    };
 
     let mut gb_dtos = Vec::new();
     for eg in gameboxes {
@@ -92,16 +116,27 @@ pub async fn get_overview(
         })
         .collect::<Vec<_>>();
 
-        let broken =
-            break_repo::already_broken(db, event_id, eg.id, subject.user_id, subject.team_id)
+        // 实例状态（run 未启动时无实例）。
+        let (broken, instance_view) = match &run {
+            Some(run) => {
+                let broken = crate::modules::event::awdp::repo::break_repo::already_broken(
+                    db,
+                    run.id,
+                    eg.gamebox_id,
+                    subject.user_id,
+                    subject.team_id,
+                )
                 .await?;
-
-        // 实例状态。
-        let instance_view =
-            match runtime::get_my_instance_view(db, event_id, eg.id, subject).await? {
-                Some(v) => Some(InstanceViewDto::from(&v)),
-                None => None,
-            };
+                let view = match runtime::get_my_instance_view(db, run.id, eg.gamebox_id, subject)
+                    .await?
+                {
+                    Some(v) => Some(InstanceViewDto::from(&v)),
+                    None => None,
+                };
+                (broken, view)
+            }
+            None => (false, None),
+        };
 
         gb_dtos.push(AwdpGameBoxDto {
             id: eg.id,
@@ -113,7 +148,11 @@ pub async fn get_overview(
             exposed,
             broken,
             instance: instance_view,
-            source_code_dir: if awdp.phase == AwdpPhase::Fix {
+            source_code_dir: if run
+                .as_ref()
+                .map(|r| r.phase == AwdpPhase::Fix)
+                .unwrap_or(false)
+            {
                 gamebox.awdp_source_code_dir.clone()
             } else {
                 None
@@ -121,7 +160,7 @@ pub async fn get_overview(
         });
     }
 
-    let config = AwdpConfig {
+    let config = crate::modules::event::awdp::domain::AwdpConfig {
         break_duration_secs: awdp.break_duration_secs,
         fix_duration_secs: awdp.fix_duration_secs,
         fix_round_interval_secs: awdp.fix_round_interval_secs,
@@ -131,20 +170,23 @@ pub async fn get_overview(
     UniResponse::ok(
         AwdpOverviewDto {
             event_id,
-            phase: awdp.phase.clone(),
+            phase: run
+                .as_ref()
+                .map(|r| r.phase.clone())
+                .unwrap_or(AwdpPhase::Pending),
             break_duration_secs: awdp.break_duration_secs,
             fix_duration_secs: awdp.fix_duration_secs,
             fix_round_interval_secs: awdp.fix_round_interval_secs,
             total_rounds: config.total_rounds(),
             break_score: awdp.break_score,
             fix_round_score: awdp.fix_round_score,
-            started_at: awdp.started_at,
-            break_ends_at: awdp.break_ends_at,
-            fix_started_at: awdp.fix_started_at,
-            fix_ends_at: awdp.fix_ends_at,
-            finished_at: awdp.finished_at,
-            current_round: awdp.current_round,
-            next_action_at: awdp.next_action_at,
+            started_at: run.as_ref().and_then(|r| r.started_at),
+            break_ends_at: run.as_ref().and_then(|r| r.break_ends_at),
+            fix_started_at: run.as_ref().and_then(|r| r.fix_started_at),
+            fix_ends_at: run.as_ref().and_then(|r| r.fix_ends_at),
+            finished_at: run.as_ref().and_then(|r| r.finished_at),
+            current_round: run.as_ref().map(|r| r.current_round).unwrap_or(0),
+            next_action_at: run.as_ref().and_then(|r| r.next_action_at),
             my_score,
             gameboxes: gb_dtos,
         }
@@ -163,17 +205,18 @@ pub async fn start_my_instance(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let flag_prefix = crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "FLAG_PREFIX")
-        .await
-        .unwrap_or_else(|_| "flag".into());
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let view = runtime::start_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         ctx.config.auth.jwt_secret.expose().as_bytes(),
-        event_id,
-        eg_id,
+        run.id,
+        eg.gamebox_id,
         subject,
-        &flag_prefix,
+        &flag_prefix_async(&ctx).await,
     )
     .await
     .map_err(AppError::from)?;
@@ -190,7 +233,12 @@ pub async fn stop_my_instance(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let view = runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
+    let view =
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, eg.gamebox_id, subject).await?;
     let Some(view) = view else {
         return Err(AppError::NotFound("instance not started".into()));
     };
@@ -215,7 +263,12 @@ pub async fn get_my_instance(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let view = runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
+    let view =
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, eg.gamebox_id, subject).await?;
     UniResponse::ok(view.map(|v| InstanceViewDto::from(&v)).into()).into()
 }
 
@@ -231,11 +284,15 @@ pub async fn submit_break_flag(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let result = break_service::submit_flag(
         ctx.db.get_ref(),
         ctx.config.auth.jwt_secret.expose().as_bytes(),
-        event_id,
-        eg_id,
+        run.id,
+        eg.gamebox_id,
         &body.flag,
         subject,
     )
@@ -246,13 +303,7 @@ pub async fn submit_break_flag(
             &state,
             event_id,
             "break",
-            crate::modules::event::awdp::repo::event_repo::require_by_event_id(
-                ctx.db.get_ref(),
-                event_id,
-            )
-            .await
-            .map(|a| a.break_score)
-            .unwrap_or(0),
+            run.break_score,
         );
     }
     UniResponse::ok(
@@ -276,11 +327,12 @@ pub async fn reset_my_instance(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let flag_prefix = crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "FLAG_PREFIX")
-        .await
-        .unwrap_or_else(|_| "flag".into());
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let Some(view) =
-        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, eg.gamebox_id, subject).await?
     else {
         return Err(AppError::NotFound("instance not started".into()));
     };
@@ -290,7 +342,7 @@ pub async fn reset_my_instance(
         ctx.config.auth.jwt_secret.expose().as_bytes(),
         view.instance_id,
         subject,
-        &flag_prefix,
+        &flag_prefix_async(&ctx).await,
     )
     .await
     .map_err(AppError::from)?;
@@ -315,8 +367,12 @@ pub async fn upload_patch(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let Some(view) =
-        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, eg.gamebox_id, subject).await?
     else {
         return Err(AppError::NotFound("instance not started".into()));
     };
@@ -333,7 +389,7 @@ pub async fn upload_patch(
     let result = patch_service::apply_patch(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        event_id,
+        run.id,
         view.instance_id,
         &script,
         subject,
@@ -370,15 +426,19 @@ pub async fn manual_test_check(
     let (event_id, eg_id) = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let Some(view) =
-        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, eg.gamebox_id, subject).await?
     else {
         return Err(AppError::NotFound("instance not started".into()));
     };
     let result = evaluation::manual_check(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        event_id,
+        run.id,
         view.instance_id,
         subject,
     )
@@ -414,8 +474,10 @@ pub async fn download_source(
     let _subject = resolve_subject(&ctx, event_id, _user.id).await?;
     let db = ctx.db.get_ref();
 
-    let awdp = event_repo::require_by_event_id(db, event_id).await?;
-    if awdp.phase != AwdpPhase::Fix {
+    let run = active_run_for_event(db, event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    if run.phase != AwdpPhase::Fix {
         return Err(AppError::InvalidState(
             "source.zip 仅在 Fix 阶段可下载".into(),
         ));
@@ -435,7 +497,7 @@ pub async fn download_source(
     UniResponse::ok(url.into()).into()
 }
 
-/// GET {event_id}/awdp/stream —— AWDP 实时事件流（与 AWD stream 同 hub，按 event_id 过滤）。
+/// GET {event_id}/awdp/stream —— AWDP 实时事件流（competition 按 event_id 过滤）。
 #[get("{event_id}/awdp/stream")]
 pub async fn event_stream(
     _user: UserJwtGuard,
@@ -494,7 +556,7 @@ pub async fn event_stream(
         .streaming(body)
 }
 
-/// GET {event_id}/awdp/rounds —— Fix 回合时间线（管理/选手共用展示）。
+/// GET {event_id}/awdp/rounds —— Fix 回合时间线（选手展示）。
 #[get("{event_id}/awdp/rounds")]
 pub async fn get_rounds(
     user: UserJwtGuard,
@@ -503,9 +565,10 @@ pub async fn get_rounds(
 ) -> UniResult<Vec<AwdpRoundDto>> {
     let event_id = path.into_inner();
     let _user = user.into_inner();
-    let rounds =
-        crate::modules::event::awdp::repo::round_repo::list_for_event(ctx.db.get_ref(), event_id)
-            .await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let rounds = round_repo::list_for_run(ctx.db.get_ref(), run.id).await?;
     UniResponse::ok(
         rounds
             .into_iter()
@@ -532,7 +595,10 @@ pub async fn get_my_evaluations(
     let event_id = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let all = evaluation_repo::list_for_event(ctx.db.get_ref(), event_id).await?;
+    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
+    let all = evaluation_repo::list_for_run(ctx.db.get_ref(), run.id).await?;
     let mut out = Vec::new();
     for ev in all {
         // 只暴露本人实例的评估。
@@ -553,25 +619,23 @@ pub async fn get_my_evaluations(
                 } => inst.owner_team_id == Some(t),
                 _ => false,
             };
-            (ok, ext.event_gamebox_id)
+            (ok, ext.gamebox_id)
         })
         .unwrap_or((false, Uuid::nil()));
         if !owned.0 {
             continue;
         }
         let round_seq = match ev.fix_round_id {
-            Some(rid) => {
-                crate::modules::event::awdp::repo::round_repo::find_by_id(ctx.db.get_ref(), rid)
-                    .await
-                    .map(|r| r.sequence)
-                    .ok()
-            }
+            Some(rid) => round_repo::find_by_id(ctx.db.get_ref(), rid)
+                .await
+                .map(|r| r.sequence)
+                .ok(),
             None => None,
         };
         out.push(AwdpEvaluationDto {
             id: ev.id,
             instance_id: ev.instance_id,
-            event_gamebox_id: owned.1,
+            gamebox_id: owned.1,
             fix_round_id: ev.fix_round_id,
             round_sequence: round_seq,
             kind: ev.kind,

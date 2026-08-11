@@ -1,4 +1,7 @@
 //! AWDP 管理端路由（挂 /api/admin/events/{event_id}/awdp/*）。
+//!
+//! URL 保持 event-oriented；配置读写走 awdp_events（纯配置），
+//! 生命周期操作（start/break-to-fix/finish）经 active competition run。
 
 use actix_web::web::{self, Json};
 use chrono::Utc;
@@ -10,7 +13,7 @@ use crate::{
     modules::event::awdp::{
         api::dto::*,
         domain::{AwdpConfig, AwdpConfigPatch},
-        repo::{event_gamebox_repo, event_repo, instance_repo},
+        repo::{event_gamebox_repo, event_repo, instance_repo, run_repo, score_repo},
         service::runtime,
     },
 };
@@ -27,7 +30,16 @@ async fn ensure_awdp_event(ctx: &ReqCtx, event_id: Uuid) -> Result<(), AppError>
     Ok(())
 }
 
-/// GET /api/admin/events/{event_id}/awdp —— 配置 + 阶段。
+async fn require_active_run(
+    ctx: &ReqCtx,
+    event_id: Uuid,
+) -> Result<crate::entity::awdp_runs::Model, AppError> {
+    run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未启动（无 active run）".into()))
+}
+
+/// GET /api/admin/events/{event_id}/awdp —— 配置 + 阶段（运行态来自 active run）。
 #[get("{event_id}/awdp")]
 pub async fn get_awdp_config(
     _admin: SuperAdminJwtGuard,
@@ -37,10 +49,11 @@ pub async fn get_awdp_config(
     let event_id = path.into_inner();
     ensure_awdp_event(&ctx, event_id).await?;
     let row = event_repo::require_by_event_id(ctx.db.get_ref(), event_id).await?;
-    UniResponse::ok(AwdpEventConfigDto::from(&row).into()).into()
+    let run = run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await?;
+    UniResponse::ok(AwdpEventConfigDto::from_config_and_run(&row, run.as_ref()).into()).into()
 }
 
-/// PATCH /api/admin/events/{event_id}/awdp —— 配置更新（仅 pending 可改，乐观锁）。
+/// PATCH /api/admin/events/{event_id}/awdp —— 配置更新（无 active run 可改，乐观锁）。
 #[patch("{event_id}/awdp")]
 pub async fn patch_awdp_config(
     _admin: SuperAdminJwtGuard,
@@ -59,10 +72,11 @@ pub async fn patch_awdp_config(
         fix_round_score: body.fix_round_score,
     };
     let row = event_repo::update_config(ctx.db.get_ref(), event_id, patch).await?;
-    UniResponse::ok(AwdpEventConfigDto::from(&row).into()).into()
+    let run = run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await?;
+    UniResponse::ok(AwdpEventConfigDto::from_config_and_run(&row, run.as_ref()).into()).into()
 }
 
-/// POST /api/admin/events/{event_id}/awdp/start —— 手动开始（pending → Break）。
+/// POST /api/admin/events/{event_id}/awdp/start —— 手动开始（create_competition_run + 立即 Break）。
 #[post("{event_id}/awdp/start")]
 pub async fn start_awdp_event(
     _admin: SuperAdminJwtGuard,
@@ -80,25 +94,31 @@ pub async fn start_awdp_event(
         break_score: row.break_score,
         fix_round_score: row.fix_round_score,
     };
-    let now = Utc::now();
-    let break_ends = now + chrono::Duration::seconds(config.break_duration_secs as i64);
-    event_repo::transition_phase(
-        ctx.db.get_ref(),
-        event_id,
-        AwdpPhase::Pending,
-        AwdpPhase::Break,
-        event_repo::PhaseTransitionPatch {
-            started_at: Some(now),
-            break_ends_at: Some(break_ends),
-            next_action_at: Some(break_ends),
-            ..Default::default()
-        },
-    )
-    .await?;
+    // 快照自 awdp_events 配置（幂等：已有 active run 直接返回）。
+    let run = run_repo::create_competition_run(ctx.db.get_ref(), event_id, &config).await?;
+    if run.phase == AwdpPhase::Pending {
+        // 立即 pending → Break。
+        let now = Utc::now();
+        let break_ends = now + chrono::Duration::seconds(config.break_duration_secs as i64);
+        run_repo::transition_phase(
+            ctx.db.get_ref(),
+            run.id,
+            AwdpPhase::Pending,
+            AwdpPhase::Break,
+            run_repo::PhaseTransitionPatch {
+                started_at: Some(now),
+                break_ends_at: Some(break_ends),
+                next_action_at: Some(break_ends),
+                ..Default::default()
+            },
+        )
+        .await?;
+        crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "break");
+    }
     UniResponse::ok_none().into()
 }
 
-/// POST /api/admin/events/{event_id}/awdp/break-to-fix —— Break 到期 → Fix（重置全部实例到 pristine）。
+/// POST /api/admin/events/{event_id}/awdp/break-to-fix —— Break 到期 → Fix（重置全部实例 pristine）。
 #[post("{event_id}/awdp/break-to-fix")]
 pub async fn break_to_fix(
     _admin: SuperAdminJwtGuard,
@@ -108,18 +128,19 @@ pub async fn break_to_fix(
 ) -> UniResult<()> {
     let event_id = path.into_inner();
     ensure_awdp_event(&ctx, event_id).await?;
+    let run = require_active_run(&ctx, event_id).await?;
     crate::modules::event::awdp::service::event_service::transition_break_to_fix(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         ctx.config.auth.jwt_secret.expose().as_bytes(),
-        event_id,
+        run.id,
     )
     .await?;
-    crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "break");
+    crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "fix");
     UniResponse::ok_none().into()
 }
 
-/// POST /api/admin/events/{event_id}/awdp/break-to-fix —— 手动结束（Fix → Ended）。
+/// POST /api/admin/events/{event_id}/awdp/finish —— 手动结束（Fix → Ended）。
 #[post("{event_id}/awdp/finish")]
 pub async fn finish_awdp_event(
     _admin: SuperAdminJwtGuard,
@@ -129,12 +150,13 @@ pub async fn finish_awdp_event(
 ) -> UniResult<()> {
     let event_id = path.into_inner();
     ensure_awdp_event(&ctx, event_id).await?;
-    event_repo::transition_phase(
+    let run = require_active_run(&ctx, event_id).await?;
+    run_repo::transition_phase(
         ctx.db.get_ref(),
-        event_id,
+        run.id,
         AwdpPhase::Fix,
         AwdpPhase::Ended,
-        event_repo::PhaseTransitionPatch {
+        run_repo::PhaseTransitionPatch {
             finished_at: Some(Utc::now()),
             next_action_at: None,
             ..Default::default()
@@ -143,6 +165,39 @@ pub async fn finish_awdp_event(
     .await?;
     crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "ended");
     UniResponse::ok_none().into()
+}
+
+/// GET /api/admin/events/{event_id}/awdp/runs —— run 历史汇总（inspect）。
+#[get("{event_id}/awdp/runs")]
+pub async fn list_runs(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<AwdpAdminRunDto>> {
+    let event_id = path.into_inner();
+    ensure_awdp_event(&ctx, event_id).await?;
+    let runs = run_repo::list_for_event(ctx.db.get_ref(), event_id).await?;
+    let mut out = Vec::new();
+    for run in runs {
+        let instances = instance_repo::list_for_run(ctx.db.get_ref(), run.id).await?;
+        let score_sum = score_repo::total_for_run(ctx.db.get_ref(), run.id)
+            .await?
+            .into_iter()
+            .map(|(_, _, total)| total)
+            .sum::<i64>();
+        out.push(AwdpAdminRunDto {
+            run_id: run.id,
+            phase: run.phase,
+            current_round: run.current_round,
+            total_rounds: run.total_rounds,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            next_action_at: run.next_action_at,
+            instance_count: instances.len(),
+            score_sum,
+        });
+    }
+    UniResponse::ok(out.into()).into()
 }
 
 /// POST /api/admin/events/{event_id}/awdp/gameboxes —— attach（仅完整 [awdp] capability）。
@@ -196,7 +251,7 @@ pub async fn list_event_gameboxes(
     UniResponse::ok(out.into()).into()
 }
 
-/// GET /api/admin/events/{event_id}/awdp/instances —— 实例 inspect。
+/// GET /api/admin/events/{event_id}/awdp/instances —— 实例 inspect（经 run 聚合）。
 #[get("{event_id}/awdp/instances")]
 pub async fn list_instances(
     _admin: SuperAdminJwtGuard,
@@ -208,12 +263,12 @@ pub async fn list_instances(
     let rows = instance_repo::list_for_event(ctx.db.get_ref(), event_id).await?;
     let mut out = Vec::new();
     for (instance, ext) in rows {
-        let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), ext.event_gamebox_id).await?;
-        let gb = event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), eg.gamebox_id).await?;
+        let gb =
+            event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), ext.gamebox_id).await?;
         let endpoints = runtime::instance_endpoints_for(ctx.db.get_ref(), instance.id).await?;
         out.push(AwdpAdminInstanceDto {
             instance_id: instance.id,
-            event_gamebox_id: eg.id,
+            event_gamebox_id: ext.gamebox_id,
             gamebox_name: gb.name.clone(),
             owner_user_id: ext.owner_user_id,
             owner_team_id: ext.owner_team_id,
@@ -240,6 +295,7 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(patch_awdp_config)
         .service(start_awdp_event)
         .service(finish_awdp_event)
+        .service(list_runs)
         .service(attach_gamebox)
         .service(detach_gamebox)
         .service(list_event_gameboxes)

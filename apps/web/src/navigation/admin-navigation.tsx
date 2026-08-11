@@ -80,7 +80,7 @@ export const adminNavigation: NavigationSection[] = [
 				icon: <CalendarIcon />,
 				match: {
 					mode: "pattern",
-					pattern: /^\/admin\/events(?:\/(?:jeopardy|awd)\/[^/]+(?:\/.*)?)?$/,
+					pattern: /^\/admin\/events(?:\/(?:jeopardy|awd|awdp)\/[^/]+(?:\/.*)?)?$/,
 				},
 			}),
 		],

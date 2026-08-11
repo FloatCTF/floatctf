@@ -67,6 +67,7 @@ pub async fn patch_awdp_config(
 pub async fn start_awdp_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
@@ -102,6 +103,7 @@ pub async fn start_awdp_event(
 pub async fn break_to_fix(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
@@ -113,14 +115,16 @@ pub async fn break_to_fix(
         event_id,
     )
     .await?;
+    crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "break");
     UniResponse::ok_none().into()
 }
 
-/// POST /api/admin/events/{event_id}/awdp/finish —— 手动结束（Fix → Ended）。
+/// POST /api/admin/events/{event_id}/awdp/break-to-fix —— 手动结束（Fix → Ended）。
 #[post("{event_id}/awdp/finish")]
 pub async fn finish_awdp_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
@@ -137,6 +141,7 @@ pub async fn finish_awdp_event(
         },
     )
     .await?;
+    crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "ended");
     UniResponse::ok_none().into()
 }
 

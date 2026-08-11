@@ -1,10 +1,12 @@
-import { Spinner } from "@primer/react";
+import { Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { createContext } from "react";
 
 import { adminApi } from "@/api";
+import { awdpAdminApi } from "@/api/awdp";
 import type { Events } from "@/entity";
+import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
 
 export const Route = createFileRoute("/admin/events/awdp/$id")({
 	component: RouteComponent,
@@ -18,8 +20,14 @@ function RouteComponent() {
 		queryKey: ["event", id],
 		queryFn: () => adminApi.events.get(id),
 	});
+	const configQuery = useQuery({
+		queryKey: ["awdp-config", id],
+		queryFn: () => awdpAdminApi.getConfig(id),
+		retry: false,
+	});
 
 	const event = eventQuery.data?.data;
+	const configured = Boolean(configQuery.data?.data);
 
 	if (eventQuery.isLoading) {
 		return <Spinner size="large" />;
@@ -33,6 +41,24 @@ function RouteComponent() {
 			<h3>
 				{event.title} #{event.id}
 			</h3>
+			<UnderlineNav aria-label="AWDP Event">
+				<RouterNavItem to="/admin/events/awdp/$id/configure" params={{ id }}>
+					Configure
+				</RouterNavItem>
+				{configured && (
+					<>
+						<RouterNavItem to="/admin/events/awdp/$id/gameboxes" params={{ id }}>
+							GameBoxes
+						</RouterNavItem>
+						<RouterNavItem to="/admin/events/awdp/$id/instances" params={{ id }}>
+							Instances
+						</RouterNavItem>
+						<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
+							Ops
+						</RouterNavItem>
+					</>
+				)}
+			</UnderlineNav>
 			<EventContext.Provider value={event}>
 				<Outlet />
 			</EventContext.Provider>

@@ -9,6 +9,7 @@
 
 pub mod api;
 pub mod domain;
+pub mod realtime;
 pub mod repo;
 pub mod service;
 

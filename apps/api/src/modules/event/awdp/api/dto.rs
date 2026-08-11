@@ -266,3 +266,28 @@ pub struct ManualCheckDto {
     pub judge_ok: bool,
     pub judge_detail: String,
 }
+
+/// 回合时间线 DTO。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpRoundDto {
+    pub id: Uuid,
+    pub sequence: i32,
+    pub starts_at: DateTime<FixedOffset>,
+    pub cutoff_at: DateTime<FixedOffset>,
+    pub status: String,
+}
+
+/// 我的评估历史 DTO。
+#[derive(Debug, Clone, Serialize)]
+pub struct AwdpEvaluationDto {
+    pub id: Uuid,
+    pub instance_id: Uuid,
+    pub event_gamebox_id: Uuid,
+    pub fix_round_id: Option<Uuid>,
+    pub round_sequence: Option<i32>,
+    pub kind: crate::entity::sea_orm_active_enums::AwdpEvaluationKind,
+    pub status: crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
+    pub healthcheck_result: Option<String>,
+    pub judge_result: Option<String>,
+    pub finished_at: Option<DateTime<FixedOffset>>,
+}

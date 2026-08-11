@@ -150,6 +150,281 @@ async fn seed_competition_run_in_break(
     (event.id, run.id)
 }
 
+async fn seed_awdp_gamebox(
+    db: &sea_orm::DatabaseConnection,
+    tag: &str,
+    healthchecks_json: serde_json::Value,
+    attach_to: Option<Uuid>,
+) -> Uuid {
+    let now = chrono::Utc::now().into();
+    let gb_id = Uuid::new_v4();
+    let gb = gameboxes::ActiveModel {
+        id: Set(gb_id),
+        name: Set(format!("awdp-gb-{tag}")),
+        safe_name: Set(format!(
+            "awdp-it-gb-{tag}-{}",
+            &Uuid::new_v4().to_string()[..8]
+        )),
+        category: Set("web".into()),
+        description: Set(String::new()),
+        hidden: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+        version: Set(Some("1.0.3".into())),
+        source_toml: Set(None),
+        spec_json: Set(Some(serde_json::json!({}))),
+        spec_digest: Set(Some("spec".into())),
+        package_digest: Set(Some("pkg".into())),
+        image_ref: Set(Some(IMAGE_REF.into())),
+        image_id: Set(Some(IMAGE_ID.into())),
+        image_repo_digest: Set(None),
+        username: Set(Some("floatctf".into())),
+        recommended_cpu_millis: Set(1000),
+        recommended_memory_bytes: Set(512 * 1024 * 1024),
+        recommended_pids_limit: Set(100),
+        healthchecks_json: Set(Some(healthchecks_json)),
+        judge_script_name: Set(None),
+        judge_script_content: Set(None),
+        judge_args_json: Set(None),
+        judge_timeout_secs: Set(None),
+        judge_retry_interval_secs: Set(None),
+        build_status: Set(Some("ready".into())),
+        build_error: Set(None),
+        awdp_source_code_dir: Set(Some("/var/www/html".into())),
+        awdp_exploit_script_name: Set(Some("exploit.py".into())),
+        awdp_exploit_script_content: Set(Some("x".into())),
+        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.zip"))),
+        awdp_source_artifact_digest: Set(Some("deadbeef".into())),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    if let Some(event_id) = attach_to {
+        event_gamebox_repo::attach_gamebox(db, event_id, gb.id, false)
+            .await
+            .expect("attach awdp gamebox");
+    }
+    gb.id
+}
+
+#[tokio::test]
+async fn multi_endpoints_and_duplicate_port_dedup() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+
+    // 1. 同一容器按 healthchecks 暴露 HTTP 80 + TCP 9999 → 2 个端点（§80）。
+    let (ev_a, run_a) = seed_competition_run_in_break(&db, "ep2").await;
+    let gb_a = seed_awdp_gamebox(
+        &db,
+        "ep2",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200},
+            {"type": "tcp", "port": 9999}
+        ]),
+        Some(ev_a),
+    )
+    .await;
+    let user_a = seed_user(&db, "ep2").await;
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        run_a,
+        gb_a,
+        Subject::user(user_a),
+        "flag",
+    )
+    .await
+    .expect("start multi-ep instance");
+    assert_eq!(view.endpoints.len(), 2, "HTTP80+TCP9999 → 2 endpoints");
+    let mut pairs: Vec<(String, u16)> = view
+        .endpoints
+        .iter()
+        .map(|e| (e.protocol.clone(), e.container_port))
+        .collect();
+    pairs.sort();
+    assert_eq!(pairs[0], ("http".to_string(), 80));
+    assert_eq!(pairs[1], ("tcp".to_string(), 9999));
+    assert!(view.endpoints.iter().all(|e| e.public_port > 0));
+
+    // 2. 重复 HTTP 80 healthcheck → 去重为 1 个发布端口（§80，runtime 纵深防御）。
+    let (ev_b, run_b) = seed_competition_run_in_break(&db, "dup80").await;
+    let gb_b = seed_awdp_gamebox(
+        &db,
+        "dup80",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200},
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
+        ]),
+        Some(ev_b),
+    )
+    .await;
+    let user_b = seed_user(&db, "dup80").await;
+    let view_b = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        run_b,
+        gb_b,
+        Subject::user(user_b),
+        "flag",
+    )
+    .await
+    .expect("start dup instance");
+    assert_eq!(view_b.endpoints.len(), 1, "重复 HTTP80 → 1 个发布端口");
+    assert_eq!(view_b.endpoints[0].protocol, "http");
+    assert_eq!(view_b.endpoints[0].container_port, 80);
+
+    // reset 后端点分配保留（§80，跨 recreate 稳定）。
+    let v2 = runtime::reset_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        view_b.instance_id,
+        Subject::user(user_b),
+        "flag",
+    )
+    .await
+    .expect("reset");
+    assert_eq!(v2.endpoints.len(), 1);
+    assert_eq!(v2.endpoints[0].public_port, view_b.endpoints[0].public_port);
+
+    // 清理顺序：先停容器，再删事件（级联 run/实例），最后删 gamebox。
+    let _ = runtime::stop_instance(&db, &docker, view.instance_id, Subject::user(user_a)).await;
+    let _ = runtime::stop_instance(&db, &docker, v2.instance_id, Subject::user(user_b)).await;
+    cleanup(&db, ev_a).await;
+    cleanup(&db, ev_b).await;
+}
+
+#[tokio::test]
+async fn different_gameboxes_score_independently() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+
+    // 两个独立 practice run（不同 gamebox），同一用户分别 Break（§81 独立得分）。
+    let user_id = seed_user(&db, "indgb").await;
+    let gb_a = seed_awdp_gamebox(
+        &db,
+        "indgb-a",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
+        ]),
+        None,
+    )
+    .await;
+    let gb_b = seed_awdp_gamebox(
+        &db,
+        "indgb-b",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
+        ]),
+        None,
+    )
+    .await;
+
+    let run_a = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db, &docker, JWT_SECRET, user_id, gb_a, "flag",
+    )
+    .await
+    .expect("start A");
+    let run_b = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db, &docker, JWT_SECRET, user_id, gb_b, "flag",
+    )
+    .await
+    .expect("start B");
+    assert_ne!(run_a.id, run_b.id, "不同 gamebox = 不同 run");
+
+    let subject = Subject::user(user_id);
+    let va = runtime::get_my_instance_view(&db, run_a.id, gb_a, subject)
+        .await
+        .unwrap()
+        .expect("view A");
+    let vb = runtime::get_my_instance_view(&db, run_b.id, gb_b, subject)
+        .await
+        .unwrap()
+        .expect("view B");
+    let fa = fetch_flag_with_retry(&format!(
+        "http://{}:{}/flag.php",
+        va.endpoints[0].public_host, va.endpoints[0].public_port
+    ))
+    .await;
+    let fb = fetch_flag_with_retry(&format!(
+        "http://{}:{}/flag.php",
+        vb.endpoints[0].public_host, vb.endpoints[0].public_port
+    ))
+    .await;
+    assert_ne!(fa, fb, "不同 gamebox 的 flag 不同（run×gamebox 派生）");
+
+    let ra = break_service::submit_flag(&db, JWT_SECRET, run_a.id, gb_a, &fa, subject)
+        .await
+        .expect("break A");
+    let rb = break_service::submit_flag(&db, JWT_SECRET, run_b.id, gb_b, &fb, subject)
+        .await
+        .expect("break B");
+    assert!(ra.accepted && ra.scored, "A 独立得分: {ra:?}");
+    assert!(rb.accepted && rb.scored, "B 独立得分: {rb:?}");
+
+    // A 的 flag 不能用于 B（不同 gamebox → 不同 flag）。
+    let rb_misuse = break_service::submit_flag(&db, JWT_SECRET, run_b.id, gb_b, &fa, subject)
+        .await
+        .expect("cross gamebox flag");
+    assert!(!rb_misuse.accepted, "跨 gamebox flag 必须拒绝");
+
+    let row_a = run_repo::require_by_id(&db, run_a.id).await.unwrap();
+    let row_b = run_repo::require_by_id(&db, run_b.id).await.unwrap();
+    assert_eq!(
+        score_repo::my_total(&db, run_a.id, Some(user_id), None)
+            .await
+            .unwrap(),
+        row_a.break_score,
+        "run A 得分 = break_score"
+    );
+    assert_eq!(
+        score_repo::my_total(&db, run_b.id, Some(user_id), None)
+            .await
+            .unwrap(),
+        row_b.break_score,
+        "run B 得分 = break_score（与 A 相互独立）"
+    );
+
+    let _ = runtime::stop_instance(&db, &docker, va.instance_id, subject).await;
+    let _ = runtime::stop_instance(&db, &docker, vb.instance_id, subject).await;
+    // practice run 无 event 可级联：显式删 run（级联域表），再删 gamebox。
+    let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run_a.id)
+        .exec(&db)
+        .await;
+    let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run_b.id)
+        .exec(&db)
+        .await;
+    cleanup(&db, Uuid::nil()).await;
+}
+
 #[tokio::test]
 async fn individual_start_flag_break_and_idempotency() {
     let _serial = TEST_SERIAL.lock().unwrap();

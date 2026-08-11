@@ -10,11 +10,14 @@ use uuid::Uuid;
 use fcmc::ContainerRuntime;
 use floatctf::entity::{
     events, gameboxes,
-    sea_orm_active_enums::{AwdpPhase, EventFamily, EventPurpose, ParticipantMode},
+    sea_orm_active_enums::{
+        AwdpEvaluationKind, AwdpEvaluationStatus, AwdpPhase, EventFamily, EventPurpose,
+        ParticipantMode,
+    },
 };
 use floatctf::modules::event::awdp::{
     domain::AwdpConfig,
-    repo::{event_gamebox_repo, event_repo, patch_repo, run_repo, score_repo},
+    repo::{evaluation_repo, event_gamebox_repo, event_repo, patch_repo, run_repo, score_repo},
     service::{
         event_service, patch_service,
         runtime::{self, Subject},
@@ -279,7 +282,7 @@ exit 0
     assert_eq!(sub.status, "failed");
     assert_eq!(sub.exit_code, Some(1));
 
-    // 3. 写入标记的 patch → reset → pristine 容器中标记消失 + 端点不变 + generation+1。
+    // 3. 写入标记的 patch → restart 保留 → reset → pristine 容器中标记消失 + 端点不变 + generation+1。
     let marker_patch = "#!/bin/sh\necho marker > /tmp/awdp-marker\nexit 0\n";
     let r = patch_service::apply_patch(
         &db,
@@ -292,6 +295,40 @@ exit 0
     .await
     .expect("marker patch");
     assert_eq!(r, patch_service::PatchResult::Applied);
+
+    // §83：APPLIED 后同容器 restart（patch_service 内部 restart_container）→ 修改保留。
+    let (inst_row, _ext) =
+        floatctf::modules::event::awdp::repo::instance_repo::find_by_instance_id(
+            &db,
+            view.instance_id,
+        )
+        .await
+        .unwrap();
+    let kept = rt
+        .exec(
+            &inst_row.container_name,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "test -f /tmp/awdp-marker".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(10),
+                stdout_limit: 4096,
+                stderr_limit: 4096,
+                stdin: None,
+            },
+        )
+        .await
+        .expect("exec marker check");
+    assert_eq!(
+        kept.exit_code,
+        Some(0),
+        "restart 后 patch 写入的文件必须仍在（writable layer 保留）"
+    );
+
     let view = runtime::reset_instance(&db, &docker, JWT_SECRET, view.instance_id, subject, "flag")
         .await
         .expect("reset");
@@ -328,7 +365,7 @@ exit 0
         .expect("exec marker check");
     assert_eq!(gone.exit_code, Some(0), "reset 后 patch 标记应消失");
 
-    // 4. Manual check：health + judge 通过且不计分。
+    // 4. Manual check：health + judge 通过且不计分（§84）。
     let before = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
@@ -347,6 +384,23 @@ exit 0
         .await
         .unwrap();
     assert_eq!(before, after, "manual check 不计分");
+
+    // §84：manual check 绝不运行 exploit —— exploit_result 恒 NULL；只跑 health+judge。
+    let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
+    let manual = evals
+        .iter()
+        .find(|e| e.kind == AwdpEvaluationKind::Manual)
+        .expect("manual evaluation row");
+    assert_eq!(manual.status, AwdpEvaluationStatus::Patched);
+    assert!(
+        manual.exploit_result.is_none(),
+        "manual check 不运行 exploit"
+    );
+    assert!(
+        manual.healthcheck_result.is_some() && manual.judge_result.is_some(),
+        "manual check 结果必须落库"
+    );
+    assert!(manual.fix_round_id.is_none(), "manual 评估不属于任何回合");
 
     // 5. Break 阶段拒绝 patch（新 run 留在 Break）。
     let (ev2, run2) = seed_event_and_run(&db, "breakgate", ParticipantMode::Individual).await;
@@ -398,7 +452,56 @@ async fn break_to_fix_resets_all_instances() {
     let port = view.endpoints[0].public_port;
     assert_eq!(view.runtime_generation, 1);
 
-    // Break → Fix：实例 pristine reset（gen+1、端点不变）。
+    // §82：Break 阶段容器 writable layer 可修改（转换前存在）。
+    let (inst_row, _ext) =
+        floatctf::modules::event::awdp::repo::instance_repo::find_by_instance_id(
+            &db,
+            view.instance_id,
+        )
+        .await
+        .unwrap();
+    let marker = rt
+        .exec(
+            &inst_row.container_name,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "echo break-marker > /tmp/awdp-break-marker".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(10),
+                stdout_limit: 4096,
+                stderr_limit: 4096,
+                stdin: None,
+            },
+        )
+        .await
+        .expect("write break marker");
+    assert_eq!(marker.exit_code, Some(0));
+    let check = rt
+        .exec(
+            &inst_row.container_name,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "test -f /tmp/awdp-break-marker".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(10),
+                stdout_limit: 4096,
+                stderr_limit: 4096,
+                stdin: None,
+            },
+        )
+        .await
+        .expect("check break marker");
+    assert_eq!(check.exit_code, Some(0), "Break 阶段修改必须存在于容器中");
+
+    // Break → Fix：实例 pristine reset（gen+1、端点不变、Break 可写层消失）。
     event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run_id)
         .await
         .expect("break to fix");
@@ -412,6 +515,40 @@ async fn break_to_fix_resets_all_instances() {
         .expect("view");
     assert_eq!(after.runtime_generation, 2, "break→fix 重置实例");
     assert_eq!(after.endpoints[0].public_port, port, "端点稳定");
+
+    // §82：转换后 Break writable layer 消失（pristine reset）。
+    let (inst_after, _ext2) =
+        floatctf::modules::event::awdp::repo::instance_repo::find_by_instance_id(
+            &db,
+            after.instance_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(inst_after.id, inst_row.id, "logical instance 不变");
+    let gone = rt
+        .exec(
+            &inst_after.container_name,
+            fcmc::ExecOptions {
+                cmd: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "test ! -f /tmp/awdp-break-marker".into(),
+                ],
+                env: vec![],
+                workdir: None,
+                timeout: std::time::Duration::from_secs(10),
+                stdout_limit: 4096,
+                stderr_limit: 4096,
+                stdin: None,
+            },
+        )
+        .await
+        .expect("check marker gone");
+    assert_eq!(
+        gone.exit_code,
+        Some(0),
+        "Break→Fix 后 Break 可写层必须清除（pristine）"
+    );
 
     let _ = events::Entity::delete_by_id(event_id).exec(&db).await;
     let _ = runtime::stop_instance(&db, &docker, after.instance_id, subject).await;

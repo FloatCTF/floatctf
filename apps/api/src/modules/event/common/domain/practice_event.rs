@@ -33,8 +33,8 @@ pub async fn require_practice_jeopardy_event<C: ConnectionTrait>(
 
 /// Idempotent ensure of practice:jeopardy system event.
 ///
-/// Fresh insert always uses [`PRACTICE_JEOPARDY_EVENT_ID`] (well-known UUID
-/// `00000000-0000-0000-0000-000000000001`, same style as scheduler seed tasks).
+/// Fresh insert always uses [`PRACTICE_JEOPARDY_EVENT_ID`] from
+/// `core::system_ids` (Rust well-known id, same pattern as scheduler seeds).
 /// Existing rows are returned as-is (id remapped by migration if needed).
 pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,

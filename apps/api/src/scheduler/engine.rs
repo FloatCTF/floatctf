@@ -361,30 +361,10 @@ impl TaskScheduler {
     }
 
     pub async fn seed_startup_tasks(&self) -> Result<()> {
-        let startup_tasks: Vec<(&str, &str, TaskKey, &str)> = vec![
-            (
-                "00000000-0000-0000-0000-000000000000",
-                "检查练习event",
-                TaskKey::CheckPracticeEvent,
-                "startup",
-            ),
-            (
-                "00000000-0000-0000-0000-000000000001",
-                "实例清理",
-                TaskKey::CleanInstances,
-                "startup",
-            ),
-            (
-                "00000000-0000-0000-0000-000000000002",
-                "RUSTFS文件清理",
-                TaskKey::CleanRustfs,
-                "cron",
-            ),
-        ];
-
-        for (id_str, name, key, trigger_type) in startup_tasks {
-            let id = Uuid::parse_str(id_str).map_err(|_| anyhow!("无效的 UUID: {}", id_str))?;
-
+        // Well-known ids live in `core::system_ids` (Rust is source of truth).
+        for &(id, name, task_key, trigger_type) in
+            crate::core::system_ids::startup_scheduled_task_seeds()
+        {
             let exists = scheduled_tasks::Entity::find_by_id(id)
                 .one(self.db.get_ref())
                 .await?;
@@ -395,7 +375,7 @@ impl TaskScheduler {
                 let startup_model = scheduled_tasks::ActiveModel {
                     id: ActiveValue::Set(id),
                     task_name: ActiveValue::Set(name.to_string()),
-                    task_key: ActiveValue::Set(key.to_string()),
+                    task_key: ActiveValue::Set(task_key.to_string()),
                     trigger_type: ActiveValue::Set(trigger_type.to_string()),
                     status: ActiveValue::Set("pending".to_string()),
                     created_at: ActiveValue::Set(Utc::now().into()),
@@ -404,7 +384,7 @@ impl TaskScheduler {
                 };
 
                 startup_model.insert(self.db.get_ref()).await?;
-                info!("[Init] 任务 '{}' 成功录入数据库", name);
+                info!("[Init] 任务 '{}' 成功录入数据库 id={}", name, id);
             }
         }
         Ok(())

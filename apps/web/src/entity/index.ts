@@ -27,6 +27,7 @@ export * from "./awdp_events";
 export * from "./awdp_fix_rounds";
 export * from "./awdp_instances";
 export * from "./awdp_patch_submissions";
+export * from "./awdp_run_writeups";
 export * from "./awdp_runs";
 export * from "./awdp_score_events";
 export * from "./challenge_instances";

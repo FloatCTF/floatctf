@@ -436,7 +436,9 @@ Get user's practice instance for a challenge.
 - `filter`: JSON filter expression (optional)
   - `id`: Filter by event ID
   - `title`: Filter by title (contains)
-  - `type`: Filter by event type (`JeopardyPractice`, `JeopardySingle`, `JeopardyTeam`)
+  - `family`: Filter by EventFamily (`jeopardy`, `awd`)
+  - `purpose`: Filter by EventPurpose (`practice`, `competition`)
+  - `participant_mode`: Filter by ParticipantMode (`individual`, `team`)
   - `allow_join`: Filter by allow_join boolean
 
 **Response:** `UniResponse<Vec<EventInfo>>`
@@ -1284,7 +1286,9 @@ Import challenges from ZIP or base64-encoded TOML.
 - `limit`: Items per page (optional)
 - `filter`: JSON filter (optional)
   - `id`: Filter by event ID
-  - `type`: Filter by event type
+  - `family`: Filter by EventFamily
+  - `purpose`: Filter by EventPurpose
+  - `participant_mode`: Filter by ParticipantMode
   - `title`: Filter by title (contains)
   - `hidden`: Filter by hidden status
   - `allow_join`: Filter by allow_join status
@@ -1307,16 +1311,22 @@ Import challenges from ZIP or base64-encoded TOML.
 **Request Body:**
 ```json
 {
-  "type": "JeopardyPractice | JeopardySingle | JeopardyTeam",
+  "family": "jeopardy | awd",
+  "participant_mode": "individual | team",
   "title": "string",
   "description": "string|null",
   "hidden": false,
   "allow_join": true | false,
   "rules": "string",
+  "flag_prefix": "string|null",
   "start_time": "datetime",
   "end_time": "datetime"
 }
 ```
+
+Admin create is always **Competition** (`purpose` is forced server-side).  
+Allowed combinations: Jeopardy×Individual, Jeopardy×Team, Awd×Team.  
+Practice is system-managed (`system_key=practice:jeopardy`) and cannot be created here.
 
 **Response:** `UniResponse<events::Model>`
 
@@ -1343,7 +1353,6 @@ Import challenges from ZIP or base64-encoded TOML.
 **Request Body:**
 ```json
 {
-  "type": "JeopardyPractice | JeopardySingle | JeopardyTeam", // optional
   "title": "string",   // optional
   "description": "string",  // optional
   "hidden": true | false,   // optional
@@ -1354,6 +1363,9 @@ Import challenges from ZIP or base64-encoded TOML.
   "end_time": "datetime" // optional
 }
 ```
+
+`family` / `purpose` / `participant_mode` / `system_key` are **immutable** and not patchable.  
+System-managed events (`system_key` set) reject ordinary admin PATCH entirely.
 
 **Response:** `UniResponse<events::Model>`
 
@@ -1832,35 +1844,44 @@ Import challenges from ZIP or base64-encoded TOML.
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Uuid | Primary key |
-| type | EventType | Event type enum |
+| family | EventFamily | `jeopardy` / `awd` |
+| purpose | EventPurpose | `practice` / `competition` |
+| participant_mode | ParticipantMode | `individual` / `team` |
+| system_key | Option<String> | System-managed key (e.g. `practice:jeopardy`); NULL for ordinary events |
 | title | String | Event title |
 | description | Option<String> | Event description |
 | hidden | bool | Whether event is hidden |
 | allow_join | bool | Whether users can join |
 | rules | String | Event rules |
 | start_time | DateTimeWithTimeZone | Start time |
-| end_time | DateTimeWithTimeZone | End time |
+| end_time | Option<DateTimeWithTimeZone> | End time (`NULL` for Practice) |
 | flag_prefix | Option<String> | Custom flag prefix |
 
-### EventType Enum
+### EventMode (Family × Purpose × ParticipantMode)
 
-| Value | Description |
-|-------|-------------|
-| `JeopardyPractice` | Practice mode (solo) |
-| `JeopardySingle` | Competitive single-player |
-| `JeopardyTeam` | Competitive team-based |
+Allowed combinations:
 
-### instances::Model
+| family | purpose | participant_mode |
+|--------|---------|------------------|
+| jeopardy | practice | individual |
+| jeopardy | competition | individual |
+| jeopardy | competition | team |
+| awd | competition | team |
+
+Practice is system-managed via `system_key = practice:jeopardy` (not created by admin).
+
+### challenge_instances::Model
 
 | Field | Type | Description |
 |-------|------|-------------|
 | id | Uuid | Primary key |
 | challenge_id | Uuid | Related challenge |
-| user_id | Uuid | Instance owner |
-| gamebox_id | Option<Uuid> | Gamebox reference |
+| user_id | Uuid | Launcher / requester |
+| event_id | Uuid | Owning event (Practice uses system Practice event) |
+| team_id | Option<Uuid> | Team owner when participant_mode=team; NULL for individual |
 | status | InstanceStatus | Running/Stopped/Error |
 | flag | String | Instance flag |
-| ref | String | Reference type (JeopardyPractice, event_id, etc.) |
+| identifier | String | Container/instance identifier |
 | created_at | DateTimeWithTimeZone | Creation timestamp |
 | updated_at | DateTimeWithTimeZone | Last update timestamp |
 

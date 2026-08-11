@@ -144,7 +144,7 @@ type EventState = EventStatus;
 
 function eventState(event: {
 	start_time: string;
-	end_time: string;
+	end_time?: string | null;
 }): EventState {
 	return computeEventStatus(event.start_time, event.end_time);
 }
@@ -416,7 +416,7 @@ function StatBlocks({
 
 function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 	const state = eventState(event);
-	const isAwd = event.event_type.startsWith("awd/");
+	const isAwd = event.family === "awd";
 	const href = isAwd
 		? `/admin/events/awd/${event.event_id}`
 		: `/admin/events/jeopardy/${event.event_id}`;
@@ -430,11 +430,15 @@ function EventRow({ event }: { event: DashboardSummary["events"][number] }) {
 
 	let rightText: string;
 	if (state === "ongoing") {
-		rightText = `剩 ${timeDelta(new Date(event.end_time).getTime())}`;
+		rightText = event.end_time
+			? `剩 ${timeDelta(new Date(event.end_time).getTime())}`
+			: "进行中";
 	} else if (state === "upcoming") {
 		rightText = timeDelta(new Date(event.start_time).getTime());
 	} else {
-		rightText = `结束 ${timeDelta(new Date(event.end_time).getTime())}`;
+		rightText = event.end_time
+			? `结束 ${timeDelta(new Date(event.end_time).getTime())}`
+			: "已结束";
 	}
 
 	return (

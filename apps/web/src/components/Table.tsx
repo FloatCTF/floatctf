@@ -54,6 +54,10 @@ export type MutationColumn = {
     header: string;
     field: string;
     render: ReactElement;
+    /** Only shown in the Add dialog (immutable identity fields, etc.). */
+    createOnly?: boolean;
+    /** Only shown in the Modify dialog. */
+    editOnly?: boolean;
 };
 export type BannerState = {
     isShown: boolean;
@@ -351,7 +355,20 @@ export const GenericTable = <T extends object>({
                     position="right"
                 >
                     <div className="w-full gap-1 flex-col flex">
-                        {mutationColumns?.map((column) => (
+                        {mutationColumns
+                            ?.filter((column) => {
+                                if (dialogMode === "add" && column.editOnly) {
+                                    return false;
+                                }
+                                if (
+                                    dialogMode === "modify" &&
+                                    column.createOnly
+                                ) {
+                                    return false;
+                                }
+                                return true;
+                            })
+                            .map((column) => (
                             <FormControl key={column.field} className="w-full">
                                 <FormControl.Label>
                                     {column.field}

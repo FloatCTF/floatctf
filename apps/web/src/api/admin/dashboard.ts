@@ -31,9 +31,11 @@ export type DashboardSummary = {
 	events: Array<{
 		event_id: string;
 		title: string;
-		event_type: string;
+		family: string;
+		purpose: string;
+		participant_mode: string;
 		start_time: string;
-		end_time: string;
+		end_time: string | null;
 		hidden: boolean;
 		awd: {
 			status: string;

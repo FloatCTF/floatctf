@@ -171,3 +171,81 @@ impl JeopardyVariant {
 
 /// System-managed Practice event key.
 pub const PRACTICE_JEOPARDY_SYSTEM_KEY: &str = "practice:jeopardy";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legal_modes_validate() {
+        for mode in [
+            EventMode::jeopardy_practice(),
+            EventMode::jeopardy_individual_competition(),
+            EventMode::jeopardy_team_competition(),
+            EventMode::awd_team_competition(),
+        ] {
+            assert!(mode.validate().is_ok(), "{mode:?}");
+            assert!(
+                EventMode::new(
+                    mode.family.clone(),
+                    mode.purpose.clone(),
+                    mode.participant_mode.clone()
+                )
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn illegal_modes_reject() {
+        let illegal = [
+            (
+                EventFamily::Jeopardy,
+                EventPurpose::Practice,
+                ParticipantMode::Team,
+            ),
+            (
+                EventFamily::Awd,
+                EventPurpose::Practice,
+                ParticipantMode::Team,
+            ),
+            (
+                EventFamily::Awd,
+                EventPurpose::Competition,
+                ParticipantMode::Individual,
+            ),
+            (
+                EventFamily::Awd,
+                EventPurpose::Practice,
+                ParticipantMode::Individual,
+            ),
+            (
+                EventFamily::Jeopardy,
+                EventPurpose::Practice,
+                ParticipantMode::Team, // duplicate explicit for clarity
+            ),
+        ];
+        // Dedup last duplicate is fine; assert all reject.
+        for (family, purpose, participant_mode) in illegal {
+            let err = EventMode::new(family, purpose, participant_mode);
+            assert!(err.is_err(), "expected invalid: {err:?}");
+        }
+    }
+
+    #[test]
+    fn jeopardy_variant_mapping() {
+        assert_eq!(
+            EventMode::jeopardy_practice().jeopardy_variant(),
+            Some(JeopardyVariant::Practice)
+        );
+        assert_eq!(
+            EventMode::jeopardy_individual_competition().jeopardy_variant(),
+            Some(JeopardyVariant::IndividualCompetition)
+        );
+        assert_eq!(
+            EventMode::jeopardy_team_competition().jeopardy_variant(),
+            Some(JeopardyVariant::TeamCompetition)
+        );
+        assert_eq!(EventMode::awd_team_competition().jeopardy_variant(), None);
+    }
+}

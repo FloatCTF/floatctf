@@ -158,6 +158,8 @@ function RouteComponent() {
 		{
 			header: "Family",
 			field: "family",
+			// Identity is immutable after create — only show on Add.
+			createOnly: true,
 			render: (
 				<Select
 					value={mutationEvent.family}
@@ -177,6 +179,7 @@ function RouteComponent() {
 		{
 			header: "Participant",
 			field: "participant_mode",
+			createOnly: true,
 			render: (
 				<Select
 					value={mutationEvent.participant_mode}
@@ -288,7 +291,17 @@ function RouteComponent() {
 			queryFn={adminApi.events.fetch}
 			createFn={adminApi.events.create}
 			removeFn={adminApi.events.remove}
-			patchFn={adminApi.events.patch}
+			patchFn={async (data) => {
+				// Never send immutable mode identity on patch (backend rejects changes too).
+				const {
+					family: _family,
+					purpose: _purpose,
+					participant_mode: _participant_mode,
+					system_key: _system_key,
+					...rest
+				} = data as Partial<Events>;
+				return adminApi.events.patch(rest);
+			}}
 			mutationColumns={mutationColumns}
 			mutationData={mutationEvent}
 		/>

@@ -16,6 +16,10 @@ pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     let attachment_dir = challenge_dir.join("attachment");
     fs::create_dir_all(&attachment_dir).context("Failed to create attachment directory")?;
 
+    // attachment/note.txt — 附件示例（与 examples/test_c 同形态）
+    fs::write(attachment_dir.join("note.txt"), "just test attachment")
+        .context("Failed to write attachment/note.txt")?;
+
     // meta.toml (v1 manifest — strict deny_unknown_fields)
     let meta_content = format!(
         r#"name = "{name}"
@@ -28,7 +32,7 @@ description = "Challenge description" # modify
 # safe_name = "easy-web-01"
 
 # Optional: 附件路径（必须位于 attachment/ 目录下）
-# attachment = "attachment/src.zip"
+attachment = "attachment/note.txt"
 
 [flag]
 type = "dynamic"

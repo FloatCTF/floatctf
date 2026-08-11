@@ -23,6 +23,10 @@ fn challenge_template_generates_files() {
     assert!(dir.join("src/entrypoint.sh").exists());
     assert!(dir.join("src/index.php").exists());
     assert!(dir.join("attachment").exists());
+    assert!(
+        dir.join("attachment/note.txt").exists(),
+        "template must scaffold a sample attachment file (mirrors examples/test_c)"
+    );
 }
 
 #[test]
@@ -41,6 +45,11 @@ fn challenge_template_meta_is_v1_and_roundtrips() {
     assert!(content.contains("type = \"dynamic\""));
     assert!(content.contains("[docker]"));
     assert!(content.contains("port = 80"));
+    // attachment is enabled by default and points to the scaffolded sample file
+    assert!(
+        content.contains("attachment = \"attachment/note.txt\""),
+        "template meta.toml must enable attachment (mirrors examples/test_c)"
+    );
     // no legacy fields
     assert!(!content.contains("image_tag"));
     assert!(!content.contains("env_var"));

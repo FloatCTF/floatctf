@@ -131,7 +131,7 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
       <name>/src/entrypoint.sh   # 动态 flag 写入 /flag 后 unset FLAG 再 exec
       <name>/src/flag            # 占位 flag（运行时动态覆盖）
       <name>/src/index.php       # 读取 /flag 的示例应用
-      <name>/attachment/         # 附件目录（留空，可放 src.zip）
+      <name>/attachment/note.txt  # 附件示例（可替换为 src.zip 等真实附件）
 
     GameBox（-f gamebox）:
       <name>/meta.toml
@@ -202,7 +202,7 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
     category = "web"
     description = "Challenge description"
     # safe_name = "easy-web-01"     # 可选；缺省派生
-    # attachment = "attachment/src.zip"  # 可选附件
+    attachment = "attachment/note.txt"  # 可选附件（模板默认启用，指向 attachment/ 下文件）
 
     [flag]
     type = "dynamic"

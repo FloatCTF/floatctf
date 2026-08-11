@@ -24,3 +24,18 @@ impl From<challenge_writeup::Model> for ChallengeWriteupDto {
         }
     }
 }
+
+/// 全局 Writeup 列表统一条目（challenge + gamebox 合并；列表不返回正文）。
+/// `writeup_type` = "challenge" | "gamebox"（内容名分别指题目/GameBox）。
+#[derive(Debug, Serialize)]
+pub struct UnifiedWriteupResult {
+    pub id: Uuid,
+    pub writeup_type: String,
+    pub nickname: String,
+    pub avatar: Option<String>,
+    pub email: String,
+    /// challenge.id 或 gamebox.id（practice run 的 gamebox）。
+    pub content_id: Uuid,
+    pub content_name: String,
+    pub updated_at: DateTimeWithTimeZone,
+}

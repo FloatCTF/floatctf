@@ -1,11 +1,11 @@
 //! Writeup 相关能力。
 
 pub mod dto;
-pub use dto::ChallengeWriteupDto;
+pub use dto::{ChallengeWriteupDto, UnifiedWriteupResult};
 
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenge_writeup, challenges, users},
+    entity::{awdp_run_writeups, awdp_runs, challenge_writeup, challenges, gameboxes, users},
 };
 use sea_orm::Condition;
 use std::str::FromStr;
@@ -206,9 +206,10 @@ pub async fn get_writeups(
     user: UserJwtGuard,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
-) -> UniResult<Vec<ChallengeWriteupResult>> {
-    let user = user.into_inner();
+) -> UniResult<Vec<UnifiedWriteupResult>> {
+    let me = user.into_inner();
     let mut query_params = query_params.0;
+    let db = ctx.db.get_ref();
 
     let mappings = [
         FilterMapping {
@@ -230,47 +231,83 @@ pub async fn get_writeups(
         },
     ];
 
+    // 1. challenge writeups（公开）。
     let stmt = challenge_writeup::Entity::find();
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
     let stmt = stmt.order_by_desc(challenge_writeup::Column::CreatedAt);
+    let items = stmt.all(db).await?;
 
-    let (items, total_items) =
-        if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
-            paginate_query(stmt, ctx.db.get_ref(), limit, page).await?
-        } else {
-            let items = stmt.all(ctx.db.get_ref()).await?;
-            (items.clone(), items.len())
-        };
-
-    let mut results = Vec::new();
-
+    let mut results: Vec<UnifiedWriteupResult> = Vec::new();
     for writeup in items {
         let challenge = challenges::Entity::find_by_id(writeup.challenge_id)
-            .one(ctx.db.get_ref())
+            .one(db)
             .await?
             .ok_or(AppError::NotFound(format!(
                 "Challenge {} not found",
                 writeup.challenge_id
             )))?;
         let user = users::Entity::find_by_id(writeup.user_id)
-            .one(ctx.db.get_ref())
+            .one(db)
             .await?
             .ok_or(AppError::NotFound(format!(
                 "User {} not found",
                 writeup.user_id
             )))?;
-
-        let result = ChallengeWriteupResult {
+        results.push(UnifiedWriteupResult {
+            id: writeup.id,
+            writeup_type: "challenge".into(),
             nickname: user.nickname,
             avatar: user.avatar.clone(),
             email: user.email,
-            challenge,
-            writeup,
-        };
-
-        results.push(result);
+            content_id: challenge.id,
+            content_name: challenge.name,
+            updated_at: writeup.updated_at,
+        });
     }
 
-    query_params.total = Some(total_items);
-    UniResponse::ok_meta(results.into(), query_params.into()).into()
+    // 2. 我自己的 gamebox（practice run）writeups：练习 writeup 仅属主可见（
+    //    run 系接口 owner-only），全局列表也只对本人出现（challenge writeup 是
+    //    公开的，练习不是）。竞赛 run 无 gamebox → 跳过。
+    let my_wps = awdp_run_writeups::Entity::find()
+        .filter(awdp_run_writeups::Column::UserId.eq(me.id))
+        .find_also_related(awdp_runs::Entity)
+        .all(db)
+        .await?;
+    for (wp, run) in my_wps {
+        let Some(run) = run else {
+            continue;
+        };
+        let Some(gb_id) = run.gamebox_id else {
+            continue;
+        };
+        let Some(gb) = gameboxes::Entity::find_by_id(gb_id).one(db).await? else {
+            continue;
+        };
+        results.push(UnifiedWriteupResult {
+            id: wp.run_id,
+            writeup_type: "gamebox".into(),
+            nickname: me.nickname.clone(),
+            avatar: me.avatar.clone(),
+            email: me.email.clone(),
+            content_id: gb.id,
+            content_name: gb.name,
+            updated_at: wp.updated_at,
+        });
+    }
+
+    // 3. 合并排序 + 内存分页（两类行合并后无法用 SQL 分页）。
+    results.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let total: usize = results.len();
+    let total_u64 = total as u64;
+    let page = query_params.page.unwrap_or(1).max(1);
+    let limit = query_params.limit.unwrap_or(total_u64.max(1)).max(1);
+    let start = ((page - 1) as usize) * (limit as usize);
+    let page_items = results
+        .into_iter()
+        .skip(start)
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+
+    query_params.total = Some(total);
+    UniResponse::ok_meta(page_items.into(), query_params.into()).into()
 }

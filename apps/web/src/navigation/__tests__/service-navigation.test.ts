@@ -40,6 +40,7 @@ describe("serviceNavigation", () => {
 				"/service/challenge_sets",
 				"/service/solves",
 				"/service/instances",
+				"/service/gameboxes",
 				"/service/announcements",
 				"/service/discussions",
 				"/service/writeups",

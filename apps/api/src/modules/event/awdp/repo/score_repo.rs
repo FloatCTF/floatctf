@@ -38,12 +38,11 @@ pub async fn create_score_event(
     };
     match model.insert(db).await {
         Ok(_) => Ok(true),
-        Err(sea_orm::DbErr::Exec(inner))
-            if inner
-                .to_string()
+        // 幂等：重复执行不重复加分（照 awd_score_events 模式）。
+        Err(e)
+            if e.to_string()
                 .contains("awdp_score_events_idempotency_key_uidx") =>
         {
-            // 幂等：重复执行不重复加分（照 awd_score_events 模式）。
             Ok(false)
         }
         Err(e) => Err(AwdpError::Database(e.to_string())),
@@ -62,7 +61,12 @@ pub async fn total_for_event(
         .select_only()
         .column_as(awdp_score_events::Column::UserId, "user_id")
         .column_as(awdp_score_events::Column::TeamId, "team_id")
-        .column_as(Expr::col(awdp_score_events::Column::Delta).sum(), "total")
+        .column_as(
+            Expr::col(awdp_score_events::Column::Delta)
+                .sum()
+                .cast_as(sea_orm::sea_query::Alias::new("bigint")),
+            "total",
+        )
         .group_by(awdp_score_events::Column::UserId)
         .group_by(awdp_score_events::Column::TeamId)
         .into_model::<ScoreAggRow>()
@@ -103,7 +107,12 @@ pub async fn my_total(
     }
     let row = q
         .select_only()
-        .column_as(Expr::col(awdp_score_events::Column::Delta).sum(), "total")
+        .column_as(
+            Expr::col(awdp_score_events::Column::Delta)
+                .sum()
+                .cast_as(sea_orm::sea_query::Alias::new("bigint")),
+            "total",
+        )
         .into_model::<TotalRow>()
         .one(db)
         .await

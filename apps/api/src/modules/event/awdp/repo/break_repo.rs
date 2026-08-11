@@ -56,11 +56,11 @@ pub async fn record_break(
     .await;
     match res {
         Ok(_) => Ok(true),
-        Err(sea_orm::DbErr::Exec(inner))
-            if inner.to_string().contains("awdp_breaks_user_uidx")
-                || inner.to_string().contains("awdp_breaks_team_uidx") =>
+        // 并发重放：partial unique 冲突视为“首次已记录”（sea-orm 可能以 Exec 或 Query 变体抛出）。
+        Err(e)
+            if e.to_string().contains("awdp_breaks_user_uidx")
+                || e.to_string().contains("awdp_breaks_team_uidx") =>
         {
-            // 并发重放：已存在视为“首次已记录”。
             Ok(false)
         }
         Err(e) => Err(AwdpError::Database(e.to_string())),

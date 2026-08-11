@@ -13,6 +13,7 @@ RUN apt-get update \
         > /etc/ssh/sshd_config.d/floatctf.conf
 
 COPY index.php /var/www/html/index.php
+COPY flag.php /var/www/html/flag.php
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod 0755 /entrypoint.sh

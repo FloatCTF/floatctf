@@ -10,8 +10,8 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/api")
             .configure(configure_player_routes)
             .service(web::scope("/admin").configure(configure_admin_routes))
-            // AWD player: /api/events/{event_id}/awd/...
-            // 挂进 common 的 /events scope（同组注册，避免同前缀 scope 被吞）
+            // AWD player: 实际匹配路径在 /events scope 内注册（见 configure_player_routes）；
+            // 顶层注册仅为历史兼容（无匹配路径，保留以免破坏既有顺序假设）。
             .configure(crate::modules::event::awd::api::player_routes),
     );
 
@@ -52,11 +52,12 @@ fn configure_player_routes(cfg: &mut ServiceConfig) {
         scope("/instances")
             .configure(crate::modules::event::jeopardy::api::configure_instance_routes),
     );
-    // /api/events scope：common + AWD player 同组注册（AWD 另起 scope 会被前缀吞掉）
+    // /api/events scope：common + AWD/AWDP player 同组注册（另起 scope 会被前缀吞掉）
     cfg.service(
         scope("/events")
             .configure(crate::modules::event::common::api::configure_player_routes)
-            .configure(crate::modules::event::awd::api::player_routes),
+            .configure(crate::modules::event::awd::api::player_routes)
+            .configure(crate::modules::event::awdp::api::player_routes),
     );
 }
 
@@ -80,7 +81,9 @@ fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .configure(crate::modules::event::common::api::configure_admin_routes)
             .configure(crate::modules::event::common::api::configure_admin_nested_routes)
             // AWD 赛事级路由必须与 common 同 scope 注册，否则被吞（见 api/mod.rs 注释）
-            .configure(crate::modules::event::awd::api::admin_events_routes),
+            .configure(crate::modules::event::awd::api::admin_events_routes)
+            // AWDP 赛事级路由同组注册。
+            .configure(crate::modules::event::awdp::api::admin_events_routes),
     );
 
     // AWD 平台级路由（/api/admin/awd/*，无 events 前缀冲突）

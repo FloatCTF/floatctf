@@ -1,6 +1,7 @@
 //! AWDP 领域纯逻辑（无 DB / 无 IO）。
 
 pub mod config;
+pub mod flag;
 pub mod phase;
 pub mod score;
 pub mod timing;

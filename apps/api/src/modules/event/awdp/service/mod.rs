@@ -1,3 +1,4 @@
-//! AWDP 应用服务（Phase D/E/F 逐步填充）。
+//! AWDP 应用服务。
 
-// 后续阶段：instance 生命周期、Break、Patch、Evaluation、Tick 等。
+pub mod break_service;
+pub mod runtime;

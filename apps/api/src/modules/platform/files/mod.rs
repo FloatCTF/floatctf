@@ -3,4 +3,4 @@
 pub mod download;
 pub mod upload;
 
-pub use download::generate_presigned_download_url;
+pub use download::presign_private_download_url;

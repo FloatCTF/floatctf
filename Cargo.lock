@@ -1994,6 +1994,7 @@ dependencies = [
  "tracing-actix-web",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "uuid",
  "x25519-dalek",
  "zip",

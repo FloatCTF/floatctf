@@ -6,7 +6,7 @@ pub mod operations;
 pub mod settings;
 
 pub use announcements::AnnouncementsDto;
-pub use files::generate_presigned_download_url;
+pub use files::presign_private_download_url;
 pub use operations::{LogsDto, ScheduledTasksDto};
 pub use settings::SettingsDto;
 

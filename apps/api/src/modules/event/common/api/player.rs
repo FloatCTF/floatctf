@@ -10,7 +10,7 @@ use crate::{
     api::{apply_filters, prelude::*},
     entity::{challenge_instances, event_announcements, event_teams, event_users, events},
     modules::event::common::application::player_service::{self as svc},
-    modules::platform::files::download::generate_presigned_download_url,
+    modules::platform::files::download::presign_private_download_url,
 };
 
 // Re-export DTOs / adapters for other handlers (admin dashboard, etc.).
@@ -313,13 +313,8 @@ pub async fn get_own_wp(
 ) -> UniResult<String> {
     let user = user.into_inner();
     let file_url = svc::own_writeup_file_url(&ctx.db, *event_id, &user).await?;
-    let signed_url = generate_presigned_download_url(
-        ctx.rustfs,
-        "floatctf-private",
-        &file_url,
-        5 * 60, // 5 minutes
-    )
-    .await
-    .map_err(|e| AppError::Internal(format!("Failed to generate signed URL: {}", e)))?;
-    UniResponse::ok(Some(signed_url)).into()
+    let proxy_url = presign_private_download_url(ctx.rustfs, &file_url, 5 * 60)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to generate signed URL: {}", e)))?;
+    UniResponse::ok(Some(proxy_url)).into()
 }

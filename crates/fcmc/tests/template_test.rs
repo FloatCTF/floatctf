@@ -152,6 +152,7 @@ fn gamebox_template_generates_files() {
     assert!(dir.join("src/Dockerfile").exists());
     assert!(dir.join("src/index.php").exists());
     assert!(dir.join("judge/check.py").exists());
+    assert!(dir.join("awdp/exploit.py").exists());
 }
 
 #[test]
@@ -168,6 +169,11 @@ fn gamebox_template_meta_is_parseable() {
     assert_eq!(meta.version, "1.0.0");
     assert_eq!(meta.gamebox.username, "floatctf");
     assert!(meta.judge.is_some());
+    assert!(meta.awdp.is_some());
+    assert_eq!(
+        meta.awdp.as_ref().unwrap().exploit_script,
+        "awdp/exploit.py"
+    );
     assert!(!meta.gamebox.healthchecks.is_empty());
     // No legacy fields
     let raw = std::fs::read_to_string(tmp.path().join("gb-roundtrip/meta.toml")).unwrap();

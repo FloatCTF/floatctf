@@ -139,6 +139,7 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
       <name>/src/entrypoint.sh   # GAMEBOX_USERNAME/USERPASS 契约（见第 6 节）
       <name>/src/index.php       # SSRF curl 示例页
       <name>/judge/check.py      # judge 脚本占位（不进镜像）
+      <name>/awdp/exploit.py     # AWD-P 攻击脚本占位（不进镜像）
 
   示例:
     fcmc gen -n easy-web
@@ -257,6 +258,9 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
   [judge]（可选，缺省 WARN）:
     script = "judge/check.py"   # 必须位于 judge/ 下，且文件真实存在
 
+  [awdp]（可选，缺省 WARN）:
+    exploit_script = "awdp/exploit.py"   # 必须位于 awdp/ 下，且文件真实存在
+
   完整示例:
     name = "hello-floatctf"
     version = "1.0.0"
@@ -275,6 +279,9 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
 
     [judge]
     script = "judge/check.py"
+
+    [awdp]
+    exploit_script = "awdp/exploit.py"
 
     [gamebox.recommended_resources]
     cpu_millis = 1000

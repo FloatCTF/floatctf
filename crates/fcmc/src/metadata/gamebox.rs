@@ -54,6 +54,9 @@ pub enum GameBoxMetaError {
     #[error("invalid judge script path '{0}': {1}")]
     InvalidJudgePath(String, String),
 
+    #[error("invalid awdp exploit script path '{0}': {1}")]
+    InvalidExploitPath(String, String),
+
     #[error("recommended_resources.{0} must be > 0")]
     InvalidResource(String),
 }
@@ -81,6 +84,9 @@ pub struct GameBoxMeta {
     /// Optional trusted judge script reference (never part of Docker build context).
     #[serde(default)]
     pub judge: Option<JudgeManifest>,
+    /// Optional AWD-P exploit script reference (never part of Docker build context).
+    #[serde(default)]
+    pub awdp: Option<AwdpManifest>,
 }
 
 /// 部分调用方/计划文档偏好的别名。
@@ -131,6 +137,14 @@ pub struct JudgeManifest {
     pub script: String,
 }
 
+/// `[awdp]` section — path to the attack (exploit) script under the package.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AwdpManifest {
+    /// Relative path that must start with `awdp/` (e.g. `awdp/exploit.py`).
+    pub exploit_script: String,
+}
+
 /// 共享的软资源建议（见 [`crate::metadata::RecommendedResources`]）。
 pub use super::RecommendedResources;
 
@@ -151,6 +165,7 @@ pub struct NormalizedGameBoxSpec {
     pub healthchecks: Vec<NormalizedHealthcheck>,
     pub recommended_resources: RecommendedResources,
     pub judge_script: Option<String>,
+    pub exploit_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -199,42 +214,41 @@ pub fn validate_version(version: &str) -> Result<semver::Version, GameBoxMetaErr
 
 /// 校验裁判脚本路径：相对路径、以 `judge/` 开头、无 `..`、非绝对路径。
 pub fn validate_judge_path(path: &str) -> Result<(), GameBoxMetaError> {
+    validate_script_path(path, "judge/", |p, msg| {
+        GameBoxMetaError::InvalidJudgePath(p.to_string(), msg.into())
+    })
+}
+
+/// 校验 AWD-P 攻击脚本路径：相对路径、以 `awdp/` 开头、无 `..`、非绝对路径。
+pub fn validate_awdp_path(path: &str) -> Result<(), GameBoxMetaError> {
+    validate_script_path(path, "awdp/", |p, msg| {
+        GameBoxMetaError::InvalidExploitPath(p.to_string(), msg.into())
+    })
+}
+
+fn validate_script_path(
+    path: &str,
+    prefix: &str,
+    err: impl Fn(&str, &str) -> GameBoxMetaError,
+) -> Result<(), GameBoxMetaError> {
     if path.is_empty() {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "empty path".into(),
-        ));
+        return Err(err(path, "empty path"));
     }
     if path.starts_with('/') || path.starts_with('\\') {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "must be relative".into(),
-        ));
+        return Err(err(path, "must be relative"));
     }
     // Windows drive / UNC
     if path.len() >= 2 && path.as_bytes()[1] == b':' {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "must be relative".into(),
-        ));
+        return Err(err(path, "must be relative"));
     }
-    if !path.starts_with("judge/") {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "must start with 'judge/'".into(),
-        ));
+    if !path.starts_with(prefix) {
+        return Err(err(path, "must start with the expected directory"));
     }
     if path.contains("..") {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "must not contain '..'".into(),
-        ));
+        return Err(err(path, "must not contain '..'"));
     }
-    if path.ends_with('/') || path == "judge/" {
-        return Err(GameBoxMetaError::InvalidJudgePath(
-            path.to_string(),
-            "must point to a file".into(),
-        ));
+    if path.ends_with('/') || path == prefix.trim_end_matches('/') {
+        return Err(err(path, "must point to a file"));
     }
     Ok(())
 }
@@ -352,6 +366,10 @@ impl GameBoxMeta {
             validate_judge_path(&judge.script)?;
         }
 
+        if let Some(ref awdp) = self.awdp {
+            validate_awdp_path(&awdp.exploit_script)?;
+        }
+
         if let Some(ref res) = self.gamebox.recommended_resources {
             if res.cpu_millis <= 0 {
                 return Err(GameBoxMetaError::InvalidResource("cpu_millis".into()));
@@ -438,6 +456,7 @@ impl GameBoxMeta {
             healthchecks,
             recommended_resources,
             judge_script: self.judge.as_ref().map(|j| j.script.clone()),
+            exploit_script: self.awdp.as_ref().map(|a| a.exploit_script.clone()),
         })
     }
 }
@@ -699,5 +718,62 @@ port = 3306
         assert!(validate_judge_path("judge/../x.py").is_err());
         assert!(validate_judge_path("scripts/check.py").is_err());
         assert!(validate_judge_path("judge/").is_err());
+    }
+
+    #[test]
+    fn awdp_path_rules() {
+        assert!(validate_awdp_path("awdp/exploit.py").is_ok());
+        assert!(validate_awdp_path("/awdp/exploit.py").is_err());
+        assert!(validate_awdp_path("awdp/../x.py").is_err());
+        assert!(validate_awdp_path("scripts/exploit.py").is_err());
+        assert!(validate_awdp_path("awdp/").is_err());
+    }
+
+    #[test]
+    fn parse_with_awdp() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[judge]
+script = "judge/check.py"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+"#;
+        let meta = GameBoxMeta::parse_and_validate(toml).unwrap();
+        assert_eq!(meta.judge.as_ref().unwrap().script, "judge/check.py");
+        assert_eq!(
+            meta.awdp.as_ref().unwrap().exploit_script,
+            "awdp/exploit.py"
+        );
+        let norm = meta.normalize().unwrap();
+        assert_eq!(norm.judge_script.as_deref(), Some("judge/check.py"));
+        assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
+    }
+
+    #[test]
+    fn reject_bad_awdp_path() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "judge/exploit.py"
+"#;
+        let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+        assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));
     }
 }

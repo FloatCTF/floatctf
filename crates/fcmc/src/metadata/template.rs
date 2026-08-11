@@ -126,6 +126,10 @@ expected_status = 200
 [judge]
 script = "judge/check.py"
 
+# optional: AWD-P 攻击脚本（必须位于 awdp/ 目录下）
+[awdp]
+exploit_script = "awdp/exploit.py"
+
 [gamebox.recommended_resources]
 cpu_millis = 1000
 memory_bytes = 536870912
@@ -146,14 +150,40 @@ fn write_judge_check_py(judge_dir: &std::path::Path) -> Result<()> {
 
 Trusted by the platform; never baked into the Docker image.
 Exit 0 = service OK, non-zero = down / broken.
+
+用法:
+    python judge/check.py <GameBox IP>
+
+输出（JSON，stdout）:
+    {"success": true}
+    {"success": false, "error": "..."}
 """
+import json
 import sys
+import urllib.request
+
+
+def check(target_ip: str) -> dict:
+    try:
+        with urllib.request.urlopen(f"http://{target_ip}/", timeout=10) as resp:
+            if resp.status == 200:
+                return {"success": True}
+            return {"success": False, "error": f"HTTP {resp.status}"}
+    except Exception as exc:  # 网络/超时/HTTP 错误
+        return {"success": False, "error": str(exc)}
 
 
 def main() -> int:
-    # TODO: probe the target (env/args provided by judgeserver)
-    print("ok")
-    return 0
+    if len(sys.argv) != 2:
+        print(
+            json.dumps(
+                {"success": False, "error": "用法: python judge/check.py <GameBox IP>"}
+            )
+        )
+        return 2
+    result = check(sys.argv[1])
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result.get("success") else 1
 
 
 if __name__ == "__main__":
@@ -161,6 +191,58 @@ if __name__ == "__main__":
 "#,
     )
     .context("Failed to write judge/check.py")?;
+    Ok(())
+}
+
+fn write_awdp_exploit_py(awdp_dir: &std::path::Path) -> Result<()> {
+    use std::fs;
+    fs::create_dir_all(awdp_dir).context("Failed to create awdp directory")?;
+    fs::write(
+        awdp_dir.join("exploit.py"),
+        r#"#!/usr/bin/env python3
+"""GameBox AWD-P attack script (exploit).
+
+Attack the target GameBox and grab its flag.
+Never baked into the Docker image.
+
+用法:
+    python awdp/exploit.py <目标 GameBox IP>
+
+输出（JSON，stdout）:
+    {"success": true, "flag": "flag{...}"}
+    {"success": false, "error": "..."}
+"""
+import json
+import sys
+
+
+def exploit(target_ip: str) -> dict:
+    # TODO: 在这里实现针对目标 GameBox 的实际攻击逻辑，
+    # 例如利用漏洞读取 /flag 或触发 flagserver 发放 flag。
+    raise NotImplementedError("implement the real exploit")
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(
+            json.dumps(
+                {"success": False, "error": "用法: python awdp/exploit.py <目标 GameBox IP>"}
+            )
+        )
+        return 2
+    try:
+        result = exploit(sys.argv[1])
+    except NotImplementedError as exc:
+        result = {"success": False, "error": str(exc)}
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result.get("success") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+"#,
+    )
+    .context("Failed to write awdp/exploit.py")?;
     Ok(())
 }
 
@@ -179,6 +261,7 @@ pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
         .context("Failed to write meta.toml")?;
 
     write_judge_check_py(&gamebox_dir.join("judge"))?;
+    write_awdp_exploit_py(&gamebox_dir.join("awdp"))?;
 
     // Dockerfile — 自包含：php:8.2-apache + openssh-server，SSH 凭据来自 env 契约
     // (GAMEBOX_USERNAME / GAMEBOX_USERPASS，对齐 examples/test_g)。

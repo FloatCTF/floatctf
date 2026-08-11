@@ -539,6 +539,36 @@ fn gamebox_parse_with_judge() {
 }
 
 #[test]
+fn gamebox_parse_with_awdp() {
+    let content =
+        std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta_with_awdp.toml")).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    let awdp = meta.awdp.as_ref().unwrap();
+    assert_eq!(awdp.exploit_script, "awdp/exploit.py");
+    let norm = meta.normalize().unwrap();
+    assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
+}
+
+#[test]
+fn gamebox_reject_awdp_outside_dir() {
+    let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+description = "d"
+
+[gamebox]
+username = "u"
+
+[awdp]
+exploit_script = "scripts/x.py"
+"#;
+    let err = GameBoxMeta::parse_and_validate(toml).unwrap_err();
+    assert!(matches!(err, GameBoxMetaError::InvalidExploitPath(_, _)));
+}
+
+#[test]
 fn gamebox_explicit_valid_safe_name() {
     let toml = r#"
 name = "Easy Web"

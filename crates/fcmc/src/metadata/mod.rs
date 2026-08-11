@@ -39,8 +39,9 @@ pub use challenge::{
     ChallengeMetaError, NormalizedChallengeSpec,
 };
 pub use gamebox::{
-    GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta, GameBoxMetaError,
-    GameBoxSection, JudgeManifest, NormalizedGameBoxSpec, NormalizedHealthcheck,
-    build_gamebox_image_ref, validate_judge_path, validate_safe_name, validate_version,
+    AwdpManifest, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta,
+    GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedGameBoxSpec, NormalizedHealthcheck,
+    build_gamebox_image_ref, validate_awdp_path, validate_judge_path, validate_safe_name,
+    validate_version,
 };
 pub use identity::{ArtifactKind, build_artifact_image_ref, derive_safe_name};

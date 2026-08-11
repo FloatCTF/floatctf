@@ -304,6 +304,31 @@ pub fn check_gamebox(dir: &Path) -> Result<CheckResult> {
                     message: "未配置 [judge]".into(),
                 });
             }
+
+            // awdp exploit script file
+            if let Some(ref awdp) = cfg.awdp {
+                let script_path = dir.join(&awdp.exploit_script);
+                if script_path.exists() {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Ok,
+                        section: "AWDP".into(),
+                        message: format!("exploit 脚本存在: {:?}", script_path),
+                    });
+                } else {
+                    messages.push(CheckMessage {
+                        level: CheckLevel::Err,
+                        section: "AWDP".into(),
+                        message: format!("exploit 脚本不存在: {:?}", script_path),
+                    });
+                    passed = false;
+                }
+            } else {
+                messages.push(CheckMessage {
+                    level: CheckLevel::Warn,
+                    section: "AWDP".into(),
+                    message: "未配置 [awdp]".into(),
+                });
+            }
         }
         Err(e) => {
             messages.push(CheckMessage {

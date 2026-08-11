@@ -6,7 +6,9 @@ pub mod practice_event;
 pub mod time_state;
 
 pub use capability::EventCapabilities;
-pub use event_mode::{EventMode, EventModeError, PRACTICE_JEOPARDY_SYSTEM_KEY};
+pub use event_mode::{
+    EventMode, EventModeError, PRACTICE_JEOPARDY_EVENT_ID, PRACTICE_JEOPARDY_SYSTEM_KEY,
+};
 pub use practice_event::{
     ensure_practice_jeopardy_event, find_practice_jeopardy_event, require_practice_jeopardy_event,
 };

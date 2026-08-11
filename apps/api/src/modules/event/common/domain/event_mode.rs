@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 
@@ -133,8 +134,15 @@ impl EventMode {
     }
 }
 
-/// System-managed Practice event key.
+/// System-managed Practice event key (semantic lookup).
 pub const PRACTICE_JEOPARDY_SYSTEM_KEY: &str = "practice:jeopardy";
+
+/// Well-known Practice event primary key.
+///
+/// Same style as scheduler startup tasks (`…0000` / `…0001` / `…0002` on
+/// `scheduled_tasks`). `events` uses `…0001` so the id is stable across
+/// ensure / fresh bootstrap / rebuild (still resolve by `system_key` in code).
+pub const PRACTICE_JEOPARDY_EVENT_ID: Uuid = Uuid::from_u128(1);
 
 #[cfg(test)]
 mod tests {

@@ -24,7 +24,9 @@ use floatctf::entity::{
 use floatctf::modules::event::common::application::admin_service::{
     self as common_admin, PatchEventRequest,
 };
-use floatctf::modules::event::common::domain::event_mode::PRACTICE_JEOPARDY_SYSTEM_KEY;
+use floatctf::modules::event::common::domain::event_mode::{
+    PRACTICE_JEOPARDY_EVENT_ID, PRACTICE_JEOPARDY_SYSTEM_KEY,
+};
 use floatctf::modules::event::common::domain::practice_event::{
     ensure_practice_jeopardy_event, find_practice_jeopardy_event,
 };
@@ -551,6 +553,7 @@ async fn practice_bootstrap_idempotent_and_fields() {
         .await
         .expect("ensure second");
     assert_eq!(first.id, second.id);
+    assert_eq!(first.id, PRACTICE_JEOPARDY_EVENT_ID);
     assert_eq!(
         first.system_key.as_deref(),
         Some(PRACTICE_JEOPARDY_SYSTEM_KEY)

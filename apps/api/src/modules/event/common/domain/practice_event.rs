@@ -4,15 +4,16 @@ use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
 };
-use uuid::Uuid;
 
 use crate::entity::{
     events,
     sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
 };
-use crate::modules::event::common::domain::event_mode::PRACTICE_JEOPARDY_SYSTEM_KEY;
+use crate::modules::event::common::domain::event_mode::{
+    PRACTICE_JEOPARDY_EVENT_ID, PRACTICE_JEOPARDY_SYSTEM_KEY,
+};
 
-/// Find Practice event by system_key. Never uses Uuid::nil() as semantic key.
+/// Find Practice event by system_key (canonical lookup).
 pub async fn find_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,
 ) -> Result<Option<events::Model>, sea_orm::DbErr> {
@@ -30,7 +31,11 @@ pub async fn require_practice_jeopardy_event<C: ConnectionTrait>(
         .ok_or_else(|| sea_orm::DbErr::RecordNotFound("practice:jeopardy event not found".into()))
 }
 
-/// Idempotent ensure of practice:jeopardy system event (normal random UUID on fresh create).
+/// Idempotent ensure of practice:jeopardy system event.
+///
+/// Fresh insert always uses [`PRACTICE_JEOPARDY_EVENT_ID`] (well-known UUID
+/// `00000000-0000-0000-0000-000000000001`, same style as scheduler seed tasks).
+/// Existing rows are returned as-is (id remapped by migration if needed).
 pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,
 ) -> Result<events::Model, sea_orm::DbErr> {
@@ -40,7 +45,7 @@ pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
 
     let now = Utc::now().fixed_offset();
     let model = events::ActiveModel {
-        id: Set(Uuid::new_v4()),
+        id: Set(PRACTICE_JEOPARDY_EVENT_ID),
         family: Set(EventFamily::Jeopardy),
         purpose: Set(EventPurpose::Practice),
         participant_mode: Set(ParticipantMode::Individual),
@@ -60,7 +65,7 @@ pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
     match model.insert(db).await {
         Ok(created) => Ok(created),
         Err(err) => {
-            // Concurrent bootstrap: unique system_key race → re-select.
+            // Concurrent bootstrap: unique system_key (or fixed PK) race → re-select.
             if let Some(existing) = find_practice_jeopardy_event(db).await? {
                 Ok(existing)
             } else {

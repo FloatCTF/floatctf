@@ -185,6 +185,12 @@ where
         .one(&txn)
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.system_key.is_some() {
+        return Err(AppError::Validation(
+            "SystemManagedEvent: system-managed events cannot be patched via ordinary admin API"
+                .into(),
+        ));
+    }
     let schedule_may_change = req.start_time.is_some() || req.end_time.is_some();
     let mut m_event = event.into_active_model();
 

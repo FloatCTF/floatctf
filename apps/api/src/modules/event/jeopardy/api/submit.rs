@@ -5,6 +5,7 @@ use crate::{
     entity::{event_teams, event_writeup, events},
     modules::event::{
         EventModuleRegistry,
+        common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::context::{
             EventContextBuilder, SubmitFlagRequest as ModeSubmitFlag,
         },
@@ -34,14 +35,15 @@ pub async fn submit_flag(
     let mut sfr = sfr.into_inner();
     sfr.flag = sfr.flag.trim().to_string();
 
-    // prepare event
+    // Practice submit omits event_id; resolve system Practice explicitly (no Context fallback).
     let event = match sfr.event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound("no event".into()))?
-            .into(),
-        None => None,
+            .ok_or(AppError::NotFound("no event".into()))?,
+        None => require_practice_jeopardy_event(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?,
     };
 
     let event_ctx = EventContextBuilder::new()

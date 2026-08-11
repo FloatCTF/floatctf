@@ -94,7 +94,9 @@ pub struct AwdAlertDto {
 pub struct DashboardEventDto {
     pub event_id: Uuid,
     pub title: String,
-    pub event_type: String,
+    pub family: String,
+    pub purpose: String,
+    pub participant_mode: String,
     pub start_time: DateTime<FixedOffset>,
     pub end_time: Option<DateTime<FixedOffset>>,
     pub hidden: bool,
@@ -172,12 +174,9 @@ pub async fn get_dashboard_summary(
         .map(|e| DashboardEventDto {
             event_id: e.id,
             title: e.title,
-            event_type: format!(
-                "{}/{}/{}",
-                snake_str(&e.family),
-                snake_str(&e.purpose),
-                snake_str(&e.participant_mode)
-            ),
+            family: snake_str(&e.family),
+            purpose: snake_str(&e.purpose),
+            participant_mode: snake_str(&e.participant_mode),
             start_time: e.start_time,
             end_time: e.end_time,
             hidden: e.hidden,

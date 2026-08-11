@@ -19,7 +19,6 @@ use crate::{
             core,
         },
         domain::{
-            policy::JeopardyModePolicy,
             scoreboard::{ChallengeScoreboard, ScoreboardItem},
             solve::SolveSubject,
             trend::{TrendItem, TrendPoint},
@@ -45,7 +44,6 @@ impl JeopardySingleServices {
     ) -> Result<()> {
         ctx.should_user_joined().await?;
         ctx.should_ongoing()?;
-        let _ = self.policy();
         core::jeopardy_submit(ctx, instance_id, flag, SolveSubject::User).await
     }
 

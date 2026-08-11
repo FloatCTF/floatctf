@@ -291,7 +291,7 @@ pub async fn list_event_instances(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
@@ -328,7 +328,7 @@ pub async fn get_challenge_instance(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;

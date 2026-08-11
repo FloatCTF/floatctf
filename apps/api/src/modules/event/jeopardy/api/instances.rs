@@ -127,13 +127,15 @@ pub async fn launch_instance(
     let user = user.into_inner();
     let lir = lir.into_inner();
 
+    // Practice launch omits event_id; resolve system Practice explicitly (no Context fallback).
     let event = match lir.event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound("no event".into()))?
-            .into(),
-        None => None, // builder resolves practice:jeopardy
+            .ok_or(AppError::NotFound("no event".into()))?,
+        None => require_practice_jeopardy_event(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?,
     };
 
     let event_ctx = EventContextBuilder::new()
@@ -195,7 +197,7 @@ pub async fn destroy_instance(
         .db(ctx.db.clone())
         .docker(ctx.docker.clone())
         .user(user.clone())
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context:{}", e)))?;

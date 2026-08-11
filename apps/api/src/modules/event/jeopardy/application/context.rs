@@ -12,10 +12,7 @@ use crate::{
     core::AppConfig,
     entity::{challenge_instances, event_teams, event_users, events, users},
     infrastructure::{WebDb, WebDocker},
-    modules::event::common::domain::practice_event::require_practice_jeopardy_event,
-    modules::event::common::domain::time_state::{
-        EventTimeStatus as CommonEventTimeStatus, event_time_status_of,
-    },
+    modules::event::common::domain::time_state::event_time_status_of,
 };
 
 /// Single-request context for Jeopardy mode operations.
@@ -66,8 +63,10 @@ impl EventContextBuilder {
         self
     }
 
-    pub fn event(mut self, event: Option<events::Model>) -> Self {
-        self.event = event;
+    /// Required: callers must load the Event explicitly (Practice via
+    /// `require_practice_jeopardy_event`, formal via route event_id).
+    pub fn event(mut self, event: events::Model) -> Self {
+        self.event = Some(event);
         self
     }
 
@@ -95,15 +94,14 @@ impl EventContextBuilder {
 
     /// Construct EventContext. Docker is required for launch/destroy/submit;
     /// pure-read handlers should prefer mode methods that only take `db` + `event`.
+    ///
+    /// Event is required — this builder never infers Practice from a missing event.
     pub async fn build(self) -> Result<EventContext> {
         let db = self.db.clone().context("db is required")?;
         let user = self.user.context("user is required")?;
-        let event = match self.event {
-            Some(e) => e,
-            None => require_practice_jeopardy_event(db.get_ref())
-                .await
-                .map_err(|e| anyhow!("Practice Event not found: {e}"))?,
-        };
+        let event = self.event.context(
+            "event is required (resolve Practice via require_practice_jeopardy_event first)",
+        )?;
 
         let team = if let Some(t) = self.team {
             Some(t)

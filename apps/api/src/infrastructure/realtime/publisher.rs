@@ -11,9 +11,12 @@ use uuid::Uuid;
 /// 平台级实时事件信封。
 ///
 /// 不得包含完整 flag、WireGuard 密钥或内部令牌。
+/// `run_id`：AWDP practice run 维度订阅（competition 仍按 event_id；两者互斥使用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeEvent {
     pub event_id: Uuid,
+    #[serde(default)]
+    pub run_id: Option<Uuid>,
     pub sequence: Option<u64>,
     /// Event type, e.g. `attack.success`, `score.changed`.
     #[serde(rename = "type")]
@@ -26,11 +29,18 @@ impl RealtimeEvent {
     pub fn new(event_id: Uuid, event_type: impl Into<String>, payload: Value) -> Self {
         Self {
             event_id,
+            run_id: None,
             sequence: None,
             event_type: event_type.into(),
             occurred_at: Utc::now().to_rfc3339(),
             payload,
         }
+    }
+
+    /// 绑定 run 维度（practice SSE 按 run_id 订阅）。
+    pub fn with_run_id(mut self, run_id: Uuid) -> Self {
+        self.run_id = Some(run_id);
+        self
     }
 
     pub fn with_sequence(mut self, sequence: u64) -> Self {

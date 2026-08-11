@@ -127,6 +127,13 @@ export type AwdpRunScoresDto = {
 	history: ScoreEventDto[];
 };
 
+/** 我的 Writeup（一 run 一份）。 */
+export type AwdpRunWriteupDto = {
+	run_id: string;
+	content: string;
+	updated_at: string | null;
+};
+
 /** source presigned URL 响应（后端实现：直接返回 URL 字符串，非对象）。 */
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -189,6 +196,19 @@ export const awdpRunApi = {
 	scores: async (runId: string) => {
 		const res = await service_api.get<UniResponse<AwdpRunScoresDto>>(
 			`/service/awdp/runs/${runId}/scores`,
+		);
+		return res.data;
+	},
+	getWriteup: async (runId: string) => {
+		const res = await service_api.get<UniResponse<AwdpRunWriteupDto>>(
+			`/service/awdp/runs/${runId}/writeup`,
+		);
+		return res.data;
+	},
+	saveWriteup: async (runId: string, content: string) => {
+		const res = await service_api.put<UniResponse<AwdpRunWriteupDto>>(
+			`/service/awdp/runs/${runId}/writeup`,
+			{ content },
 		);
 		return res.data;
 	},

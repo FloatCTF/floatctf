@@ -1,15 +1,33 @@
-import { ActionList, Button, TextInput, Textarea, useConfirm } from "@primer/react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { CheckIcon } from "@primer/octicons-react";
+import {
+	ActionList,
+	Button,
+	ButtonGroup,
+	Dialog,
+	Stack,
+	TextInput,
+	Textarea,
+	ToggleSwitch,
+	useConfirm,
+} from "@primer/react";
+import { DataTable, Table } from "@primer/react/experimental";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useReactive } from "ahooks";
 import type { AxiosError } from "axios";
-import { useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
-import type { GameBoxLibraryDto } from "@/api/awd";
+import type {
+	GameBoxBuildResult,
+	GameBoxCheckResult,
+	GameBoxLibraryDto,
+} from "@/api/awd";
 import { type QueryParams, type UniResponse } from "@/api/axios";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../route";
+import { useSelectedRowIds } from "@/util";
 
 export const Route = createFileRoute("/admin/awd/gameboxes")({
 	component: RouteComponent,
@@ -22,6 +40,7 @@ function RouteComponent() {
 	const confirmDialog = useConfirm();
 	const queryClient = useQueryClient();
 	const banner = useMsgBanner({});
+	const [selectedRowIds, setSelectedRowIds] = useSelectedRowIds();
 	const onDone = () => {
 		queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
 	};
@@ -106,13 +125,15 @@ function RouteComponent() {
 			header: "hidden",
 			field: "hidden",
 			render: (
-				<TextInput
-					value={String(mutationData.hidden)}
-					onChange={(e) => {
-						mutationData.hidden = e.target.value === "true";
-					}}
-					placeholder="true / false"
-				/>
+				<Stack direction="horizontal" align="center">
+					<ToggleSwitch
+						aria-labelledby="default-toggle-label"
+						checked={mutationData.hidden}
+						onClick={() => {
+							mutationData.hidden = !mutationData.hidden;
+						}}
+					/>
+				</Stack>
 			),
 		},
 		{
@@ -271,14 +292,6 @@ function RouteComponent() {
 			),
 		},
 		{
-			accessorKey: "build_status",
-			header: "Build",
-			field: "build_status",
-			renderCell: (row: GameBoxLibraryDto) => (
-				<span>{row.build_status ?? "-"}</span>
-			),
-		},
-		{
 			accessorKey: "image_ref",
 			header: "Image",
 			field: "image_ref",
@@ -294,7 +307,7 @@ function RouteComponent() {
 			header: "Hidden",
 			field: "hidden",
 			renderCell: (row: GameBoxLibraryDto) => (
-				<span>{row.hidden ? "yes" : "no"}</span>
+				<span>{row.hidden ? <CheckIcon size={16} /> : <></>}</span>
 			),
 		},
 	];
@@ -368,12 +381,157 @@ function RouteComponent() {
 				mutationColumns={mutationColumns}
 				mutationData={mutationData}
 				columnActions={columnActions}
-				customActions={<ImportButton />}
+				customActions={<GameBoxActions gamebox_id_list={Array.from(selectedRowIds)} />}
 				disableAdd={true}
+				selectedRowIds={selectedRowIds}
+				onSelectedRowIdsChange={setSelectedRowIds}
 				filterKeys={["name", "safe_name", "category", "hidden"]}
 				subtitle="GameBox = 身份 + 当前版本 package（导入严格递增 version，解压至 GAMEBOXES_DIR）"
 			/>
 		</div>
+	);
+}
+
+// package zip 导入（与 admin/challenges.tsx 的 ImportButton 逻辑一致）
+function GameBoxActions({ gamebox_id_list }: { gamebox_id_list?: string[] }) {
+	return (
+		<div className="flex gap-1">
+			<ButtonGroup>
+				<ImportButton />
+				<CheckButton gamebox_id_list={gamebox_id_list} />
+			</ButtonGroup>
+		</div>
+	);
+}
+
+// 检查当前版本镜像本地可用 + package 目录已镜像（与 admin/challenges.tsx CheckButton 一致）
+export function CheckButton({
+	gamebox_id_list,
+}: {
+	gamebox_id_list?: string[];
+}) {
+	const idsToCheck: string[] | undefined =
+		gamebox_id_list && gamebox_id_list.length > 0
+			? gamebox_id_list
+			: undefined;
+	const [isOpen, setIsOpen] = useState(false);
+	const buttonRef = useRef<HTMLButtonElement>(null);
+	const onDialogClose = useCallback(() => setIsOpen(false), []);
+	const banner = useMsgBanner({});
+
+	// 数据获取
+	const { data, isLoading } = useQuery({
+		queryKey: ["GameBoxCheck", idsToCheck],
+		queryFn: () => adminApi.awd.checkGameboxes(idsToCheck),
+		enabled: isOpen,
+		refetchOnWindowFocus: false,
+		staleTime: 60_000, // 1 分钟内重复打开不会再请求
+	});
+	const queryClient = useQueryClient();
+	const [building, setBuilding] = useState(false);
+
+	const buildGameboxMutation = useMutation({
+		mutationFn: (gamebox_id_list?: string[]) =>
+			adminApi.awd.buildGameboxes(gamebox_id_list),
+		onSuccess: (data) => {
+			setBuilding(false);
+			banner.showBanner(
+				"success",
+				data.data?.map((r) => r.message).join("\n") ?? "",
+			);
+			queryClient.invalidateQueries({ queryKey: ["GameBoxCheck"] });
+		},
+		onError: (e) => {
+			setBuilding(false);
+			banner.showBanner("critical", e.message);
+		},
+	});
+	// 列定义只生成一次
+	const columns = useMemo(
+		() => [
+			{
+				accessorKey: "gamebox_name",
+				header: "GameBox Name",
+				field: "gamebox_name",
+				rowHeader: true,
+			},
+			{
+				accessorKey: "docker_image",
+				header: "Docker Image",
+				field: "docker_image",
+				renderCell: (row: GameBoxCheckResult) => {
+					return (
+						<span>
+							{row.docker_image ? (
+								<CheckIcon />
+							) : (
+								<Button
+									size="small"
+									variant="primary"
+									onClick={() => {
+										setBuilding(true);
+										buildGameboxMutation.mutate([row.id]);
+									}}
+									disabled={building}
+								>
+									Build
+								</Button>
+							)}
+						</span>
+					);
+				},
+			},
+			{
+				accessorKey: "package_dir",
+				header: "Package Dir",
+				field: "package_dir",
+				renderCell: (row: GameBoxCheckResult) => {
+					return (
+						<span>{row.package_dir ? <CheckIcon /> : <></>}</span>
+					);
+				},
+			},
+		],
+		[buildGameboxMutation, building],
+	);
+
+	// 过滤出不可用的 gamebox
+	const invalidData = useMemo(
+		() => (data?.data ?? []).filter((r: GameBoxCheckResult) => !r.is_ok),
+		[data],
+	);
+
+	// 表格实例
+	const table = useReactTable({
+		data: invalidData,
+		columns,
+		getCoreRowModel: getCoreRowModel(),
+		getRowId: (row) => row.gamebox_name, // 👈 用 gamebox_name 保证唯一 key
+	});
+
+	if (isLoading) {
+		return <div>Loading…</div>;
+	}
+
+	return (
+		<>
+			{isOpen && (
+				<Dialog title="Unavailable GameBoxes" onClose={onDialogClose}>
+					<Table.Container className="m-2">
+						<DataTable
+							aria-labelledby="repositories-default"
+							// @ts-ignore
+							columns={columns}
+							getRowId={(row) => row.gamebox_name}
+							data={table.getRowModel().rows.map((row) => row.original)}
+						/>
+					</Table.Container>
+				</Dialog>
+			)}
+			<Button ref={buttonRef} onClick={() => setIsOpen(!isOpen)}>
+				Check
+			</Button>
+		</>
 	);
 }
 

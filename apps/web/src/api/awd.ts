@@ -84,6 +84,22 @@ export type ImportGameBoxResponse = {
 	gamebox: GameBoxLibraryDto;
 };
 
+/** POST /awd/gameboxes/check 结果行。 */
+export type GameBoxCheckResult = {
+	id: string;
+	gamebox_name: string;
+	is_ok: boolean;
+	docker_image: boolean;
+	package_dir: boolean;
+};
+
+/** POST /awd/gameboxes/build 结果行。 */
+export type GameBoxBuildResult = {
+	gamebox_name: string;
+	is_ok: boolean;
+	message: string;
+};
+
 export type EventGameBoxDto = {
 	id: string;
 	gamebox_id: string;
@@ -370,6 +386,22 @@ export const awdAdminApi = {
 	},
 	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
 		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
+		return res.data;
+	},
+	checkGameboxes: async (
+		gamebox_id_list?: string[],
+	): Promise<UniResponse<GameBoxCheckResult[]>> => {
+		const res = await admin_api.post("/awd/gameboxes/check", {
+			gamebox_id_list,
+		});
+		return res.data;
+	},
+	buildGameboxes: async (
+		gamebox_id_list?: string[],
+	): Promise<UniResponse<GameBoxBuildResult[]>> => {
+		const res = await admin_api.post("/awd/gameboxes/build", {
+			gamebox_id_list,
+		});
 		return res.data;
 	},
 	// ── 平台网络（Control Plane，§73）──

@@ -55,6 +55,19 @@ function RouteComponent() {
 			},
 		},
 		{
+			accessorKey: "image_ref",
+			header: "Image",
+			field: "image_ref",
+			renderCell: (row: ChallengesListItem) => {
+				return (
+					<span>
+						{row.image_ref ?? "—"}
+						{row.image_repo_digest ? " 🔒" : ""}
+					</span>
+				);
+			},
+		},
+		{
 			accessorKey: "attachment",
 			header: "Attachment",
 			field: "attachment",

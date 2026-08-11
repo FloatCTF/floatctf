@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use actix_web::web;
+use fcmc::{DockerContainerRuntime, ImageRuntime};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     sea_query::Query,
@@ -20,10 +21,14 @@ use crate::{
         prelude::*, sea_orm_utils::query_query,
     },
     entity::{awd_event_gameboxes, gameboxes},
+    infrastructure::settings::{get_setting, resolve_dir_path},
     modules::event::awd_team::{
         domain::instance_ip_for_offset,
         repo::{event_gamebox_repo, event_repo, gamebox_lib_repo},
-        service::{gamebox_import_service, gamebox_service},
+        service::{
+            gamebox_import_service::{self, BUILD_STATUS_READY},
+            gamebox_service,
+        },
     },
 };
 
@@ -112,6 +117,148 @@ pub async fn import_gamebox(
         .into(),
     )
     .into()
+}
+
+/// POST /api/admin/awd/gameboxes/check —— 检查当前版本镜像本地可用 + package 目录已镜像
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GameBoxCheckResult {
+    pub id: Uuid,
+    pub gamebox_name: String,
+    pub is_ok: bool,
+    pub docker_image: bool,
+    pub package_dir: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GameBoxCheckRequest {
+    pub gamebox_id_list: Option<Vec<Uuid>>,
+}
+
+#[post("/awd/gameboxes/check")]
+pub async fn check_gameboxes(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    req: web::Json<GameBoxCheckRequest>,
+) -> UniResult<Vec<GameBoxCheckResult>> {
+    let req = req.into_inner();
+    let gamebox_dir = get_setting(&ctx.db, "GAMEBOXES_DIR")
+        .await
+        .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
+
+    let gameboxes = {
+        if let Some(ids) = req.gamebox_id_list {
+            gameboxes::Entity::find()
+                .filter(gameboxes::Column::Id.is_in(ids))
+                .all(ctx.db.get_ref())
+                .await?
+        } else {
+            gameboxes::Entity::find().all(ctx.db.get_ref()).await?
+        }
+    };
+
+    let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
+    let mut results = Vec::new();
+    for gb in gameboxes {
+        let (docker_ok, dir_ok) = if gb.build_status.as_deref() == Some(BUILD_STATUS_READY) {
+            // 镜像检查：当前版本 image pin（RepoDigest > image_id）必须本地可 inspect
+            let docker_ok = match gamebox_service::effective_image_ref_from_gamebox(&gb) {
+                Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
+                Err(_) => false,
+            };
+            // package 目录检查：GAMEBOXES_DIR/{safe_name} 已镜像到磁盘
+            let dir_ok = resolve_dir_path(&gamebox_dir).join(&gb.safe_name).is_dir();
+            (docker_ok, dir_ok)
+        } else {
+            (false, true)
+        };
+
+        results.push(GameBoxCheckResult {
+            id: gb.id,
+            gamebox_name: gb.name,
+            is_ok: docker_ok && dir_ok,
+            docker_image: docker_ok,
+            package_dir: dir_ok,
+        });
+    }
+
+    UniResponse::ok(results.into()).into()
+}
+
+/// POST /api/admin/awd/gameboxes/build —— 仅 re-ensure 当前版本 pin 镜像本地存在（pull by RepoDigest when missing）
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GameBoxBuildRequest {
+    pub gamebox_id: Option<Uuid>,
+    pub gamebox_id_list: Option<Vec<Uuid>>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GameBoxBuildResult {
+    pub gamebox_name: String,
+    pub is_ok: bool,
+    pub message: String,
+}
+
+#[post("/awd/gameboxes/build")]
+pub async fn build_gamebox(
+    user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    req: web::Json<GameBoxBuildRequest>,
+) -> UniResult<Vec<GameBoxBuildResult>> {
+    let user = user.into_inner();
+    let req = req.into_inner();
+    let mut id_list = Vec::new();
+    if let Some(id) = req.gamebox_id {
+        id_list.push(id);
+    }
+    if let Some(l) = req.gamebox_id_list {
+        id_list.extend(l);
+    }
+
+    let mut res = Vec::new();
+    for gb_id in id_list {
+        let gb = gameboxes::Entity::find_by_id(gb_id)
+            .one(ctx.db.get_ref())
+            .await?
+            .ok_or(AppError::NotFound(format!("gamebox {} not exist", gb_id)))?;
+
+        let (is_ok, message) = if gb.build_status.as_deref() == Some(BUILD_STATUS_READY) {
+            match gamebox_service::effective_image_ref_from_gamebox(&gb) {
+                Ok(pin) => {
+                    let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
+                    match ImageRuntime::ensure_image(&runtime, &pin, None).await {
+                        Ok(_) => (true, "ok".to_string()),
+                        Err(e) => (false, e.to_string()),
+                    }
+                }
+                Err(e) => (false, e.to_string()),
+            }
+        } else {
+            (
+                false,
+                "no ready package; import a package first".to_string(),
+            )
+        };
+
+        res.push(GameBoxBuildResult {
+            gamebox_name: gb.name.clone(),
+            is_ok,
+            message,
+        });
+
+        ctx.log
+            .add_log(
+                "INFO",
+                "GAMEBOXES",
+                "BUILD",
+                format!("{} 确保 gamebox 镜像: {}", user.username, gb.name).as_str(),
+                json!({ "gamebox_name": gb.name, "success": is_ok }),
+                None,
+                user.id.into(),
+                Some(&ctx.req),
+            )
+            .await;
+    }
+
+    UniResponse::ok(res.into()).into()
 }
 
 /// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 身份 + 可编辑运行参数

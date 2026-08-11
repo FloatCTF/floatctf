@@ -93,6 +93,7 @@ pub fn configure_admin_nested_routes(cfg: &mut ServiceConfig) {
     .service(
         scope("/{event_id}/challenges")
             .service(event_challenges::add_challenge)
+            .service(event_challenges::set_challenge_points)
             .service(event_challenges::remove_challenge)
             .service(event_challenges::get_challenges)
             .service(event_challenges::hidden_challenges)

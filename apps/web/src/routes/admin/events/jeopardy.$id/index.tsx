@@ -5,7 +5,9 @@ import {
 	Button,
 	ButtonGroup,
 	Dialog,
+	FormControl,
 	IconButton,
+	TextInput,
 } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,6 +47,8 @@ function RouteComponent() {
 	const queryClient = useQueryClient();
 	const subject = `event_challenges: ${id}`;
 	const banner = useMsgBanner();
+	// Set Points 弹窗：待设置分数的题目列表（多选批量或单行）
+	const [pointsDialogIds, setPointsDialogIds] = useState<string[] | null>(null);
 	const open_event_challenge = useMutation({
 		mutationFn: adminApi.event_challenges.open,
 		onSuccess: () => {
@@ -105,6 +109,14 @@ function RouteComponent() {
 		return (
 			<ActionList>
 				<ActionList.Item
+					key={`${row.challenge.id}-points`}
+					onClick={() => {
+						setPointsDialogIds([row.challenge.id]);
+					}}
+				>
+					Set Points
+				</ActionList.Item>
+				<ActionList.Item
 					key={`${row.challenge.id}-edit`}
 					onClick={() => {
 						if (row.event_challenge.hidden) {
@@ -136,6 +148,22 @@ function RouteComponent() {
 				banner={banner}
 				challenge_id_list={Array.from(eventChallengeSelectedRowIds)}
 			/>
+			<Button
+				variant="primary"
+				onClick={() => {
+					const ids = Array.from(eventChallengeSelectedRowIds);
+					if (ids.length === 0) {
+						banner.showBanner(
+							"critical",
+							"Please select at least one challenge",
+						);
+						return;
+					}
+					setPointsDialogIds(ids);
+				}}
+			>
+				Set Points
+			</Button>
 			<CreateChallengeSetButton
 				name={event?.title ?? "Challenge Set"}
 				description={event?.description ?? "Challenge Description"}
@@ -162,7 +190,73 @@ function RouteComponent() {
 				disableAdd={true}
 				externalBanner={banner}
 			/>
+			{pointsDialogIds && (
+				<SetPointsDialog
+					event_id={id}
+					challenge_id_list={pointsDialogIds}
+					refresh_query_key={subject}
+					onClose={() => setPointsDialogIds(null)}
+				/>
+			)}
 		</div>
+	);
+}
+
+function SetPointsDialog({
+	event_id,
+	challenge_id_list,
+	refresh_query_key,
+	onClose,
+}: {
+	event_id: string;
+	challenge_id_list: string[];
+	refresh_query_key: string;
+	onClose: () => void;
+}) {
+	const queryClient = useQueryClient();
+	const [points, setPoints] = useState("100");
+	const setPointsMutation = useMutation({
+		mutationFn: (value: number) =>
+			adminApi.event_challenges.setPoints({
+				event_id,
+				challenge_id_list,
+				points: value,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: [refresh_query_key] });
+			onClose();
+		},
+	});
+	const parsed = Number(points);
+	const valid = Number.isFinite(parsed) && parsed > 0;
+	return (
+		<Dialog title="Set Challenge Points" onClose={onClose}>
+			<div className="p-3 flex flex-col gap-3">
+				<p className="text-sm opacity-70">
+					设置 {challenge_id_list.length} 道题的分值（提交后新解按新分值结算，已得分不追溯）
+				</p>
+				<FormControl>
+					<FormControl.Label>Points</FormControl.Label>
+					<TextInput
+						value={points}
+						type="number"
+						min={1}
+						onChange={(e) => setPoints(e.target.value)}
+						block
+					/>
+				</FormControl>
+				<div className="flex justify-end gap-2">
+					<Button onClick={onClose}>Cancel</Button>
+					<Button
+						variant="primary"
+						disabled={!valid || setPointsMutation.isPending}
+						onClick={() => setPointsMutation.mutate(parsed)}
+					>
+						{setPointsMutation.isPending ? "Saving…" : "Save"}
+					</Button>
+				</div>
+			</div>
+		</Dialog>
 	);
 }
 
@@ -178,6 +272,7 @@ function AddChallengeButton({
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const onDialogClose = useCallback(() => setIsOpen(false), []);
 	const [userSelectedRowIds, setUserSelectedRowIds] = useSelectedRowIds();
+	const [points, setPoints] = useState("");
 	const banner = useMsgBanner();
 	const addEventChallengesMutation = useMutation({
 		mutationFn: adminApi.event_challenges.add,
@@ -188,18 +283,24 @@ function AddChallengeButton({
 				});
 			}
 			banner.showBanner("success", "Add Event Challenges Success");
+			setIsOpen(false);
 		},
 		onError: (error) => {
 			banner.showErrorBanner(error);
 		},
 	});
+	const parsedPoints = points === "" ? undefined : Number(points);
+	const pointsValid =
+		points === "" || (Number.isFinite(parsedPoints!) && parsedPoints! > 0);
 	const user_op_actions = (
 		<Button
 			variant="primary"
+			disabled={!pointsValid || addEventChallengesMutation.isPending}
 			onClick={() => {
 				addEventChallengesMutation.mutate({
 					event_id: event_id,
 					challenge_id_list: Array.from(userSelectedRowIds),
+					points: parsedPoints,
 				});
 			}}
 		>
@@ -239,7 +340,23 @@ function AddChallengeButton({
 						enableInternalActions={false}
 						selectedRowIds={userSelectedRowIds}
 						onSelectedRowIdsChange={setUserSelectedRowIds}
-						customActions={user_op_actions}
+						customActions={
+							<div className="flex flex-col gap-2">
+								<FormControl>
+									<FormControl.Label>
+										Points（可选，默认 100）
+									</FormControl.Label>
+									<TextInput
+										value={points}
+										type="number"
+										min={1}
+										placeholder="100"
+										onChange={(e) => setPoints(e.target.value)}
+									/>
+								</FormControl>
+								{user_op_actions}
+							</div>
+						}
 						externalBanner={banner}
 					/>
 				</Dialog>

@@ -19,6 +19,20 @@ use crate::{
 pub struct AddChallengeRequest {
     pub challenge_id: Option<Uuid>,
     pub challenge_id_list: Option<Vec<Uuid>>,
+    /// 添加时指定的题目分值；不传时默认 100。
+    #[serde(default)]
+    pub points: Option<f64>,
+}
+
+/// 校验分值：必须为正的有限浮点数，且不超过 1_000_000。
+fn validate_points(points: f64) -> Result<f64, AppError> {
+    if !points.is_finite() || points <= 0.0 || points > 1_000_000.0 {
+        return Err(AppError::BadRequest(format!(
+            "invalid points value: {}",
+            points
+        )));
+    }
+    Ok(points)
 }
 
 /// POST /api/admin/events/{event_id}/challenges
@@ -77,7 +91,7 @@ pub async fn add_challenge(
                 )));
             }
 
-            let points = 100.0;
+            let points = validate_points(acr.points.unwrap_or(100.0))?;
             let new_event_challenge = jeopardy_event_challenges::ActiveModel {
                 event_id: Set(event.id),
                 challenge_id: Set(challenge.id),
@@ -252,6 +266,83 @@ pub async fn get_challenges(
     query_params.total = Some(total_items);
 
     UniResponse::ok_meta(result.into(), query_params.into()).into()
+}
+
+/// PATCH /api/admin/events/{event_id}/challenges
+#[patch("")]
+pub async fn set_challenge_points(
+    user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    event_id: Path<Uuid>,
+    sdr: Json<SetChallengePointsRequest>,
+) -> UniResult<Vec<EventChallengesDto>> {
+    let user = user.into_inner();
+    let sdr = sdr.into_inner();
+    let event_id = event_id.into_inner();
+
+    let points = validate_points(sdr.points)?;
+    let event = events::Entity::find_by_id(event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+
+    let challenge_ids: Vec<Uuid> = sdr
+        .challenge_id
+        .into_iter()
+        .chain(sdr.challenge_id_list.unwrap_or_default())
+        .collect();
+    if challenge_ids.is_empty() {
+        return Err(AppError::BadRequest(
+            "challenge_id or challenge_id_list required".to_string(),
+        ));
+    }
+
+    let mut event_challenges_list = Vec::new();
+    for challenge_id in challenge_ids {
+        let event_challenge = jeopardy_event_challenges::Entity::find()
+            .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
+            .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge_id))
+            .one(ctx.db.get_ref())
+            .await?
+            .ok_or(AppError::NotFound(format!(
+                "challenge {} not in event {}",
+                challenge_id, event.id
+            )))?;
+
+        let mut event_challenge: jeopardy_event_challenges::ActiveModel = event_challenge.into();
+        event_challenge.points = Set(points);
+        let updated = event_challenge.update(ctx.db.get_ref()).await?;
+        event_challenges_list.push(updated);
+    }
+
+    ctx.log
+        .add_log(
+            "INFO",
+            "EVENT_CHALLENGES",
+            "SET_POINTS",
+            format!(
+                "{} 将比赛 {} 的 {} 道题目分值设为 {}",
+                user.username,
+                event.title,
+                event_challenges_list.len(),
+                points
+            )
+            .as_str(),
+            json!({"event_id": event.id, "count": event_challenges_list.len(), "points": points}),
+            None,
+            user.id.into(),
+            Some(&ctx.req),
+        )
+        .await;
+
+    UniResponse::ok(Some(map_dto_vec(event_challenges_list))).into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetChallengePointsRequest {
+    pub challenge_id: Option<Uuid>,
+    pub challenge_id_list: Option<Vec<Uuid>>,
+    pub points: f64,
 }
 
 pub type HiddenChallengeRequest = AddChallengeRequest;

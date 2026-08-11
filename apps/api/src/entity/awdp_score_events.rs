@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub event_id: Uuid,
+    pub event_id: Option<Uuid>,
     pub user_id: Option<Uuid>,
     pub team_id: Option<Uuid>,
-    pub event_gamebox_id: Uuid,
     #[sea_orm(column_type = "Text")]
     pub score_type: String,
     pub fix_round_id: Option<Uuid>,
@@ -19,18 +18,12 @@ pub struct Model {
     #[sea_orm(column_type = "Text", unique)]
     pub idempotency_key: String,
     pub created_at: DateTimeWithTimeZone,
+    pub run_id: Uuid,
+    pub gamebox_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::awdp_event_gameboxes::Entity",
-        from = "Column::EventGameboxId",
-        to = "super::awdp_event_gameboxes::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    AwdpEventGameboxes,
     #[sea_orm(
         belongs_to = "super::awdp_fix_rounds::Entity",
         from = "Column::FixRoundId",
@@ -40,6 +33,14 @@ pub enum Relation {
     )]
     AwdpFixRounds,
     #[sea_orm(
+        belongs_to = "super::awdp_runs::Entity",
+        from = "Column::RunId",
+        to = "super::awdp_runs::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    AwdpRuns,
+    #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "(Column::EventId, Column::TeamId)",
         to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
@@ -48,13 +49,13 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
+        belongs_to = "super::gameboxes::Entity",
+        from = "Column::GameboxId",
+        to = "super::gameboxes::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "Restrict"
     )]
-    Events,
+    Gameboxes,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::UserId",
@@ -65,15 +66,15 @@ pub enum Relation {
     Users,
 }
 
-impl Related<super::awdp_event_gameboxes::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpEventGameboxes.def()
-    }
-}
-
 impl Related<super::awdp_fix_rounds::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpFixRounds.def()
+    }
+}
+
+impl Related<super::awdp_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRuns.def()
     }
 }
 
@@ -83,9 +84,9 @@ impl Related<super::event_teams::Entity> for Entity {
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::Gameboxes.def()
     }
 }
 

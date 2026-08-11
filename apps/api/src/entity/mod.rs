@@ -30,6 +30,7 @@ pub mod awdp_events;
 pub mod awdp_fix_rounds;
 pub mod awdp_instances;
 pub mod awdp_patch_submissions;
+pub mod awdp_runs;
 pub mod awdp_score_events;
 pub mod challenge_instances;
 pub mod challenge_set_items;

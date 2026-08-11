@@ -1,6 +1,5 @@
 export type AwdpFixRounds = {
   id: string;
-  event_id: string;
   sequence: number;
   starts_at: string;
   cutoff_at: string;
@@ -9,4 +8,5 @@ export type AwdpFixRounds = {
   finished_at?: string;
   created_at: string;
   updated_at: string;
+  run_id: string;
 };

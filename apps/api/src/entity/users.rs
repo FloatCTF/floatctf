@@ -36,6 +36,8 @@ pub enum Relation {
     AwdpInstances,
     #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
     AwdpPatchSubmissions,
+    #[sea_orm(has_many = "super::awdp_runs::Entity")]
+    AwdpRuns,
     #[sea_orm(has_many = "super::awdp_score_events::Entity")]
     AwdpScoreEvents,
     #[sea_orm(has_many = "super::challenge_instances::Entity")]
@@ -97,6 +99,12 @@ impl Related<super::awdp_instances::Entity> for Entity {
 impl Related<super::awdp_patch_submissions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpPatchSubmissions.def()
+    }
+}
+
+impl Related<super::awdp_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRuns.def()
     }
 }
 

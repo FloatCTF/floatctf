@@ -70,8 +70,16 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
     AwdEventGameboxes,
+    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
+    AwdpBreaks,
     #[sea_orm(has_many = "super::awdp_event_gameboxes::Entity")]
     AwdpEventGameboxes,
+    #[sea_orm(has_many = "super::awdp_instances::Entity")]
+    AwdpInstances,
+    #[sea_orm(has_many = "super::awdp_runs::Entity")]
+    AwdpRuns,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
 }
 
 impl Related<super::awd_event_gameboxes::Entity> for Entity {
@@ -80,9 +88,33 @@ impl Related<super::awd_event_gameboxes::Entity> for Entity {
     }
 }
 
+impl Related<super::awdp_breaks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpBreaks.def()
+    }
+}
+
 impl Related<super::awdp_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpEventGameboxes.def()
+    }
+}
+
+impl Related<super::awdp_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpInstances.def()
+    }
+}
+
+impl Related<super::awdp_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRuns.def()
+    }
+}
+
+impl Related<super::awdp_score_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpScoreEvents.def()
     }
 }
 

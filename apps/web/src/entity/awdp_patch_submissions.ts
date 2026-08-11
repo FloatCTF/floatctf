@@ -1,6 +1,6 @@
 export type AwdpPatchSubmissions = {
   id: string;
-  event_id: string;
+  event_id?: string;
   instance_id: string;
   fix_round_id?: string;
   user_id?: string;
@@ -15,4 +15,5 @@ export type AwdpPatchSubmissions = {
   stdout_limited?: string;
   stderr_limited?: string;
   error_message?: string;
+  run_id: string;
 };

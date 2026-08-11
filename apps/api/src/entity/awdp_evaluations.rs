@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub event_id: Uuid,
     pub instance_id: Uuid,
     pub fix_round_id: Option<Uuid>,
     pub kind: AwdpEvaluationKind,
@@ -29,6 +28,7 @@ pub struct Model {
     pub finished_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    pub run_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -42,13 +42,13 @@ pub enum Relation {
     )]
     AwdpFixRounds,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
+        belongs_to = "super::awdp_runs::Entity",
+        from = "Column::RunId",
+        to = "super::awdp_runs::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    Events,
+    AwdpRuns,
     #[sea_orm(
         belongs_to = "super::instances::Entity",
         from = "Column::InstanceId",
@@ -65,9 +65,9 @@ impl Related<super::awdp_fix_rounds::Entity> for Entity {
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::awdp_runs::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::AwdpRuns.def()
     }
 }
 

@@ -23,12 +23,6 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
-    AwdpBreaks,
-    #[sea_orm(has_many = "super::awdp_instances::Entity")]
-    AwdpInstances,
-    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
-    AwdpScoreEvents,
     #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
@@ -45,24 +39,6 @@ pub enum Relation {
         on_delete = "Restrict"
     )]
     Gameboxes,
-}
-
-impl Related<super::awdp_breaks::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpBreaks.def()
-    }
-}
-
-impl Related<super::awdp_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpInstances.def()
-    }
-}
-
-impl Related<super::awdp_score_events::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpScoreEvents.def()
-    }
 }
 
 impl Related<super::events::Entity> for Entity {

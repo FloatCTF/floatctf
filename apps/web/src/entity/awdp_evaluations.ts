@@ -2,7 +2,6 @@ import type { AwdpEvaluationKind, AwdpEvaluationStatus } from './sea_orm_active_
 
 export type AwdpEvaluations = {
   id: string;
-  event_id: string;
   instance_id: string;
   fix_round_id?: string;
   kind: AwdpEvaluationKind;
@@ -16,4 +15,5 @@ export type AwdpEvaluations = {
   finished_at?: string;
   created_at: string;
   updated_at: string;
+  run_id: string;
 };

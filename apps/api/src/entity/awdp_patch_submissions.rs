@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub event_id: Uuid,
+    pub event_id: Option<Uuid>,
     pub instance_id: Uuid,
     pub fix_round_id: Option<Uuid>,
     pub user_id: Option<Uuid>,
@@ -29,6 +29,7 @@ pub struct Model {
     pub stderr_limited: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub error_message: Option<String>,
+    pub run_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -42,6 +43,14 @@ pub enum Relation {
     )]
     AwdpFixRounds,
     #[sea_orm(
+        belongs_to = "super::awdp_runs::Entity",
+        from = "Column::RunId",
+        to = "super::awdp_runs::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    AwdpRuns,
+    #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "(Column::EventId, Column::TeamId)",
         to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
@@ -49,14 +58,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     EventTeams,
-    #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
     #[sea_orm(
         belongs_to = "super::instances::Entity",
         from = "Column::InstanceId",
@@ -81,15 +82,15 @@ impl Related<super::awdp_fix_rounds::Entity> for Entity {
     }
 }
 
-impl Related<super::event_teams::Entity> for Entity {
+impl Related<super::awdp_runs::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventTeams.def()
+        Relation::AwdpRuns.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::EventTeams.def()
     }
 }
 

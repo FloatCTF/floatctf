@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub event_id: Uuid,
     pub sequence: i32,
     pub starts_at: DateTimeWithTimeZone,
     pub cutoff_at: DateTimeWithTimeZone,
@@ -18,6 +17,7 @@ pub struct Model {
     pub finished_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    pub run_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -26,16 +26,16 @@ pub enum Relation {
     AwdpEvaluations,
     #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
     AwdpPatchSubmissions,
-    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
-    AwdpScoreEvents,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
+        belongs_to = "super::awdp_runs::Entity",
+        from = "Column::RunId",
+        to = "super::awdp_runs::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    Events,
+    AwdpRuns,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
 }
 
 impl Related<super::awdp_evaluations::Entity> for Entity {
@@ -50,15 +50,15 @@ impl Related<super::awdp_patch_submissions::Entity> for Entity {
     }
 }
 
-impl Related<super::awdp_score_events::Entity> for Entity {
+impl Related<super::awdp_runs::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdpScoreEvents.def()
+        Relation::AwdpRuns.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::awdp_score_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::AwdpScoreEvents.def()
     }
 }
 

@@ -28,6 +28,7 @@ pub use super::awdp_events::Entity as AwdpEvents;
 pub use super::awdp_fix_rounds::Entity as AwdpFixRounds;
 pub use super::awdp_instances::Entity as AwdpInstances;
 pub use super::awdp_patch_submissions::Entity as AwdpPatchSubmissions;
+pub use super::awdp_runs::Entity as AwdpRuns;
 pub use super::awdp_score_events::Entity as AwdpScoreEvents;
 pub use super::challenge_instances::Entity as ChallengeInstances;
 pub use super::challenge_set_items::Entity as ChallengeSetItems;

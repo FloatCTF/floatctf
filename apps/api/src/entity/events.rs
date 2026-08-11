@@ -38,22 +38,12 @@ pub enum Relation {
     AwdEvents,
     #[sea_orm(has_many = "super::awd_network_allocations::Entity")]
     AwdNetworkAllocations,
-    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
-    AwdpBreaks,
-    #[sea_orm(has_many = "super::awdp_evaluations::Entity")]
-    AwdpEvaluations,
     #[sea_orm(has_many = "super::awdp_event_gameboxes::Entity")]
     AwdpEventGameboxes,
     #[sea_orm(has_one = "super::awdp_events::Entity")]
     AwdpEvents,
-    #[sea_orm(has_many = "super::awdp_fix_rounds::Entity")]
-    AwdpFixRounds,
-    #[sea_orm(has_many = "super::awdp_instances::Entity")]
-    AwdpInstances,
-    #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
-    AwdpPatchSubmissions,
-    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
-    AwdpScoreEvents,
+    #[sea_orm(has_one = "super::awdp_runs::Entity")]
+    AwdpRuns,
     #[sea_orm(has_many = "super::challenge_instances::Entity")]
     ChallengeInstances,
     #[sea_orm(has_many = "super::event_announcements::Entity")]
@@ -86,18 +76,6 @@ impl Related<super::awd_network_allocations::Entity> for Entity {
     }
 }
 
-impl Related<super::awdp_breaks::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpBreaks.def()
-    }
-}
-
-impl Related<super::awdp_evaluations::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpEvaluations.def()
-    }
-}
-
 impl Related<super::awdp_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpEventGameboxes.def()
@@ -110,27 +88,9 @@ impl Related<super::awdp_events::Entity> for Entity {
     }
 }
 
-impl Related<super::awdp_fix_rounds::Entity> for Entity {
+impl Related<super::awdp_runs::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdpFixRounds.def()
-    }
-}
-
-impl Related<super::awdp_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpInstances.def()
-    }
-}
-
-impl Related<super::awdp_patch_submissions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpPatchSubmissions.def()
-    }
-}
-
-impl Related<super::awdp_score_events::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdpScoreEvents.def()
+        Relation::AwdpRuns.def()
     }
 }
 

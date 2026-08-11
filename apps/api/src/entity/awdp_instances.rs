@@ -8,23 +8,24 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub instance_id: Uuid,
-    pub event_id: Uuid,
-    pub event_gamebox_id: Uuid,
+    pub event_id: Option<Uuid>,
     pub owner_user_id: Option<Uuid>,
     pub owner_team_id: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
+    pub run_id: Uuid,
+    pub gamebox_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::awdp_event_gameboxes::Entity",
-        from = "Column::EventGameboxId",
-        to = "super::awdp_event_gameboxes::Column::Id",
+        belongs_to = "super::awdp_runs::Entity",
+        from = "Column::RunId",
+        to = "super::awdp_runs::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    AwdpEventGameboxes,
+    AwdpRuns,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "(Column::EventId, Column::OwnerTeamId)",
@@ -34,13 +35,13 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
+        belongs_to = "super::gameboxes::Entity",
+        from = "Column::GameboxId",
+        to = "super::gameboxes::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "Restrict"
     )]
-    Events,
+    Gameboxes,
     #[sea_orm(
         belongs_to = "super::instances::Entity",
         from = "Column::InstanceId",
@@ -59,9 +60,9 @@ pub enum Relation {
     Users,
 }
 
-impl Related<super::awdp_event_gameboxes::Entity> for Entity {
+impl Related<super::awdp_runs::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdpEventGameboxes.def()
+        Relation::AwdpRuns.def()
     }
 }
 
@@ -71,9 +72,9 @@ impl Related<super::event_teams::Entity> for Entity {
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::Gameboxes.def()
     }
 }
 

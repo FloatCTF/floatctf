@@ -22,6 +22,7 @@ import type {
 	GameBoxBuildResult,
 	GameBoxCheckResult,
 	GameBoxLibraryDto,
+	GameBoxScanItem,
 } from "@/api/awd";
 import { type QueryParams, type UniResponse } from "@/api/axios";
 import { GenericTable, useMsgBanner } from "@/components";
@@ -269,7 +270,9 @@ function RouteComponent() {
 				mutationColumns={mutationColumns}
 				mutationData={mutationData}
 				columnActions={columnActions}
-				customActions={<GameBoxActions gamebox_id_list={Array.from(selectedRowIds)} />}
+				customActions={
+					<GameBoxActions gamebox_id_list={Array.from(selectedRowIds)} />
+				}
 				disableAdd={true}
 				selectedRowIds={selectedRowIds}
 				onSelectedRowIdsChange={setSelectedRowIds}
@@ -287,8 +290,112 @@ function GameBoxActions({ gamebox_id_list }: { gamebox_id_list?: string[] }) {
 			<ButtonGroup>
 				<ImportButton />
 				<CheckButton gamebox_id_list={gamebox_id_list} />
+				<ScanButton />
 			</ButtonGroup>
 		</div>
+	);
+}
+
+// 扫描 GAMEBOXES_DIR 登记未入库 package（结果弹窗展示）
+export function ScanButton() {
+	const [isOpen, setIsOpen] = useState(false);
+	const [items, setItems] = useState<GameBoxScanItem[]>([]);
+	const [loading, setLoading] = useState(false);
+	const queryClient = useQueryClient();
+	const banner = useMsgBanner({});
+
+	const handleScan = async () => {
+		setLoading(true);
+		try {
+			const res = await adminApi.awd.scanGameboxes();
+			setItems(res.data ?? []);
+			setIsOpen(true);
+			queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+		} catch (e) {
+			banner.showBanner(
+				"critical",
+				(e as Error).message || "扫描失败，请重试",
+			);
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const columns = useMemo(
+		() => [
+			{
+				accessorKey: "safe_name",
+				header: "Safe Name",
+				field: "safe_name",
+				rowHeader: true,
+			},
+			{
+				accessorKey: "name",
+				header: "Name",
+				field: "name",
+			},
+			{
+				accessorKey: "version",
+				header: "Version",
+				field: "version",
+			},
+			{
+				accessorKey: "status",
+				header: "Status",
+				field: "status",
+				renderCell: (row: GameBoxScanItem) => (
+					<span
+						className={
+							row.status === "error"
+								? "text-red-500"
+								: row.status === "added"
+									? "text-green-600"
+									: "text-gray-500"
+						}
+					>
+						{row.status}
+					</span>
+				),
+			},
+			{
+				accessorKey: "message",
+				header: "Message",
+				field: "message",
+			},
+		],
+		[],
+	);
+
+	const table = useReactTable<GameBoxScanItem>({
+		data: items,
+		columns,
+		getCoreRowModel: getCoreRowModel(),
+		getRowId: (row) => row.safe_name,
+	});
+
+	return (
+		<>
+			{isOpen && (
+				<Dialog title="Scan Results" onClose={() => setIsOpen(false)}>
+					<Table.Container className="m-2">
+						<DataTable
+							aria-labelledby="repositories-default"
+							// @ts-ignore
+							columns={columns}
+							// @ts-ignore
+							getRowId={(row) => row.safe_name}
+							// @ts-ignore
+							data={table
+								.getRowModel()
+								.rows.map((row) => row.original)}
+						/>
+					</Table.Container>
+				</Dialog>
+			)}
+			<Button onClick={handleScan} disabled={loading}>
+				{loading ? "Scanning..." : "Scan"}
+			</Button>
+		</>
 	);
 }
 

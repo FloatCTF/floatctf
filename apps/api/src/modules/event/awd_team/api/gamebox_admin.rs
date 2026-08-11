@@ -26,7 +26,7 @@ use crate::{
         domain::instance_ip_for_offset,
         repo::{event_gamebox_repo, event_repo, gamebox_lib_repo},
         service::{
-            gamebox_import_service::{self, BUILD_STATUS_READY},
+            gamebox_import_service::{self, BUILD_STATUS_READY, GameBoxScanItem},
             gamebox_service,
         },
     },
@@ -259,6 +259,22 @@ pub async fn build_gamebox(
     }
 
     UniResponse::ok(res.into()).into()
+}
+
+/// POST /api/admin/awd/gameboxes/scan —— 扫描 GAMEBOXES_DIR 登记未入库 package
+#[post("/awd/gameboxes/scan")]
+pub async fn scan_gameboxes(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+) -> UniResult<Vec<GameBoxScanItem>> {
+    let items = gamebox_import_service::scan_gameboxes_dir(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        &ctx.config.registry,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(items.into()).into()
 }
 
 /// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 身份 + 可编辑运行参数

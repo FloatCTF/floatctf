@@ -3,6 +3,7 @@ import type { ChallengeSets } from "@/entity";
 import type {
 	BuildChallengeResult,
 	ChallengeCheckResult,
+	ChallengeScanItem,
 	ImportChallengeResponse,
 } from "@/routes/admin/challenges";
 import type { ChallengesListItem } from "@/types/challengeDto";
@@ -61,6 +62,10 @@ export const challengeAdminApi = {
 		const res = await admin_api.post("/challenges/build", {
 			challenge_id_list,
 		});
+		return res.data;
+	},
+	scanChallenges: async (): Promise<UniResponse<ChallengeScanItem[]>> => {
+		const res = await admin_api.post("/challenges/scan");
 		return res.data;
 	},
 	getChallengeSets: async (

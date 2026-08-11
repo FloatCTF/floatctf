@@ -247,6 +247,278 @@ pub async fn import_gamebox_package(
     }
 }
 
+/// Scan result of a single directory under GAMEBOXES_DIR.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GameBoxScanItem {
+    pub safe_name: String,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    /// "added" | "skipped" | "error"
+    pub status: String,
+    pub message: String,
+}
+
+/// Scan `GAMEBOXES_DIR/{safe_name}` and register packages that are not yet in the DB.
+///
+/// 场景：DB 清空/换库后，磁盘目录（mirror 产物）与本地镜像仍在。逐目录解析 meta.toml，
+/// 若 safe_name 未入库则登记 identity + package 字段；镜像（image_ref tag）本地存在 → ready，
+/// 否则 → failed（build_error 提示需重新 Import）。已存在的跳过。
+pub async fn scan_gameboxes_dir(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    registry: &RegistryConfig,
+) -> AwdResult<Vec<GameBoxScanItem>> {
+    use crate::infrastructure::settings::resolve_dir_path;
+
+    let dir_str = get_setting(db, "GAMEBOXES_DIR")
+        .await
+        .map_err(|e| AwdError::Internal(format!("get setting GAMEBOXES_DIR: {e}")))?;
+    let root = resolve_dir_path(&dir_str);
+    if !root.is_dir() {
+        info!(dir = %root.display(), "GAMEBOXES_DIR not found, scan returns empty");
+        return Ok(Vec::new());
+    }
+
+    let runtime = DockerContainerRuntime::new(docker.clone());
+    let mut items = Vec::new();
+    let entries = std::fs::read_dir(&root)
+        .map_err(|e| AwdError::Internal(format!("read GAMEBOXES_DIR {}: {e}", root.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| AwdError::Internal(format!("read_dir entry: {e}")))?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let package_root = entry.path();
+
+        let source_toml = match read_meta_toml(&package_root) {
+            Ok(t) => t,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name: dir_name,
+                    name: None,
+                    version: None,
+                    status: "error".into(),
+                    message: format!("meta.toml 读取失败: {e}"),
+                });
+                continue;
+            }
+        };
+        let meta = match fcmc::GameBoxMeta::parse_and_validate(&source_toml) {
+            Ok(m) => m,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name: dir_name,
+                    name: None,
+                    version: None,
+                    status: "error".into(),
+                    message: map_meta_error(e).to_string(),
+                });
+                continue;
+            }
+        };
+        let safe_name = match meta.resolved_safe_name() {
+            Ok(s) => s,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name: dir_name,
+                    name: None,
+                    version: None,
+                    status: "error".into(),
+                    message: map_meta_error(e).to_string(),
+                });
+                continue;
+            }
+        };
+        let version = meta.version.clone();
+        let normalized = match meta.normalize() {
+            Ok(n) => n,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name: safe_name.clone(),
+                    name: None,
+                    version: Some(version),
+                    status: "error".into(),
+                    message: map_meta_error(e).to_string(),
+                });
+                continue;
+            }
+        };
+
+        // 已入库 → 跳过（scan 只补录缺的）
+        let existing = gamebox_lib_repo::find_gamebox_by_safe_name(db, &safe_name)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        if existing.is_some() {
+            items.push(GameBoxScanItem {
+                safe_name,
+                name: Some(normalized.name.clone()),
+                version: Some(version),
+                status: "skipped".into(),
+                message: "已在数据库中".into(),
+            });
+            continue;
+        }
+
+        let package_digest = match compute_package_digest(&package_root) {
+            Ok(d) => d,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name,
+                    name: Some(normalized.name.clone()),
+                    version: Some(version),
+                    status: "error".into(),
+                    message: format!("package_digest 计算失败: {e}"),
+                });
+                continue;
+            }
+        };
+        let spec_digest = match compute_spec_digest(&normalized) {
+            Ok(d) => d,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name,
+                    name: Some(normalized.name.clone()),
+                    version: Some(version),
+                    status: "error".into(),
+                    message: format!("spec_digest 计算失败: {e}"),
+                });
+                continue;
+            }
+        };
+        let spec_json = match serde_json::to_value(&normalized) {
+            Ok(v) => v,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name,
+                    name: Some(normalized.name.clone()),
+                    version: Some(version),
+                    status: "error".into(),
+                    message: format!("spec_json 序列化失败: {e}"),
+                });
+                continue;
+            }
+        };
+        let healthchecks_json = match serde_json::to_value(&normalized.healthchecks) {
+            Ok(v) => v,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name,
+                    name: Some(normalized.name.clone()),
+                    version: Some(version),
+                    status: "error".into(),
+                    message: format!("healthchecks_json 序列化失败: {e}"),
+                });
+                continue;
+            }
+        };
+
+        let (judge_script_name, judge_script_content) = if let Some(ref j) = meta.judge {
+            match read_judge_script(&package_root, &j.script) {
+                Ok(content) => {
+                    let name = Path::new(&j.script)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&j.script)
+                        .to_string();
+                    (Some(name), Some(content))
+                }
+                Err(e) => {
+                    items.push(GameBoxScanItem {
+                        safe_name,
+                        name: Some(normalized.name.clone()),
+                        version: Some(version),
+                        status: "error".into(),
+                        message: format!("judge 脚本读取失败: {e}"),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            (None, None)
+        };
+
+        // 镜像存在性：image_ref tag 本地可 inspect → ready；否则 failed（提示重新 Import）
+        let image_ref = build_gamebox_image_ref(&registry.image_prefix, &safe_name, &version);
+        let (image_id, build_status, build_error) =
+            match ImageRuntime::inspect_image(&runtime, &image_ref).await {
+                Ok(insp) => (
+                    if insp.image_id.is_empty() {
+                        None
+                    } else {
+                        Some(insp.image_id)
+                    },
+                    BUILD_STATUS_READY,
+                    None,
+                ),
+                Err(_) => (
+                    None,
+                    BUILD_STATUS_FAILED,
+                    Some("镜像不存在本地，请用 Import 重新构建".to_string()),
+                ),
+            };
+
+        let resources = &normalized.recommended_resources;
+        let model = gameboxes::ActiveModel {
+            name: Set(normalized.name.clone()),
+            safe_name: Set(safe_name.clone()),
+            category: Set(normalized.category.clone()),
+            description: Set(normalized.description.clone()),
+            hidden: Set(false),
+            version: Set(Some(version.clone())),
+            source_toml: Set(Some(source_toml.clone())),
+            spec_json: Set(Some(spec_json)),
+            spec_digest: Set(Some(spec_digest)),
+            package_digest: Set(Some(package_digest)),
+            image_ref: Set(Some(image_ref.clone())),
+            image_id: Set(image_id.clone()),
+            image_repo_digest: Set(None),
+            username: Set(Some(normalized.username.clone())),
+            recommended_cpu_millis: Set(resources.cpu_millis),
+            recommended_memory_bytes: Set(resources.memory_bytes),
+            recommended_pids_limit: Set(resources.pids_limit),
+            healthchecks_json: Set(Some(healthchecks_json)),
+            judge_script_name: Set(judge_script_name),
+            judge_script_content: Set(judge_script_content),
+            judge_args_json: Set(None),
+            judge_timeout_secs: Set(None),
+            judge_retry_interval_secs: Set(None),
+            build_status: Set(Some(build_status.to_string())),
+            build_error: Set(build_error),
+            ..Default::default()
+        };
+        let g = match model.insert(db).await {
+            Ok(m) => m,
+            Err(e) => {
+                items.push(GameBoxScanItem {
+                    safe_name,
+                    name: Some(normalized.name),
+                    version: Some(version),
+                    status: "error".into(),
+                    message: format!("写入数据库失败: {e}"),
+                });
+                continue;
+            }
+        };
+
+        info!(
+            gamebox_id = %g.id,
+            safe_name = %safe_name,
+            version = %version,
+            build_status = %build_status,
+            "GameBox registered from GAMEBOXES_DIR scan"
+        );
+        items.push(GameBoxScanItem {
+            safe_name,
+            name: Some(g.name),
+            version: g.version.clone(),
+            status: "added".into(),
+            message: format!("build_status={build_status}"),
+        });
+    }
+    Ok(items)
+}
+
 async fn run_build_and_pin(
     runtime: &DockerContainerRuntime,
     registry: &RegistryConfig,

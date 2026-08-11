@@ -84,6 +84,15 @@ export type ImportGameBoxResponse = {
 	gamebox: GameBoxLibraryDto;
 };
 
+/** POST /awd/gameboxes/scan 结果行。 */
+export type GameBoxScanItem = {
+	safe_name: string;
+	name: string | null;
+	version: string | null;
+	status: "added" | "skipped" | "error";
+	message: string;
+};
+
 /** POST /awd/gameboxes/check 结果行。 */
 export type GameBoxCheckResult = {
 	id: string;
@@ -386,6 +395,10 @@ export const awdAdminApi = {
 	},
 	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
 		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
+		return res.data;
+	},
+	scanGameboxes: async (): Promise<UniResponse<GameBoxScanItem[]>> => {
+		const res = await admin_api.post(`/awd/gameboxes/scan`);
 		return res.data;
 	},
 	checkGameboxes: async (

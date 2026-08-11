@@ -67,6 +67,8 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .service(build::web_import_challenge)
             // POST /api/admin/challenges/build
             .service(build::build_challenge)
+            // POST /api/admin/challenges/scan
+            .service(build::scan_challenges)
             // POST /api/admin/challenges
             .service(catalog::admin::create_challenge)
             // DELETE /api/admin/challenges

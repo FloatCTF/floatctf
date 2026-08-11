@@ -54,6 +54,7 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(network_admin::get_platform_network_allocations)
         .service(gamebox_admin::list_gamebox_library)
         .service(gamebox_admin::import_gamebox)
+        .service(gamebox_admin::scan_gameboxes)
         .service(gamebox_admin::check_gameboxes)
         .service(gamebox_admin::build_gamebox)
         .service(gamebox_admin::update_gamebox)

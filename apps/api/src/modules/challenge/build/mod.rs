@@ -4,6 +4,7 @@ pub mod import_service;
 
 use crate::api::prelude::*;
 use crate::entity::{challenges, prelude::Challenges};
+use crate::modules::challenge::build::import_service::ChallengeScanItem;
 use crate::modules::challenge::catalog::ChallengesDto;
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use fcmc::{DockerContainerRuntime, ImageRuntime};
@@ -60,6 +61,21 @@ pub async fn web_import_challenge(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImportChallengeResponse {
     pub challenge: ChallengesDto,
+}
+
+/// POST /api/admin/challenges/scan —— 扫描 CHALLENGES_DIR 登记未入库 package
+#[post("/scan")]
+pub async fn scan_challenges(
+    _user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+) -> UniResult<Vec<ChallengeScanItem>> {
+    let items = import_service::scan_challenges_dir(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        &ctx.config.registry,
+    )
+    .await?;
+    UniResponse::ok(items.into()).into()
 }
 
 /// POST /api/admin/challenges/check

@@ -260,6 +260,7 @@ function RouteComponent() {
 			<ButtonGroup>
 				<ImportButton />
 				<CheckButton challenge_id_list={Array.from(selectedRowIds)} />
+				<ScanButton />
 			</ButtonGroup>
 		</div>
 	);
@@ -392,9 +393,119 @@ export type BuildChallengeResult = {
 	is_ok: boolean;
 	message: string;
 };
+export type ChallengeScanItem = {
+	safe_name: string;
+	name: string | null;
+	version: string | null;
+	status: "added" | "skipped" | "error";
+	message: string;
+};
 export type ImportChallengeResponse = {
 	challenge: ChallengesListItem;
 };
+
+// 扫描 CHALLENGES_DIR 登记未入库 package（结果弹窗展示）
+export function ScanButton() {
+	const [isOpen, setIsOpen] = useState(false);
+	const [items, setItems] = useState<ChallengeScanItem[]>([]);
+	const [loading, setLoading] = useState(false);
+	const queryClient = useQueryClient();
+	const banner = useMsgBanner({});
+
+	const handleScan = async () => {
+		setLoading(true);
+		try {
+			const res = await adminApi.challenges.scanChallenges();
+			setItems(res.data ?? []);
+			setIsOpen(true);
+			queryClient.invalidateQueries({ queryKey: ["Challenges"] });
+		} catch (e) {
+			banner.showBanner(
+				"critical",
+				(e as Error).message || "扫描失败，请重试",
+			);
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const columns = useMemo(
+		() => [
+			{
+				accessorKey: "safe_name",
+				header: "Safe Name",
+				field: "safe_name",
+				rowHeader: true,
+			},
+			{
+				accessorKey: "name",
+				header: "Name",
+				field: "name",
+			},
+			{
+				accessorKey: "version",
+				header: "Version",
+				field: "version",
+			},
+			{
+				accessorKey: "status",
+				header: "Status",
+				field: "status",
+				renderCell: (row: ChallengeScanItem) => (
+					<span
+						className={
+							row.status === "error"
+								? "text-red-500"
+								: row.status === "added"
+									? "text-green-600"
+									: "text-gray-500"
+						}
+					>
+						{row.status}
+					</span>
+				),
+			},
+			{
+				accessorKey: "message",
+				header: "Message",
+				field: "message",
+			},
+		],
+		[],
+	);
+
+	const table = useReactTable<ChallengeScanItem>({
+		data: items,
+		columns,
+		getCoreRowModel: getCoreRowModel(),
+		getRowId: (row) => row.safe_name,
+	});
+
+	return (
+		<>
+			{isOpen && (
+				<Dialog title="Scan Results" onClose={() => setIsOpen(false)}>
+					<Table.Container className="m-2">
+						<DataTable
+							aria-labelledby="repositories-default"
+							// @ts-ignore
+							columns={columns}
+							// @ts-ignore
+							getRowId={(row) => row.safe_name}
+							// @ts-ignore
+							data={table
+								.getRowModel()
+								.rows.map((row) => row.original)}
+						/>
+					</Table.Container>
+				</Dialog>
+			)}
+			<Button onClick={handleScan} disabled={loading}>
+				{loading ? "Scanning..." : "Scan"}
+			</Button>
+		</>
+	);
+}
 
 export function CheckButton({
 	challenge_id_list,

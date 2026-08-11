@@ -8,6 +8,18 @@ import type { ChallengeWriteupResult } from "@/routes/service/challenges/$id/wri
 import type { ChallengesListItem } from "@/types/challengeDto";
 import { type QueryParams, type UniResponse, service_api } from "../axios";
 
+/** 全局 Writeup 列表统一条目（challenge + gamebox 合并；writeup_type 区分类型）。 */
+export type UnifiedWriteupResult = {
+	id: string;
+	writeup_type: "challenge" | "gamebox";
+	nickname: string;
+	avatar?: string | null;
+	email: string;
+	content_id: string;
+	content_name: string;
+	updated_at: string;
+};
+
 export const challengeServiceApi = {
 	fetch: async (
 		params: QueryParams = {},
@@ -58,7 +70,7 @@ export const challengeServiceApi = {
 	},
 	getAllWriteups: async (
 		params: QueryParams = {},
-	): Promise<UniResponse<ChallengeWriteupResult[]>> => {
+	): Promise<UniResponse<UnifiedWriteupResult[]>> => {
 		const res = await service_api.get("/writeups", { params });
 		return res.data;
 	},

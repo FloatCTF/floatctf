@@ -652,10 +652,10 @@ export function AwdpWorkbench({
 	});
 
 	return (
-		<div className="h-full w-full flex flex-col gap-2">
+		<div className="h-full w-full flex flex-col gap-2 min-h-0">
 			{/* 顶部：标题 + 描述（与挑战详情页同款：text-2xl + border-top 分隔） */}
 			{viewModel.title ? (
-				<div id="awdp-meta">
+				<div id="awdp-meta" className="shrink-0">
 					<p className="font-bold text-2xl">{viewModel.title}</p>
 					{viewModel.description ? (
 						<div className="border-top mt-2 pt-2">{viewModel.description}</div>
@@ -665,7 +665,7 @@ export function AwdpWorkbench({
 			<banner.BannerComponent />
 
 			{/* 顶部状态面板：Phase / Countdown / Score / Break→Fix Timeline（§3-21） */}
-			<div className="mb-2">
+			<div className="mb-2 shrink-0">
 				<AwdpPhaseOverview
 					phase={phase}
 					startedAt={viewModel.startedAt ?? null}
@@ -682,91 +682,95 @@ export function AwdpWorkbench({
 				/>
 			</div>
 
-			{/* GameBox 卡片列表 */}
-			<div className="flex flex-col gap-3">
+			{/* GameBox 卡片列表（超出高度内部滚动，避免页面溢出） */}
+			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
 				{viewModel.gameboxes.map(renderGameBox)}
 				{viewModel.gameboxes.length === 0 && (
 					<p className="text-sm opacity-70">暂无 GameBox。</p>
 				)}
-			</div>
 
-			{/* Official History（fix|ended） */}
-			{phase === "fix" || phase === "ended" ? (
-				<section className="p-3 rounded border">
-					<h4 className="font-bold mb-2">Official History</h4>
-					<Table.Container>
-						<DataTable
-							aria-labelledby="awdp-official-history"
-							// @ts-ignore
-							columns={historyColumns}
-							data={historyTable.getRowModel().rows.map((row) => row.original)}
-						/>
-					</Table.Container>
-					{viewModel.history.length === 0 && (
-						<p className="text-sm opacity-70 mt-2">暂无评估记录。</p>
-					)}
-				</section>
-			) : null}
+				{/* Official History（fix|ended） */}
+				{phase === "fix" || phase === "ended" ? (
+					<section className="p-3 rounded border">
+						<h4 className="font-bold mb-2">Official History</h4>
+						<Table.Container>
+							<DataTable
+								aria-labelledby="awdp-official-history"
+								// @ts-ignore
+								columns={historyColumns}
+								data={historyTable
+									.getRowModel()
+									.rows.map((row) => row.original)}
+							/>
+						</Table.Container>
+						{viewModel.history.length === 0 && (
+							<p className="text-sm opacity-70 mt-2">暂无评估记录。</p>
+						)}
+					</section>
+				) : null}
 
-			{/* Ended（§68） */}
-			{phase === "ended" ? (
-				<section className="p-3 rounded border flex flex-col gap-3">
-					<div className="flex items-center gap-2">
-						<h4 className="font-bold flex-1">Final Score</h4>
-						<strong className="text-lg tabular-nums">{viewModel.score}</strong>
-					</div>
-					<div>
-						<h5 className="font-bold text-sm mb-2">Break Results</h5>
-						<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-							{viewModel.gameboxes.map((gb) => (
-								<Fragment key={gb.id}>
-									<dt className="font-bold">{gb.name}</dt>
-									<dd className="font-medium">
-										{gb.broken ? (
-											<span className="text-green-600">
-												Broken +{viewModel.breakScore}
-											</span>
-										) : (
-											<span className="opacity-60">Unbroken</span>
-										)}
-									</dd>
-								</Fragment>
-							))}
-							{viewModel.gameboxes.length === 0 && (
-								<dd className="font-medium opacity-60">暂无 GameBox。</dd>
-							)}
-						</dl>
-					</div>
-					{viewModel.scoreHistory && viewModel.scoreHistory.length > 0 ? (
+				{/* Ended（§68） */}
+				{phase === "ended" ? (
+					<section className="p-3 rounded border flex flex-col gap-3">
+						<div className="flex items-center gap-2">
+							<h4 className="font-bold flex-1">Final Score</h4>
+							<strong className="text-lg tabular-nums">
+								{viewModel.score}
+							</strong>
+						</div>
 						<div>
-							<h5 className="font-bold text-sm mb-2">Score Ledger</h5>
+							<h5 className="font-bold text-sm mb-2">Break Results</h5>
 							<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-								{viewModel.scoreHistory.map((s) => (
-									<Fragment key={s.id}>
-										<dt className="font-bold">
-											{s.score_type === "break" ? "Break" : "Fix"}
-										</dt>
-										<dd className="font-medium tabular-nums">
-											{s.delta > 0 ? "+" : ""}
-											{s.delta} · {fmtTime(s.created_at)}
+								{viewModel.gameboxes.map((gb) => (
+									<Fragment key={gb.id}>
+										<dt className="font-bold">{gb.name}</dt>
+										<dd className="font-medium">
+											{gb.broken ? (
+												<span className="text-green-600">
+													Broken +{viewModel.breakScore}
+												</span>
+											) : (
+												<span className="opacity-60">Unbroken</span>
+											)}
 										</dd>
 									</Fragment>
 								))}
+								{viewModel.gameboxes.length === 0 && (
+									<dd className="font-medium opacity-60">暂无 GameBox。</dd>
+								)}
 							</dl>
 						</div>
-					) : null}
-					{viewModel.isPractice && onTrainAgain && (
-						<Button
-							variant="primary"
-							className="w-40"
-							disabled={busy["train-again"]}
-							onClick={handleTrainAgain}
-						>
-							{busy["train-again"] ? "Restarting…" : "Train Again"}
-						</Button>
-					)}
-				</section>
-			) : null}
+						{viewModel.scoreHistory && viewModel.scoreHistory.length > 0 ? (
+							<div>
+								<h5 className="font-bold text-sm mb-2">Score Ledger</h5>
+								<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
+									{viewModel.scoreHistory.map((s) => (
+										<Fragment key={s.id}>
+											<dt className="font-bold">
+												{s.score_type === "break" ? "Break" : "Fix"}
+											</dt>
+											<dd className="font-medium tabular-nums">
+												{s.delta > 0 ? "+" : ""}
+												{s.delta} · {fmtTime(s.created_at)}
+											</dd>
+										</Fragment>
+									))}
+								</dl>
+							</div>
+						) : null}
+						{viewModel.isPractice && onTrainAgain && (
+							<Button
+								variant="primary"
+								className="w-40"
+								disabled={busy["train-again"]}
+								onClick={handleTrainAgain}
+							>
+								{busy["train-again"] ? "Restarting…" : "Train Again"}
+							</Button>
+						)}
+					</section>
+				) : null}
+			</div>
 
 			{children}
 		</div>

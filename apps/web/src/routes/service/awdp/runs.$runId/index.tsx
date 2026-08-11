@@ -1,21 +1,20 @@
 import { Spinner } from "@primer/react";
 import { InlineMessage } from "@primer/react/experimental";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { awdpRunApi } from "@/api/awdpRuns";
-import { MDPlusEditor, useMsgBanner } from "@/components";
 import {
 	AwdpWorkbench,
 	type AwdpWorkbenchViewModel,
 	buildAwdpHistory,
 } from "@/components/awdp/AwdpWorkbench";
 import { useAwdpRunStream } from "@/hooks/useAwdpRunStream";
-import { ServiceRouteGuard } from "../route";
+import { ServiceRouteGuard } from "../../route";
 
-export const Route = createFileRoute("/service/awdp/runs/$runId")({
+export const Route = createFileRoute("/service/awdp/runs/$runId/")({
 	component: RouteComponent,
 	loader: ServiceRouteGuard,
 });
@@ -190,75 +189,13 @@ function RouteComponent() {
 	}
 
 	return (
-		<div className="flex h-full w-full min-h-0">
-			{/* 左侧：做题（AWDP 工作台） */}
-			<div className="flex flex-col flex-5 min-h-0">
-				<div className="flex items-center gap-2 px-3 pt-1">
-					<span className="text-xs opacity-60 ml-auto">
-						{stream.connected ? "live" : "poll"}
-					</span>
-				</div>
-				<AwdpWorkbench viewModel={viewModel} {...callbacks} />
+		<div className="h-full w-full flex flex-col min-h-0">
+			<div className="flex items-center gap-2">
+				<span className="text-xs opacity-60 ml-auto">
+					{stream.connected ? "live" : "poll"}
+				</span>
 			</div>
-
-			{/* 右侧：写 WP（与 challenge 详情页同款） */}
-			<div className="flex-7 h-full flex flex-col min-h-0 border-l">
-				<RunWriteupEditor runId={runId} />
-			</div>
-		</div>
-	);
-}
-
-/** 右侧 Writeup 面板：一 run 一份，MD 编辑器 + 保存（真实接口，非本地假数据）。 */
-function RunWriteupEditor({ runId }: { runId: string }) {
-	const banner = useMsgBanner();
-	const queryClient = useQueryClient();
-	const [markdown, setMarkdown] = useState("");
-
-	const writeupQuery = useQuery({
-		queryKey: ["awdp-run-writeup", runId],
-		queryFn: () => awdpRunApi.getWriteup(runId),
-	});
-
-	useEffect(() => {
-		const content = writeupQuery.data?.data?.content;
-		if (content) {
-			setMarkdown(content);
-		}
-	}, [writeupQuery.data]);
-
-	const saveMutation = useMutation({
-		mutationFn: () => awdpRunApi.saveWriteup(runId, markdown),
-		onSuccess: () => {
-			banner.showBanner("success", "Writeup saved successfully");
-			queryClient.invalidateQueries({
-				queryKey: ["awdp-run-writeup", runId],
-			});
-		},
-		onError: (error) => {
-			banner.showErrorBanner(error);
-		},
-	});
-
-	return (
-		<div className="flex h-full flex-col min-h-0">
-			<banner.BannerComponent />
-			<div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs text-[var(--fgColor-muted)]">
-				<span>Writeup</span>
-				{writeupQuery.data?.data?.updated_at && (
-					<span className="opacity-70">
-						Saved {new Date(writeupQuery.data.data.updated_at).toLocaleString()}
-					</span>
-				)}
-			</div>
-			<MDPlusEditor
-				className="flex-1 min-h-0"
-				value={markdown}
-				setValue={(value) => setMarkdown(value)}
-				onSave={() => {
-					saveMutation.mutate();
-				}}
-			/>
+			<AwdpWorkbench viewModel={viewModel} {...callbacks} />
 		</div>
 	);
 }

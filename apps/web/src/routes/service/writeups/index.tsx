@@ -1,11 +1,11 @@
-import { Avatar } from "@primer/react";
+import { Avatar, Label } from "@primer/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
+import type { UnifiedWriteupResult } from "@/api/service/challenges";
 import { GenericTable } from "@/components";
 import { AppLink } from "@/navigation";
-import type { ChallengeWriteupResult } from "@/routes/service/challenges/$id/writeup";
 import { DatetimeToShow } from "@/util";
 
 export const Route = createFileRoute("/service/writeups/")({
@@ -19,23 +19,28 @@ function RouteComponent() {
 
 	const columns = [
 		{
-			accessorKey: "challenge",
-			header: "Challenge",
-			field: "challenge.name",
+			accessorKey: "content_name",
+			header: "Content",
+			field: "content_name",
 			rowHeader: true,
 			sortBy: true,
-			renderCell: (row: ChallengeWriteupResult) => (
-				<AppLink to="/service/challenges/$id" params={{ id: row.challenge.id }}>
-					{row.challenge.name}
-				</AppLink>
-			),
+			renderCell: (row: UnifiedWriteupResult) =>
+				row.writeup_type === "gamebox" ? (
+					<AppLink to="/service/awdp/runs/$runId" params={{ runId: row.id }}>
+						{row.content_name}
+					</AppLink>
+				) : (
+					<AppLink to="/service/challenges/$id" params={{ id: row.content_id }}>
+						{row.content_name}
+					</AppLink>
+				),
 		},
 		{
 			accessorKey: "nickname",
 			header: "Author",
 			field: "nickname",
 			sortBy: true,
-			renderCell: (row: ChallengeWriteupResult) => (
+			renderCell: (row: UnifiedWriteupResult) => (
 				<div className="flex items-center gap-2">
 					{row.avatar ? (
 						<Avatar src={row.avatar} size={24} />
@@ -52,20 +57,30 @@ function RouteComponent() {
 			),
 		},
 		{
+			accessorKey: "writeup_type",
+			header: "Type",
+			field: "writeup_type",
+			renderCell: (row: UnifiedWriteupResult) => (
+				<Label variant={row.writeup_type === "gamebox" ? "success" : "accent"}>
+					{row.writeup_type === "gamebox" ? "Gamebox" : "Challenge"}
+				</Label>
+			),
+		},
+		{
 			accessorKey: "email",
 			header: "Email",
 			field: "email",
-			renderCell: (row: ChallengeWriteupResult) => (
+			renderCell: (row: UnifiedWriteupResult) => (
 				<a href={`mailto:${row.email}`}>{row.email}</a>
 			),
 		},
 		{
 			accessorKey: "updated_at",
 			header: "Updated At",
-			field: "writeup.updated_at",
+			field: "updated_at",
 			sortBy: true,
-			renderCell: (row: ChallengeWriteupResult) => (
-				<span>{DatetimeToShow(row.writeup.updated_at)}</span>
+			renderCell: (row: UnifiedWriteupResult) => (
+				<span>{DatetimeToShow(row.updated_at)}</span>
 			),
 		},
 	];
@@ -79,7 +94,7 @@ function RouteComponent() {
 			enableInternalActions={false}
 			disableAdd={true}
 			disableSelect={true}
-			getRowId={(row: ChallengeWriteupResult) => row.writeup.id}
+			getRowId={(row: UnifiedWriteupResult) => row.id}
 		/>
 	);
 }

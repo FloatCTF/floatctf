@@ -465,7 +465,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 	}
 
 	return (
-		<section className="rounded border p-4">
+		<section className="rounded border p-3">
 			{/* 第一行：Phase identity（左）| Score（右） */}
 			<div className="flex items-start justify-between gap-4 flex-wrap">
 				<div className="min-w-0">
@@ -492,8 +492,8 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 			</div>
 
 			{/* 第二行：Countdown */}
-			<div className="mt-4">
-				<p className="text-3xl leading-8 font-semibold tabular-nums text-[var(--fgColor-default)]">
+			<div className="mt-3">
+				<p className="text-2xl leading-7 font-semibold tabular-nums text-[var(--fgColor-default)]">
 					{countdownText}
 				</p>
 				{countdownCaption ? (
@@ -509,7 +509,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 			</div>
 
 			{/* 第三行：Break → Fix Timeline */}
-			<div className="mt-4">
+			<div className="mt-3">
 				<AwdpTimeline
 					state={state}
 					phase={phase}

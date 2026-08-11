@@ -1,7 +1,7 @@
-//! AWDP 实例运行时服务：按需启动 GameBox（plan §13/§14/§15）。
+//! AWDP 实例运行时服务：按需启动 GameBox（plan §13/§14/§15，run 中心化）。
 //!
 //! 关键不变量：
-//!   - 逻辑实例（instances + awdp_instances）唯一：每 subject × event_gamebox 至多一个；
+//!   - 逻辑实例（instances + awdp_instances）唯一：每 subject × run × gamebox 至多一个；
 //!   - 用户可见 public endpoint 跨 reset 稳定（instance_endpoints 保存 host 端口，
 //!     recreate 时复用 host_port 绑定）；
 //!   - 一个 container 按 healthchecks 暴露多个 HTTP/TCP 端点（protocol+port 去重）；
@@ -18,14 +18,14 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::{
-    awdp_event_gameboxes, awdp_instances, events, gameboxes, instance_endpoints, instances,
+    awdp_event_gameboxes, awdp_instances, awdp_runs, gameboxes, instance_endpoints, instances,
     sea_orm_active_enums::AwdpPhase,
 };
 use crate::infrastructure::settings::get_setting;
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::flag::awdp_flag,
-    repo::{event_gamebox_repo, event_repo, instance_repo},
+    repo::{break_repo, event_gamebox_repo, instance_repo, run_repo},
 };
 use crate::modules::gamebox::{effective_image_ref_from_gamebox, healthcheck::parse_healthchecks};
 
@@ -33,7 +33,7 @@ use crate::modules::gamebox::{effective_image_ref_from_gamebox, healthcheck::par
 #[derive(Debug, Clone)]
 pub struct InstanceView {
     pub instance_id: Uuid,
-    pub event_gamebox_id: Uuid,
+    pub gamebox_id: Uuid,
     pub gamebox_name: String,
     pub gamebox_category: String,
     pub runtime_state: String,
@@ -72,19 +72,26 @@ impl Subject {
     }
 }
 
-/// 按 participant_mode 解析主体（与 resolve_participant 等价，双主体）。
-pub async fn resolve_subject(
+/// 解析 run 的 gamebox 运行规格：
+///   competition（run.event_id）→ 赛事挂载行 override（eg）或 GameBox 默认；
+///   practice（event_id NULL）→ GameBox 默认规格。
+pub async fn resolve_run_gamebox_spec(
     db: &DatabaseConnection,
-    event: &events::Model,
-    user_id: Uuid,
-    team_id_for_event: Option<Uuid>,
-) -> AwdpResult<Subject> {
-    if event.participant_mode == crate::entity::sea_orm_active_enums::ParticipantMode::Team {
-        let team_id = team_id_for_event
-            .ok_or_else(|| AwdpError::Forbidden("you are not in any team for this event".into()))?;
-        Ok(Subject::team(team_id))
-    } else {
-        Ok(Subject::user(user_id))
+    run: &awdp_runs::Model,
+    gamebox_id: Uuid,
+) -> AwdpResult<(Option<awdp_event_gameboxes::Model>, gameboxes::Model)> {
+    match run.event_id {
+        Some(event_id) => {
+            let eg = event_gamebox_repo::find_for_event_and_gamebox(db, event_id, gamebox_id)
+                .await?
+                .ok_or_else(|| AwdpError::Validation("gamebox 未挂载到本赛事".into()))?;
+            let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
+            Ok((Some(eg), gamebox))
+        }
+        None => {
+            let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
+            Ok((None, gamebox))
+        }
     }
 }
 
@@ -93,30 +100,23 @@ pub async fn start_instance(
     db: &DatabaseConnection,
     docker: &Docker,
     jwt_secret: &[u8],
-    event_id: Uuid,
-    event_gamebox_id: Uuid,
+    run_id: Uuid,
+    gamebox_id: Uuid,
     subject: Subject,
     flag_prefix: &str,
 ) -> AwdpResult<InstanceView> {
     // 1. 阶段门：Break / Fix 才允许启动。
-    let awdp = event_repo::require_by_event_id(db, event_id).await?;
-    if !matches!(awdp.phase, AwdpPhase::Break | AwdpPhase::Fix) {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if !matches!(run.phase, AwdpPhase::Break | AwdpPhase::Fix) {
         return Err(AwdpError::InvalidState(format!(
             "AWDP phase {:?} does not allow instance start",
-            awdp.phase
+            run.phase
         )));
     }
 
     // 2. 解析运行规格。
-    let (eg, gamebox) = event_gamebox_repo::effective_gamebox_spec(db, event_gamebox_id).await?;
+    let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, gamebox_id).await?;
     let image_ref = effective_image_ref_from_gamebox(&gamebox).map_err(AwdpError::from)?;
-    let healthchecks =
-        parse_healthchecks(&eg.healthcheck_override_json.clone().unwrap_or_else(|| {
-            gamebox
-                .healthchecks_json
-                .clone()
-                .unwrap_or_else(|| serde_json::json!([]))
-        }))?;
     let node_ip = get_setting(db, "NODE_IP")
         .await
         .map_err(|e| AwdpError::Internal(format!("get NODE_IP: {e}")))?;
@@ -124,8 +124,8 @@ pub async fn start_instance(
     // 3. 查找/创建逻辑实例。
     let (instance, ext) = match instance_repo::find_instance_for_subject(
         db,
-        event_id,
-        event_gamebox_id,
+        run_id,
+        gamebox_id,
         subject.user_id,
         subject.team_id,
     )
@@ -138,8 +138,8 @@ pub async fn start_instance(
                 format!("awdp-{}", &instance_id.to_string().replace('-', "")[..20]);
             instance_repo::create_instance(
                 db,
-                event_id,
-                event_gamebox_id,
+                run_id,
+                gamebox_id,
                 subject.user_id,
                 subject.team_id,
                 &container_name,
@@ -165,18 +165,17 @@ pub async fn start_instance(
 
     let flag = awdp_flag(
         jwt_secret,
-        event_id,
-        event_gamebox_id,
+        run_id,
+        gamebox_id,
         subject.user_id,
         subject.team_id,
         flag_prefix,
     );
-    let container_name = instance.container_name.clone();
     let generation = instance.runtime_generation;
-    let (instance, endpoints) = launch_container(
+    let (instance, _endpoints) = launch_container(
         db,
         &runtime,
-        event_id,
+        run_id,
         &instance,
         &ext,
         &eg,
@@ -198,10 +197,10 @@ pub async fn start_instance(
 async fn launch_container(
     db: &DatabaseConnection,
     runtime: &DockerContainerRuntime,
-    event_id: Uuid,
+    run_id: Uuid,
     instance: &instances::Model,
     ext: &awdp_instances::Model,
-    eg: &awdp_event_gameboxes::Model,
+    eg: &Option<awdp_event_gameboxes::Model>,
     gamebox: &gameboxes::Model,
     image_ref: &str,
     flag: &str,
@@ -210,13 +209,7 @@ async fn launch_container(
     generation: i64,
 ) -> AwdpResult<(instances::Model, Vec<instance_endpoints::Model>)> {
     // 按 healthchecks 暴露端口（protocol+port 去重）；复用既有 host 端口。
-    let healthchecks =
-        parse_healthchecks(&eg.healthcheck_override_json.clone().unwrap_or_else(|| {
-            gamebox
-                .healthchecks_json
-                .clone()
-                .unwrap_or_else(|| serde_json::json!([]))
-        }))?;
+    let healthchecks = parse_healthchecks(&healthchecks_of(eg, gamebox))?;
     let mut seen: HashMap<(String, u16), ()> = HashMap::new();
     let mut port_bindings: Vec<PortBinding> = Vec::new();
     let mut endpoint_specs: Vec<(String, u16)> = Vec::new(); // (protocol, container_port)
@@ -266,10 +259,29 @@ async fn launch_container(
     let labels = HashMap::from([
         ("io.floatctf.managed".into(), "true".into()),
         ("io.floatctf.resource".into(), "awdp-instance".into()),
-        ("io.floatctf.event_id".into(), event_id.to_string()),
-        ("io.floatctf.event_gamebox_id".into(), eg.id.to_string()),
+        ("io.floatctf.run_id".into(), run_id.to_string()),
+        ("io.floatctf.gamebox_id".into(), ext.gamebox_id.to_string()),
         ("io.floatctf.instance_id".into(), instance.id.to_string()),
     ]);
+
+    let resources = match eg {
+        Some(eg) => ResourceLimits {
+            cpu_millis: Some(eg.cpu_millis),
+            memory_bytes: Some(eg.memory_bytes),
+            pids_limit: Some(eg.pids_limit),
+            cap_drop: vec!["NET_ADMIN".into(), "NET_RAW".into(), "SYS_ADMIN".into()],
+            privileged: false,
+            extra_hosts: vec![],
+        },
+        None => ResourceLimits {
+            cpu_millis: Some(gamebox.recommended_cpu_millis),
+            memory_bytes: Some(gamebox.recommended_memory_bytes),
+            pids_limit: Some(gamebox.recommended_pids_limit),
+            cap_drop: vec!["NET_ADMIN".into(), "NET_RAW".into(), "SYS_ADMIN".into()],
+            privileged: false,
+            extra_hosts: vec![],
+        },
+    };
 
     let spec = fcmc::ContainerSpec {
         name: instance.container_name.clone(),
@@ -280,14 +292,7 @@ async fn launch_container(
         fixed_ip: None,
         port_bindings,
         auto_remove: true,
-        resources: ResourceLimits {
-            cpu_millis: Some(eg.cpu_millis),
-            memory_bytes: Some(eg.memory_bytes),
-            pids_limit: Some(eg.pids_limit),
-            cap_drop: vec!["NET_ADMIN".into(), "NET_RAW".into(), "SYS_ADMIN".into()],
-            privileged: false,
-            extra_hosts: vec![],
-        },
+        resources,
         network_mode: None,
         healthcheck: None,
     };
@@ -338,6 +343,21 @@ async fn launch_container(
     Ok((instance, endpoints.concat()))
 }
 
+/// healthcheck 源：赛事 override > GameBox 默认。
+fn healthchecks_of(
+    eg: &Option<awdp_event_gameboxes::Model>,
+    gamebox: &gameboxes::Model,
+) -> serde_json::Value {
+    eg.as_ref()
+        .and_then(|e| e.healthcheck_override_json.clone())
+        .unwrap_or_else(|| {
+            gamebox
+                .healthchecks_json
+                .clone()
+                .unwrap_or_else(|| serde_json::json!([]))
+        })
+}
+
 /// Reset：移除物理容器并从 pristine 镜像重建（保留逻辑实例 + 端点分配）。
 /// 与 Patch / Evaluation / Manual check 使用同一把 instance advisory lock。
 pub async fn reset_instance(
@@ -366,8 +386,8 @@ pub async fn reset_instance_unchecked(
     flag_prefix: &str,
 ) -> AwdpResult<InstanceView> {
     let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
-    let (eg, gamebox) =
-        event_gamebox_repo::effective_gamebox_spec(db, ext.event_gamebox_id).await?;
+    let run = run_repo::require_by_id(db, ext.run_id).await?;
+    let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, ext.gamebox_id).await?;
     let image_ref = effective_image_ref_from_gamebox(&gamebox).map_err(AwdpError::from)?;
     let node_ip = get_setting(db, "NODE_IP")
         .await
@@ -381,8 +401,8 @@ pub async fn reset_instance_unchecked(
 
     let flag = awdp_flag(
         jwt_secret,
-        ext.event_id,
-        ext.event_gamebox_id,
+        ext.run_id,
+        ext.gamebox_id,
         ext.owner_user_id,
         ext.owner_team_id,
         flag_prefix,
@@ -396,7 +416,7 @@ pub async fn reset_instance_unchecked(
     let (instance, _endpoints) = launch_container(
         db,
         &runtime,
-        ext.event_id,
+        ext.run_id,
         &instance,
         &ext,
         &eg,
@@ -494,22 +514,22 @@ pub async fn get_instance_view(
 ) -> AwdpResult<InstanceView> {
     let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
     assert_owner(&instance, subject)?;
-    let eg = event_gamebox_repo::require_by_id(db, ext.event_gamebox_id).await?;
-    let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id).await?;
+    let run = run_repo::require_by_id(db, ext.run_id).await?;
+    let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, ext.gamebox_id).await?;
     build_view(db, &instance, &ext, &eg, &gamebox).await
 }
 
-/// 当前主体在该 event_gamebox 下的实例视图（未启动返回 None）。
+/// 当前主体在该 run × gamebox 下的实例视图（未启动返回 None）。
 pub async fn get_my_instance_view(
     db: &DatabaseConnection,
-    event_id: Uuid,
-    event_gamebox_id: Uuid,
+    run_id: Uuid,
+    gamebox_id: Uuid,
     subject: Subject,
 ) -> AwdpResult<Option<InstanceView>> {
     let Some((instance, ext)) = instance_repo::find_instance_for_subject(
         db,
-        event_id,
-        event_gamebox_id,
+        run_id,
+        gamebox_id,
         subject.user_id,
         subject.team_id,
     )
@@ -517,8 +537,8 @@ pub async fn get_my_instance_view(
     else {
         return Ok(None);
     };
-    let eg = event_gamebox_repo::require_by_id(db, ext.event_gamebox_id).await?;
-    let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id).await?;
+    let run = run_repo::require_by_id(db, ext.run_id).await?;
+    let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, ext.gamebox_id).await?;
     Ok(Some(build_view(db, &instance, &ext, &eg, &gamebox).await?))
 }
 
@@ -526,21 +546,21 @@ async fn build_view(
     db: &DatabaseConnection,
     instance: &instances::Model,
     ext: &awdp_instances::Model,
-    eg: &awdp_event_gameboxes::Model,
+    _eg: &Option<awdp_event_gameboxes::Model>,
     gamebox: &gameboxes::Model,
 ) -> AwdpResult<InstanceView> {
     let endpoints = load_endpoints(db, instance.id).await?;
-    let broken = crate::modules::event::awdp::repo::break_repo::already_broken(
+    let broken = break_repo::already_broken(
         db,
-        ext.event_id,
-        eg.id,
+        ext.run_id,
+        ext.gamebox_id,
         ext.owner_user_id,
         ext.owner_team_id,
     )
     .await?;
     Ok(InstanceView {
         instance_id: instance.id,
-        event_gamebox_id: eg.id,
+        gamebox_id: ext.gamebox_id,
         gamebox_name: gamebox.name.clone(),
         gamebox_category: gamebox.category.clone(),
         runtime_state: instance.runtime_state.clone(),
@@ -619,16 +639,31 @@ async fn upsert_endpoint(
     Ok(())
 }
 
-/// 事件内全部实例视图（管理端 inspect）。
+/// run 内全部实例视图。
 pub async fn list_instances(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+) -> AwdpResult<Vec<InstanceView>> {
+    let rows = instance_repo::list_for_run(db, run_id).await?;
+    let mut out = Vec::new();
+    for (instance, ext) in rows {
+        let run = run_repo::require_by_id(db, ext.run_id).await?;
+        let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, ext.gamebox_id).await?;
+        out.push(build_view(db, &instance, &ext, &eg, &gamebox).await?);
+    }
+    Ok(out)
+}
+
+/// 事件下全部实例视图（管理端 inspect）。
+pub async fn list_instances_for_event(
     db: &DatabaseConnection,
     event_id: Uuid,
 ) -> AwdpResult<Vec<InstanceView>> {
     let rows = instance_repo::list_for_event(db, event_id).await?;
     let mut out = Vec::new();
     for (instance, ext) in rows {
-        let eg = event_gamebox_repo::require_by_id(db, ext.event_gamebox_id).await?;
-        let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id).await?;
+        let run = run_repo::require_by_id(db, ext.run_id).await?;
+        let (eg, gamebox) = resolve_run_gamebox_spec(db, &run, ext.gamebox_id).await?;
         out.push(build_view(db, &instance, &ext, &eg, &gamebox).await?);
     }
     Ok(out)

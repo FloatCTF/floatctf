@@ -1,4 +1,4 @@
-//! AWDP 事件生命周期：Break→Fix 切换（plan §19）。
+//! AWDP run 生命周期：Break→Fix 切换（plan §19，run 中心化）。
 
 use bollard::Docker;
 use chrono::Utc;
@@ -9,7 +9,7 @@ use crate::entity::sea_orm_active_enums::AwdpPhase;
 use crate::modules::event::awdp::{
     AwdpResult,
     domain::AwdpConfig,
-    repo::{event_repo, instance_repo, round_repo},
+    repo::{instance_repo, round_repo, run_repo},
     service::runtime,
 };
 
@@ -20,16 +20,10 @@ pub async fn transition_break_to_fix(
     db: &DatabaseConnection,
     docker: &Docker,
     jwt_secret: &[u8],
-    event_id: Uuid,
+    run_id: Uuid,
 ) -> AwdpResult<()> {
-    let row = event_repo::require_by_event_id(db, event_id).await?;
-    let config = AwdpConfig {
-        break_duration_secs: row.break_duration_secs,
-        fix_duration_secs: row.fix_duration_secs,
-        fix_round_interval_secs: row.fix_round_interval_secs,
-        break_score: row.break_score,
-        fix_round_score: row.fix_round_score,
-    };
+    let run = run_repo::require_by_id(db, run_id).await?;
+    let config = AwdpConfig::from_run(&run);
     config.validate()?;
 
     let now = Utc::now();
@@ -37,12 +31,12 @@ pub async fn transition_break_to_fix(
     let first_cutoff = now + chrono::Duration::seconds(config.fix_round_interval_secs as i64);
 
     // CAS：Break → Fix。
-    event_repo::transition_phase(
+    run_repo::transition_phase(
         db,
-        event_id,
+        run_id,
         AwdpPhase::Break,
         AwdpPhase::Fix,
-        event_repo::PhaseTransitionPatch {
+        run_repo::PhaseTransitionPatch {
             fix_started_at: Some(now),
             fix_ends_at: Some(fix_ends),
             current_round: Some(0),
@@ -53,21 +47,21 @@ pub async fn transition_break_to_fix(
     .await?;
 
     // 确定性预生成回合时间线（幂等）。
-    round_repo::materialize_rounds(db, event_id).await?;
+    round_repo::materialize_rounds(db, run_id).await?;
 
     // 全部已启动实例 reset 到 pristine（保留 logical instance + 端点分配）。
-    reset_all_instances(db, docker, jwt_secret, event_id).await?;
+    reset_all_run_instances(db, docker, jwt_secret, run_id).await?;
     Ok(())
 }
 
-/// 事件下全部已启动实例 reset 到 pristine（Break→Fix / 管理端）。
-pub async fn reset_all_instances(
+/// run 下全部已启动实例 reset 到 pristine（Break→Fix / 管理端 / 玩家 run reset）。
+pub async fn reset_all_run_instances(
     db: &DatabaseConnection,
     docker: &Docker,
     jwt_secret: &[u8],
-    event_id: Uuid,
+    run_id: Uuid,
 ) -> AwdpResult<usize> {
-    let rows = instance_repo::list_for_event(db, event_id).await?;
+    let rows = instance_repo::list_for_run(db, run_id).await?;
     let mut n = 0usize;
     for (instance, _ext) in rows {
         if instance.runtime_state == "pending" {

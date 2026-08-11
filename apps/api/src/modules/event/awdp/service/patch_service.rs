@@ -1,4 +1,4 @@
-//! AWDP Patch 提交与执行（plan §21/§22/§23）。
+//! AWDP Patch 提交与执行（plan §21/§22/§23，run 中心化）。
 //!
 //! 流程（全程持有 instance advisory lock）：
 //!   upload patch.sh（Fix only）
@@ -23,9 +23,7 @@ use uuid::Uuid;
 use crate::entity::sea_orm_active_enums::AwdpPhase;
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    repo::{
-        evaluation_repo, event_gamebox_repo, event_repo, instance_repo, patch_repo, round_repo,
-    },
+    repo::{evaluation_repo, event_gamebox_repo, instance_repo, patch_repo, round_repo, run_repo},
     service::{lock::InstanceAdvisoryLock, runtime::Subject},
 };
 
@@ -46,16 +44,16 @@ pub enum PatchResult {
 pub async fn apply_patch(
     db: &DatabaseConnection,
     docker: &Docker,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     script: &str,
     subject: Subject,
 ) -> AwdpResult<PatchResult> {
-    let awdp = event_repo::require_by_event_id(db, event_id).await?;
-    if awdp.phase != AwdpPhase::Fix {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if run.phase != AwdpPhase::Fix {
         return Err(AwdpError::InvalidState(format!(
             "patch upload only allowed during Fix (phase={:?})",
-            awdp.phase
+            run.phase
         )));
     }
     if script.len() > MAX_PATCH_BYTES {
@@ -66,7 +64,7 @@ pub async fn apply_patch(
     }
 
     let lock = InstanceAdvisoryLock::acquire(db, instance_id).await?;
-    let result = apply_patch_locked(db, docker, event_id, instance_id, script, subject).await;
+    let result = apply_patch_locked(db, docker, run_id, instance_id, script, subject).await;
     lock.release().await;
     result
 }
@@ -74,7 +72,7 @@ pub async fn apply_patch(
 async fn apply_patch_locked(
     db: &DatabaseConnection,
     docker: &Docker,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     script: &str,
     subject: Subject,
@@ -82,14 +80,14 @@ async fn apply_patch_locked(
     let now = Utc::now();
 
     // 1. 当前 open round。
-    let Some(round) = round_repo::current_open_round(db, event_id, now).await? else {
+    let Some(round) = round_repo::current_open_round(db, run_id, now).await? else {
         return Err(AwdpError::InvalidState(
             "当前没有进行中的 Fix 回合（可能正处于评估窗口）".into(),
         ));
     };
 
     // 2. prior-round 评估未完成 → 拒绝修改容器（plan §23 竞态）。
-    if let Some(prior) = round_repo::next_due_round(db, event_id).await? {
+    if let Some(prior) = round_repo::next_due_round(db, run_id).await? {
         if prior.id != round.id
             && prior.status != "completed"
             && evaluation_repo::has_unfinished_for_instance(db, instance_id, prior.id).await?
@@ -106,7 +104,7 @@ async fn apply_patch_locked(
     };
     let submission = patch_repo::create_submission(
         db,
-        event_id,
+        run_id,
         instance_id,
         round.id,
         subject.user_id,
@@ -117,7 +115,7 @@ async fn apply_patch_locked(
     .await?;
 
     // 4. 容器必须 running。
-    let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
     if instance.runtime_state != "running" {
         patch_repo::finish_apply(
             db,
@@ -131,8 +129,7 @@ async fn apply_patch_locked(
         .await?;
         return Err(AwdpError::InvalidState("instance is not running".into()));
     }
-    let (_eg, gamebox) =
-        event_gamebox_repo::effective_gamebox_spec(db, _ext.event_gamebox_id).await?;
+    let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
     let source_dir = gamebox
         .awdp_source_code_dir
         .clone()
@@ -196,11 +193,11 @@ async fn apply_patch_locked(
 /// 当前主体的最近 patch 提交（前端展示 applying/applied/failed）。
 pub async fn latest_for_subject_instance(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     subject: Subject,
 ) -> AwdpResult<Option<crate::entity::awdp_patch_submissions::Model>> {
-    let _ = event_id;
+    let _ = run_id;
     let Some(row) = patch_repo::latest_for_instance(db, instance_id).await? else {
         return Ok(None);
     };

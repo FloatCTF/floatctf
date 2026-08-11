@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use bollard::Docker;
-use chrono::Utc;
 use fcmc::{ContainerRuntime, DockerContainerRuntime};
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
@@ -11,9 +10,8 @@ use uuid::Uuid;
 use crate::infrastructure::script_runner::{parse_batch_results, run_script};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    repo::{
-        evaluation_repo, event_gamebox_repo, event_repo, instance_repo, patch_repo, score_repo,
-    },
+    domain::fix_idempotency_key,
+    repo::{evaluation_repo, event_gamebox_repo, instance_repo, patch_repo, run_repo, score_repo},
     service::{lock::InstanceAdvisoryLock, runtime::Subject},
 };
 
@@ -30,12 +28,12 @@ pub struct ManualCheckResult {
 pub async fn manual_check(
     db: &DatabaseConnection,
     docker: &Docker,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     subject: Subject,
 ) -> AwdpResult<ManualCheckResult> {
-    let awdp = event_repo::require_by_event_id(db, event_id).await?;
-    if awdp.phase != crate::entity::sea_orm_active_enums::AwdpPhase::Fix {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if run.phase != crate::entity::sea_orm_active_enums::AwdpPhase::Fix {
         return Err(AwdpError::InvalidState(
             "Test Check 仅在 Fix 阶段可用".into(),
         ));
@@ -61,7 +59,7 @@ pub async fn manual_check(
     }
 
     let lock = InstanceAdvisoryLock::acquire(db, instance_id).await?;
-    let result = manual_check_locked(db, docker, event_id, instance_id, &instance).await;
+    let result = manual_check_locked(db, docker, run_id, instance_id, &instance).await;
     lock.release().await;
     result
 }
@@ -69,11 +67,11 @@ pub async fn manual_check(
 async fn manual_check_locked(
     db: &DatabaseConnection,
     docker: &Docker,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     instance: &crate::entity::instances::Model,
 ) -> AwdpResult<ManualCheckResult> {
-    let evaluation = evaluation_repo::create_manual(db, event_id, instance_id).await?;
+    let evaluation = evaluation_repo::create_manual(db, run_id, instance_id).await?;
 
     if instance.runtime_state != "running" {
         evaluation_repo::finish(
@@ -101,8 +99,7 @@ async fn manual_check_locked(
         .ok_or_else(|| AwdpError::Docker("container has no ip_address".into()))?;
 
     let (_instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
-    let (_eg, gamebox) =
-        event_gamebox_repo::effective_gamebox_spec(db, ext.event_gamebox_id).await?;
+    let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
 
     // 1. Healthcheck（public endpoints，带重试）。
     let endpoints = super::runtime::instance_endpoints_for(db, instance_id).await?;
@@ -240,11 +237,11 @@ async fn manual_check_locked(
 /// 物化一条 official 评估（round × instance 唯一；幂等）。
 pub async fn materialize_official_evaluations(
     db: &DatabaseConnection,
-    event_id: Uuid,
+    run_id: Uuid,
     instance_id: Uuid,
     fix_round_id: Uuid,
 ) -> AwdpResult<bool> {
-    let _ = evaluation_repo::create_official(db, event_id, instance_id, fix_round_id).await?;
+    let _ = evaluation_repo::create_official(db, run_id, instance_id, fix_round_id).await?;
     Ok(true)
 }
 
@@ -299,8 +296,8 @@ async fn process_official_locked(
     use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
 
     let (_instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
-    let (_eg, gamebox) =
-        event_gamebox_repo::effective_gamebox_spec(db, ext.event_gamebox_id).await?;
+    let run = run_repo::require_by_id(db, ext.run_id).await?;
+    let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
     let round_id = ev
         .fix_round_id
         .ok_or_else(|| AwdpError::Internal("official evaluation missing fix_round_id".into()))?;
@@ -508,22 +505,17 @@ async fn process_official_locked(
         )
         .await?;
     } else {
-        // PATCHED → +fix_round_score（幂等键 awdp:fix:{event}:{round}:{instance}）。
-        let awdp = event_repo::require_by_event_id(db, ev.event_id).await?;
-        let key = crate::modules::event::awdp::domain::fix_idempotency_key(
-            ev.event_id,
-            round_id,
-            ev.instance_id,
-        );
+        // PATCHED → +fix_round_score（幂等键 awdp:fix:{run}:{round}:{instance}）。
+        let key = fix_idempotency_key(ext.run_id, round_id, ev.instance_id);
         let _scored = score_repo::create_score_event(
             db,
-            ev.event_id,
+            ext.run_id,
             ext.owner_user_id,
             ext.owner_team_id,
-            ext.event_gamebox_id,
+            ext.gamebox_id,
             "fix",
             Some(round_id),
-            awdp.fix_round_score,
+            run.fix_round_score,
             &key,
         )
         .await?;

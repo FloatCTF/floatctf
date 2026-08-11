@@ -1,4 +1,4 @@
-//! Platform file download helpers (admin private download + presigned URLs).
+//! 平台文件下载处理。
 
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ use crate::{
     infrastructure::WebRustfs,
 };
 
-/// Generate a presigned GET URL for an object (shared by player event writeups, etc.).
+/// 为对象生成预签名 GET URL（选手赛事 Writeup 等共用）。
 pub async fn generate_presigned_download_url(
     rustfs: WebRustfs,
     bucket: &str,

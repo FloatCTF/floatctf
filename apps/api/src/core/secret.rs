@@ -1,8 +1,8 @@
-//! Secret wrapper that redacts sensitive values in logs and Debug.
+//! 敏感值包装类型：在日志与 `Debug` 中脱敏。
 
 use std::fmt;
 
-/// Opaque secret string — never printed in Debug/Display.
+/// 不透明密钥字符串——永不在 Debug/Display 中打印。
 #[derive(Clone)]
 pub struct Secret(String);
 

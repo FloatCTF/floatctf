@@ -1,3 +1,5 @@
+//! 调度引擎：任务注册表、触发与执行循环。
+
 use crate::entity::scheduled_tasks;
 use crate::infrastructure::logging::LogService;
 use crate::infrastructure::{WebDb, WebDocker, WebRustfs};

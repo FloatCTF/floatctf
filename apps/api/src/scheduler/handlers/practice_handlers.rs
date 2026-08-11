@@ -1,3 +1,5 @@
+//! 练习赛事确保与实例清理相关调度处理器。
+
 use crate::{
     entity::scheduled_tasks,
     infrastructure::{WebDb, WebDocker},

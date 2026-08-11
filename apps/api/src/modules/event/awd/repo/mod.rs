@@ -1,7 +1,4 @@
-//! Repository layer for AWD operations — encapsulates database access.
-//!
-//! Each module wraps SeaORM queries on the generated entities, keeping
-//! raw query construction out of handlers and services.
+//! AWD 仓储层。
 
 pub mod ban_repo;
 pub mod event_gamebox_repo;

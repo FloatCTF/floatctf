@@ -1,19 +1,16 @@
-//! Network address management for AWD events.
-//!
-//! Handles CIDR parsing, subnet allocation, and IP assignment
-//! without depending on the `ipnetwork` crate.
+//! AWD 网络领域模型。
 
 use crate::modules::event::awd::AwdError;
 use std::net::Ipv4Addr;
 
-/// Represents a parsed IPv4 CIDR block.
+/// 已解析的 IPv4 CIDR 块。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv4Cidr {
     pub network: Ipv4Addr,
     pub prefix_len: u8,
 }
 
-/// Represents an allocated subnet within a larger CIDR.
+/// 在更大 CIDR 内已分配的子网。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllocatedSubnet {
     pub cidr: Ipv4Cidr,

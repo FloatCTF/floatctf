@@ -1,13 +1,6 @@
-//! Challenge package import pipeline（单版本模型）。
+//! 题目包导入服务。
 //!
-//! Flow:
-//! 1. Safe extract zip → discover package root → require meta.toml + src/Dockerfile
-//! 2. Parse/validate meta.toml via `fcmc::ChallengeMeta` → 得 safe_name/version
-//! 3. 版本门禁：incoming 必须严格大于该 Challenge 当前版本（等于/小于拒绝，详细日志）
-//! 4. Compute package_digest (meta.toml + src/** + attachment/**) + spec_digest
-//! 5. Attachment: read + hash metadata (file copied to CHALLENGES_DIR after success)
-//! 6. 单版本 upsert：identity 先置 building → docker build → ready/failed（image pins）
-//! 7. On success: mirror package (src/ + attachment/) into CHALLENGES_DIR/{safe_name}
+//! 流程与 GameBox 导入对称：安全解压 → 规格规范化 → 构建/推送 → 登记身份。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -38,19 +31,19 @@ pub const BUILD_STATUS_BUILDING: &str = "building";
 pub const BUILD_STATUS_READY: &str = "ready";
 pub const BUILD_STATUS_FAILED: &str = "failed";
 
-/// Max attachment size (bounded; matches package single-file limit headroom).
+/// 附件大小上限（有界；与包内单文件限制留余量一致）。
 const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Result of import (returned to admin API).
+/// import (returned to admin API)的结果。
 #[derive(Debug, Clone)]
 pub struct ImportChallengeResult {
     pub challenge: challenges::Model,
 }
 
-/// Import a Challenge package zip (multipart tempfile path).
+/// 导入 Challenge 包 zip（multipart 临时文件路径）。
 ///
 /// 单版本模型：identity 直接承载当前版本全部 package 字段；导入要求 version 严格递增。
-/// Uses platform `RegistryConfig` for image prefix / push mode / credentials.
+/// 使用平台 `RegistryConfig` 作为镜像前缀 / 推送模式 / 凭证。
 pub async fn import_challenge_package(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -251,7 +244,7 @@ pub async fn import_challenge_package(
                 package_digest = %package_digest,
                 "Challenge package import ready"
             );
-            // Best-effort cleanup of temp tag (canonical image_ref still tagged).
+            // 尽力清理临时 tag（规范 image_ref 仍保留 tag）。
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
             Ok(ImportChallengeResult { challenge })
         }
@@ -275,7 +268,7 @@ pub async fn import_challenge_package(
     }
 }
 
-/// Scan result of a single directory under CHALLENGES_DIR.
+/// `CHALLENGES_DIR` 下单个目录的扫描结果。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ChallengeScanItem {
     pub safe_name: String,
@@ -286,7 +279,7 @@ pub struct ChallengeScanItem {
     pub message: String,
 }
 
-/// Scan `CHALLENGES_DIR/{safe_name}` and register packages that are not yet in the DB.
+/// 扫描 `CHALLENGES_DIR/{safe_name}`，登记尚未入库的包。
 ///
 /// 场景：DB 清空/换库后，磁盘目录（mirror 产物）与本地镜像仍在。逐目录解析 meta.toml，
 /// 若 safe_name 未入库则登记 identity + package 字段；镜像（image_ref tag）本地存在 → ready，
@@ -558,7 +551,7 @@ async fn run_build_and_pin(
 ) -> Result<(String, Option<String>), ImageError> {
     let built = ImageRuntime::build_image(runtime, build_req.clone()).await?;
 
-    // Tag canonical ref from the built image id (fallback: temp tag name).
+    // 用构建得到的 image id 打上规范 ref tag（回退：临时 tag 名）。
     if let Err(e) = ImageRuntime::tag_image(runtime, &built.image_id, canonical_ref).await {
         ImageRuntime::tag_image(runtime, temp_tag, canonical_ref)
             .await
@@ -605,9 +598,9 @@ fn registry_auth(registry: &RegistryConfig) -> Option<RegistryAuth> {
     })
 }
 
-/// Copy the imported package (`src/`, `attachment/`, and any files at root) into
-/// `CHALLENGES_DIR/{safe_name}` so existing static-file serving (attachment links)
-/// keeps working. Best-effort: failure is logged, not fatal.
+/// 将已导入包（`src/`、`attachment/` 及根目录文件）复制到
+/// `CHALLENGES_DIR/{safe_name}`，以便既有静态文件服务（附件链接）
+/// 以保持可用。尽力而为：失败只记日志，不致命。
 async fn mirror_to_challenges_dir(db: &DatabaseConnection, safe_name: &str, package_root: &Path) {
     let challenges_dir = match get_setting(db, "CHALLENGES_DIR").await {
         Ok(d) => d,

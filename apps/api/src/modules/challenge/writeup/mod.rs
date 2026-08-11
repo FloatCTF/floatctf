@@ -1,4 +1,4 @@
-//! Challenge writeup handlers (player).
+//! Writeup 相关能力。
 
 pub mod dto;
 pub use dto::ChallengeWriteupDto;

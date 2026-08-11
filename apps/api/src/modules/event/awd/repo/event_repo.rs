@@ -1,4 +1,4 @@
-//! AWD event repository — single style: struct methods + free-function adapters.
+//! AWD 赛事配置仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -92,7 +92,7 @@ impl TransitionPatch {
     }
 }
 
-/// Instantiated repository (preferred for new call sites).
+/// 已实例化仓储（新调用点优先）。
 pub struct AwdEventRepository {
     db: DatabaseConnection,
 }
@@ -145,10 +145,10 @@ impl AwdEventRepository {
     }
 }
 
-/// Backward-compatible name used by older call sites.
+/// 旧调用点使用的向后兼容名称。
 pub type EventRepo<'a> = AwdEventRepositoryRef<'a>;
 
-/// Borrowed repository (avoids cloning `DatabaseConnection` when not needed).
+/// 借用式仓储（无需时避免克隆 `DatabaseConnection`）。
 pub struct AwdEventRepositoryRef<'a> {
     pub db: &'a DatabaseConnection,
 }

@@ -1,3 +1,5 @@
+//! 平台调度引擎与任务注册。
+
 mod engine;
 mod handlers;
 mod task_key;

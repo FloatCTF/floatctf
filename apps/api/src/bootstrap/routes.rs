@@ -1,10 +1,10 @@
-//! Central HTTP route aggregation — only place that composes module routes.
+//! 集中 HTTP 路由聚合——唯一组装各模块路由的位置。
 
 use actix_web::web::{self, ServiceConfig, scope};
 
-/// Configure ALL routes on a `ServiceConfig` — single source of truth.
+/// 在 `ServiceConfig` 上配置全部路由——路由组装的唯一权威位置。
 ///
-/// Used by the HTTP server and integration tests.
+/// 供 HTTP 服务与集成测试共用。
 pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
@@ -19,12 +19,12 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
     cfg.configure(crate::modules::event::awd::api::internal_routes);
 }
 
-/// Alias for integration tests.
+/// 集成测试用别名。
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     configure_all_routes(cfg);
 }
 
-/// Player-facing routes under `/api` (formerly `api::service`).
+/// 选手侧路由，挂在 `/api` 下（原 `api::service`）。
 fn configure_player_routes(cfg: &mut ServiceConfig) {
     // POST /api/admin/session
     cfg.configure(crate::modules::identity::configure_session_routes);
@@ -60,7 +60,7 @@ fn configure_player_routes(cfg: &mut ServiceConfig) {
     );
 }
 
-/// Admin routes under `/api/admin` (formerly `api::admin`).
+/// 管理端路由，挂在 `/api/admin` 下（原 `api::admin`）。
 fn configure_admin_routes(cfg: &mut ServiceConfig) {
     // Operational / platform admin
     crate::modules::platform::configure_admin_routes(cfg);

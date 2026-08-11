@@ -1,4 +1,4 @@
-//! Event lifecycle service — AWD event CRUD, deployment, and phase management.
+//! AWD 赛事配置/生命周期服务。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
 use tracing::info;
@@ -16,7 +16,7 @@ use crate::modules::event::awd::{
     service::{firewall_service, round_service},
 };
 
-/// Start an AWD event: validate status, create first round, set hardening phase + policy.
+/// 启动an AWD event: validate status, create first round, set hardening phase + policy。
 pub async fn start_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -86,7 +86,7 @@ pub async fn start_event(
     Ok(())
 }
 
-/// Pause an event: save remaining round time, set network to pause phase.
+/// 暂停赛事：保存轮次剩余时间，网络进入 pause 阶段。
 pub async fn pause_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -169,7 +169,7 @@ pub async fn pause_event(
     }
 }
 
-/// Resume an event: restore round time, restore network phase.
+/// 恢复赛事：还原轮次时间与网络阶段。
 pub async fn resume_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -274,7 +274,7 @@ pub async fn resume_event(
     }
 }
 
-/// Finish an event: stop rounds, stop scoring, preserve data.
+/// 结束赛事：停止轮次与计分，保留数据。
 pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await

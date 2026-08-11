@@ -1,4 +1,4 @@
-//! AWD service layer — orchestrates repositories, domain logic, and external systems.
+//! AWD 应用服务聚合。
 
 pub mod archive_service;
 pub mod ban_service;

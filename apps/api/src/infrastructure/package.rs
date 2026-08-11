@@ -1,15 +1,16 @@
-//! Shared artifact package utilities: safe zip extract, package/spec digests.
+//! 共享制品包工具：安全 zip 解压、包/规格摘要。
 //!
-//! Used by both Challenge and GameBox import pipelines (plan: share the package
-//! foundation — do not re-implement zip-slip guards / semantic digest per domain).
+//! Challenge 与 GameBox 导入管线共用（共享包基础能力——
+//! 禁止各域重复实现 zip-slip 防护 / 语义摘要）。
 //!
-//! Canonical package layout (after extract + root discovery):
+//! 规范包布局（解压并定位根目录后）：
+//!
 //! ```text
 //! meta.toml
 //! src/Dockerfile
-//! src/**            # docker build context only
-//! attachment/**     # challenge only; never part of docker context
-//! judge/**          # gamebox only; never part of docker context
+//! src/**            # 进入 docker build context
+//! attachments/**    # 可选附件；不进 docker context
+//! judge/**          # 仅 gamebox；不进 docker context
 //! ```
 
 use std::fs::{self, File};
@@ -18,17 +19,17 @@ use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-/// Hard limits for artifact package zip (defense-in-depth).
+/// 制品包 zip 硬限制（纵深防御）。
 pub const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_EXTRACTED_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_FILES: usize = 5000;
 pub const MAX_SINGLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_META_TOML_BYTES: u64 = 1024 * 1024;
 pub const MAX_PACKAGE_FILE_BYTES: u64 = 1024 * 1024;
-/// Judge script size cap (GameBox).
+/// 裁判脚本大小上限（GameBox）。
 pub const MAX_JUDGE_SCRIPT_BYTES: u64 = 1024 * 1024;
 
-/// Package-processing error with a stable kind for API mapping.
+/// 包处理错误；带稳定 kind 便于映射到 API。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageError {
     /// Author/package input problem → 4xx (INVALID_PACKAGE / INVALID_PATH / …).
@@ -48,7 +49,7 @@ impl std::fmt::Display for PackageError {
 
 impl std::error::Error for PackageError {}
 
-/// Safely extract a zip into `dest_dir` with size / zip-slip / symlink guards.
+/// 安全解压 zip 到 `dest_dir`（大小 / zip-slip / 符号链接防护）。
 pub fn extract_package_zip(zip_path: &Path, dest_dir: &Path) -> Result<(), PackageError> {
     let meta = fs::metadata(zip_path)
         .map_err(|e| PackageError::Validation(format!("INVALID_PACKAGE: cannot read zip: {e}")))?;
@@ -157,8 +158,8 @@ pub fn extract_package_zip(zip_path: &Path, dest_dir: &Path) -> Result<(), Packa
     Ok(())
 }
 
-/// Discover package root: if `root/meta.toml` exists use root; else if exactly one
-/// nested package root containing meta.toml, use that; else error.
+/// 定位包根：若 `root/meta.toml` 存在则用 root；否则若恰好一个
+/// 嵌套目录含 meta.toml 则用之；否则报错。
 pub fn discover_package_root(extract_root: &Path) -> Result<PathBuf, PackageError> {
     let root_meta = extract_root.join("meta.toml");
     if root_meta.is_file() {
@@ -204,7 +205,7 @@ fn find_meta_tomls(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), PackageErro
     Ok(())
 }
 
-/// Validate required package layout under `package_root`: meta.toml + src/Dockerfile.
+/// 校验required package layout under `package_root`: meta.toml + src/Dockerfile。
 pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
     let meta = package_root.join("meta.toml");
     if !meta.is_file() {
@@ -227,16 +228,16 @@ pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
     Ok(())
 }
 
-/// Read meta.toml text (already size-checked by require_package_layout).
+/// 读取 meta.toml 文本（大小已由 require_package_layout 校验）。
 pub fn read_meta_toml(package_root: &Path) -> Result<String, PackageError> {
     fs::read_to_string(package_root.join("meta.toml"))
         .map_err(|e| PackageError::Validation(format!("INVALID_PACKAGE: read meta.toml: {e}")))
 }
 
-/// Read an arbitrary package file (e.g. attachment) with path + size guards.
+/// 读取包内任意文件（如附件），带路径与大小防护。
 ///
-/// `relative` must be a relative path that stays under `package_root` after
-/// canonicalisation; content limited to `max_bytes`.
+/// `relative` 必须是相对路径，且规范化后仍落在 `package_root` 下
+/// 规范化路径；内容限制为 `max_bytes`。
 pub fn read_package_file(
     package_root: &Path,
     relative: &str,
@@ -279,12 +280,12 @@ pub fn read_package_file(
         .map_err(|e| PackageError::Validation(format!("FILE_NOT_FOUND: read failed: {e}")))
 }
 
-/// Compute package_digest = SHA-256 over canonical file list.
+/// 计算 `package_digest` = 规范文件列表的 SHA-256。
 ///
-/// Includes `meta.toml` plus every tree under each `include_dirs` entry
-/// (e.g. `["src", "attachment"]` for challenge, `["src", "judge"]` for gamebox).
-/// For each file (sorted by relative path): hash `path\0` + type byte + len + raw bytes.
-/// Ignores mtime/owner/permissions. Directories are not hashed as entries.
+/// 包含 `meta.toml` 以及每个 `include_dirs` 条目下的整棵树
+/// （例如 challenge 用 `["src", "attachment"]`，gamebox 用 `["src", "judge"]`）。
+/// 对每个文件（按相对路径排序）：哈希 `path\0` + 类型字节 + 长度 + 原始字节。
+/// 忽略 mtime/owner/权限。目录本身不作为条目参与哈希。
 pub fn compute_package_digest(
     package_root: &Path,
     include_dirs: &[&str],
@@ -354,7 +355,7 @@ fn collect_tree(
     Ok(())
 }
 
-/// SHA-256 hex of canonical JSON bytes for any serializable normalized spec.
+/// 任意可序列化规范规格的规范 JSON 字节 SHA-256 十六进制摘要。
 pub fn compute_spec_digest<T: serde::Serialize>(spec: &T) -> Result<String, PackageError> {
     let bytes = serde_json::to_vec(spec)
         .map_err(|e| PackageError::Internal(format!("serialize normalized spec: {e}")))?;
@@ -363,14 +364,14 @@ pub fn compute_spec_digest<T: serde::Serialize>(spec: &T) -> Result<String, Pack
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// SHA-256 hex of raw bytes (attachment integrity).
+/// 原始字节的 SHA-256 十六进制摘要（附件完整性）。
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
 }
 
-/// Bound + sanitize build error messages (strip obvious secret-looking tokens, max ~2KB).
+/// 截断并清洗构建错误信息（去掉明显疑似密钥的 token，最大约 2KB）。
 pub fn sanitize_build_error(msg: &str) -> String {
     let mut s = msg.replace('\0', "");
     for needle in ["password=", "PASSWORD=", "Authorization:", "token="] {

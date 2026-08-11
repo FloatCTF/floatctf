@@ -1,6 +1,4 @@
-//! Unified application error type.
-//!
-//! `AppError` is the single HTTP error type for all handlers.
+//! 统一应用错误类型。
 
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
@@ -10,7 +8,7 @@ use thiserror::Error;
 use super::response::UniResponse;
 use crate::modules::event::awd::AwdError;
 
-/// Unified application error with structured HTTP responses.
+/// 统一应用错误，带结构化 HTTP 响应。
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -107,7 +105,7 @@ impl From<AwdError> for AppError {
     }
 }
 
-/// Handler result type (name kept for call-site stability).
+/// 处理器结果类型（名称保留以稳定调用点）。
 pub type UniResult<T> = Result<UniResponse<T>, AppError>;
 
 impl<T> From<UniResponse<T>> for Result<UniResponse<T>, AppError> {

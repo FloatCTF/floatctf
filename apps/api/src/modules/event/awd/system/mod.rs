@@ -1,10 +1,4 @@
-//! AWD system layer — encapsulates all privileged command execution.
-//!
-//! # Safety
-//!
-//! This module is the ONLY place where system commands (nft, wg, ip, conntrack)
-//! may be executed. All external command parameters use structured argument
-//! passing — never shell string concatenation.
+//! 宿主侧系统命令封装（WireGuard、conntrack 等）。
 
 pub mod command;
 pub mod conntrack;

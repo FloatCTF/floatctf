@@ -1,4 +1,4 @@
-//! Flag service — handles deterministic flag issuing for AWD events.
+//! AWD Flag 发放与校验服务。
 
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
@@ -12,7 +12,7 @@ use crate::modules::event::awd::{
     repo::{ban_repo, event_repo, flag_repo, gamebox_repo, round_repo},
 };
 
-/// Context for issuing a flag: which GameBox, in which round, for which event.
+/// Flag 发放上下文：哪个 GameBox、哪一轮、哪场赛事。
 pub struct FlagIssueContext {
     pub event_id: Uuid,
     pub round_id: Uuid,
@@ -20,15 +20,15 @@ pub struct FlagIssueContext {
     pub source_ip: String,
 }
 
-/// Result of a flag issue operation.
+/// a flag issue operation的结果。
 pub struct FlagIssueResult {
     pub flag: String,
     pub already_issued: bool,
 }
 
-/// Issue a flag for a GameBox based on its source IP.
+/// 按源 IP 为 GameBox 发放 Flag。
 ///
-/// # Validation
+/// # 校验
 /// - Event must be running in attack phase
 /// - Active round must exist
 /// - Team must not be banned
@@ -130,8 +130,8 @@ pub async fn issue_flag(
     })
 }
 
-/// Validate that a flag submission context is valid.
-/// Returns (attacker_team_id, victim_team_id, gamebox_instance_id, flag_issue).
+/// 校验that a flag submission context is valid。
+/// 返回 (attacker_team_id, victim_team_id, gamebox_instance_id, flag_issue)。
 pub async fn validate_submission(
     db: &DatabaseConnection,
     event_id: Uuid,

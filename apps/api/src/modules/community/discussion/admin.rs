@@ -1,4 +1,4 @@
-//! Admin discussion handlers — `/api/admin/discussions`.
+//! 讨论管理端接口。
 
 use std::str::FromStr;
 

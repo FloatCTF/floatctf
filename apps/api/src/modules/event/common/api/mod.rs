@@ -39,7 +39,7 @@ pub use player::{
 
 use actix_web::web::{self, ServiceConfig, scope};
 
-/// Register player common event routes under an existing `/events` scope.
+/// 注册player common event routes under an existing `/events` scope。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(player::get_events)
         .service(player::get_event_challenges)
@@ -58,7 +58,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(player::quit_team);
 }
 
-/// Register admin common event CRUD under an existing `/events` scope.
+/// 注册admin common event CRUD under an existing `/events` scope。
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(admin::create_event)
         .service(admin::delete_event)
@@ -69,7 +69,7 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
         .service(admin::get_report);
 }
 
-/// Nested admin event sub-resources (users/teams/challenges/announcements/writeups/logs).
+/// 管理端赛事嵌套子资源（users/teams/challenges/announcements/writeups/logs）。
 pub fn configure_admin_nested_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         scope("/{event_id}/users")

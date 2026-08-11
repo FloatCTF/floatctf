@@ -1,8 +1,4 @@
-//! Application readiness probes for GameBox (HTTP GET / TCP connect).
-//!
-//! These are **not** Docker HEALTHCHECK instructions. They come from
-//! `gamebox_revisions.healthchecks_json` (or EventGameBox override) and are
-//! used by precheck / reset wait-ready paths.
+//! GameBox 健康检查探针。
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -13,7 +9,7 @@ use tokio::time::timeout;
 
 use crate::modules::event::awd::{AwdError, AwdResult};
 
-/// One readiness probe entry (mirrors fcmc::NormalizedHealthcheck JSON shape).
+/// 单条就绪探针（与 fcmc::NormalizedHealthcheck JSON 形状一致）。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum AppHealthcheck {
@@ -38,7 +34,7 @@ pub struct ProbeResult {
     pub detail: String,
 }
 
-/// Parse healthchecks_json (array) into typed probes.
+/// 将 healthchecks_json（数组）解析为类型化探针。
 pub fn parse_healthchecks(json: &serde_json::Value) -> AwdResult<Vec<AppHealthcheck>> {
     if json.is_null() {
         return Ok(Vec::new());
@@ -47,7 +43,7 @@ pub fn parse_healthchecks(json: &serde_json::Value) -> AwdResult<Vec<AppHealthch
         .map_err(|e| AwdError::Validation(format!("healthchecks_json invalid: {e}")))
 }
 
-/// Probe all checks against `ip`. Returns Ok only if every check passes.
+/// 对 `ip` 执行全部探针。全部通过才返回 Ok。
 pub async fn probe_all(
     ip: &str,
     checks: &[AppHealthcheck],
@@ -115,7 +111,7 @@ pub async fn probe_one(ip: &str, check: &AppHealthcheck, t: Duration) -> ProbeRe
     }
 }
 
-/// Convenience: all checks must pass.
+/// 便捷方法：全部检查必须通过。
 pub async fn all_healthy(
     ip: &str,
     healthchecks_json: &serde_json::Value,
@@ -129,7 +125,7 @@ pub async fn all_healthy(
     Ok(results.iter().all(|r| r.ok))
 }
 
-/// Resolve IP:port to SocketAddr (best-effort validation helper).
+/// 解析IP:port to SocketAddr (best-effort validation helper)。
 #[allow(dead_code)]
 pub fn parse_socket(ip: &str, port: u16) -> AwdResult<SocketAddr> {
     format!("{ip}:{port}")

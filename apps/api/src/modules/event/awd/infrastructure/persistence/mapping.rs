@@ -1,22 +1,11 @@
-//! Explicit mapping between domain concepts and SeaORM ActiveEnum values.
-//!
-//! # Canonical rules
-//!
-//! - **Business rules** (transitions, phase permissions) live only on
-//!   `domain::{AwdEventStatusExt, AwdPhaseExt, GameboxStatusExt, ...}`.
-//! - **Persistence** uses generated `entity::sea_orm_active_enums::*` (never hand-edited).
-//! - Services/repos accept ActiveEnum at the DB boundary; do not invent parallel enums
-//!   in handlers. Pure value objects (`Ipv4Cidr`, flag hashes, idempotency keys) stay
-//!   in `domain/` without SeaORM deps.
-//!
-//! If a future split introduces pure domain enums, add `TryFrom` pairs here only.
+//! AWD 实体与领域对象映射规则。
 
 use crate::entity::sea_orm_active_enums::{
     AwdEventStatus, AwdPhase, BanStatus, GameboxStatus, JudgeTaskStatus, PrecheckStatus,
     RoundStatus, ScoreEventType, WgPeerStatus,
 };
 
-/// Marker: these ActiveEnum types are the persistence representation of AWD domain state.
+/// 标记：这些 ActiveEnum 类型是 AWD 领域状态的持久化表示。
 pub trait AwdPersistedEnum: Sized + Clone + PartialEq + Eq + Send + Sync + 'static {}
 
 impl AwdPersistedEnum for AwdEventStatus {}
@@ -29,8 +18,8 @@ impl AwdPersistedEnum for BanStatus {}
 impl AwdPersistedEnum for ScoreEventType {}
 impl AwdPersistedEnum for WgPeerStatus {}
 
-/// Identity map used at boundaries that already hold ActiveEnum values.
-/// Exists so call sites can document intent: `status.persist()` vs free-form casts.
+/// 在已持有 ActiveEnum 的边界使用的恒等映射。
+/// 便于调用点表达意图：`status.persist()` 对比随意强转。
 pub trait Persist: AwdPersistedEnum {
     fn persist(self) -> Self {
         self

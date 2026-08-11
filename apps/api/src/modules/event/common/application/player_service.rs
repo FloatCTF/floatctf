@@ -404,7 +404,7 @@ pub async fn create_team(
     Ok(team)
 }
 
-/// Captain quits → team deleted; member quits → membership removed. Also leaves event_users.
+/// 队长退出 → 删除战队；队员退出 → 移除成员关系。同时离开 event_users。
 pub async fn quit_team(
     db: &DatabaseConnection,
     event_id: Uuid,

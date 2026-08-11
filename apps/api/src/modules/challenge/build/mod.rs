@@ -1,4 +1,4 @@
-//! Admin challenge import / check / docker image ensure.
+//! 题目镜像/包构建相关能力。
 
 pub mod import_service;
 
@@ -242,7 +242,7 @@ pub async fn build_challenge(
     UniResponse::ok(res.into()).into()
 }
 
-/// Image pin: `image_repo_digest` (repo@sha256:…) > `image_id` (LocalOnly sha256:…).
+/// 镜像钉扎：`image_repo_digest`（repo@sha256:…）优先于 `image_id`（仅本地 sha256:…）。
 pub fn effective_image_ref(
     repo_digest: Option<&str>,
     image_id: Option<&str>,

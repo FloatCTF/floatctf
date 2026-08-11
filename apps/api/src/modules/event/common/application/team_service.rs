@@ -27,7 +27,7 @@ pub async fn find_user_team(
 }
 
 /// 要求用户是该赛事某战队的成员。
-/// Returns team_id or error.
+/// 返回 team_id or error。
 pub async fn require_member(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -38,7 +38,7 @@ pub async fn require_member(
         .ok_or_else(|| AwdError::NotFound("You are not in a team for this event".into()))
 }
 
-/// Check if user is a captain of their team.
+/// 检查if user is a captain of their team。
 pub async fn is_captain(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) -> AwdResult<bool> {
     let membership = event_team_members::Entity::find()
         .filter(event_team_members::Column::EventId.eq(event_id))
@@ -52,7 +52,7 @@ pub async fn is_captain(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) 
         .unwrap_or(false))
 }
 
-/// Join a team (add user to team).
+/// 加入战队（将用户加入战队）。
 pub async fn join_team(
     db: &DatabaseConnection,
     event_id: Uuid,

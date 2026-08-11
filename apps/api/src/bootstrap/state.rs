@@ -1,7 +1,6 @@
-//! Application state — centralized dependency container.
+//! 应用状态——集中依赖容器。
 //!
-//! `AppState` holds all shared resources and is injected via `web::Data<AppState>`.
-//! Existing handlers continue to use individual `app_data` entries during migration.
+//! 新模块应依赖 `web::Data<AppState>`；迁移期间既有处理器仍可使用独立 `app_data`。
 
 use std::sync::Arc;
 
@@ -17,10 +16,10 @@ use crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime;
 use crate::scheduler::TaskScheduler;
 use fcmc::AwdContainerRuntime;
 
-/// Central application state, shared across all request handlers.
+/// 中央应用状态，在全部请求处理器间共享。
 ///
-/// New modules should depend on `web::Data<AppState>` instead of
-/// extracting individual resources from `app_data`.
+/// 新模块应依赖 `web::Data<AppState>`，而非
+/// 从 `app_data` 逐个提取资源。
 #[derive(Clone)]
 pub struct AppState {
     /// Typed process-static configuration.
@@ -41,10 +40,10 @@ pub struct AppState {
     pub scheduler: Arc<TaskScheduler>,
 }
 
-/// AWD-specific dependencies.
+/// AWD 专用依赖。
 ///
-/// Separated from `AppState` because not all AWD deps are needed by
-/// non-AWD handlers.
+/// 与 `AppState` 分离：非 AWD 处理器无需全部 AWD 依赖。
+///
 #[derive(Clone)]
 pub struct AwdDependencies {
     /// Encryption service for AWD secrets and tokens.

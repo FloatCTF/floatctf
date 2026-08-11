@@ -1,4 +1,4 @@
-//! Round repository.
+//! 轮次仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -41,7 +41,7 @@ pub async fn find_round_by_id(
     awd_rounds::Entity::find_by_id(id).one(db).await
 }
 
-/// Create a new round in a transaction, ensuring at most one active round.
+/// 创建a new round in a transaction, ensuring at most one active round。
 pub async fn create_round(
     db: &(impl ConnectionTrait + Send),
     event_id: Uuid,

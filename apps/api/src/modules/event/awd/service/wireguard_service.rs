@@ -1,12 +1,4 @@
-//! WireGuard interface and peer management.
-//!
-//! # Key architecture
-//!
-//! - One WireGuard interface per AWD event
-//! - Peers are per-user (each team member gets their own peer)
-//! - Client config uses split tunneling (GameBox CIDR + team WireGuard subnet)
-//! - Database is the authoritative source — platform recovers from DB on restart
-//! - Key generation is pure Rust (`infrastructure::network::keys`), not `wg genkey`
+//! AWD WireGuard 接入服务。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -30,12 +22,12 @@ use crate::modules::event::awd::{
     repo::{ban_repo, wireguard_repo},
 };
 
-/// Generate a peer keypair (client private + public).
+/// 生成a peer keypair (client private + public)。
 pub fn generate_peer_keypair() -> WgKeyPair {
     generate_keypair()
 }
 
-/// Generate a complete WireGuard client configuration.
+/// 生成a complete WireGuard client configuration。
 pub fn build_client_config(
     peer_ip: &str,
     peer_private_key: &str,
@@ -59,8 +51,8 @@ PersistentKeepalive = 25
     )
 }
 
-/// Allocate the next available host address from a team's WireGuard subnet.
-/// Returns the /32 address string.
+/// 分配the next available host address from a team's WireGuard subnet。
+/// 返回 the /32 address string。
 pub fn allocate_peer_ip(wireguard_subnet: &Ipv4Cidr, next_host: u32) -> AwdResult<(String, u32)> {
     let ip = wireguard_subnet.nth_host(next_host).ok_or_else(|| {
         AwdError::Network(format!(
@@ -71,9 +63,9 @@ pub fn allocate_peer_ip(wireguard_subnet: &Ipv4Cidr, next_host: u32) -> AwdResul
     Ok((format!("{}/32", ip), next_host + 1))
 }
 
-/// Ensure the user has an active WG peer; create one with pure-Rust keys if missing.
+/// 确保the user has an active WG peer; create one with pure-Rust keys if missing。
 ///
-/// Returns `(peer_model, plaintext_private_key)` for config rendering only.
+/// 返回 `(peer_model, plaintext_private_key)` for config rendering only。
 async fn load_event_network(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -204,7 +196,7 @@ fn decrypt_peer_private_key(
     String::from_utf8(bytes).map_err(|e| AwdError::Crypto(e.to_string()))
 }
 
-/// Load all active peers for an event from DB and return their configs.
+/// 加载all active peers for an event from DB and return their configs。
 pub async fn load_active_peers(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -236,7 +228,7 @@ async fn load_awd_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<aw
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))
 }
 
-/// Revoke a peer (disables the WireGuard tunnel for that user).
+/// 吊销对等体（禁用该用户的 WireGuard 隧道）。
 ///
 /// 闭环：host 先移除 peer（`wg set <iface> peer <pubkey> remove`，经 network runtime），
 /// 成功后再写 DB 置 Revoked + revoked_at。host 移除失败则返回错误、DB 保持原状（可重试）。
@@ -327,7 +319,7 @@ async fn fail_closed_revoke(db: &DatabaseConnection, peer_id: Uuid, cause: &AwdE
     }
 }
 
-/// Rotate a peer's keys while preserving the assigned IP.
+/// 轮换对等体密钥，保留已分配 IP。
 ///
 /// 生命周期闭环：Active → Rotating（DB 标记 + rotated_at）→ host 轮换（加新 peer、移除旧 peer）
 /// → 成功置回 Active 并更新 public_key/private_key（key_version 用事件当前值）；host 失败置 Revoked

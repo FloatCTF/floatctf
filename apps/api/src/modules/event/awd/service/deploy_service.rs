@@ -1,7 +1,4 @@
-//! Deployment orchestration — Docker network, infra containers, GameBoxes,
-//! WireGuard interface, and hardening firewall for an AWD event.
-//!
-//! Each step is idempotent: re-running deploy will not create duplicates.
+//! AWD 部署编排服务。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -29,17 +26,17 @@ use crate::modules::event::awd::{
 };
 use fcmc::{AwdContainerRuntime, EventNetworkSpec, InfrastructureContainerSpec};
 
-/// Orchestrate full deployment of an AWD event.
+/// 编排 AWD 赛事完整部署。
 ///
-/// Steps (idempotent):
-/// 1. Docker network
-/// 2. FlagServer container
-/// 3. JudgeServer container
-/// 4. Team networks (+ encrypted SSH passwords)
-/// 5. GameBox instance rows + containers
-/// 6. WireGuard interface (+ store server key material)
-/// 7. Hardening firewall policy
-/// 8. Mark Deployed
+/// 步骤（幂等）：
+/// 1. Docker 网络
+/// 2. FlagServer 容器
+/// 3. JudgeServer 容器
+/// 4. 战队网络（含加密 SSH 口令）
+/// 5. GameBox 实例行 + 容器
+/// 6. WireGuard 接口（并存储服务端密钥材料）
+/// 7. 加固防火墙策略
+/// 8. 标记为已部署
 pub async fn deploy_event(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,

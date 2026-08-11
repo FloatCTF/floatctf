@@ -1,4 +1,4 @@
-//! Player practice challenge solves (catalog, not event scoring).
+//! 选手练习解题记录（题库侧，非赛事计分）。
 
 use std::{collections::HashMap, str::FromStr};
 

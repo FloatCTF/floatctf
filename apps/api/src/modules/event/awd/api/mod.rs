@@ -1,4 +1,4 @@
-//! AWD API handlers — admin, player, and internal endpoints.
+//! AWD HTTP API（选手 / 管理 / 内部 / 网络 / GameBox）。
 
 pub mod admin;
 pub mod auth;
@@ -10,9 +10,9 @@ pub mod player;
 
 use actix_web::web;
 
-/// Register AWD admin routes **inside** `scope("/events")`.
+/// 注册AWD admin routes **inside** `scope("/events")`。
 ///
-/// Final paths: `/api/admin/events/{event_id}/awd/...` and `POST /api/admin/events/awd`.
+/// 最终路径：`/api/admin/events/{event_id}/awd/...` 与 `POST /api/admin/events/awd`。
 /// 注意：必须与 common 的 /events scope 同组挂载（bootstrap routes.rs），
 /// 否则会被 common scope("/events") 吞掉（Actix 同前缀 scope 按注册顺序优先匹配）。
 pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
@@ -44,7 +44,7 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::delete_event_gamebox);
 }
 
-/// Register AWD admin routes at the `/api/admin` top level (no events/ prefix).
+/// 注册AWD admin routes at the `/api/admin` top level (no events/ prefix)。
 ///
 /// Final paths: `/api/admin/awd/...`（平台 AWD Networking §73 + GameBox 库）。
 pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
@@ -61,9 +61,9 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::hide_gamebox);
 }
 
-/// Register AWD player routes **inside** `scope("/events")`.
+/// 注册AWD player routes **inside** `scope("/events")`。
 ///
-/// Final paths: `/api/events/{event_id}/awd/...`
+/// 最终路径：`/api/events/{event_id}/awd/...`
 /// 同样必须与 common 的 /events scope 同组挂载（bootstrap routes.rs）。
 pub fn player_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(player::get_my_gameboxes)
@@ -75,9 +75,9 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(player::event_stream);
 }
 
-/// Register AWD internal routes (FlagServer / JudgeServer).
+/// 注册AWD internal routes (FlagServer / JudgeServer)。
 ///
-/// Final paths: `/internal/awd/events/...`
+/// 最终路径：`/internal/awd/events/...`
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(internal::issue_flag)
         .service(internal::judge_callback)

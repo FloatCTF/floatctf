@@ -1,14 +1,4 @@
-//! EventPublisher trait and in-process / multi-node implementations.
-//!
-//! # Multi-node fan-out
-//!
-//! - Default: [`BroadcastEventPublisher`] (in-process only).
-//! - When `REALTIME_REDIS_URL` is set (and feature `realtime-redis` is enabled),
-//!   [`HybridEventPublisher`] publishes to local broadcast **and** Redis channel
-//!   `floatctf:realtime` (override via `REALTIME_REDIS_CHANNEL`).
-//! - Each node runs a Redis subscriber that re-broadcasts remote messages into
-//!   the local hub so SSE clients on every node receive events.
-//! - Messages carry an origin node id to avoid echo (double local delivery).
+//! `EventPublisher` trait 以及进程内 / 多节点实现。
 
 use std::sync::{Arc, Mutex};
 
@@ -18,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Platform-wide real-time event envelope.
+/// 平台级实时事件信封。
 ///
-/// Must never contain full flags, WireGuard keys, or internal tokens.
+/// 不得包含完整 flag、WireGuard 密钥或内部令牌。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeEvent {
     pub event_id: Uuid,
@@ -54,7 +44,7 @@ pub trait EventPublisher: Send + Sync {
     async fn publish(&self, event: RealtimeEvent) -> anyhow::Result<()>;
 }
 
-/// Discards all events (default until a WS hub is wired).
+/// 丢弃全部事件（在接入 WS hub 前的默认实现）。
 pub struct NoopEventPublisher;
 
 #[async_trait]
@@ -64,7 +54,7 @@ impl EventPublisher for NoopEventPublisher {
     }
 }
 
-/// Records published events for tests.
+/// 记录已发布事件，供测试使用。
 #[derive(Default, Clone)]
 pub struct RecordingEventPublisher {
     events: Arc<Mutex<Vec<RealtimeEvent>>>,
@@ -92,10 +82,10 @@ impl EventPublisher for RecordingEventPublisher {
     }
 }
 
-/// In-process broadcast hub for WebSocket / SSE fans.
+/// 进程内广播中枢，供 WebSocket / SSE 订阅方使用。
 ///
-/// Subscribers receive clones of published events. Lagged receivers drop older
-/// messages (broadcast semantics). Suitable until a multi-node bus is needed.
+/// 订阅者收到已发布事件的克隆。落后接收方会丢弃较旧
+/// 消息（广播语义）。在需要多节点总线前适用。
 pub struct BroadcastEventPublisher {
     tx: tokio::sync::broadcast::Sender<RealtimeEvent>,
     seq: std::sync::atomic::AtomicU64,
@@ -153,7 +143,7 @@ impl EventPublisher for BroadcastEventPublisher {
     }
 }
 
-/// Wire format for Redis pub/sub (includes origin so nodes can drop echoes).
+/// Redis pub/sub 线路格式（含 origin，便于节点丢弃回环）。
 #[cfg(feature = "realtime-redis")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RedisBusMessage {
@@ -161,10 +151,10 @@ struct RedisBusMessage {
     event: RealtimeEvent,
 }
 
-/// Local broadcast + optional Redis PUBLISH for multi-node fan-out.
+/// 本地广播 + 可选 Redis PUBLISH，用于多节点扇出。
 ///
-/// SSE still subscribes to the shared [`BroadcastEventPublisher`]. Remote
-/// events arrive via a background Redis subscriber and are injected locally.
+/// SSE 仍订阅共享的 [`BroadcastEventPublisher`]。远端
+/// 事件经后台 Redis 订阅到达并注入本地。
 pub struct HybridEventPublisher {
     local: Arc<BroadcastEventPublisher>,
     node_id: Uuid,
@@ -361,7 +351,7 @@ impl EventPublisher for HybridEventPublisher {
     }
 }
 
-/// Resolve publisher wiring from the static TOML configuration.
+/// 解析publisher wiring from the static TOML configuration。
 pub fn build_realtime(
     capacity: usize,
     redis_url: Option<&str>,

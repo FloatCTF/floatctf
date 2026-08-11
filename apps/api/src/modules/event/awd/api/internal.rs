@@ -1,7 +1,4 @@
-//! AWD internal API handlers — for FlagServer and JudgeServer communication.
-//!
-//! All endpoints require AwdInternalAuth (Bearer token validated against
-//! encrypted tokens stored in awd_events).
+//! AWD 内部服务接口（裁判机/探针等）。
 
 use actix_web::web;
 
@@ -24,8 +21,8 @@ use super::dto::*;
 use actix_web::post;
 
 /// POST /internal/awd/events/{event_id}/flags/issue
-/// Called by FlagServer to issue a flag for a GameBox.
-/// Requires FlagServer token.
+/// 由 FlagServer 调用，为 GameBox 发放 Flag。
+/// 需要 FlagServer 令牌。
 #[post("/internal/awd/events/{event_id}/flags/issue")]
 pub async fn issue_flag(
     auth: AwdInternalAuth,
@@ -93,8 +90,8 @@ pub async fn issue_flag(
 }
 
 /// POST /internal/awd/events/{event_id}/judge/callback
-/// Called by JudgeServer after each task completes.
-/// Requires JudgeServer token.
+/// 由 JudgeServer 在每个任务完成后调用。
+/// 需要 JudgeServer 令牌。
 #[post("/internal/awd/events/{event_id}/judge/callback")]
 pub async fn judge_callback(
     auth: AwdInternalAuth,
@@ -258,7 +255,7 @@ fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
 }
 
 /// GET /internal/awd/events/{event_id}/health
-/// Requires any valid internal token (FlagServer or JudgeServer).
+/// 需要任意有效内部令牌（FlagServer 或 JudgeServer）。
 #[actix_web::get("/internal/awd/events/{event_id}/health")]
 pub async fn event_health(
     _auth: AwdInternalAuth,

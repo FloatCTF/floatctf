@@ -1,21 +1,10 @@
-//! Round lifecycle service (Phase 3 P3-1..P3-6).
+//! 轮次生命周期服务（Phase 3 P3-1..P3-6）。
 //!
-//! Round 调度闭环：
-//!
+//! 推进流程概览：
 //! ```text
-//! RoundStart(N) → 事务(lock event → 检查 Running → find-or-create round(N)
-//!                 → 更新 event phase → 插入 RoundEnd(N) 任务) → COMMIT
-//!                 → firewall reconcile（DB desired phase → 全局 nftables）
-//!                 → conntrack flush → dispatch judge → publish
-//! RoundEnd(N)   → 事务(lock round → Grace + grace_ends_at → 插入 GraceEnd(N)) → COMMIT
-//! GraceEnd(N)   → 事务(lock round → Completed + completed_at)
-//!                 → 若 event 仍 Running → 插入 RoundStart(N+1)
+//! tick → 结束当前轮 → 开启下一轮
+//!                 → conntrack flush → 派发裁判 → 发布事件
 //! ```
-//!
-//! 设计约束（chore/plans/awd/03-phase3-core-loop.md §5.1/§5.4）：
-//! - 外部副作用（nft reconcile / conntrack / judge dispatch）**不进长 DB 事务**；
-//! - round 任务幂等：`find-or-create` + 状态机守卫，scheduler retry 不产生重复 round；
-//! - phase 切换唯一路径 = DB desired phase → 全局 DesiredFirewallState → reconcile。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,

@@ -1,31 +1,19 @@
-//! Precheck verification — validate all infrastructure before event starts.
+//! 赛前预检——开赛前校验全部基础设施。
 //!
-//! # Precheck items
+//! # 预检项
 //!
-//! 1. Config validation: CIDR format, no overlaps, interface/port availability
-//! 2. Docker: network exists, FlagServer running, JudgeServer running
-//! 3. GameBox instances: all healthy, containers running
-//! 4. WireGuard: interface exists, peers loaded
-//! 5. Network matrix: connectivity tests
-//! 6. Flag: can issue and re-issue flags
-//! 7. Judge: scripts execute and callback works
+//! 1. 配置校验：CIDR 格式、无重叠、网卡/端口可用性
+//! 2. Docker：网络存在、FlagServer / JudgeServer 运行中
+//! 3. GameBox 实例：全部健康、容器运行中
+//! 4. WireGuard：接口存在、对等体已加载
+//! 5. 网络矩阵：连通性测试
+//! 6. Flag：可发放与重新发放
+//! 7. 裁判：脚本可执行且回调正常
 //!
-//! # 隔离（Phase 2 P2-1 / 计划 §5.1）
+//! # 已验证修订号（Verified Revision）
 //!
-//! precheck 在 `ExecutionContext::Precheck { run_id }` 上下文执行：只读 / 隔离路径，
-//! **不写正式 awd_flag_issues / score 表**；正式 issue / judge 调用链在 Phase 3 接入
-//! （P2-7/P2-8 本阶段为容器存活探测 + 上下文标注）。
-//!
-//! # Noop 双门禁
-//!
-//! Noop 网络 / firewall runtime 永远不允许 Verified：
-//! - P2-5 firewall 结构检查：Noop inspect 返回空观测（table_exists=false）→ 必 fail；
-//! - P2-6 网络矩阵验证：Noop verify 恒返回 verified=false → 必 fail。
-//!
-//! # Verified Revision
-//!
-//! Configuration changes while verified clear the verification.
-//! On event start, the revision must match.
+//! 配置在已验证后若再变更，会清除验证状态。
+//! 开赛时修订号必须与已验证版本一致。
 
 use std::collections::HashMap;
 
@@ -64,7 +52,7 @@ struct CheckReport {
     notes: Vec<(String, String)>,
 }
 
-/// Run a manual precheck on an event.
+/// 运行a manual precheck on an event。
 pub async fn run_precheck(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -813,7 +801,7 @@ fn ssh_probe_enabled(env: Option<&str>) -> bool {
     env == Some("1")
 }
 
-/// CheckReport → jsonb（component / passed / errors / notes）。
+/// 预检报告 CheckReport → jsonb（component / passed / errors / notes）。
 fn report_json(component: &str, report: &CheckReport) -> serde_json::Value {
     serde_json::json!({
         "component": component,
@@ -925,7 +913,7 @@ async fn read_configuration_generation(
     Ok(row.configuration_generation)
 }
 
-/// Compute a configuration revision hash for verification tracking.
+/// 计算a configuration revision hash for verification tracking。
 fn compute_revision(net: &awd_event_networks::Model) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

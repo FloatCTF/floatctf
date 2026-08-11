@@ -1,12 +1,4 @@
-//! AWD scheduler handlers — integrates with the existing TaskScheduler.
-//!
-//! Task keys:
-//! - `awd.event.auto_precheck` — run the event precheck before start
-//! - `awd.event.start` — start a verified event
-//! - `awd.round.start` — start a new round
-//! - `awd.round.end` — end the current round (start grace period)
-//! - `awd.round.grace_end` — complete a round after its grace period
-//! - `awd.archive.cleanup` — archive cleanup after retention period
+//! AWD 调度任务注册与处理器。
 
 use crate::entity::scheduled_tasks;
 use crate::infrastructure::{WebDb, WebDocker};
@@ -33,14 +25,14 @@ use crate::modules::event::awd::{
 use fcmc::AwdContainerRuntime;
 use std::sync::Arc;
 
-/// Payload for round-related tasks.
+/// 轮次相关任务的载荷。
 #[derive(Debug, Deserialize)]
 struct RoundTaskPayload {
     event_id: Uuid,
 }
 
-/// Return the T-1h execution time when an event is far enough in the future.
-/// Events starting in less than one hour require an explicit manual precheck.
+/// 当赛事开始仍足够远时，返回 T-1h 的执行时间。
+/// 一小时内开赛的赛事须显式人工预检。
 pub fn automatic_precheck_at(
     start_time: DateTime<FixedOffset>,
     now: DateTime<Utc>,
@@ -49,8 +41,8 @@ pub fn automatic_precheck_at(
     (execute_at >= now).then(|| execute_at.fixed_offset())
 }
 
-/// Create the one-shot automatic precheck task once per AWD Event.
-/// Returns `None` for near-term Events and when the task already exists.
+/// 创建the one-shot automatic precheck task once per AWD Event。
+/// 返回 `None` for near-term Events and when the task already exists。
 pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     db: &C,
     event_id: Uuid,
@@ -164,7 +156,7 @@ pub async fn replace_auto_precheck_schedule<C: ConnectionTrait + Send>(
     Ok(())
 }
 
-/// Create the one-shot event-start task at `planned_start_at`（P2-12）。
+/// 在 `planned_start_at` 创建一次性开赛任务（P2-12）。
 /// 幂等：同一 event 已存在 active AwdEventStart 任务则跳过。
 /// 无 planned start 时间时返回 None（手动开始）。
 pub async fn schedule_event_start<C: ConnectionTrait + Send>(
@@ -326,7 +318,7 @@ fn event_id_from_task(task: &scheduled_tasks::Model) -> anyhow::Result<Uuid> {
     Ok(payload.event_id)
 }
 
-/// Handler: Run the automatic precheck scheduled before an AWD event.
+/// 处理器：执行 AWD 赛前自动预检。
 pub struct AwdAutoPrecheckHandler {
     pub db: WebDb,
     pub network: Arc<dyn AwdNetworkRuntime>,
@@ -378,7 +370,7 @@ impl TaskHandler for AwdAutoPrecheckHandler {
     }
 }
 
-/// Handler: Start a verified AWD event at its scheduled start time.
+/// 处理器：在计划开赛时间启动已通过预检的 AWD 赛事。
 pub struct AwdEventStartHandler {
     pub db: WebDb,
     pub network:
@@ -598,7 +590,7 @@ impl TaskHandler for AwdTeamUnbanHandler {
     }
 }
 
-/// Handler: Cleanup archived events after retention period.
+/// 处理器：保留期结束后清理已归档赛事。
 pub struct AwdArchiveCleanupHandler {
     pub db: WebDb,
     pub docker: WebDocker,

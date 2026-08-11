@@ -1,23 +1,4 @@
-//! AWD cryptographic services.
-//!
-//! # Key hierarchy
-//!
-//! ```text
-//! The application secret from `[auth].jwt_secret` in the TOML config
-//!   └── HKDF-SHA256(info="floatctf-awd-master-v1")
-//!       └── AWD_MASTER_KEY (32 bytes)
-//! ```
-//!
-//! # Encryption
-//!
-//! Uses XChaCha20-Poly1305 for authenticated encryption.
-//! Each ciphertext stores: `ciphertext | nonce | key_version`.
-//! AAD is constructed as: `event_id || ":" || field_name`.
-//!
-//! # Safety
-//!
-//! - Secrets must NOT appear in Debug/Display output or logs.
-//! - The `AwdSecret` type wraps sensitive values and redacts them.
+//! AWD 加解密服务（信封加密、敏感值脱敏等）。
 
 use chacha20poly1305::{
     AeadCore, KeyInit, XChaCha20Poly1305, XNonce,
@@ -32,16 +13,16 @@ use crate::{core::secret::Secret, modules::event::awd::AwdError};
 
 static AWD_SECRET: OnceLock<Secret> = OnceLock::new();
 
-/// Expected master key length (32 bytes for XChaCha20-Poly1305).
+/// 主密钥期望长度（XChaCha20-Poly1305 为 32 字节）。
 const MASTER_KEY_LEN: usize = 32;
 
-/// HKDF info string for key derivation.
+/// 用于密钥派生的 HKDF info 字符串。
 const HKDF_INFO: &[u8] = b"floatctf-awd-master-v1";
 
-/// Nonce size for XChaCha20-Poly1305 (24 bytes).
+/// XChaCha20-Poly1305 的 nonce 长度（24 字节）。
 const NONCE_LEN: usize = 24;
 
-/// Sensitive value that redacts itself in Debug/Display output.
+/// 在 Debug/Display 中自脱敏的敏感值。
 #[derive(Clone)]
 pub struct AwdSecret(Vec<u8>);
 
@@ -72,7 +53,7 @@ impl std::fmt::Display for AwdSecret {
     }
 }
 
-/// Encrypted data with nonce and key version.
+/// 带 nonce 与密钥版本的密文数据。
 #[derive(Debug, Clone)]
 pub struct EncryptedBlob {
     pub ciphertext: Vec<u8>,
@@ -80,7 +61,7 @@ pub struct EncryptedBlob {
     pub key_version: i32,
 }
 
-/// Core AWD crypto service.
+/// AWD 核心加解密服务。
 pub struct AwdCrypto {
     master_key: AwdSecret,
 }
@@ -255,7 +236,7 @@ impl AwdCrypto {
     }
 }
 
-/// Helper: create AEAD payload with plaintext and associated data.
+/// 辅助：用明文与关联数据构造 AEAD 载荷。
 fn aead_payload<'a>(
     ciphertext_or_plaintext: &'a [u8],
     aad: &'a [u8],
@@ -266,7 +247,7 @@ fn aead_payload<'a>(
     }
 }
 
-/// Constant-time comparison to prevent timing side-channel attacks.
+/// 恒定时间比较，防止时序侧信道。
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

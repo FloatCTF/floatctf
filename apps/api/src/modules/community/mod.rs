@@ -1,4 +1,4 @@
-//! Community module — discussions, comments, and likes.
+//! 社区域：讨论、评论、点赞。
 
 pub mod comment;
 pub mod discussion;
@@ -6,9 +6,9 @@ pub mod like;
 
 use actix_web::web::ServiceConfig;
 
-/// Register player discussion routes under an existing `/discussions` scope.
+/// 注册player discussion routes under an existing `/discussions` scope。
 ///
-/// Final paths: `/api/discussions/**`
+/// 最终路径：`/api/discussions/**`
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(discussion::player::get_discussions)
         .service(discussion::player::get_discussion)
@@ -23,9 +23,9 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(comment::player::delete_comment);
 }
 
-/// Register admin discussion routes under an existing `/discussions` scope.
+/// 注册admin discussion routes under an existing `/discussions` scope。
 ///
-/// Final paths: `/api/admin/discussions/**`
+/// 最终路径：`/api/admin/discussions/**`
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(discussion::admin::get_discussions)
         .service(discussion::admin::get_discussion)

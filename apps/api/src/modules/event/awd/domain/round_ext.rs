@@ -1,4 +1,4 @@
-//! Extension methods for round, judge, precheck transitions.
+//! AWD 轮次领域扩展。
 
 use crate::entity::sea_orm_active_enums::{JudgeTaskStatus, PrecheckStatus, RoundStatus};
 

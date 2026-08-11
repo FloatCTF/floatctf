@@ -48,7 +48,7 @@ pub async fn find_team_by_name(
         .await
 }
 
-/// Check if a team name is already taken in an event.
+/// 检查战队名在该赛事中是否已被占用。
 pub async fn is_team_name_taken(
     db: &DatabaseConnection,
     event_id: Uuid,

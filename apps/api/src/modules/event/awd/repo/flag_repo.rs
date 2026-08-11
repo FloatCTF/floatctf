@@ -1,4 +1,4 @@
-//! Flag issue and submission repository.
+//! Flag 发放/提交仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,

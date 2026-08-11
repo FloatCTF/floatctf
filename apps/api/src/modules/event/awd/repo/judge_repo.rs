@@ -1,4 +1,4 @@
-//! Judge batch and task repository.
+//! 裁判任务/批次仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,

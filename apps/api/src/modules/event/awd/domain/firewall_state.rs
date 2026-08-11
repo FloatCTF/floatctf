@@ -1,12 +1,4 @@
-//! Desired firewall state model (Phase 1 P1-4, native nftables).
-//!
-//! DB 是 Desired State 的唯一事实源；`DesiredFirewallState` 是由 DB/配置推导出的
-//! 全局期望防火墙状态，经 `NftablesFirewallRuntime.reconcile()` 收敛到
-//! `table inet floatctf_awd`。
-//!
-//! 设计约束（见 chore/plans/awd/01-phase1-network-recovery.md §5.16）：
-//! - 本模型是 conceptual 数据模型，Phase 1 实现 Rust 结构；
-//! - FloatCTF 只管理 `table inet floatctf_awd`，禁止触碰 Docker/firewalld 规则。
+//! AWD 防火墙期望态模型（Phase 1 P1-4，原生 nftables）。
 
 use uuid::Uuid;
 

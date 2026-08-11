@@ -1,8 +1,4 @@
-//! AWD internal service authentication.
-//!
-//! Validates Bearer tokens for FlagServer and JudgeServer communication.
-//! Tokens are stored encrypted in `awd_events` and verified via constant-time
-//! re-encryption comparison (no decryption needed).
+//! AWD API 鉴权辅助。
 
 use crate::api::prelude::*;
 use actix_web::{FromRequest, HttpRequest, web};
@@ -14,16 +10,16 @@ use crate::entity::awd_events;
 use crate::infrastructure::WebDb;
 use crate::modules::event::awd::crypto::AwdCrypto;
 
-/// Identifies which internal service is making the request.
+/// 标识发起请求的内部服务身份。
 #[derive(Debug, Clone)]
 pub enum AwdInternalPrincipal {
     FlagServer { event_id: uuid::Uuid },
     JudgeServer { event_id: uuid::Uuid },
 }
 
-/// Extractor that validates AWD internal service authentication.
+/// 校验 AWD 内部服务认证的提取器。
 ///
-/// Usage in handler:
+/// 处理器中用法：
 /// ```ignore
 /// pub async fn my_handler(
 ///     auth: AwdInternalAuth,
@@ -164,7 +160,7 @@ impl FromRequest for AwdInternalAuth {
     }
 }
 
-/// Extract raw token bytes from Authorization: Bearer header.
+/// 从 Authorization: Bearer 头提取原始 token 字节。
 fn extract_bearer_token(req: &HttpRequest) -> Result<Vec<u8>, AuthError> {
     let auth_header = req
         .headers()

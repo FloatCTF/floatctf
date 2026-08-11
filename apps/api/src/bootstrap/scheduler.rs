@@ -1,3 +1,5 @@
+//! 启动时构建调度器并注册全部处理器。
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -22,7 +24,7 @@ use crate::{
     },
 };
 
-/// Build the scheduler and register every handler exactly once.
+/// 构建调度器，并将每个处理器恰好注册一次。
 pub async fn build_task_scheduler(
     db: WebDb,
     docker: WebDocker,

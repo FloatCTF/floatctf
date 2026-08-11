@@ -1,4 +1,4 @@
-//! Challenge sets (collections of catalog challenges).
+//! 题集模块。
 
 pub mod dto;
 pub use dto::ChallengeSetsDto;

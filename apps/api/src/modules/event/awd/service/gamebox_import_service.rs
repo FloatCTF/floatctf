@@ -1,14 +1,14 @@
-//! GameBox package import pipeline（单版本模型）。
+//! GameBox 包导入（构建/推送/登记）服务。
 //!
-//! Flow:
-//! 1. Safe extract zip → discover package root → require meta.toml + src/Dockerfile
-//! 2. Parse/validate meta.toml via fcmc::GameBoxMeta → 得 safe_name/version
-//! 3. 版本门禁：incoming 必须严格大于该 GameBox 当前版本（等于/小于拒绝，详细日志）
-//! 4. Compute package_digest + spec_digest
-//! 5. 单版本 upsert：identity 先置 building → docker build → ready/failed（image pins）
-//! 6. On success: mirror package into GAMEBOXES_DIR/{safe_name}
+//! 流程：
+//! 1. 安全解压 zip → 定位包根 → 要求 meta.toml + src/Dockerfile
+//! 2. 解析并规范化规格
+//! 3. docker build
+//! 4. 计算 package_digest + spec_digest
+//! 5. 按 RegistryConfig 推送/钉扎镜像
+//! 6. 成功后镜像包到 GAMEBOXES_DIR/{safe_name}
 //!
-//! v1: synchronous build is OK (no durable job system for docker builds).
+//! v1：同步构建可接受（尚无 docker build 持久任务系统）。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,16 +42,16 @@ pub const BUILD_STATUS_BUILDING: &str = "building";
 pub const BUILD_STATUS_READY: &str = "ready";
 pub const BUILD_STATUS_FAILED: &str = "failed";
 
-/// Result of import (returned to admin API).
+/// import (returned to admin API)的结果。
 #[derive(Debug, Clone)]
 pub struct ImportGameBoxResult {
     pub gamebox: gameboxes::Model,
 }
 
-/// Import a GameBox package zip (multipart tempfile path).
+/// 导入 GameBox 包 zip（multipart 临时文件路径）。
 ///
 /// 单版本模型：identity 直接承载当前版本全部 package 字段；导入要求 version 严格递增。
-/// Uses platform `RegistryConfig` for image prefix / push mode / credentials.
+/// 使用平台 `RegistryConfig` 作为镜像前缀 / 推送模式 / 凭证。
 pub async fn import_gamebox_package(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -223,7 +223,7 @@ pub async fn import_gamebox_package(
                 package_digest = %package_digest,
                 "GameBox package import ready"
             );
-            // Best-effort cleanup of temp tag (canonical image_ref still tagged).
+            // 尽力清理临时 tag（规范 image_ref 仍保留 tag）。
             let _ = ImageRuntime::remove_image(&runtime, &temp_tag, true).await;
             Ok(ImportGameBoxResult { gamebox })
         }
@@ -247,7 +247,7 @@ pub async fn import_gamebox_package(
     }
 }
 
-/// Scan result of a single directory under GAMEBOXES_DIR.
+/// `GAMEBOXES_DIR` 下单个目录的扫描结果。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GameBoxScanItem {
     pub safe_name: String,
@@ -258,7 +258,7 @@ pub struct GameBoxScanItem {
     pub message: String,
 }
 
-/// Scan `GAMEBOXES_DIR/{safe_name}` and register packages that are not yet in the DB.
+/// 扫描 `GAMEBOXES_DIR/{safe_name}`，登记尚未入库的包。
 ///
 /// 场景：DB 清空/换库后，磁盘目录（mirror 产物）与本地镜像仍在。逐目录解析 meta.toml，
 /// 若 safe_name 未入库则登记 identity + package 字段；镜像（image_ref tag）本地存在 → ready，
@@ -530,7 +530,7 @@ async fn run_build_and_pin(
         .await
         .map_err(map_image_error)?;
 
-    // Tag canonical ref from the built image id (fallback: temp tag name).
+    // 用构建得到的 image id 打上规范 ref tag（回退：临时 tag 名）。
     if let Err(e) = ImageRuntime::tag_image(runtime, &built.image_id, canonical_ref).await {
         ImageRuntime::tag_image(runtime, temp_tag, canonical_ref)
             .await
@@ -582,7 +582,7 @@ fn registry_auth(registry: &RegistryConfig) -> Option<RegistryAuth> {
 }
 
 /// Copy the imported package into `GAMEBOXES_DIR/{safe_name}`（解压落盘，与 Challenge 一致）。
-/// Best-effort: failure is logged, not fatal.
+/// 尽力而为：失败只记日志，不致命。
 async fn mirror_to_gameboxes_dir(db: &DatabaseConnection, safe_name: &str, package_root: &Path) {
     let gameboxes_dir = match get_setting(db, "GAMEBOXES_DIR").await {
         Ok(d) => d,

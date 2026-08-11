@@ -1,4 +1,4 @@
-//! Platform / operational module — announcements, settings, files, and operations.
+//! 平台运营：公告、文件、仪表盘、设置。
 
 pub mod announcements;
 pub mod files;
@@ -12,7 +12,7 @@ pub use settings::SettingsDto;
 
 use actix_web::web::{ServiceConfig, scope};
 
-/// Player-facing platform routes under `/api`.
+/// 选手侧平台路由（`/api` 下）。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(scope("/announcements").service(announcements::get_player_announcements));
 
@@ -23,7 +23,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     );
 }
 
-/// Admin platform / operational routes under `/api/admin`.
+/// 管理端平台/运营路由（`/api/admin` 下）。
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(files::download::download);
 

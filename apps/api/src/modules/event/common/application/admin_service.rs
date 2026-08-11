@@ -106,7 +106,7 @@ pub struct DataPresent {
     pub trend: Vec<TrendItem>,
 }
 
-/// Team member row embedded in writeup reports (mirrors admin event_teams DTO).
+/// 嵌入 Writeup 报告的战队成员行（与管理端 event_teams DTO 对齐）。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReportTeamMember {
     pub username: String,

@@ -1,9 +1,4 @@
-//! Platform AWD Networking API（§73）：
-//! - GET/PATCH /admin/awd/network            平台网络设置（pools / prefix / WG port / endpoint）
-//! - GET  /admin/awd/network/health          Host 观测状态（§4.1，只读）
-//! - GET  /admin/awd/network/allocations     平台分配账本视图（§7/§66）
-//!
-//! 全部 Admin only（§72）。平台页不允许切 Docker backend / 关闭 firewalld（§4.1/§44）。
+//! 平台级 AWD 网络管理 API。
 
 use actix_web::{get, patch, web};
 use serde::Deserialize;

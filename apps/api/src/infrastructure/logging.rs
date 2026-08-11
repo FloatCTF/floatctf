@@ -1,4 +1,4 @@
-//! Request/audit logging service (`LogService` / `WebLog`).
+//! 请求/审计日志服务（`LogService` / `WebLog`）。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::Value;

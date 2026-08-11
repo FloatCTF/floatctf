@@ -1,4 +1,4 @@
-//! AWD host networking: WireGuard, conntrack (firewall moved to `infrastructure::firewall`).
+//! AWD 网络运行时与密钥管理。
 
 pub mod keys;
 pub mod runtime;

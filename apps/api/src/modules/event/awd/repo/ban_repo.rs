@@ -1,4 +1,4 @@
-//! Team ban repository.
+//! 战队封禁仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,

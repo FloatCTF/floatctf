@@ -1,6 +1,4 @@
-//! Actix request extractors for authenticated principals.
-//!
-//! JWT validation is delegated to `crate::core::security::jwt`.
+//! 鉴权相关请求提取器与守卫。
 
 use crate::core::security::jwt::validate_jwt;
 use crate::entity::{super_admin, users};

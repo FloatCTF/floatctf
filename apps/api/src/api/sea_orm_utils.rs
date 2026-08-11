@@ -1,3 +1,5 @@
+//! SeaORM 查询过滤与跨表过滤辅助。
+
 use sea_orm::DbErr;
 use sea_orm::entity::prelude::Uuid;
 use sea_orm::{Condition, DatabaseConnection, EntityTrait, QueryFilter, Select};

@@ -1,4 +1,4 @@
-//! Host network runtime for WireGuard, firewall policy, and conntrack.
+//! AWD 网络运行时编排。
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -11,7 +11,7 @@ use crate::modules::event::awd::{
     },
 };
 
-/// Desired WireGuard interface state for one event.
+/// 单场赛事的 WireGuard 接口期望态。
 #[derive(Debug, Clone)]
 pub struct WireGuardDesiredState {
     pub interface: String,
@@ -20,21 +20,21 @@ pub struct WireGuardDesiredState {
     pub address: String,
 }
 
-/// Identity for peer revocation.
+/// 对等体吊销用的身份标识。
 #[derive(Debug, Clone)]
 pub struct PeerIdentity {
     pub interface: String,
     pub public_key: String,
 }
 
-/// Event-scoped network identity (CIDR + ids for chain naming).
+/// 赛事作用域网络身份（CIDR + 链命名用 id）。
 #[derive(Debug, Clone)]
 pub struct EventNetworkIdentity {
     pub event_id: Uuid,
     pub gamebox_cidr: String,
 }
 
-/// Team-scoped identity for targeted conntrack flush.
+/// 战队作用域身份，用于定向 conntrack 刷新。
 #[derive(Debug, Clone)]
 pub struct TeamNetworkIdentity {
     pub event_id: Uuid,
@@ -42,14 +42,14 @@ pub struct TeamNetworkIdentity {
     pub gamebox_subnet: String,
 }
 
-/// Observed host network state (best-effort).
+/// 观测到的宿主网络状态（尽力而为）。
 #[derive(Debug, Clone, Default)]
 pub struct NetworkObservedState {
     pub wireguard_interface_up: bool,
     pub notes: Vec<String>,
 }
 
-/// Platform host networking for AWD (WireGuard / conntrack).
+/// AWD 平台宿主网络（WireGuard / conntrack）。
 ///
 /// 防火墙策略已迁移到独立 `FirewallRuntime`（native nftables，Phase 1）；
 /// 本 runtime 只管 WG 生命周期与 conntrack 清理。
@@ -66,7 +66,7 @@ pub trait AwdNetworkRuntime: Send + Sync {
     async fn inspect(&self, event: EventNetworkIdentity) -> AwdResult<NetworkObservedState>;
 }
 
-/// Production implementation using real host commands.
+/// 使用真实宿主命令的生产实现。
 pub struct HostNetworkRuntime {
     runner: RealCommandRunner,
 }
@@ -144,7 +144,7 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
     }
 }
 
-/// No-op runtime for environments without host privileges (CI / local API).
+/// 无宿主权限环境的空操作运行时（CI / 本地 API）。
 pub struct NoopNetworkRuntime;
 
 #[async_trait]

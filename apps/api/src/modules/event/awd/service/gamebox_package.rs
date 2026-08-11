@@ -1,19 +1,11 @@
-//! GameBox package helpers — thin delegation to shared `infrastructure::package`.
-//!
-//! Canonical package layout (after extract + root discovery):
-//! ```text
-//! meta.toml
-//! src/Dockerfile
-//! src/**            # docker build context only
-//! judge/**          # optional; never part of docker context
-//! ```
+//! GameBox 包解析、摘要与规范化。
 
 use std::path::{Path, PathBuf};
 
 use crate::infrastructure::package;
 use crate::modules::event::awd::{AwdError, AwdResult};
 
-/// Hard limits for GameBox package zip (defense-in-depth).
+/// GameBox 包 zip 硬限制（纵深防御）。
 pub const MAX_ARCHIVE_BYTES: u64 = package::MAX_ARCHIVE_BYTES;
 pub const MAX_EXTRACTED_BYTES: u64 = package::MAX_EXTRACTED_BYTES;
 pub const MAX_FILES: usize = package::MAX_FILES;
@@ -28,27 +20,27 @@ fn awd_map(e: package::PackageError) -> AwdError {
     }
 }
 
-/// Safely extract a zip into `dest_dir` with size / zip-slip / symlink guards.
+/// 安全解压 zip 到 `dest_dir`（大小 / zip-slip / 符号链接防护）。
 pub fn extract_package_zip(zip_path: &Path, dest_dir: &Path) -> AwdResult<()> {
     package::extract_package_zip(zip_path, dest_dir).map_err(awd_map)
 }
 
-/// Discover package root: root meta.toml or exactly one nested meta.toml.
+/// 定位包根：根目录 meta.toml，或恰好一个嵌套 meta.toml。
 pub fn discover_package_root(extract_root: &Path) -> AwdResult<PathBuf> {
     package::discover_package_root(extract_root).map_err(awd_map)
 }
 
-/// Validate required package layout under `package_root`.
+/// 校验required package layout under `package_root`。
 pub fn require_package_layout(package_root: &Path) -> AwdResult<()> {
     package::require_package_layout(package_root).map_err(awd_map)
 }
 
-/// Read meta.toml text (already size-checked by require_package_layout).
+/// 读取 meta.toml 文本（大小已由 require_package_layout 校验）。
 pub fn read_meta_toml(package_root: &Path) -> AwdResult<String> {
     package::read_meta_toml(package_root).map_err(awd_map)
 }
 
-/// Read judge script if present; enforces path under package and size limit.
+/// 若存在则读取裁判脚本；强制路径在包内且受大小限制。
 pub fn read_judge_script(package_root: &Path, relative: &str) -> AwdResult<String> {
     fcmc::validate_judge_path(relative)
         .map_err(|e| AwdError::Validation(format!("INVALID_JUDGE_PATH: {e}")))?;
@@ -58,17 +50,17 @@ pub fn read_judge_script(package_root: &Path, relative: &str) -> AwdResult<Strin
         .map_err(|e| AwdError::Validation(format!("JUDGE_SCRIPT_NOT_UTF8: {e}")))
 }
 
-/// Compute package_digest = SHA-256 over canonical file list (meta.toml + src/** + judge/**).
+/// 计算 `package_digest` = 规范文件列表（meta.toml + src/** + judge/**）的 SHA-256。
 pub fn compute_package_digest(package_root: &Path) -> AwdResult<String> {
     package::compute_package_digest(package_root, &["src", "judge"]).map_err(awd_map)
 }
 
-/// SHA-256 hex of canonical JSON bytes for a NormalizedGameBoxSpec.
+/// `NormalizedGameBoxSpec` 规范 JSON 字节的 SHA-256 十六进制摘要。
 pub fn compute_spec_digest(spec: &fcmc::NormalizedGameBoxSpec) -> AwdResult<String> {
     package::compute_spec_digest(spec).map_err(awd_map)
 }
 
-/// Bound + sanitize build error messages (strip obvious secret-looking tokens, max ~2KB).
+/// 截断并清洗构建错误信息（去掉明显疑似密钥的 token，最大约 2KB）。
 pub fn sanitize_build_error(msg: &str) -> String {
     package::sanitize_build_error(msg)
 }

@@ -1,4 +1,4 @@
-//! Player challenge set handlers.
+//! 题集选手端接口。
 
 use std::str::FromStr;
 

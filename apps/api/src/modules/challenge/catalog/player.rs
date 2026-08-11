@@ -1,4 +1,4 @@
-//! Player challenge catalog handlers.
+//! 选手题目目录处理器。
 
 use std::str::FromStr;
 

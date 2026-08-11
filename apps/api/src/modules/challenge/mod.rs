@@ -1,7 +1,4 @@
-//! Challenge catalog module — challenges, sets, writeups, build/import.
-//!
-//! Manages the challenge *catalog* itself (not event-challenge relationships).
-//! `jeopardy_event_challenges` remains under the event module / admin API.
+//! 题目域：题库、构建、题集、Writeup。
 
 pub mod build;
 pub mod catalog;
@@ -10,9 +7,9 @@ pub mod writeup;
 
 use actix_web::web::{self, ServiceConfig};
 
-/// Player-facing challenge routes (under `/api`).
+/// 选手侧题目路由（`/api` 下）。
 ///
-/// Scopes: `/challenges`, `/challenge_sets`, `/writeups`, `/solves`.
+/// 作用域：`/challenges`、`/challenge_sets`、`/writeups`、`/solves`。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/writeups")
@@ -55,9 +52,9 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     );
 }
 
-/// Admin challenge routes (under `/api/admin`).
+/// 管理端题目路由（`/api/admin` 下）。
 ///
-/// Scopes: `/challenges`, `/challenge_sets`.
+/// 作用域：`/challenges`、`/challenge_sets`。
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/challenges")

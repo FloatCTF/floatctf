@@ -1,4 +1,4 @@
-//! Request-scoped application context extractor (`ReqCtx`).
+//! 请求级应用上下文提取器（`ReqCtx`）。
 
 use actix_web::FromRequest;
 use actix_web::HttpRequest;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::core::AppConfig;
 use crate::infrastructure::{WebDb, WebDocker, WebLog, WebRustfs};
 
-/// Bundled request dependencies extracted from Actix app data.
+/// 从 Actix app data 提取的捆绑请求依赖。
 pub struct ReqCtx {
     pub config: Arc<AppConfig>,
     pub db: WebDb,

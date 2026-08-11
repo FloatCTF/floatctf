@@ -1,4 +1,4 @@
-//! AWD player-facing API handlers.
+//! AWD 选手端 HTTP 处理器。
 
 use actix_web::{HttpResponse, web};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -414,9 +414,9 @@ pub async fn get_wireguard_config(
 
 /// GET /api/events/{event_id}/awd/stream
 /// GET /api/events/{event_id}/awd/stream
-/// Server-Sent Events from the in-process `BroadcastEventPublisher` hub.
-/// Clients filter by `event_id` in the envelope; reconnect + REST snapshot
-/// is the responsibility of the frontend (`useAwdEventStream`).
+/// 来自进程内 `BroadcastEventPublisher` 中枢的 Server-Sent Events。
+/// 客户端按信封中的 `event_id` 过滤；重连 + REST 快照
+/// 由前端负责（`useAwdEventStream`）。
 #[get("{event_id}/awd/stream")]
 pub async fn event_stream(
     _user: UserJwtGuard,

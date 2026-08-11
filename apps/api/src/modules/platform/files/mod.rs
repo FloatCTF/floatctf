@@ -1,4 +1,4 @@
-//! Platform file upload/download handlers.
+//! 平台文件上传/下载处理器。
 
 pub mod download;
 pub mod upload;

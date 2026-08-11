@@ -1,8 +1,4 @@
-//! Firewall runtime abstraction (Phase 1 P1-3).
-//!
-//! 唯一生产实现为 native nftables（`NftablesFirewallRuntime`）。
-//! 不提供 application-facing 的 add/remove rule API —— application 只描述
-//! Desired State，runtime 决定如何收敛（global reconcile）。
+//! 防火墙运行时抽象（Phase 1 P1-3）。
 
 pub mod env;
 pub mod nftables;

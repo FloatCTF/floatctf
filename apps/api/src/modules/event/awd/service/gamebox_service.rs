@@ -1,14 +1,13 @@
-//! GameBox library service + 单一 runtime spec resolver（单版本模型）。
+//! AWD GameBox 实例生命周期服务。
 //!
-//! 本服务承载：
-//!   1. 全局 GameBox 身份：identity 元数据更新、safe_name 校验。
+//! 关键路径：
+//!   1. 管理端挂载 EventGameBox
 //!   2. `resolve_event_gamebox_spec` —— Deploy / Reset / Recovery / Precheck / Judge
-//!      唯一共享的 effective config 解析入口（GameBox 当前版本 + EventGameBox 覆盖）。
-//!   3. `build_gamebox_runtime_spec` —— 从 resolved spec 组装 fcmc::GameBoxSpec。
+//!      统一解析运行规格
 //!
-//! 镜像 pin 规则：
-//!   prefer `gamebox.image_repo_digest` if Some, else `image_id` (LocalOnly),
-//!   else fall back to `image_ref` (tag). Ready gameboxes must have at least one pin.
+//! 镜像钉扎优先级：
+//!   优先 `gamebox.image_repo_digest`（若有），否则 `image_id`（仅本地），
+//!   再否则回退 `image_ref`（tag）。就绪的 gamebox 至少要有一种钉扎。
 
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
@@ -98,7 +97,7 @@ pub async fn unique_safe_name(db: &DatabaseConnection, display_name: &str) -> Aw
     Ok(candidate)
 }
 
-/// Validate an explicit safe_name (no auto-suffix).
+/// 校验an explicit safe_name (no auto-suffix)。
 pub fn validate_identity_safe_name(safe_name: &str) -> AwdResult<()> {
     validate_safe_name(safe_name).map_err(AwdError::Validation)
 }
@@ -124,8 +123,8 @@ pub struct ResolvedGameBoxRuntimeSpec {
     pub effective_judge_retry_interval_secs: Option<i32>,
 }
 
-/// Runtime image pin:
-/// `image_repo_digest` (full `repo@sha256:…`) > `image_id` (LocalOnly `sha256:…`) > `image_ref` tag.
+/// 运行时镜像钉扎：
+/// `image_repo_digest`（完整 `repo@sha256:…`）> `image_id`（仅本地 `sha256:…`）> `image_ref` tag。
 pub fn effective_image_ref_from_gamebox(gamebox: &gameboxes::Model) -> AwdResult<String> {
     if let Some(ref d) = gamebox.image_repo_digest {
         if !d.is_empty() {

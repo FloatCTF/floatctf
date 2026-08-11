@@ -1,8 +1,7 @@
-//! Typed static configuration loaded once from a TOML file at process start.
+//! 进程启动时从 TOML 一次性加载的类型化静态配置。
 //!
-//! The file selected by `FLOATCTF_CONFIG` is the only source for process-static
-//! API configuration. Dynamic, admin-editable settings remain in the `settings`
-//! DB table (`seed_default_settings` / `get_setting`).
+//! 由 `FLOATCTF_CONFIG` 选定的文件是进程静态 API 配置的**唯一**来源。
+//! 可管理端动态编辑的项仍在数据库 `settings` 表（`seed_default_settings` / `get_setting`）。
 
 use std::path::Path;
 
@@ -10,7 +9,7 @@ use serde::Deserialize;
 
 use super::secret::Secret;
 
-/// Top-level application configuration.
+/// 应用顶层配置。
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub server: ServerConfig,
@@ -49,11 +48,11 @@ pub struct DockerConfig {
     pub use_defaults: bool,
 }
 
-/// Registry / image push settings for GameBox package import pipeline.
+/// GameBox 包导入管线的镜像仓库 / 推送设置。
 ///
-/// `push = false` is explicit **LocalOnly** mode: after local build+inspect, mark
-/// ready with `image_id`; `image_repo_digest` may be NULL; runtime pins `image_id`.
-/// When `push = true`, push is required and ready is only marked after RepoDigest.
+/// `push = false` 为显式 **LocalOnly** 模式：本地 build+inspect 后标记
+/// 以 `image_id` 就绪；`image_repo_digest` 可为空；运行时钉扎 `image_id`。
+/// 当 `push = true` 时必须推送，且仅在拿到 RepoDigest 后标记就绪。
 #[derive(Debug, Clone)]
 pub struct RegistryConfig {
     /// Image name prefix → `{image_prefix}/gameboxes/{safe}:{ver}`.
@@ -91,7 +90,7 @@ pub struct PathConfig {
     pub work_dir: String,
 }
 
-/// Static AWD process config (not per-event secrets).
+/// AWD 进程静态配置（非每场赛事密钥）。
 #[derive(Debug, Clone)]
 pub struct AwdStaticConfig {
     /// Whether AWD crypto could be derived from the shared JWT secret material.
@@ -445,7 +444,7 @@ fn default_listen_port() -> u16 {
 fn default_work_dir() -> String {
     "./".to_string()
 }
-/// Empty timezone = leave the process local timezone untouched.
+/// 时区为空 = 不修改进程本地时区。
 fn default_timezone() -> String {
     String::new()
 }

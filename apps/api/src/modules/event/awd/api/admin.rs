@@ -1,6 +1,4 @@
-//! AWD admin API handlers.
-//!
-//! All endpoints require SuperAdmin authentication.
+//! AWD 赛事管理端 HTTP 处理器。
 
 use actix_web::web;
 use sea_orm::{

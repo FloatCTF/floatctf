@@ -1,7 +1,4 @@
-//! Global firewall desired-state reconcile orchestrator (Phase 1 P1-10).
-//!
-//! 唯一路径：DB（Desired State）→ `DesiredFirewallState`（全局）→ `FirewallRuntime.reconcile()`。
-//! 禁止在任何 service 直接 add/delete 单条 nft rule。
+//! 全局防火墙期望态协调编排器（Phase 1 P1-10）。
 
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;

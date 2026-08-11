@@ -1,4 +1,4 @@
-//! Startup recovery — reconcile platform state with Docker after restart.
+//! AWD 故障恢复服务。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, QueryFilter};
 use tracing::{error, info, warn};
@@ -21,7 +21,7 @@ use crate::modules::event::awd::{
 };
 use fcmc::AwdContainerRuntime;
 
-/// Run recovery for all active AWD events on startup.
+/// 运行recovery for all active AWD events on startup。
 pub async fn recover_all(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
@@ -91,7 +91,7 @@ pub async fn recover_all(
     Ok(recovered)
 }
 
-/// Recover a single AWD event's resources.
+/// 恢复单场 AWD 赛事的资源。
 async fn recover_event(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
@@ -233,7 +233,7 @@ async fn recover_event(
     Ok(recovered)
 }
 
-/// Handle a network error: pause event, record error state.
+/// 处理a network error: pause event, record error state。
 pub async fn handle_network_error(
     db: &DatabaseConnection,
     event_id: Uuid,

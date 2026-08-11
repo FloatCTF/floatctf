@@ -1,4 +1,4 @@
-//! HTTP handlers for weapon catalog.
+//! 武器库 HTTP 处理器。
 
 use actix_multipart::form::MultipartForm;
 use actix_web::web::ServiceConfig;
@@ -14,16 +14,16 @@ use crate::{
     entity::weapons,
 };
 
-/// Register player weapon routes under an existing `/weapons` scope.
+/// 注册player weapon routes under an existing `/weapons` scope。
 ///
-/// Final paths: `/api/weapons`
+/// 最终路径：`/api/weapons`
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(get_weapons_player);
 }
 
-/// Register admin weapon routes under an existing `/weapons` scope.
+/// 注册admin weapon routes under an existing `/weapons` scope。
 ///
-/// Final paths: `/api/admin/weapons/**`
+/// 最终路径：`/api/admin/weapons/**`
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(create_weapon)
         .service(delete_weapon)

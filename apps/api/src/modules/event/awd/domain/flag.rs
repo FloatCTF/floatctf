@@ -1,13 +1,10 @@
-//! Flag generation — deterministic HMAC-based flag issuing.
-//!
-//! Format: `flag{...}` with configurable prefix.
-//! Generation: `HMAC-SHA256(event_secret, event_id || round_id || gamebox_instance_id)`
+//! AWD Flag 领域模型。
 
 use sha2::{Digest, Sha256};
 
-/// Generate a deterministic flag using HMAC-SHA256.
+/// 使用 HMAC-SHA256 生成确定性 Flag。
 ///
-/// The flag is derived from:
+/// Flag 派生自：
 /// - `event_secret`: per-event secret key
 /// - `event_id`: UUID of the event
 /// - `round_id`: UUID of the round
@@ -35,14 +32,14 @@ pub fn generate_flag(
     format!("{}{{{}}}", prefix, flag_body)
 }
 
-/// Hash a flag for storage (SHA-256).
+/// 对 Flag 做存储哈希（SHA-256）。
 pub fn hash_flag(flag: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(flag.as_bytes());
     hex::encode(hasher.finalize())
 }
 
-/// Verify a submitted flag against a stored hash.
+/// 用已存哈希校验提交的 Flag。
 pub fn verify_flag(flag: &str, stored_hash: &str) -> bool {
     hash_flag(flag) == stored_hash
 }

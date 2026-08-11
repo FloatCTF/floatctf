@@ -187,8 +187,8 @@ pub async fn terminal_ws(
     Ok(res)
 }
 
-/// Try shells in order: fish > zsh > bash > sh.
-/// Returns (shell_name, optional_login_flag).
+/// 按顺序尝试 shell：fish > zsh > bash > sh。
+/// 返回 (shell_name, optional_login_flag)。
 fn find_shell() -> (&'static str, Option<&'static str>) {
     let candidates: &[(&str, Option<&str>)] = &[
         ("fish", Some("--login")),

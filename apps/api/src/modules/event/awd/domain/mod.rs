@@ -1,14 +1,4 @@
-//! AWD domain models.
-//!
-//! # Layering
-//!
-//! - **State machines**: extension traits on generated ActiveEnum
-//!   (`event_ext`, `gamebox_ext`, `round_ext`) — single source of transition rules.
-//! - **Value objects**: pure types without SeaORM (`Ipv4Cidr`, flag helpers, scores).
-//! - **Persistence mapping**: `crate::modules::event::awd::infrastructure::persistence::mapping`.
-//!
-//! Generated entity enums are re-exported here for call-site convenience; they must
-//! never be edited by hand (sea-orm-cli only).
+//! AWD 领域类型与扩展。
 
 pub mod execution;
 pub mod firewall_state;

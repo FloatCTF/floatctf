@@ -1,4 +1,4 @@
-//! Docker client initialization.
+//! Docker 客户端初始化。
 
 use anyhow::Result;
 use bollard::Docker;

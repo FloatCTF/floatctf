@@ -1,4 +1,4 @@
-//! Score event repository.
+//! 计分事件仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -89,7 +89,7 @@ pub async fn create_score_event_if_absent(
     Ok(res.rows_affected() == 1)
 }
 
-/// Return the current total score for a team by summing deltas.
+/// 通过累加 delta 得到战队当前总分。
 pub async fn team_total_score(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -103,7 +103,7 @@ pub async fn team_total_score(
     Ok(scores.iter().map(|s| s.delta).sum())
 }
 
-/// Sum deltas for a team filtered by score event types.
+/// 按计分事件类型过滤后累加战队 delta。
 pub async fn team_score_for_types(
     db: &DatabaseConnection,
     event_id: Uuid,

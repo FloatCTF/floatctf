@@ -1,8 +1,4 @@
-//! GameBox library + EventGameBox admin handlers。
-//!
-//! - `/api/admin/awd/gameboxes`：全局 GameBox 库（单版本 identity）
-//! - `/api/admin/awd/gameboxes/import`：package zip 导入（build + pin，单版本门禁）
-//! - `/api/admin/events/{event_id}/awd/gameboxes`：赛事选择（引用 GameBox 当前版本）
+//! GameBox 题库与 EventGameBox 管理端处理器。
 
 use std::str::FromStr;
 

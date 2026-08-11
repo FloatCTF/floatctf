@@ -1,4 +1,4 @@
-//! WireGuard peer repository.
+//! WireGuard 对等体仓储。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,

@@ -1,4 +1,4 @@
-//! Platform operations: system, docker, DB console, logs, tasks, runtime instances.
+//! 平台运营类接口（仪表盘等）。
 
 pub mod dashboard;
 pub mod database;

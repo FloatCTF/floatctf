@@ -1,7 +1,4 @@
-//! Domain state-machine rules for AWD event status and phase.
-//!
-//! Implemented on SeaORM ActiveEnum types (persistence representation).
-//! Do not hand-edit `entity::sea_orm_active_enums`; put rules here only.
+//! AWD 赛事领域扩展。
 
 use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase};
 

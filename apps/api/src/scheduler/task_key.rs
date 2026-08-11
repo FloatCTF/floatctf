@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-/// Stable identifiers stored in `scheduled_tasks.task_key`.
+/// 存于 `scheduled_tasks.task_key` 的稳定标识。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskKey {
     CheckPracticeEvent,

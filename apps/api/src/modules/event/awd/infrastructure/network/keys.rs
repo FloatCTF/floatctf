@@ -1,16 +1,10 @@
-//! WireGuard key generation in pure Rust (equivalent to `wg genkey` / `wg pubkey`).
-//!
-//! WireGuard private keys are clamped X25519 scalars; public keys are the
-//! corresponding Curve25519 points. Both are standard Base64 (no wrapping).
-//!
-//! Host `wg`/`ip` commands are still needed to *configure interfaces* on Linux;
-//! only key material generation is crate-based so we never shell out for secrets.
+//! AWD 网络密钥材料管理。
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-/// A WireGuard keypair encoded as WireGuard-compatible Base64 strings.
+/// 以 WireGuard 兼容 Base64 编码的密钥对。
 #[derive(Clone)]
 pub struct WgKeyPair {
     /// 32-byte clamped private key, Base64.
@@ -28,7 +22,7 @@ impl std::fmt::Debug for WgKeyPair {
     }
 }
 
-/// Generate a new WireGuard keypair (`wg genkey` + `wg pubkey`).
+/// 生成a new WireGuard keypair (`wg genkey` + `wg pubkey`)。
 pub fn generate_keypair() -> WgKeyPair {
     let secret = StaticSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
@@ -38,7 +32,7 @@ pub fn generate_keypair() -> WgKeyPair {
     }
 }
 
-/// Derive a public key from a Base64 private key (`wg pubkey`).
+/// 派生a public key from a Base64 private key (`wg pubkey`)。
 pub fn public_from_private(private_key_b64: &str) -> Result<String, String> {
     let bytes = STANDARD
         .decode(private_key_b64.trim())

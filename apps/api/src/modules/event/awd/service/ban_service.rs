@@ -1,21 +1,13 @@
-//! Ban 跨层闭环（Phase 4 P4-5/P4-6/P4-7，nftables banned set 版）。
-//!
-//! 单入口 `ban_service::ban_team`（取代旧 render_ban_rules / per-team ban chains）：
+//! 战队封禁/解封服务。
 //!
 //! ```text
 //! ban:
-//!   1. DB：写 awd_team_bans（desired state）
-//!   2. WG：host 移除该队 Active peers（DB 保持 Active = suspend，非永久 revoke）
-//!   3. Firewall：全局 DesiredFirewallState（banned_teams += team）→ nft reconcile
-//!      → banned 子网成为 @banned_players_v4 set element
-//!   4. Conntrack：flush 该队相关连接
-//!   5. Realtime：publish team.banned
-//!
-//! unban：反向（DB unbanned → host 恢复 peers → reconcile 移除 set element → publish）
-//!
-//! 失败模型（§5.3）：DB ban 是 Desired State；WG/firewall/conntrack 逐项 reconcile，
-//! 任何失败 → 返回错误（可重跑）；Recovery（P1-11）按 DB bans 重建，
-//! 不依赖 nft table 中旧 ban elements 作为事实源。
+//!   1. 写封禁记录
+//!   2. 更新网络/防火墙期望态
+//!   3. 下发策略
+//!   4. conntrack 清理
+//!   5. 实时通道：发布 team.banned
+//! unban: 对称逆操作
 //! ```
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::Expr};

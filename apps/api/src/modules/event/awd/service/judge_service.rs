@@ -1,4 +1,4 @@
-//! Judge service — batch creation, dispatch to JudgeServer, and callback handling.
+//! AWD 裁判调度服务。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -55,7 +55,7 @@ impl JudgeBatchStatus {
     }
 }
 
-/// Create a judge batch for a round: one task per (non-banned) team × template.
+/// 创建a judge batch for a round: one task per (non-banned) team × template。
 pub async fn create_batch(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -170,7 +170,7 @@ pub async fn create_batch(
     Ok(batch.id)
 }
 
-/// Dispatch a batch to the JudgeServer via HTTP.
+/// 经 HTTP 向 JudgeServer 派发一批任务。
 pub async fn dispatch_batch(
     db: &DatabaseConnection,
     batch_id: Uuid,
@@ -396,7 +396,7 @@ async fn set_batch_status(
     Ok(())
 }
 
-/// Count pending tasks for a batch.
+/// 统计pending tasks for a batch。
 pub async fn pending_task_count(db: &DatabaseConnection, batch_id: Uuid) -> AwdResult<i64> {
     let tasks = awd_judge_tasks::Entity::find()
         .filter(awd_judge_tasks::Column::BatchId.eq(batch_id))

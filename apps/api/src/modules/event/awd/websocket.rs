@@ -1,24 +1,6 @@
-//! WebSocket event publisher for AWD real-time updates.
+//! AWD 实时更新的 WebSocket 事件发布。
 //!
-//! # Event Format
-//!
-//! ```json
-//! {
-//!   "event": "attack.success",
-//!   "event_id": "uuid",
-//!   "sequence": 42,
-//!   "data": { ... },
-//!   "timestamp": "2025-01-01T00:00:00Z"
-//! }
-//! ```
-//!
-//! # Security
-//!
-//! Events must NOT contain:
-//! - Full flags
-//! - WireGuard keys
-//! - Event secrets
-//! - Internal tokens
+//! 事件载荷不得包含密钥、完整规则集等敏感明细。
 
 use chrono::Utc;
 use serde::Serialize;
@@ -26,7 +8,7 @@ use uuid::Uuid;
 
 use crate::infrastructure::realtime::RealtimeEvent;
 
-/// An AWD real-time event to be broadcast over WebSocket.
+/// 经 WebSocket 广播的 AWD 实时事件。
 #[derive(Debug, Clone, Serialize)]
 pub struct AwdEvent {
     /// Event type (e.g. "attack.success", "score.changed", "judge.result")
@@ -61,7 +43,7 @@ impl AwdEvent {
     }
 }
 
-/// Publish an attack success event.
+/// 发布攻击成功事件。
 pub fn attack_success(
     event_id: Uuid,
     attacker_team_id: Uuid,
@@ -81,7 +63,7 @@ pub fn attack_success(
     )
 }
 
-/// Publish a score change event.
+/// 发布比分变更事件。
 pub fn score_changed(event_id: Uuid, team_id: Uuid, new_total: i64, delta: i64) -> AwdEvent {
     AwdEvent::new(
         "score.changed",
@@ -94,7 +76,7 @@ pub fn score_changed(event_id: Uuid, team_id: Uuid, new_total: i64, delta: i64) 
     )
 }
 
-/// Publish a judge result event.
+/// 发布裁判结果事件。
 pub fn judge_result(
     event_id: Uuid,
     team_id: Uuid,
@@ -114,7 +96,7 @@ pub fn judge_result(
     )
 }
 
-/// Publish a round lifecycle event.
+/// 发布轮次生命周期事件。
 pub fn round_started(event_id: Uuid, round_number: i32, phase: &str) -> AwdEvent {
     AwdEvent::new(
         "round.started",
@@ -154,7 +136,7 @@ pub fn network_policy_applied(
     )
 }
 
-/// Publish a network policy failure event（P3-7）。
+/// 发布网络策略失败事件（P3-7）。
 pub fn network_policy_failed(
     event_id: Uuid,
     desired_revision: u64,
@@ -172,7 +154,7 @@ pub fn network_policy_failed(
     )
 }
 
-/// Publish a round completed event（P3-7）。
+/// 发布轮次完成事件（P3-7）。
 pub fn round_completed(event_id: Uuid, round_number: i32) -> AwdEvent {
     AwdEvent::new(
         "round.completed",
@@ -183,7 +165,7 @@ pub fn round_completed(event_id: Uuid, round_number: i32) -> AwdEvent {
     )
 }
 
-/// Publish a GameBox reset event.
+/// 发布 GameBox 重置事件。
 pub fn gamebox_reset(event_id: Uuid, instance_id: Uuid, team_id: Uuid, status: &str) -> AwdEvent {
     AwdEvent::new(
         "gamebox.reset",
@@ -196,7 +178,7 @@ pub fn gamebox_reset(event_id: Uuid, instance_id: Uuid, team_id: Uuid, status: &
     )
 }
 
-/// Publish a team banned event.
+/// 发布战队封禁事件。
 pub fn team_banned(event_id: Uuid, team_id: Uuid) -> AwdEvent {
     AwdEvent::new(
         "team.banned",
@@ -207,7 +189,7 @@ pub fn team_banned(event_id: Uuid, team_id: Uuid) -> AwdEvent {
     )
 }
 
-/// Publish a team unbanned event.
+/// 发布战队解封事件。
 pub fn team_unbanned(event_id: Uuid, team_id: Uuid) -> AwdEvent {
     AwdEvent::new(
         "team.unbanned",
@@ -218,7 +200,7 @@ pub fn team_unbanned(event_id: Uuid, team_id: Uuid) -> AwdEvent {
     )
 }
 
-/// Publish an event lifecycle event.
+/// 发布赛事生命周期
 pub fn event_paused(event_id: Uuid) -> AwdEvent {
     AwdEvent::new("event.paused", event_id, serde_json::json!({}))
 }
@@ -227,7 +209,7 @@ pub fn event_resumed(event_id: Uuid) -> AwdEvent {
     AwdEvent::new("event.resumed", event_id, serde_json::json!({}))
 }
 
-/// Publish a network error event.
+/// 发布a network error event。
 pub fn network_error(event_id: Uuid, error_msg: &str) -> AwdEvent {
     AwdEvent::new(
         "network.error",

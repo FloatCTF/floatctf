@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 
 use crate::api::prelude::*;
 
-/// Maximum allowed SQL statement length (characters).
+/// 最大allowed SQL statement length (characters)。
 const MAX_SQL_LENGTH: usize = 10_000;
 
-/// Maximum allowed execution time (seconds).
+/// 最大allowed execution time (seconds)。
 const SQL_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Serialize, Deserialize)]

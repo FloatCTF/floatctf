@@ -1,11 +1,11 @@
-//! Score event types and idempotency key construction.
+//! AWD 计分领域模型。
 
 use serde::{Deserialize, Serialize};
 
-/// Re-export SeaORM-generated score event type as canonical.
+/// 再导出 SeaORM 生成的计分事件类型作为权威别名。
 pub use crate::entity::sea_orm_active_enums::ScoreEventType;
 
-/// Builder for idempotency keys to prevent duplicate scoring.
+/// 幂等键构建器，防止重复计分。
 pub struct IdempotencyKey;
 
 impl IdempotencyKey {
@@ -60,7 +60,7 @@ impl IdempotencyKey {
     }
 }
 
-/// Scoreboard entry for aggregation.
+/// 用于聚合的积分榜条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamScore {
     pub team_id: uuid::Uuid,

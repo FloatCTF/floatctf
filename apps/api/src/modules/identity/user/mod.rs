@@ -1,4 +1,4 @@
-//! User profile (player) and admin user CRUD.
+//! 用户资料（选手）与管理端用户 CRUD。
 
 pub mod dto;
 pub use dto::UsersDto;

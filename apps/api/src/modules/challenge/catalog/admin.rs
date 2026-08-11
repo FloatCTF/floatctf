@@ -1,9 +1,9 @@
-//! Admin challenge catalog CRUD handlers — 单版本 identity（含当前 package 字段）。
+//! 题库管理端接口。
 //!
-//! Version/runtime content enters via package import (`POST /api/admin/challenges/import`),
-//! which upserts the identity with the new version（严格递增门禁）。Manual create/patch here only
-//! touch the stable identity (name / category / description / hidden); safe_name is derived from name
-//! (never auto-suffixed — identity ambiguity is an explicit error).
+//! 版本/运行时内容经包导入进入（`POST /api/admin/challenges/import`），
+//! 导入会以严格递增门禁 upsert 身份行。本处手工创建/补丁仅触及稳定身份字段
+//! （name / category / description / hidden）；`safe_name` 由 name 派生
+//! （绝不自动加后缀——身份歧义视为显式错误）。
 
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::{

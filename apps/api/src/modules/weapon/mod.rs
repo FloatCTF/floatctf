@@ -1,4 +1,4 @@
-//! Weapon catalog module — player listing and admin CRUD/upload.
+//! 武器库模块——选手列表与管理端 CRUD/上传。
 
 mod api;
 mod application;

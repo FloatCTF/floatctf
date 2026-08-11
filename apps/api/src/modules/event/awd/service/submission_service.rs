@@ -1,7 +1,4 @@
-//! Submission service — handles flag submission, scoring, and duplicate detection.
-//!
-//! All operations run in a single database transaction to ensure atomicity.
-//! If any step fails, the entire submission is rolled back.
+//! AWD Flag 提交服务。
 
 use sea_orm::{DatabaseConnection, TransactionTrait};
 use uuid::Uuid;
@@ -12,7 +9,7 @@ use crate::modules::event::awd::{
     repo::{flag_repo, score_repo},
 };
 
-/// Result of a successful flag submission.
+/// a successful flag submission的结果。
 pub struct SubmissionResult {
     pub attack_score_delta: i64,
     pub victim_loss_delta: i64,
@@ -20,15 +17,15 @@ pub struct SubmissionResult {
     pub was_first_blood: bool,
 }
 
-/// Process a flag submission atomically within a single transaction:
-/// 1. Check for duplicate submission (early exit with clear error)
-/// 2. Insert submission record (unique constraint as final guard)
-/// 3. Insert attack score event
-/// 4. Insert victim loss score event
-/// 5. Try first-blood bonus
+/// 在单一事务内原子处理 Flag 提交：
+/// 1. 检查重复提交（清晰错误并提前返回）
+/// 2. 插入提交记录（唯一约束作最终防护）
+/// 3. 插入攻击得分事件
+/// 4. 插入被攻击失分事件
+/// 5. 尝试一血加分
 ///
-/// If any step fails, the entire transaction is rolled back.
-/// All operations use idempotency keys to prevent double-counting.
+/// 任一步失败则整事务回滚。
+/// 全部操作使用幂等键，防止重复计分。
 pub async fn process_submission(
     db: &DatabaseConnection,
     event_id: Uuid,

@@ -1,4 +1,4 @@
-//! Score service — query and manage the append-only score ledger.
+//! AWD 计分服务。
 
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
@@ -10,7 +10,7 @@ use crate::modules::event::awd::{
     repo::score_repo,
 };
 
-/// Get the current scoreboard for an event, aggregated from the ledger.
+/// 从账本聚合得到赛事当前积分榜。
 pub async fn get_scoreboard(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -80,7 +80,7 @@ pub async fn get_scoreboard(
     Ok(scores)
 }
 
-/// Get the score history for a specific team.
+/// 获取score history for a specific team。
 pub async fn get_team_score_history(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -91,7 +91,7 @@ pub async fn get_team_score_history(
         .map_err(|e| AwdError::Database(e.to_string()))
 }
 
-/// Record a manual score adjustment (admin action).
+/// 记录人工调分（管理端操作）。
 pub async fn record_adjustment(
     db: &DatabaseConnection,
     event_id: Uuid,

@@ -1,9 +1,7 @@
-//! WireGuard interface management — real wg commands for host-side operations.
+//! WireGuard 接口管理——宿主侧真实 `wg` 命令。
 //!
-//! # Safety
-//!
-//! All commands use structured argument lists, never shell concatenation.
-//! Operations are idempotent where possible.
+//! 全部使用结构化参数列表，禁止 shell 拼接。
+//! 操作尽可能幂等。
 
 use crate::modules::event::awd::{
     AwdError, AwdResult,
@@ -11,7 +9,7 @@ use crate::modules::event::awd::{
 };
 use tracing::info;
 
-/// Create a WireGuard interface with the given private key and listen port.
+/// 创建a WireGuard interface with the given private key and listen port。
 pub async fn create_interface(
     runner: &dyn CommandRunner,
     iface: &str,
@@ -86,7 +84,7 @@ pub async fn create_interface(
     Ok(())
 }
 
-/// Delete a WireGuard interface.
+/// 删除a WireGuard interface。
 pub async fn delete_interface(runner: &dyn CommandRunner, iface: &str) -> AwdResult<()> {
     // Bring down first（best-effort：接口可能已处于 down 状态，Phase 0 P0-4 吞错扫描）。
     let _ = runner
@@ -113,7 +111,7 @@ pub async fn delete_interface(runner: &dyn CommandRunner, iface: &str) -> AwdRes
     Ok(())
 }
 
-/// Add a peer to an existing WireGuard interface.
+/// 向已有 WireGuard 接口添加对等体。
 pub async fn add_peer(
     runner: &dyn CommandRunner,
     iface: &str,
@@ -126,7 +124,7 @@ pub async fn add_peer(
     Ok(())
 }
 
-/// Remove a peer from a WireGuard interface.
+/// 移除a peer from a WireGuard interface。
 pub async fn remove_peer(
     runner: &dyn CommandRunner,
     iface: &str,
@@ -138,7 +136,7 @@ pub async fn remove_peer(
     Ok(())
 }
 
-/// Enable IP forwarding.
+/// 启用 IP 转发。
 pub async fn enable_ip_forwarding(runner: &dyn CommandRunner) -> AwdResult<()> {
     runner
         .run(
@@ -150,7 +148,7 @@ pub async fn enable_ip_forwarding(runner: &dyn CommandRunner) -> AwdResult<()> {
     Ok(())
 }
 
-/// Flush all conntrack entries for a CIDR (cleaner than conntrack_cmd for event-scoped flush).
+/// 刷新某 CIDR 的全部 conntrack 条目（比按赛事范围调用 conntrack_cmd 更干净）。
 pub async fn flush_event_conntrack(
     runner: &dyn CommandRunner,
     gamebox_cidr: &str,

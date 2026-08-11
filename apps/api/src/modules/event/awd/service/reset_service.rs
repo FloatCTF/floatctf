@@ -1,15 +1,4 @@
-//! GameBox reset workflow — destroy and recreate containers with same IP.
-//!
-//! Flow:
-//! 1. Validate reset permissions and free/penalty status
-//! 2. Mark instance as resetting
-//! 3. Stop + remove old container (via fcmc)
-//! 4. Create new container with same spec (IP, image, password)
-//! 5. Wait for healthcheck + SSH ready
-//! 6. Mark as ready
-//! 7. Apply reset protection period
-//!
-//! Failed resets: mark as reset_failed, leave container state for admin inspection.
+//! AWD GameBox 重置服务。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -51,7 +40,7 @@ impl ResetActor {
     }
 }
 
-/// Reset record created during a reset operation.
+/// 重置操作中创建的重置记录。
 pub struct ResetContext {
     pub event_id: Uuid,
     pub instance_id: Uuid,
@@ -60,7 +49,7 @@ pub struct ResetContext {
     pub actor: ResetActor,
 }
 
-/// Execute the full GameBox reset workflow.
+/// 执行完整 GameBox 重置工作流。
 pub async fn execute_reset(
     db: &DatabaseConnection,
     containers: &dyn fcmc::AwdContainerRuntime,
@@ -283,7 +272,7 @@ pub async fn execute_reset(
     Ok(())
 }
 
-/// Get the count of resets used by a team for an event.
+/// 获取某战队在某赛事中已使用的重置次数。
 pub async fn team_reset_count(
     db: &DatabaseConnection,
     event_id: Uuid,

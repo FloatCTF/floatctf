@@ -1,7 +1,6 @@
-//! Application bootstrap — initialization and HTTP server startup.
+//! 应用引导：初始化与 HTTP 服务启动。
 //!
-//! This module contains the startup logic previously in `main.rs`,
-//! exposed as a library function for integration testing.
+//! 原 `main.rs` 中的启动逻辑集中于此，并以库函数形式暴露，供集成测试复用。
 
 pub mod routes;
 pub mod scheduler;
@@ -37,10 +36,10 @@ pub enum BootstrapError {
     Io(#[from] std::io::Error),
 }
 
-/// Initialize and run the FloatCTF HTTP server.
+/// 初始化并运行 FloatCTF HTTP 服务。
 ///
-/// This is the single entry point for both the binary and integration tests.
-/// Returns `Err` if initialization fails (database, Docker, S3, or AWD crypto).
+/// 二进制与集成测试共用的唯一入口。
+/// 初始化失败（数据库、Docker、S3 或 AWD 加密）时返回 `Err`。
 pub async fn run() -> Result<(), BootstrapError> {
     // Load all process-static settings from TOML — fail fast before touching infrastructure.
     let config_path = std::env::var_os("FLOATCTF_CONFIG")

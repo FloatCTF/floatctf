@@ -1,10 +1,4 @@
-//! Centralized system command execution layer.
-//!
-//! # Safety
-//!
-//! This module is the ONLY place where external system commands may be
-//! executed. All commands use structured argument lists — shell string
-//! concatenation is forbidden.
+//! 安全构造系统命令（结构化参数，禁止 shell 拼接）。
 
 use std::process::Output;
 use tokio::process::Command;
@@ -16,13 +10,13 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
-/// Abstraction over system command execution (testable / mockable).
+/// 系统命令执行抽象（可测试 / 可 mock）。
 #[async_trait::async_trait]
 pub trait CommandRunner: Send + Sync {
     async fn run(&self, program: &str, args: &[String]) -> anyhow::Result<CommandOutput>;
 }
 
-/// Real command runner that executes commands on the host.
+/// 在宿主上真实执行命令的运行器。
 pub struct RealCommandRunner;
 
 #[async_trait::async_trait]
@@ -37,7 +31,7 @@ impl CommandRunner for RealCommandRunner {
     }
 }
 
-/// Recording command runner for testing — records commands without executing them.
+/// 测试用记录型命令运行器——只记录不执行。
 #[derive(Default)]
 pub struct RecordingCommandRunner {
     pub commands: std::sync::Mutex<Vec<(String, Vec<String>)>>,
@@ -70,7 +64,7 @@ impl CommandRunner for RecordingCommandRunner {
 
 // ── Safe wrappers for specific system commands ──
 
-/// Build `wg` command arguments safely.
+/// 构建`wg` command arguments safely。
 pub mod wireguard_cmd {
     use super::*;
 
@@ -139,7 +133,7 @@ pub mod wireguard_cmd {
     }
 }
 
-/// Build `conntrack` command arguments safely.
+/// 构建`conntrack` command arguments safely。
 pub mod conntrack_cmd {
     use super::*;
 

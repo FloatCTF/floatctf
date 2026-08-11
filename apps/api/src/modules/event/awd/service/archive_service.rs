@@ -1,4 +1,4 @@
-//! Archive service — clean up resources after event retention period.
+//! AWD 赛事归档服务。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -17,11 +17,11 @@ use crate::modules::event::awd::{
 };
 use fcmc::AwdContainerRuntime;
 
-/// Full archive: destroy Docker + host network resources, keep DB records.
+/// 完整归档：销毁 Docker 与宿主网络资源，保留数据库记录。
 ///
-/// Host WG/iptables operations go through `AwdNetworkRuntime` (Host or Noop).
-/// Failure to remove host WG is logged and surfaces as `AwdError::Network` only when
-/// the runtime itself returns an error (Noop always succeeds; Host may fail).
+/// 宿主 WG/iptables 操作经 `AwdNetworkRuntime`（Host 或 Noop）。
+/// 移除宿主 WG 失败会记日志，且仅当运行时自身返回错误时表现为 `AwdError::Network`
+/// （Noop 恒成功；Host 可能失败）。
 pub async fn archive_event(
     db: &DatabaseConnection,
     containers: &dyn AwdContainerRuntime,
@@ -167,7 +167,7 @@ pub async fn archive_event(
     Ok(())
 }
 
-/// Quick archive: just mark as archived without cleaning Docker (manual cleanup).
+/// 快速归档：仅标记已归档，不清理 Docker（需人工清理）。
 pub async fn quick_archive(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<()> {
     // 先按 event_id（外键）解析真实主键，再走状态机唯一入口（Phase 0）。
     let awd_event = event_repo::find_by_event_id(db, event_id)

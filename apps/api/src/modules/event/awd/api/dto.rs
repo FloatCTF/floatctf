@@ -1,4 +1,4 @@
-//! AWD API data transfer objects.
+//! AWD API 请求/响应 DTO。
 
 use std::collections::BTreeMap;
 

@@ -1,13 +1,6 @@
-//! Admin dashboard summary endpoint — GET /api/admin/dashboard/summary.
+//! 管理端仪表盘汇总——`GET /api/admin/dashboard/summary`。
 //!
-//! Aggregates everything a platform operator needs on one screen, all read-only:
-//! - `stats`: platform scale (users / events / challenges / weapons / announcements /
-//!   discussions / instances / AWD GameBoxes)
-//! - `attention`: items that need action — failed scheduled tasks, ERROR logs in the
-//!   last 24h, and AWD events stuck in abnormal states
-//! - `events`: recent events (up to 50, newest start first) with the AWD lifecycle
-//!   status/phase joined; the frontend splits live / upcoming / finished by time
-//! - `activity`: recent global solves (challenge_solves) and recent signups
+//! 只读聚合运营人员一屏所需信息。
 
 use std::collections::HashMap;
 

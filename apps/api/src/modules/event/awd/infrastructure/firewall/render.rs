@@ -1,15 +1,4 @@
-//! Pure nftables ruleset renderer (Phase 1 P1-8).
-//!
-//! `DesiredFirewallState` → `table inet floatctf_awd` 完整规则文本。
-//! 纯函数、无 IO、无特权命令 —— 全部渲染逻辑可单测断言。
-//!
-//! # 设计原则（chore/plans/awd/01-phase1-network-recovery.md）
-//!
-//! - base chain `policy accept`：FloatCTF 只做 **restrictive DROP**，
-//!   不主动 ACCEPT 业务流量（own-team 放行规则是 hardening 隔离的必要精确表达）。
-//! - 只用 sets，不生成 per-team ban chains；禁 `nft flush ruleset`。
-//! - `inet` family 统一 IPv4/IPv6；IPv6 显式策略占位（AWD v4-only 部署，管理范围默认 DROP）。
-//! - 规则规模 O(N)（N = 队伍数），不生成 O(N²) 的 Team A→Team B 规则。
+//! 纯 nftables 规则集渲染器（Phase 1 P1-8）。
 
 use std::collections::BTreeSet;
 

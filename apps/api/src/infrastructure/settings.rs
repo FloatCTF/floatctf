@@ -1,16 +1,15 @@
-//! Dynamic DB-backed settings (admin-editable).
+//! 数据库承载的动态设置（管理端可编辑）。
 //!
-//! Process-static env config lives in `crate::core::config::AppConfig`.
+//! 进程静态配置见 `crate::core::config::AppConfig`。
 
 use std::collections::{HashMap, HashSet};
 
 use crate::entity::settings;
 use crate::{core::AppConfig, entity::sea_orm_active_enums::SettingValueType};
 use sea_orm::{ActiveValue::Set, DbConn, EntityTrait, sea_query::OnConflict};
-/// Upsert default rows into the `settings` table (do nothing on conflict).
+/// 向 `settings` 表 upsert 默认行（冲突则跳过）。
 ///
-/// Values come from the process TOML configuration; settings remain editable
-/// through the database after they have been seeded.
+/// 取值来自进程 TOML 配置；种子写入后仍可通过数据库编辑。
 pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     let defaults = vec![
         (
@@ -108,19 +107,19 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     }
 }
 
-/// Backward-compatible alias for [`seed_default_settings`].
+/// [`seed_default_settings`] 的向后兼容别名。
 #[deprecated(note = "use seed_default_settings")]
 pub async fn init_settings(db: &DbConn, config: &AppConfig) {
     seed_default_settings(db, config).await;
 }
 
-/// Load all settings into a `key -> raw value` map.
+/// 加载all settings into a `key -> raw value` map。
 async fn load_settings_map(db: &DbConn) -> HashMap<String, String> {
     let rows = settings::Entity::find().all(db).await.unwrap_or_default();
     rows.into_iter().map(|s| (s.key, s.value)).collect()
 }
 
-/// Resolve `{{KEY}}` references in `value` against the DB settings.
+/// 解析`{{KEY}}` references in `value` against the DB settings。
 ///
 /// 解析后的值仅用于 API 响应与消费方；数据库里始终保存原始模板，
 /// 便于管理端继续编辑 `{{WORK_DIR}}/xxx` 形式。

@@ -19,7 +19,7 @@ import { adminApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import type { ChallengesListItem } from "@/types/challengeDto";
-import { DatetimeToShow, useSelectedRowIds } from "@/util";
+import { useSelectedRowIds } from "@/util";
 
 export const Route = createFileRoute("/admin/challenges")({
 	component: RouteComponent,
@@ -81,22 +81,6 @@ function RouteComponent() {
 				return <span>{row.hidden ? <CheckIcon /> : <></>}</span>;
 			},
 			sortBy: true,
-		},
-		{
-			accessorKey: "created_at",
-			header: "Created At",
-			field: "created_at",
-			renderCell: (row: ChallengesListItem) => {
-				return <span>{DatetimeToShow(row.created_at)}</span>;
-			},
-		},
-		{
-			accessorKey: "updated_at",
-			header: "Updated At",
-			field: "updated_at",
-			renderCell: (row: ChallengesListItem) => {
-				return <span>{DatetimeToShow(row.updated_at)}</span>;
-			},
 		},
 	];
 

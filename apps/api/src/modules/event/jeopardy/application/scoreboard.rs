@@ -1,4 +1,4 @@
-//! Official Jeopardy scoreboard (Competition only; Individual or Team rows).
+//! Jeopardy 官方积分榜（仅竞赛；个人或战队行）。
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,7 +14,7 @@ use crate::infrastructure::WebDb;
 use crate::modules::event::jeopardy::domain::policy::JeopardyPolicy;
 use crate::modules::event::jeopardy::domain::scoreboard::{ChallengeScoreboard, ScoreboardItem};
 
-/// Build official scoreboard for a Jeopardy competition event.
+/// 构建 Jeopardy 竞赛官方积分榜。
 pub async fn get_scoreboard(db: &WebDb, event: &events::Model) -> Result<Vec<ScoreboardItem>> {
     JeopardyPolicy::require_jeopardy_family(event)?;
     let policy = JeopardyPolicy::from_event(event).map_err(|e| anyhow!(e))?;
@@ -75,7 +75,7 @@ async fn load_solves_ordered(
         .await?)
 }
 
-/// Build per-owner solved set and first-solve ordinal within each challenge.
+/// 构建各主体已解集合，以及每题内首次解题序位。
 fn solve_maps_by_owner(
     solves: &[jeopardy_challenge_solves::Model],
     owner_of: impl Fn(&jeopardy_challenge_solves::Model) -> Option<Uuid>,

@@ -1,4 +1,4 @@
-//! Trend projection types for EventMode.
+//! 积分趋势投影类型。
 
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};

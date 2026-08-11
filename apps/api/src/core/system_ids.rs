@@ -1,42 +1,42 @@
-//! Well-known system object IDs.
+//! 平台系统对象固定主键（代码侧权威定义）。
 //!
-//! **Source of truth is Rust**, not a DB enum/registry table.
-//! Bootstrap / ensure paths seed or upsert the corresponding rows; runtime
-//! code may also look up by semantic key (`system_key`, `task_key`).
+//! **权威在 Rust 常量**，不设数据库全局枚举/登记表。
+//! 启动 seed、幂等 ensure 负责把对应行写入业务表；运行时也可按语义键
+//! （`events.system_key`、`scheduled_tasks.task_key`）查询。
 //!
-//! ID style matches historical scheduler seeds: `Uuid::from_u128(n)` →
-//! `00000000-0000-0000-0000-00000000000n`.
+//! 编号风格沿用调度种子任务：`Uuid::from_u128(n)` →
+//! `00000000-0000-0000-0000-00000000000n`。
 //!
-//! Numbers are **per table** (different relations may reuse the same `n`).
+//! 序号 **按表独立分配**（不同表可复用同一 `n`，无跨表唯一约束）。
 
 use uuid::Uuid;
 
-// ── scheduled_tasks (startup / platform maintenance) ───────────────────────
+// ── scheduled_tasks：平台启动/维护任务 ──────────────────────────────────────
 
-/// `CHECK_PRACTICE_EVENT` — ensure practice:jeopardy on startup.
+/// 任务键 `CHECK_PRACTICE_EVENT`：启动时 ensure 系统练习赛事 `practice:jeopardy`。
 pub const SCHED_CHECK_PRACTICE_EVENT: Uuid = Uuid::from_u128(0);
 
-/// `CLEAN_INSTANCES` — destroy expired challenge instances.
+/// 任务键 `CLEAN_INSTANCES`：清理到期/残留的题目实例。
 pub const SCHED_CLEAN_INSTANCES: Uuid = Uuid::from_u128(1);
 
-/// `CLEAN_RUSTFS` — GC unused object storage files.
+/// 任务键 `CLEAN_RUSTFS`：回收对象存储中未引用文件。
 pub const SCHED_CLEAN_RUSTFS: Uuid = Uuid::from_u128(2);
 
-// ── events (system-managed competitions) ───────────────────────────────────
+// ── events：系统托管赛事 ────────────────────────────────────────────────────
 
-/// Jeopardy Practice system event (`system_key = practice:jeopardy`).
+/// Jeopardy 系统练习赛事主键（`system_key = practice:jeopardy`）。
 ///
-/// Same numeric slot as [`SCHED_CLEAN_INSTANCES`] but on table `events`
-/// (no cross-table uniqueness). Prefer semantic lookup via system_key in
-/// application code; this constant is for ensure / docs / ops.
+/// 与 [`SCHED_CLEAN_INSTANCES`] 同为 `from_u128(1)`，但分属 `events` /
+/// `scheduled_tasks` 两表，互不冲突。业务代码优先按 `system_key` 解析；
+/// 本常量用于 ensure、运维与文档中的稳定主键。
 pub const EVENT_PRACTICE_JEOPARDY: Uuid = Uuid::from_u128(1);
 
-/// Semantic key for [`EVENT_PRACTICE_JEOPARDY`] (unique on `events.system_key`).
+/// [`EVENT_PRACTICE_JEOPARDY`] 的语义键（`events.system_key` 部分唯一）。
 pub const EVENT_PRACTICE_JEOPARDY_SYSTEM_KEY: &str = "practice:jeopardy";
 
-/// All platform startup scheduled-task seeds: (id, display name, task_key str, trigger).
+/// 平台启动类调度任务种子列表：`(主键, 显示名, task_key 字符串, 触发类型)`。
 ///
-/// `task_key` strings must match [`crate::scheduler::task_key::TaskKey`] wire form.
+/// `task_key` 须与 [`crate::scheduler::task_key::TaskKey`] 的入库字符串一致。
 pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static str, &'static str)]
 {
     &[
@@ -78,7 +78,7 @@ mod tests {
             EVENT_PRACTICE_JEOPARDY.to_string(),
             "00000000-0000-0000-0000-000000000001"
         );
-        // Same u128 on different tables is intentional.
+        // 不同表复用同一 u128 序号是有意设计
         assert_eq!(EVENT_PRACTICE_JEOPARDY, SCHED_CLEAN_INSTANCES);
     }
 

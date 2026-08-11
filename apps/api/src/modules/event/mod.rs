@@ -1,7 +1,7 @@
-//! Unified competition / event module (`modules/event`).
+//! 统一赛事模块（`modules/event`）。
 //!
-//! Identity: EventFamily × EventPurpose × ParticipantMode (`EventMode`).
-//! Engines: `jeopardy` and `awd`.
+//! 身份模型：`EventFamily` × `EventPurpose` × `ParticipantMode`（[`common::domain::event_mode::EventMode`]）。
+//! 引擎：`jeopardy`（解题赛）与 `awd`（攻防赛），相互独立。
 
 pub mod common;
 

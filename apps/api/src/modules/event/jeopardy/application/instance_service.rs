@@ -1,6 +1,6 @@
-//! Application service coordinating instance persistence and container lifecycle.
+//! 协调实例持久化与容器生命周期的应用服务。
 //!
-//! 单版本模型：instance 直接引用 Challenge 当前版本（flag/port/镜像 pin 均来自 identity 行），
+//! 单版本模型：实例直接引用 Challenge 当前版本（flag/端口/镜像钉扎均来自身份行），
 //! 不存在 revision 钉住。
 
 use std::sync::Arc;
@@ -272,7 +272,7 @@ impl InstanceService {
     }
 }
 
-/// Image pin: `image_repo_digest` (repo@sha256:…) > `image_id` (LocalOnly sha256:…).
+/// 镜像钉扎优先级：`image_repo_digest`（repo@sha256:…）优于 `image_id`（仅本地 sha256:…）。
 pub fn effective_image_ref(
     repo_digest: Option<&str>,
     image_id: Option<&str>,

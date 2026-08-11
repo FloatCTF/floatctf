@@ -1,4 +1,4 @@
-//! Jeopardy application use cases (Purpose × ParticipantMode driven).
+//! Jeopardy 应用用例（由 Purpose × ParticipantMode 驱动）。
 
 pub mod common;
 pub mod context;

@@ -1,10 +1,10 @@
-//! Jeopardy runtime policy — single source of truth for Purpose × Participant rules.
+//! Jeopardy 运行时策略：Purpose × Participant 规则的唯一权威来源。
 
 use crate::entity::events;
 use crate::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 use crate::modules::event::common::domain::event_mode::{EventMode, EventModeError};
 
-/// Rules for a validated Jeopardy event (family must be Jeopardy).
+/// 已校验 Jeopardy 赛事的规则集（family 必须为 Jeopardy）。
 #[derive(Debug, Clone)]
 pub struct JeopardyPolicy {
     purpose: EventPurpose,
@@ -12,7 +12,7 @@ pub struct JeopardyPolicy {
 }
 
 impl JeopardyPolicy {
-    /// Build from a validated EventMode (None if not Jeopardy).
+    /// 由已校验的 [`EventMode`] 构造（非 Jeopardy 返回 `None`）。
     pub fn from_mode(mode: &EventMode) -> Option<Self> {
         if !mode.is_jeopardy() {
             return None;
@@ -23,7 +23,7 @@ impl JeopardyPolicy {
         })
     }
 
-    /// Build from a persisted event row.
+    /// 由持久化赛事行构造。
     pub fn from_event(event: &events::Model) -> Result<Self, EventModeError> {
         let mode = event.mode()?;
         Self::from_mode(&mode).ok_or(EventModeError::InvalidCombination {
@@ -33,7 +33,7 @@ impl JeopardyPolicy {
         })
     }
 
-    /// Family gate helper for call sites that already loaded the event.
+    /// 赛制族门禁：调用方已加载赛事行时，要求 `family = Jeopardy`。
     pub fn require_jeopardy_family(event: &events::Model) -> anyhow::Result<()> {
         if event.family != EventFamily::Jeopardy {
             return Err(anyhow::anyhow!(
@@ -67,32 +67,32 @@ impl JeopardyPolicy {
         self.participant_mode == ParticipantMode::Individual
     }
 
-    /// Competition requires the challenge to be mounted on the event.
+    /// 竞赛要求题目已挂载到该赛事（`jeopardy_event_challenges`）。
     pub fn requires_event_challenge(&self) -> bool {
         self.is_competition()
     }
 
-    /// Whether solves update official ranking points.
+    /// 解题是否计入官方积分。
     pub fn contributes_to_official_score(&self) -> bool {
         self.is_competition()
     }
 
-    /// Official scoreboard / trend endpoints.
+    /// 是否提供官方积分榜 / 趋势接口。
     pub fn supports_official_scoreboard(&self) -> bool {
         self.is_competition()
     }
 
-    /// After a canonical solve, Practice still allows relaunch/retraining.
-    /// This is **not** “insert duplicate solve rows”.
+    /// 练习在已有正式解题记录后仍允许再次开环境复练。
+    /// **不是**允许插入重复的 solve 行。
     pub fn allows_retraining_after_solve(&self) -> bool {
         self.is_practice()
     }
 
-    /// Max concurrent running instances for the participant scope.
+    /// 当前参赛作用域内允许的最大并发运行实例数。
     ///
-    /// - Practice + Individual → 1  
-    /// - Competition + Individual → 2  
-    /// - Competition + Team → `team_member_count * 2` (min 2)
+    /// - 练习 + 个人 → 1
+    /// - 竞赛 + 个人 → 2
+    /// - 竞赛 + 战队 → `team_member_count * 2`（至少 2）
     pub fn max_concurrent_instances(&self, team_member_count: Option<u64>) -> u64 {
         match (&self.purpose, &self.participant_mode) {
             (EventPurpose::Practice, _) => 1,

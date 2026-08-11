@@ -1,4 +1,4 @@
-//! Declared capabilities per EventMode (for API/frontend branching).
+//! 按 [`EventMode`] 声明的能力位（供 API / 前端分支）。
 
 use serde::Serialize;
 

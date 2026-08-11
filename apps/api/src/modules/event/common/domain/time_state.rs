@@ -1,11 +1,11 @@
-//! Event wall-clock time status (common layer; distinct from AWD runtime state).
+//! 赛事墙钟时间状态（公共层；与 AWD 运行态无关）。
 
 use chrono::{DateTime, Utc};
 
 use crate::entity::events;
 use crate::entity::sea_orm_active_enums::EventPurpose;
 
-/// Time-window status derived from event start/end.
+/// 由赛事起止时间推导的时间窗状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventTimeStatus {
     NotStarted,
@@ -13,10 +13,10 @@ pub enum EventTimeStatus {
     Ended,
 }
 
-/// Compute time status for an event.
+/// 计算赛事时间状态。
 ///
-/// Practice (`end_time = NULL`): NotStarted if now < start, else Ongoing (never Ended).
-/// Competition: standard start/end window.
+/// 练习（`end_time = NULL`）：未到 `start` 为未开始，之后为进行中（永不因墙钟结束）。
+/// 竞赛：按起止时间标准窗口判定。
 pub fn event_time_status(
     start_time: DateTime<chrono::FixedOffset>,
     end_time: Option<DateTime<chrono::FixedOffset>>,

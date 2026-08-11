@@ -1,4 +1,4 @@
-//! Persistence operations for generic challenge instances.
+//! 通用题目实例的持久化操作。
 
 use sea_orm::{ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use uuid::Uuid;

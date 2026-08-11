@@ -1,7 +1,7 @@
-//! Jeopardy submission application service.
+//! Jeopardy 提交应用服务。
 //!
-//! Scoring (points + solve row) commits in one DB transaction.
-//! Container destruction runs only after commit and does not roll back a valid solve.
+//! 计分（加分 + solve 行）在同一数据库事务中提交。
+//! 容器销毁仅在提交成功后执行，且不会回滚已生效的解题。
 
 use anyhow::{Result, anyhow};
 use bollard::Docker;
@@ -389,7 +389,7 @@ mod team_duplicate_solve_tests {
     }
 }
 
-/// Practice mode: record jeopardy_challenge_solves on practice event (0 points), then destroy instance.
+/// 练习模式：在系统练习赛事上写入 `jeopardy_challenge_solves`（0 分），随后销毁实例。
 pub async fn submit_practice(
     db: &DatabaseConnection,
     docker: &Docker,

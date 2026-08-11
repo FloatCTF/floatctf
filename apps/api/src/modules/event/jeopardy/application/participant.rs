@@ -1,4 +1,4 @@
-//! Resolve Individual/Team ownership for Jeopardy operations.
+//! 解析 Jeopardy 操作的个人/战队归属主体。
 
 use anyhow::{Result, anyhow};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
@@ -9,7 +9,7 @@ use crate::entity::sea_orm_active_enums::ParticipantMode;
 use crate::modules::event::jeopardy::application::context::EventContext;
 use crate::modules::event::jeopardy::domain::solve::SolveSubject;
 
-/// Resolved participant scope for instance / solve / writeup queries.
+/// 已解析的参赛作用域（实例 / 解题 / Writeup 查询共用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedParticipant {
     pub subject: SolveSubject,
@@ -27,7 +27,7 @@ impl ResolvedParticipant {
     }
 }
 
-/// Resolve ownership from event participant_mode + current user membership.
+/// 由赛事 `participant_mode` 与当前用户成员关系解析归属。
 pub async fn resolve_participant(ctx: &EventContext) -> Result<ResolvedParticipant> {
     use crate::modules::event::jeopardy::domain::policy::JeopardyPolicy;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
@@ -67,7 +67,7 @@ pub async fn resolve_participant(ctx: &EventContext) -> Result<ResolvedParticipa
     }
 }
 
-/// Resolve team membership without EventContext (solve-status helpers).
+/// 无 `EventContext` 时解析战队成员关系（解题状态等辅助路径）。
 pub async fn resolve_team_id_for_user(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,

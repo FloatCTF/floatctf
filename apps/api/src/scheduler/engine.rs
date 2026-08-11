@@ -361,7 +361,7 @@ impl TaskScheduler {
     }
 
     pub async fn seed_startup_tasks(&self) -> Result<()> {
-        // Well-known ids live in `core::system_ids` (Rust is source of truth).
+        // 固定主键定义在 `core::system_ids`（Rust 为权威源，启动时 seed 入库）
         for &(id, name, task_key, trigger_type) in
             crate::core::system_ids::startup_scheduled_task_seeds()
         {

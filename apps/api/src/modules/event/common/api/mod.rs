@@ -1,4 +1,4 @@
-//! HTTP handlers for common event operations.
+//! 赛事公共 HTTP 处理器。
 
 pub mod dto;
 pub mod event_announcement_dto;

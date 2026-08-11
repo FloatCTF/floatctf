@@ -1,7 +1,7 @@
-//! Admin-facing event application service.
+//! 管理端赛事应用服务。
 //!
-//! Business logic extracted from `api/admin/events` HTTP handlers.
-//! Handlers keep auth, logging side-effects, and UniResponse wrapping.
+//! 业务逻辑自 `api/admin/events` HTTP 处理器抽出。
+//! 处理器保留鉴权、日志副作用与 UniResponse 包装。
 
 use std::io::Write;
 use std::str::FromStr;
@@ -582,7 +582,7 @@ const REPORT_TEMPLATE: &str = r#"
 </html>
 "#;
 
-/// Build writeup report zip, upload to S3, return object key.
+/// 生成 Writeup 报告 zip，上传对象存储，返回对象键。
 pub async fn export_writeup_report(
     db: &WebDb,
     rustfs: &WebRustfs,

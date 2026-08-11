@@ -1,4 +1,4 @@
-//! Core primitives shared across modules: config, secrets, security, system ids.
+//! 跨模块核心原语：配置、密钥、鉴权、系统固定主键等。
 
 pub mod config;
 pub mod secret;

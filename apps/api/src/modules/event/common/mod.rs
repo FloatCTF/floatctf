@@ -1,4 +1,4 @@
-//! Shared event operations (not mode-specific).
+//! 赛事公共能力（与具体赛制引擎无关）。
 
 pub mod api;
 pub mod application;

@@ -1,3 +1,5 @@
+//! 赛事公共领域：模式、能力位、时间态、系统练习赛事等。
+
 pub mod capability;
 pub mod event;
 pub mod event_mode;

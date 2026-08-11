@@ -1,4 +1,4 @@
-//! Unified Jeopardy flag submission entry (Purpose branches internally).
+//! Jeopardy Flag 提交统一入口（内部按 Purpose 分支）。
 
 use anyhow::{Result, anyhow};
 
@@ -10,14 +10,14 @@ use crate::modules::event::jeopardy::application::{
 use crate::modules::event::jeopardy::domain::policy::JeopardyPolicy;
 use crate::modules::event::jeopardy::domain::solve::JeopardySubmitRequest;
 
-/// Single entry for flag submit: Practice → 0-score path; Competition → scored service.
+/// Flag 提交唯一入口：练习 → 零分路径；竞赛 → 计分服务。
 pub async fn submit_flag(ctx: &EventContext, sfr: SubmitFlagRequest) -> Result<()> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
     let instance_id = sfr.instance_id.ok_or_else(|| anyhow!("no instance_id"))?;
 
     if !policy.contributes_to_official_score() {
-        // Practice: points stay 0; allows_retraining_after_solve (no second solve row).
+        // 练习：得分恒为 0；允许复练（不插入第二行 solve）。
         let _ = policy.allows_retraining_after_solve();
         return submit_practice(
             ctx.db.get_ref(),
@@ -29,7 +29,7 @@ pub async fn submit_flag(ctx: &EventContext, sfr: SubmitFlagRequest) -> Result<(
         .await;
     }
 
-    // Competition scored path
+    // 竞赛计分路径
     ctx.should_user_joined().await?;
     ctx.should_ongoing()?;
     let participant = resolve_participant(ctx).await?;

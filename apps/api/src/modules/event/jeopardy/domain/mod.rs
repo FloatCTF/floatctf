@@ -1,4 +1,4 @@
-//! Jeopardy shared domain types.
+//! Jeopardy 共享领域类型。
 
 pub mod instance;
 pub mod policy;

@@ -1,13 +1,13 @@
-//! EventMode — Family × Purpose × ParticipantMode value object.
+//! 赛事模式值对象：`EventFamily` × `EventPurpose` × `ParticipantMode`。
 //!
-//! Source of truth for event identity/semantics (replaces legacy EventType).
+//! 赛事身份与语义的权威组合（替代历史扁平 `EventType`）。
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
 
-/// Validated combination of family / purpose / participant_mode.
+/// 已通过合法性校验的三维模式组合。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventMode {
     pub family: EventFamily,
@@ -28,7 +28,7 @@ pub enum EventModeError {
 }
 
 impl EventMode {
-    /// Construct and validate a mode triple.
+    /// 构造并校验三维模式。
     pub fn new(
         family: EventFamily,
         purpose: EventPurpose,
@@ -43,7 +43,7 @@ impl EventMode {
         Ok(mode)
     }
 
-    /// Validate current allowed combinations (must match DB CHECK).
+    /// 校验当前允许的组合（须与库表 `events_mode_combination_check` 一致）。
     pub fn validate(&self) -> Result<(), EventModeError> {
         let ok = matches!(
             (&self.family, &self.purpose, &self.participant_mode),
@@ -133,17 +133,17 @@ impl EventMode {
     }
 }
 
-/// System-managed Practice event key (semantic lookup).
+/// 系统托管练习赛事的语义键（按 `events.system_key` 查询）。
 ///
-/// Canonical definition: [`crate::core::system_ids::EVENT_PRACTICE_JEOPARDY_SYSTEM_KEY`].
+/// 权威定义见 [`crate::core::system_ids::EVENT_PRACTICE_JEOPARDY_SYSTEM_KEY`]。
 pub const PRACTICE_JEOPARDY_SYSTEM_KEY: &str =
     crate::core::system_ids::EVENT_PRACTICE_JEOPARDY_SYSTEM_KEY;
 
-/// Well-known Practice event primary key (`…0001`).
+/// 系统练习赛事固定主键（`…0001`）。
 ///
-/// Canonical definition: [`crate::core::system_ids::EVENT_PRACTICE_JEOPARDY`].
-/// Resolve by [`PRACTICE_JEOPARDY_SYSTEM_KEY`] in application code; this id is
-/// for ensure / ops stability (seeded from Rust, not a DB enum table).
+/// 权威定义见 [`crate::core::system_ids::EVENT_PRACTICE_JEOPARDY`]。
+/// 业务路径优先用 [`PRACTICE_JEOPARDY_SYSTEM_KEY`] 解析；本常量供 ensure
+/// 与运维保证主键稳定（由 Rust 常量 seed，非数据库枚举表）。
 pub const PRACTICE_JEOPARDY_EVENT_ID: uuid::Uuid = crate::core::system_ids::EVENT_PRACTICE_JEOPARDY;
 
 #[cfg(test)]

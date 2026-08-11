@@ -1,4 +1,4 @@
-//! Request-scoped Jeopardy event context (replaces strategies/event EventContext).
+//! 请求级 Jeopardy 赛事上下文（替代历史 strategies/event EventContext）。
 
 use std::sync::Arc;
 
@@ -15,16 +15,16 @@ use crate::{
     modules::event::common::domain::time_state::event_time_status_of,
 };
 
-/// Single-request context for Jeopardy mode operations.
+/// 单次请求内 Jeopardy 操作上下文。
 #[derive(Debug)]
 pub struct EventContext {
     pub db: WebDb,
-    /// Present for launch/destroy/submit paths; may be a placeholder for pure-read builds.
+    /// 启动/销毁/提交路径需要；纯读路径可为占位。
     pub docker: WebDocker,
     pub event: events::Model,
     pub user: users::Model,
     pub team: Option<event_teams::Model>,
-    /// Static process config; set on launch-capable paths (instance limits).
+    /// 进程静态配置；启动路径用于实例并发上限等。
     pub config: Option<Arc<AppConfig>>,
 }
 
@@ -35,7 +35,7 @@ pub struct EventContextBuilder {
     event: Option<events::Model>,
     user: Option<users::Model>,
     team: Option<event_teams::Model>,
-    /// When true, resolve Team from event_team_members for the user+event.
+    /// 为 true 时按 user+event 从 `event_team_members` 解析战队。
     resolve_team: bool,
     config: Option<Arc<AppConfig>>,
 }
@@ -63,8 +63,8 @@ impl EventContextBuilder {
         self
     }
 
-    /// Required: callers must load the Event explicitly (Practice via
-    /// `require_practice_jeopardy_event`, formal via route event_id).
+    /// 必填：调用方须显式加载赛事（练习经 `require_practice_jeopardy_event`，
+    /// 正式赛经路由 `event_id`）。
     pub fn event(mut self, event: events::Model) -> Self {
         self.event = Some(event);
         self
@@ -80,22 +80,22 @@ impl EventContextBuilder {
         self
     }
 
-    /// Auto-load Team membership for this user in the Event (when present).
+    /// 自动加载该用户在本赛事中的战队成员关系（若存在）。
     pub fn resolve_team(mut self) -> Self {
         self.resolve_team = true;
         self
     }
 
-    /// Attach the static process config (needed for instance limits on launch paths).
+    /// 挂载进程静态配置（启动路径的实例并发上限等需要）。
     pub fn config(mut self, config: Arc<AppConfig>) -> Self {
         self.config = Some(config);
         self
     }
 
-    /// Construct EventContext. Docker is required for launch/destroy/submit;
-    /// pure-read handlers should prefer mode methods that only take `db` + `event`.
+    /// 构造 [`EventContext`]。启动/销毁/提交需要 Docker；
+    /// 纯读处理器宜直接使用仅依赖 `db` + `event` 的用例函数。
     ///
-    /// Event is required — this builder never infers Practice from a missing event.
+    /// 赛事必填——本构建器不会在缺省 event 时自动回落系统练习赛。
     pub async fn build(self) -> Result<EventContext> {
         let db = self.db.clone().context("db is required")?;
         let user = self.user.context("user is required")?;
@@ -139,7 +139,7 @@ impl Default for EventContextBuilder {
     }
 }
 
-/// Time-window status derived from event start/end (request-local).
+/// 由赛事起止推导的时间窗状态（请求本地）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventTimeStatus {
     NotStarted,

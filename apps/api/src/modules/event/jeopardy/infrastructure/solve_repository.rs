@@ -1,4 +1,4 @@
-//! Persistence helpers for Jeopardy event solves (transaction-aware).
+//! Jeopardy 解题记录持久化辅助（支持事务）。
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, PaginatorTrait,

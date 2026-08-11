@@ -1,4 +1,4 @@
-//! Admin event HTTP handlers — thin adapters over `modules::event::common::application::admin_service`.
+//! 管理端赛事 HTTP 处理器——薄适配 `admin_service`。
 
 use crate::api::dto::map_dto_vec;
 

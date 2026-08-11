@@ -1,4 +1,4 @@
-//! Unified Jeopardy instance launch / list / destroy use cases.
+//! Jeopardy 实例启动 / 列表 / 销毁统一用例。
 
 use anyhow::{Result, anyhow};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
@@ -17,7 +17,7 @@ use crate::modules::event::jeopardy::application::{
 use crate::modules::event::jeopardy::domain::policy::JeopardyPolicy;
 use crate::modules::event::jeopardy::domain::solve::SolveSubject;
 
-/// Launch (or reuse) a running instance for `challenge_id`.
+/// 为 `challenge_id` 启动（或复用）运行中实例。
 pub async fn launch_instance(
     ctx: &EventContext,
     challenge_id: Uuid,
@@ -126,13 +126,13 @@ pub async fn launch_instance(
     .map_err(|e| anyhow!(e))
 }
 
-/// Destroy an owned running instance.
+/// 销毁当前主体拥有的运行中实例。
 pub async fn destroy_instance(ctx: &EventContext, instance_id: Uuid) -> Result<()> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     common::destroy_instance(&ctx.db, &ctx.docker, instance_id, &ctx.user).await
 }
 
-/// List running instances visible to the current participant.
+/// 列出当前参赛主体可见的运行中实例。
 pub async fn get_instances(ctx: &EventContext) -> Result<Vec<ModeInstanceResult>> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
@@ -187,7 +187,7 @@ pub async fn get_instances(ctx: &EventContext) -> Result<Vec<ModeInstanceResult>
     }
 }
 
-/// Running instance for one challenge in the current participant scope.
+/// 当前参赛范围内某题的运行中实例。
 pub async fn get_instance_by_challenge_id(
     ctx: &EventContext,
     challenge_id: Uuid,
@@ -218,7 +218,7 @@ pub async fn get_instance_by_challenge_id(
     q.one(db).await?.ok_or_else(|| anyhow!("no instance"))
 }
 
-/// Per-challenge solve status for the current user (team scope when Team mode).
+/// 当前用户的逐题解题状态（战队模式按战队作用域）。
 pub async fn challenge_solve_status(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,

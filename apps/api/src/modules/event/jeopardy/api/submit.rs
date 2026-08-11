@@ -33,7 +33,7 @@ pub async fn submit_flag(
     let mut sfr = sfr.into_inner();
     sfr.flag = sfr.flag.trim().to_string();
 
-    // Practice submit omits event_id; resolve system Practice explicitly (no Context fallback).
+    // 练习提交可省略 event_id；显式解析系统练习赛事（Context 不再自动回落）。
     let event = match sfr.event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())

@@ -1,4 +1,4 @@
-//! Resolve / ensure the system-managed Jeopardy Practice event.
+//! 系统托管 Jeopardy 练习赛事的查询与幂等确保。
 
 use chrono::Utc;
 use sea_orm::{
@@ -13,7 +13,7 @@ use crate::modules::event::common::domain::event_mode::{
     PRACTICE_JEOPARDY_EVENT_ID, PRACTICE_JEOPARDY_SYSTEM_KEY,
 };
 
-/// Find Practice event by system_key (canonical lookup).
+/// 按 `system_key` 查找系统练习赛事（权威语义查询）。
 pub async fn find_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,
 ) -> Result<Option<events::Model>, sea_orm::DbErr> {
@@ -23,6 +23,7 @@ pub async fn find_practice_jeopardy_event<C: ConnectionTrait>(
         .await
 }
 
+/// 要求系统练习赛事存在；缺失则返回 `RecordNotFound`。
 pub async fn require_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,
 ) -> Result<events::Model, sea_orm::DbErr> {
@@ -31,11 +32,11 @@ pub async fn require_practice_jeopardy_event<C: ConnectionTrait>(
         .ok_or_else(|| sea_orm::DbErr::RecordNotFound("practice:jeopardy event not found".into()))
 }
 
-/// Idempotent ensure of practice:jeopardy system event.
+/// 幂等确保 `practice:jeopardy` 系统赛事存在。
 ///
-/// Fresh insert always uses [`PRACTICE_JEOPARDY_EVENT_ID`] from
-/// `core::system_ids` (Rust well-known id, same pattern as scheduler seeds).
-/// Existing rows are returned as-is (id remapped by migration if needed).
+/// 首次插入固定使用 [`PRACTICE_JEOPARDY_EVENT_ID`]（定义于 `core::system_ids`，
+/// 与调度任务种子同一套固定 UUID 约定）。已存在则原样返回
+/// （历史非固定主键由迁移规范到固定值）。
 pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
     db: &C,
 ) -> Result<events::Model, sea_orm::DbErr> {
@@ -65,7 +66,7 @@ pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
     match model.insert(db).await {
         Ok(created) => Ok(created),
         Err(err) => {
-            // Concurrent bootstrap: unique system_key (or fixed PK) race → re-select.
+            // 并发 ensure：`system_key` 唯一或固定主键冲突 → 重新查询
             if let Some(existing) = find_practice_jeopardy_event(db).await? {
                 Ok(existing)
             } else {

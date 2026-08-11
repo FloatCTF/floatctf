@@ -1,4 +1,4 @@
-//! Player event HTTP handlers — thin adapters over `modules::event::common::application::player_service`.
+//! 选手端赛事 HTTP 处理器——薄适配 `player_service`。
 
 use crate::api::dto::map_dto_vec;
 

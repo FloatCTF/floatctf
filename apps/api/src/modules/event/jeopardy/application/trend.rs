@@ -1,4 +1,4 @@
-//! Official Jeopardy score trend (Competition only).
+//! Jeopardy 官方积分趋势（仅竞赛）。
 
 use std::collections::{BTreeSet, HashMap};
 

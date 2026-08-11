@@ -1,7 +1,7 @@
-//! Player-facing event application service.
+//! 选手侧赛事应用服务。
 //!
-//! Business logic extracted from `api/service/events` HTTP handlers.
-//! Handlers: auth → parse → call these functions → map errors → UniResponse.
+//! 业务逻辑自 `api/service/events` HTTP 处理器抽出。
+//! 处理器职责：鉴权 → 解析 → 调用本模块 → 映射错误 → UniResponse。
 
 use std::str::FromStr;
 
@@ -135,8 +135,8 @@ fn require_team_mode(event: &events::Model) -> Result<(), AppError> {
 
 // ── Queries ───────────────────────────────────────────────────────────────
 
-/// Enrich event rows with join status for `user_id`.
-/// Filters/queries are applied by the caller (HTTP layer owns FilterMapping).
+/// 为赛事行附加 `user_id` 的报名状态。
+/// 过滤/查询由调用方完成（HTTP 层持有 FilterMapping）。
 pub fn list_events_for_user(
     user_id: Uuid,
     events_with_users: Vec<(events::Model, Vec<event_users::Model>)>,
@@ -154,7 +154,7 @@ pub fn list_events_for_user(
         .collect()
 }
 
-/// Load a single non-hidden event with team membership detail for the user.
+/// 加载单条非隐藏赛事，并附带该用户的战队成员详情。
 pub async fn get_event_info(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -208,7 +208,7 @@ pub async fn get_event_info(
     }
 }
 
-/// Challenges for a joined user during ongoing/ended events.
+/// 已报名用户在进行中/已结束赛事中的题目列表。
 pub async fn list_event_challenges(
     db: &WebDb,
     event_id: Uuid,
@@ -345,7 +345,7 @@ pub async fn get_challenge_instance(
 
 // ── Team membership workflows ─────────────────────────────────────────────
 
-/// Create a team and join as captain (pre-start only). Returns the team model.
+/// 创建战队并以队长加入（仅赛前）。返回战队模型。
 pub async fn create_team(
     db: &WebDb,
     event_id: Uuid,
@@ -589,7 +589,7 @@ pub async fn get_trend(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<TrendIte
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
 
-/// Scoreboard with pre-start challenge list blanked.
+/// 积分榜；赛前题目列表置空。
 pub async fn get_scoreboard_for_player(
     db: WebDb,
     event_id: Uuid,
@@ -620,7 +620,7 @@ pub async fn list_announcements(
         .await?)
 }
 
-/// Resolve private object key for the player's own writeup (if any).
+/// 解析选手本人 Writeup 的私有对象键（若有）。
 pub async fn own_writeup_file_url(
     db: &WebDb,
     event_id: Uuid,
@@ -639,7 +639,7 @@ pub async fn own_writeup_file_url(
 
 // ── Filter helpers for list endpoints (keep FilterMapping construction here) ─
 
-/// Build sea_orm condition filter mappings for player event list.
+/// 构建选手赛事列表的 sea_orm 条件过滤映射。
 pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
     [
         FilterMapping {

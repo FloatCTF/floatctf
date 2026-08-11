@@ -1,25 +1,23 @@
-//! Event repository — centralized database queries for event operations.
+//! 赛事仓储：集中赛事相关数据库查询。
 //!
-//! Extracted from scattered handler-level queries to provide reusable
-//! database access patterns. Handlers should call these functions
-//! instead of writing their own SeaORM queries.
+//! 自分散的处理器级查询抽出，提供可复用的数据访问模式。
+//! 处理器应调用本模块函数，避免各自手写 SeaORM 查询。
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use crate::entity::{event_team_members, event_teams};
 
-/// Team membership information for a user in an event.
+/// 用户在某赛事中的战队成员信息。
 #[derive(Debug, Clone)]
 pub struct TeamMembership {
     pub team_id: Uuid,
     pub role: String,
 }
 
-/// Find user's team membership for a specific event.
+/// 查找用户在指定赛事中的战队成员关系。
 ///
-/// Returns `Some(TeamMembership)` if the user is a member of a team
-/// in the given event, `None` otherwise.
+/// 若用户属于该赛事某战队则返回 `Some(TeamMembership)`，否则 `None`。
 pub async fn find_user_team_membership(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -37,7 +35,7 @@ pub async fn find_user_team_membership(
     }))
 }
 
-/// Find team by event and name.
+/// 按赛事与名称查找战队。
 pub async fn find_team_by_name(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -64,7 +62,7 @@ pub async fn is_team_name_taken(
     Ok(exists.is_some())
 }
 
-/// Count members in a team for an event.
+/// 统计某赛事中某战队的成员数。
 pub async fn count_team_members(
     db: &DatabaseConnection,
     event_id: Uuid,

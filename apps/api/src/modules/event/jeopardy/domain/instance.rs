@@ -1,4 +1,4 @@
-//! Domain results produced by instance lifecycle operations.
+//! 实例生命周期操作产生的领域结果类型。
 
 use uuid::Uuid;
 

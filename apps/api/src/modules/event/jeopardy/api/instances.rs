@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-/// GET /api/instances — Practice instances for current user
+/// GET /api/instances — 当前用户的系统练习实例列表
 #[get("")]
 pub async fn get_instances(
     user: UserJwtGuard,
@@ -127,7 +127,7 @@ pub async fn launch_instance(
     let user = user.into_inner();
     let lir = lir.into_inner();
 
-    // Practice launch omits event_id; resolve system Practice explicitly (no Context fallback).
+    // 练习启动可省略 event_id；显式解析系统练习赛事（Context 不再自动回落）。
     let event = match lir.event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())
@@ -178,7 +178,7 @@ pub async fn destroy_instance(
     let user = user.into_inner();
     let instance_id = instance_id.into_inner();
 
-    // Load instance to resolve its event (Practice or competition).
+    // 加载实例以解析所属赛事（练习或竞赛）。
     let instance = challenge_instances::Entity::find_by_id(instance_id)
         .filter(challenge_instances::Column::UserId.eq(user.id))
         .one(ctx.db.get_ref())

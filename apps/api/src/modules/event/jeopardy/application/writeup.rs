@@ -1,4 +1,4 @@
-//! Own writeup URL resolution by Purpose × ParticipantMode.
+//! 本人 Writeup 文件地址解析（按 Purpose × ParticipantMode）。
 
 use anyhow::{Result, anyhow};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};

@@ -1,4 +1,4 @@
-//! Common event application services (CRUD, join/leave, teams, scoreboard adapters).
+//! 赛事公共应用服务（CRUD、报名/退赛、战队、积分榜适配等）。
 
 pub mod admin_service;
 pub mod player_service;

@@ -1,11 +1,10 @@
-//! Runtime adapter used by the instance application service.
+//! 实例应用服务使用的容器运行时适配。
 //!
-//! Thin façade over `fcmc::ContainerRuntime` + `ImageRuntime` so Jeopardy
-//! lifecycle does not call bollard or free helpers directly.
+//! 对 `fcmc::ContainerRuntime` + `ImageRuntime` 的薄封装，避免 Jeopardy
+//! 生命周期直接调用 bollard 或零散辅助函数。
 //!
-//! Runtime contract comes from the Challenge identity row (单版本模型): image is the
-//! immutable pin (RepoDigest > image_id) and dynamic flags are injected via the fixed
-//! `FLAG` environment variable.
+//! 运行契约来自 Challenge 身份行（单版本模型）：镜像为不可变钉扎
+//! （RepoDigest 优先于 image_id），动态 Flag 经固定环境变量 `FLAG` 注入。
 
 use async_trait::async_trait;
 use bollard::Docker;
@@ -14,7 +13,7 @@ use fcmc::{
     PortBinding, ResourceLimits,
 };
 
-/// Runtime contract resolved from the Challenge identity（单版本）。
+/// 由 Challenge 身份行解析的运行契约（单版本）。
 #[derive(Debug, Clone)]
 pub struct ChallengeRuntimeSpec {
     /// Pinned image: `image_repo_digest` > `image_id` (ready challenges always pinned).

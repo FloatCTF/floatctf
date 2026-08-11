@@ -27,28 +27,51 @@ use crate::modules::event::awd_team::{
 // GameBox 身份
 // ---------------------------------------------------------------------------
 
-/// 更新 GameBox 身份元数据（name/category/description/hidden）。不含镜像/配置。
+/// 更新 GameBox 身份 + 可编辑运行参数（不含 digest/镜像 pin/build 状态）。
 pub async fn update_gamebox_identity(
     db: &DatabaseConnection,
     gamebox_id: Uuid,
-    name: Option<String>,
-    category: Option<String>,
-    description: Option<String>,
-    hidden: Option<bool>,
+    patch: gamebox_lib_repo::GameBoxIdentityPatch,
 ) -> AwdResult<gameboxes::Model> {
-    gamebox_lib_repo::update_gamebox_identity(
-        db,
-        gamebox_id,
-        gamebox_lib_repo::GameBoxIdentityPatch {
-            name,
-            category,
-            description,
-            hidden,
-        },
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?
-    .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
+    if let Some(v) = patch.recommended_cpu_millis {
+        if v <= 0 {
+            return Err(AwdError::Validation(
+                "recommended_cpu_millis must be > 0".into(),
+            ));
+        }
+    }
+    if let Some(v) = patch.recommended_memory_bytes {
+        if v <= 0 {
+            return Err(AwdError::Validation(
+                "recommended_memory_bytes must be > 0".into(),
+            ));
+        }
+    }
+    if let Some(v) = patch.recommended_pids_limit {
+        if v <= 0 {
+            return Err(AwdError::Validation(
+                "recommended_pids_limit must be > 0".into(),
+            ));
+        }
+    }
+    if let Some(Some(v)) = patch.judge_timeout_secs {
+        if v < 0 {
+            return Err(AwdError::Validation(
+                "judge_timeout_secs must be >= 0".into(),
+            ));
+        }
+    }
+    if let Some(Some(v)) = patch.judge_retry_interval_secs {
+        if v < 0 {
+            return Err(AwdError::Validation(
+                "judge_retry_interval_secs must be >= 0".into(),
+            ));
+        }
+    }
+    gamebox_lib_repo::update_gamebox_identity(db, gamebox_id, patch)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("GameBox not found".into()))
 }
 
 /// safe_name 生成 + 去重（仅用于 admin 手动创建身份场景；import 不走 -2 后缀）。

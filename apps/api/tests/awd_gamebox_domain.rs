@@ -370,10 +370,22 @@ async fn update_identity_does_not_touch_package() {
         floatctf::modules::event::awd_team::service::gamebox_service::update_gamebox_identity(
             &db,
             gb_id,
-            Some("new-name".into()),
-            Some("pwn".into()),
-            Some("desc".into()),
-            Some(true),
+            floatctf::modules::event::awd_team::repo::gamebox_lib_repo::GameBoxIdentityPatch {
+                name: Some("new-name".into()),
+                category: Some("pwn".into()),
+                description: Some("desc".into()),
+                hidden: Some(true),
+                username: None,
+                recommended_cpu_millis: None,
+                recommended_memory_bytes: None,
+                recommended_pids_limit: None,
+                healthchecks_json: None,
+                judge_script_name: None,
+                judge_script_content: None,
+                judge_args_json: None,
+                judge_timeout_secs: None,
+                judge_retry_interval_secs: None,
+            },
         )
         .await
         .expect("update identity");

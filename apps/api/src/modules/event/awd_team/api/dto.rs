@@ -411,7 +411,17 @@ pub struct JudgeBatchDto {
 // GameBox 领域（gamebox identity / gamebox_revision / event_gamebox / instance）
 // ════════════════════════════════════════════════════════════════════════════
 
-/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 仅身份元数据（不含镜像/配置）
+/// 字段显式 null → Some(None)（清空），缺失 → None（不更新）。
+/// serde 默认把 JSON null 与缺失都映射为外层 None，无法表达“清空”。
+fn deserialize_nullable<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(d)?))
+}
+
+/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 身份 + 可编辑运行参数（不含 digest/镜像/build 状态）
 #[derive(Debug, Deserialize)]
 pub struct UpdateGameBoxIdentityRequest {
     #[serde(default)]
@@ -422,6 +432,31 @@ pub struct UpdateGameBoxIdentityRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub hidden: Option<bool>,
+    /// 容器内用户名（healthcheck/judge 执行用）。
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub recommended_cpu_millis: Option<i64>,
+    #[serde(default)]
+    pub recommended_memory_bytes: Option<i64>,
+    #[serde(default)]
+    pub recommended_pids_limit: Option<i64>,
+    /// JSON 文本；null 清空。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub healthchecks_json: Option<Option<String>>,
+    #[serde(default)]
+    pub judge_script_name: Option<String>,
+    #[serde(default)]
+    pub judge_script_content: Option<String>,
+    /// JSON 文本；null 清空。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub judge_args_json: Option<Option<String>>,
+    /// null 清空（继承赛事默认）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub judge_timeout_secs: Option<Option<i32>>,
+    /// null 清空（继承赛事默认）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub judge_retry_interval_secs: Option<Option<i32>>,
 }
 
 /// POST /api/admin/events/{event_id}/awd/gameboxes（赛事选择 GameBox 当前版本）
@@ -512,6 +547,11 @@ pub struct GameBoxLibraryDto {
     pub memory_bytes: Option<i64>,
     pub pids_limit: Option<i64>,
     pub healthchecks_json: Option<serde_json::Value>,
+    pub judge_script_name: Option<String>,
+    pub judge_script_content: Option<String>,
+    pub judge_args_json: Option<serde_json::Value>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
 }
 
 impl From<&gameboxes::Model> for GameBoxLibraryDto {
@@ -533,6 +573,11 @@ impl From<&gameboxes::Model> for GameBoxLibraryDto {
             memory_bytes: Some(g.recommended_memory_bytes),
             pids_limit: Some(g.recommended_pids_limit),
             healthchecks_json: g.healthchecks_json.clone(),
+            judge_script_name: g.judge_script_name.clone(),
+            judge_script_content: g.judge_script_content.clone(),
+            judge_args_json: g.judge_args_json.clone(),
+            judge_timeout_secs: g.judge_timeout_secs,
+            judge_retry_interval_secs: g.judge_retry_interval_secs,
         }
     }
 }

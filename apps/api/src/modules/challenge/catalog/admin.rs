@@ -83,12 +83,30 @@ pub async fn create_challenge(
     UniResponse::ok(Some(dto)).into()
 }
 
+/// 字段显式 null → Some(None)（清空），缺失 → None（不更新）。
+fn deserialize_nullable<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(d)?))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatchChallengeRequest {
     pub name: Option<String>,
     pub category: Option<String>,
     pub description: Option<String>,
     pub hidden: Option<bool>,
+    /// 静态 flag 明文；null 清空（仅 flag_type=static 时生效）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub static_flag_value: Option<Option<String>>,
+    /// 容器端口；null 清除容器端口（变为无 docker 运行时）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub container_port: Option<Option<i32>>,
+    pub recommended_cpu_millis: Option<i64>,
+    pub recommended_memory_bytes: Option<i64>,
+    pub recommended_pids_limit: Option<i64>,
 }
 /// PATCH /api/admin/challenges/{challenge_id}
 #[patch("/{challenge_id}")]
@@ -126,6 +144,49 @@ pub async fn patch_challenge(
     if let Some(h) = pcr.hidden {
         m_challenge.hidden = Set(h);
     }
+    if let Some(v) = pcr.static_flag_value {
+        // 空串视为清空
+        let v = v.filter(|s| !s.trim().is_empty());
+        m_challenge.static_flag_value = Set(v);
+    }
+    if let Some(port) = pcr.container_port {
+        if let Some(p) = port {
+            if p < 1 || p > 65535 {
+                return AppError::Validation(
+                    "CHALLENGE_INVALID_CONTAINER_PORT: container_port must be 1-65535".into(),
+                )
+                .into();
+            }
+        }
+        m_challenge.container_port = Set(port);
+    }
+    if let Some(v) = pcr.recommended_cpu_millis {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_cpu_millis must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_cpu_millis = Set(v);
+    }
+    if let Some(v) = pcr.recommended_memory_bytes {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_memory_bytes must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_memory_bytes = Set(v);
+    }
+    if let Some(v) = pcr.recommended_pids_limit {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_pids_limit must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_pids_limit = Set(v);
+    }
     m_challenge.updated_at = Set(Utc::now().into());
 
     let challenge = m_challenge.update(ctx.db.get_ref()).await?;
@@ -143,7 +204,8 @@ pub async fn patch_challenge(
         )
         .await;
 
-    let dto = ChallengesDto::from(&challenge);
+    let dto =
+        ChallengesDto::from(&challenge).with_static_flag_value(challenge.static_flag_value.clone());
     UniResponse::ok(Some(dto)).into()
 }
 
@@ -200,7 +262,8 @@ pub async fn get_challenges(
 
     let mut dtos = Vec::with_capacity(items.len());
     for m in items {
-        dtos.push(ChallengesDto::from(&m));
+        // admin 列表返回静态 flag 明文（编辑表单需要回显；仅超管可达）
+        dtos.push(ChallengesDto::from(&m).with_static_flag_value(m.static_flag_value.clone()));
     }
 
     query_params.total = Some(total_items);
@@ -220,7 +283,7 @@ pub async fn get_challenge(
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
 
-    let dto = ChallengesDto::from(&model);
+    let dto = ChallengesDto::from(&model).with_static_flag_value(model.static_flag_value.clone());
     UniResponse::ok(Some(dto)).into()
 }
 

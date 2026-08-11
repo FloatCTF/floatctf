@@ -114,7 +114,7 @@ pub async fn import_gamebox(
     .into()
 }
 
-/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 仅身份元数据
+/// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 身份 + 可编辑运行参数
 #[patch("/awd/gameboxes/{gamebox_id}")]
 pub async fn update_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -124,13 +124,46 @@ pub async fn update_gamebox(
 ) -> UniResult<GameBoxLibraryDto> {
     let gamebox_id = path.into_inner();
     let req = body.into_inner();
+
+    // JSON 文本 → Value（非法 JSON 直接 400）
+    let healthchecks_json = match req.healthchecks_json {
+        Some(Some(t)) => Some(Some(
+            serde_json::from_str::<serde_json::Value>(&t).map_err(|e| {
+                AppError::Validation(format!("healthchecks_json 不是合法 JSON: {}", e))
+            })?,
+        )),
+        Some(None) => Some(None),
+        None => None,
+    };
+    let judge_args_json = match req.judge_args_json {
+        Some(Some(t)) => Some(Some(
+            serde_json::from_str::<serde_json::Value>(&t).map_err(|e| {
+                AppError::Validation(format!("judge_args_json 不是合法 JSON: {}", e))
+            })?,
+        )),
+        Some(None) => Some(None),
+        None => None,
+    };
+
     let gb = gamebox_service::update_gamebox_identity(
         ctx.db.get_ref(),
         gamebox_id,
-        req.name,
-        req.category,
-        req.description,
-        req.hidden,
+        gamebox_lib_repo::GameBoxIdentityPatch {
+            name: req.name,
+            category: req.category,
+            description: req.description,
+            hidden: req.hidden,
+            username: req.username,
+            recommended_cpu_millis: req.recommended_cpu_millis,
+            recommended_memory_bytes: req.recommended_memory_bytes,
+            recommended_pids_limit: req.recommended_pids_limit,
+            healthchecks_json,
+            judge_script_name: req.judge_script_name,
+            judge_script_content: req.judge_script_content,
+            judge_args_json,
+            judge_timeout_secs: req.judge_timeout_secs,
+            judge_retry_interval_secs: req.judge_retry_interval_secs,
+        },
     )
     .await
     .map_err(AppError::from)?;

@@ -103,6 +103,8 @@ pub struct ExecOptions {
     pub workdir: Option<String>,
     /// 整体超时；超时后 `ExecOutcome::timed_out = true`（部分输出仍返回）。
     pub timeout: Duration,
+    /// 可选 stdin 内容（如 `/bin/sh -s` 的脚本）。None = 不附加 stdin。
+    pub stdin: Option<Vec<u8>>,
     /// stdout 字节上限（超限截断）。
     pub stdout_limit: usize,
     /// stderr 字节上限（超限截断）。

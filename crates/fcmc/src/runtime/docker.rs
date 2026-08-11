@@ -432,9 +432,11 @@ impl ContainerRuntime for DockerContainerRuntime {
         use bollard::container::LogOutput;
         use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 
+        let stdin = options.stdin.clone();
         let create = CreateExecOptions {
             attach_stdout: Some(true),
             attach_stderr: Some(true),
+            attach_stdin: Some(stdin.is_some()),
             tty: Some(false),
             cmd: Some(options.cmd.clone()),
             // 空 env 表示继承容器环境（Docker API 的 Env=null 语义）。
@@ -471,7 +473,19 @@ impl ContainerRuntime for DockerContainerRuntime {
         let mut timed_out = false;
         let mut stream_error: Option<String> = None;
 
-        if let StartExecResults::Attached { mut output, .. } = results {
+        if let StartExecResults::Attached {
+            mut output,
+            mut input,
+        } = results
+        {
+            // 写入 stdin 后关闭（exec 在 stdin EOF 后开始）。
+            if let Some(data) = &stdin {
+                use tokio::io::AsyncWriteExt;
+                if let Err(e) = input.write_all(data).await {
+                    stream_error = Some(format!("exec stdin write: {e}"));
+                }
+                let _ = input.shutdown().await;
+            }
             let deadline = tokio::time::Instant::now() + options.timeout;
             loop {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());

@@ -11,6 +11,7 @@ pub mod logging;
 pub mod package;
 pub mod ratelimit;
 pub mod realtime;
+pub mod script_runner;
 pub mod settings;
 pub mod storage;
 

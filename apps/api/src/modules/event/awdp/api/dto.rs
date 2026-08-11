@@ -251,3 +251,18 @@ impl From<&InstanceView> for AwdpAdminInstanceDto {
         }
     }
 }
+
+/// Patch 提交结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct PatchSubmitResponse {
+    pub status: String,
+}
+
+/// 手动 Test Check 结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct ManualCheckDto {
+    pub healthcheck_ok: bool,
+    pub healthcheck_detail: Vec<String>,
+    pub judge_ok: bool,
+    pub judge_detail: String,
+}

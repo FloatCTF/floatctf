@@ -210,6 +210,7 @@ async fn docker_exec_captures_output_and_exit_code() {
                 timeout: std::time::Duration::from_secs(15),
                 stdout_limit: 64 * 1024,
                 stderr_limit: 64 * 1024,
+                stdin: None,
             },
         )
         .await
@@ -233,6 +234,7 @@ async fn docker_exec_captures_output_and_exit_code() {
                 timeout: std::time::Duration::from_secs(15),
                 stdout_limit: 64 * 1024,
                 stderr_limit: 64 * 1024,
+                stdin: None,
             },
         )
         .await
@@ -251,6 +253,7 @@ async fn docker_exec_captures_output_and_exit_code() {
                 timeout: std::time::Duration::from_secs(15),
                 stdout_limit: 64 * 1024,
                 stderr_limit: 64 * 1024,
+                stdin: None,
             },
         )
         .await
@@ -348,6 +351,7 @@ async fn docker_restart_preserves_writable_layer() {
                 timeout: std::time::Duration::from_secs(15),
                 stdout_limit: 64 * 1024,
                 stderr_limit: 64 * 1024,
+                stdin: None,
             },
         )
         .await
@@ -368,6 +372,7 @@ async fn docker_restart_preserves_writable_layer() {
                 timeout: std::time::Duration::from_secs(15),
                 stdout_limit: 64 * 1024,
                 stderr_limit: 64 * 1024,
+                stdin: None,
             },
         )
         .await

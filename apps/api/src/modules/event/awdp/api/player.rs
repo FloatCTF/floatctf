@@ -4,6 +4,8 @@ use actix_web::web::{self, Json};
 use chrono::Utc;
 use uuid::Uuid;
 
+use actix_multipart::form::{MultipartForm, tempfile::TempFile};
+
 use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     entity::{
@@ -15,7 +17,7 @@ use crate::{
         domain::config::AwdpConfig,
         repo::{break_repo, event_gamebox_repo, event_repo, score_repo},
         service::{
-            break_service,
+            break_service, evaluation, patch_service,
             runtime::{self, Subject},
         },
     },
@@ -249,11 +251,169 @@ pub async fn submit_break_flag(
     .into()
 }
 
+/// POST .../instance/reset —— 玩家 Reset（pristine 重建，保留端点）。
+#[post("{event_id}/awdp/gameboxes/{eg_id}/instance/reset")]
+pub async fn reset_my_instance(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<InstanceViewDto> {
+    let (event_id, eg_id) = path.into_inner();
+    let user = user.into_inner();
+    let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let flag_prefix = crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "FLAG_PREFIX")
+        .await
+        .unwrap_or_else(|_| "flag".into());
+    let Some(view) =
+        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+    else {
+        return Err(AppError::NotFound("instance not started".into()));
+    };
+    let view = runtime::reset_instance(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        view.instance_id,
+        subject,
+        &flag_prefix,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(InstanceViewDto::from(&view).into()).into()
+}
+
+#[derive(Debug, MultipartForm)]
+struct PatchUploadForm {
+    #[multipart(rename = "patch_file")]
+    patch_file: TempFile,
+}
+
+/// POST .../patch —— 上传并应用 patch.sh（Fix only；multipart）。
+#[post("{event_id}/awdp/gameboxes/{eg_id}/patch")]
+pub async fn upload_patch(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<(Uuid, Uuid)>,
+    MultipartForm(form): MultipartForm<PatchUploadForm>,
+) -> UniResult<PatchSubmitResponse> {
+    let (event_id, eg_id) = path.into_inner();
+    let user = user.into_inner();
+    let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let Some(view) =
+        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+    else {
+        return Err(AppError::NotFound("instance not started".into()));
+    };
+    let bytes = std::fs::read(form.patch_file.file.path())
+        .map_err(|e| AppError::BadRequest(format!("read patch_file: {e}")))?;
+    let script = String::from_utf8(bytes)
+        .map_err(|_| AppError::Validation("patch.sh 必须是 UTF-8 文本脚本".into()))?;
+    if script.len() > patch_service::MAX_PATCH_BYTES {
+        return Err(AppError::Validation(format!(
+            "patch.sh 超过 {} KiB 上限",
+            patch_service::MAX_PATCH_BYTES / 1024
+        )));
+    }
+    let result = patch_service::apply_patch(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        event_id,
+        view.instance_id,
+        &script,
+        subject,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(
+        PatchSubmitResponse {
+            status: match result {
+                patch_service::PatchResult::Applied => "applied".into(),
+                patch_service::PatchResult::Failed => "failed".into(),
+            },
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// POST .../test-check —— 手动 Test Check（healthcheck + judge，不计分）。
+#[post("{event_id}/awdp/gameboxes/{eg_id}/test-check")]
+pub async fn manual_test_check(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<ManualCheckDto> {
+    let (event_id, eg_id) = path.into_inner();
+    let user = user.into_inner();
+    let subject = resolve_subject(&ctx, event_id, user.id).await?;
+    let Some(view) =
+        runtime::get_my_instance_view(ctx.db.get_ref(), event_id, eg_id, subject).await?
+    else {
+        return Err(AppError::NotFound("instance not started".into()));
+    };
+    let result = evaluation::manual_check(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        event_id,
+        view.instance_id,
+        subject,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(
+        ManualCheckDto {
+            healthcheck_ok: result.healthcheck_ok,
+            healthcheck_detail: result.healthcheck_detail,
+            judge_ok: result.judge_ok,
+            judge_detail: result.judge_detail,
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// GET .../source —— source.zip 私有下载（Fix only；presigned /private/ 代理路径）。
+#[get("{event_id}/awdp/gameboxes/{eg_id}/source")]
+pub async fn download_source(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<String> {
+    let (event_id, eg_id) = path.into_inner();
+    let _user = user.into_inner();
+    let _subject = resolve_subject(&ctx, event_id, _user.id).await?;
+    let db = ctx.db.get_ref();
+
+    let awdp = event_repo::require_by_event_id(db, event_id).await?;
+    if awdp.phase != AwdpPhase::Fix {
+        return Err(AppError::InvalidState(
+            "source.zip 仅在 Fix 阶段可下载".into(),
+        ));
+    }
+    let (eg, gamebox) = event_gamebox_repo::effective_gamebox_spec(db, eg_id).await?;
+    let _ = eg;
+    let key = gamebox.awdp_source_artifact_key.ok_or_else(|| {
+        AppError::NotFound("该 GameBox 没有 source.zip 产物（无 [awdp] capability）".into())
+    })?;
+    let url = crate::modules::platform::files::download::presign_private_download_url(
+        ctx.rustfs.clone(),
+        &key,
+        300,
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    UniResponse::ok(url.into()).into()
+}
+
 /// 路由注册（挂进 /api/events scope，与 common 同组，见 bootstrap/routes.rs 注释）。
 pub fn player_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(get_overview)
         .service(start_my_instance)
         .service(stop_my_instance)
+        .service(reset_my_instance)
         .service(get_my_instance)
-        .service(submit_break_flag);
+        .service(submit_break_flag)
+        .service(upload_patch)
+        .service(manual_test_check)
+        .service(download_source);
 }

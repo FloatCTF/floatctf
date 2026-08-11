@@ -171,8 +171,52 @@ pub async fn start_instance(
         subject.team_id,
         flag_prefix,
     );
+    let container_name = instance.container_name.clone();
+    let generation = instance.runtime_generation;
+    let (instance, endpoints) = launch_container(
+        db,
+        &runtime,
+        event_id,
+        &instance,
+        &ext,
+        &eg,
+        &gamebox,
+        &image_ref,
+        &flag,
+        &existing_endpoints,
+        &node_ip,
+        generation,
+    )
+    .await?;
 
-    // 6. 创建容器：按 healthchecks 暴露端口（protocol+port 去重）。
+    build_view(db, &instance, &ext, &eg, &gamebox).await
+}
+
+/// 启动（或 reset 后重建）容器并发布端点。
+/// 复用既有 instance_endpoints 的 host 端口 → public endpoint 稳定。
+#[allow(clippy::too_many_arguments)]
+async fn launch_container(
+    db: &DatabaseConnection,
+    runtime: &DockerContainerRuntime,
+    event_id: Uuid,
+    instance: &instances::Model,
+    ext: &awdp_instances::Model,
+    eg: &awdp_event_gameboxes::Model,
+    gamebox: &gameboxes::Model,
+    image_ref: &str,
+    flag: &str,
+    existing_endpoints: &[instance_endpoints::Model],
+    node_ip: &str,
+    generation: i64,
+) -> AwdpResult<(instances::Model, Vec<instance_endpoints::Model>)> {
+    // 按 healthchecks 暴露端口（protocol+port 去重）；复用既有 host 端口。
+    let healthchecks =
+        parse_healthchecks(&eg.healthcheck_override_json.clone().unwrap_or_else(|| {
+            gamebox
+                .healthchecks_json
+                .clone()
+                .unwrap_or_else(|| serde_json::json!([]))
+        }))?;
     let mut seen: HashMap<(String, u16), ()> = HashMap::new();
     let mut port_bindings: Vec<PortBinding> = Vec::new();
     let mut endpoint_specs: Vec<(String, u16)> = Vec::new(); // (protocol, container_port)
@@ -209,7 +253,7 @@ pub async fn start_instance(
         .clone()
         .unwrap_or_else(|| "ctf".to_string());
     let password = Uuid::new_v4().to_string();
-    let mut env = vec![
+    let env = vec![
         format!("FLAG={flag}"),
         format!("GAMEBOX_USERNAME={username}"),
         format!("GAMEBOX_USERPASS={password}"),
@@ -223,16 +267,13 @@ pub async fn start_instance(
         ("io.floatctf.managed".into(), "true".into()),
         ("io.floatctf.resource".into(), "awdp-instance".into()),
         ("io.floatctf.event_id".into(), event_id.to_string()),
-        (
-            "io.floatctf.event_gamebox_id".into(),
-            event_gamebox_id.to_string(),
-        ),
+        ("io.floatctf.event_gamebox_id".into(), eg.id.to_string()),
         ("io.floatctf.instance_id".into(), instance.id.to_string()),
     ]);
 
     let spec = fcmc::ContainerSpec {
         name: instance.container_name.clone(),
-        image: image_ref.clone(),
+        image: image_ref.to_string(),
         env,
         labels,
         network_name: None,
@@ -251,7 +292,7 @@ pub async fn start_instance(
         healthcheck: None,
     };
 
-    // 7. create + start + inspect 端口。
+    // create + start + inspect 端口。
     let handle = runtime
         .create_and_start(spec)
         .await
@@ -261,7 +302,8 @@ pub async fn start_instance(
         .await
         .map_err(|e| AwdpError::Docker(format!("inspect instance container: {e}")))?;
 
-    // 8. 写 instance_endpoints（幂等 upsert）。
+    // 写 instance_endpoints（幂等 upsert，保留既有 public_port）。
+    let mut endpoints = Vec::new();
     for (protocol, container_port) in &endpoint_specs {
         let public_port = state
             .published_ports
@@ -277,23 +319,123 @@ pub async fn start_instance(
             instance.id,
             protocol,
             *container_port,
-            &node_ip,
+            node_ip,
             public_port,
         )
         .await?;
+        endpoints.push(load_endpoints(db, instance.id).await?);
     }
 
-    // 9. 更新 instances 行（用返回的模型构建视图，避免返回陈旧状态）。
+    // 更新 instances 行（返回最新模型）。
     let instance = instance_repo::update_runtime_state(
         db,
         instance.id,
         "running",
         Some(&handle.container_id),
-        1,
+        generation,
+    )
+    .await?;
+    Ok((instance, endpoints.concat()))
+}
+
+/// Reset：移除物理容器并从 pristine 镜像重建（保留逻辑实例 + 端点分配）。
+/// 与 Patch / Evaluation / Manual check 使用同一把 instance advisory lock。
+pub async fn reset_instance(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    jwt_secret: &[u8],
+    instance_id: Uuid,
+    subject: Subject,
+    flag_prefix: &str,
+) -> AwdpResult<InstanceView> {
+    // 归属校验先行（拒绝未授权触发 reset）。
+    let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    assert_owner(&instance, subject)?;
+    let lock = super::lock::InstanceAdvisoryLock::acquire(db, instance_id).await?;
+    let result = reset_instance_unchecked(db, docker, jwt_secret, instance_id, flag_prefix).await;
+    lock.release().await;
+    result
+}
+
+/// 无归属校验的 reset（事件驱动 Break→Fix / 管理端，调用方负责授权）。
+pub async fn reset_instance_unchecked(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    jwt_secret: &[u8],
+    instance_id: Uuid,
+    flag_prefix: &str,
+) -> AwdpResult<InstanceView> {
+    let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    let (eg, gamebox) =
+        event_gamebox_repo::effective_gamebox_spec(db, ext.event_gamebox_id).await?;
+    let image_ref = effective_image_ref_from_gamebox(&gamebox).map_err(AwdpError::from)?;
+    let node_ip = get_setting(db, "NODE_IP")
+        .await
+        .map_err(|e| AwdpError::Internal(format!("get NODE_IP: {e}")))?;
+    let existing_endpoints = load_endpoints(db, instance.id).await?;
+    let runtime = DockerContainerRuntime::new(docker.clone());
+
+    ImageRuntime::ensure_image(&runtime, &image_ref, None)
+        .await
+        .map_err(|e| AwdpError::Docker(format!("ensure image {image_ref}: {e}")))?;
+
+    let flag = awdp_flag(
+        jwt_secret,
+        ext.event_id,
+        ext.event_gamebox_id,
+        ext.owner_user_id,
+        ext.owner_team_id,
+        flag_prefix,
+    );
+    let generation = instance.runtime_generation + 1;
+
+    // 移除旧容器（pristine 重建：Break writable layer 必须清除）。
+    // auto_remove 容器 stop 后由 daemon 异步移除——必须等待消失再同名重建，避免 409。
+    remove_and_wait(&runtime, &instance.container_name, 15).await?;
+
+    let (instance, _endpoints) = launch_container(
+        db,
+        &runtime,
+        ext.event_id,
+        &instance,
+        &ext,
+        &eg,
+        &gamebox,
+        &image_ref,
+        &flag,
+        &existing_endpoints,
+        &node_ip,
+        generation,
     )
     .await?;
 
     build_view(db, &instance, &ext, &eg, &gamebox).await
+}
+
+/// stop_and_remove 并等待容器从 daemon 消失（同名重建前必须，规避 auto_remove 竞态）。
+async fn remove_and_wait(
+    runtime: &DockerContainerRuntime,
+    name: &str,
+    timeout_secs: u64,
+) -> AwdpResult<()> {
+    runtime
+        .stop_and_remove(name, fcmc::IMMEDIATE_STOP_TIMEOUT)
+        .await
+        .map_err(|e| AwdpError::Docker(format!("stop_and_remove: {e}")))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match runtime.inspect_container(name).await {
+            Ok(_) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(AwdpError::Docker(format!(
+                        "container {name} 未在 {timeout_secs}s 内消失"
+                    )));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+            Err(_) => return Ok(()), // 404 = 已消失
+        }
+    }
 }
 
 /// 停止实例（保留逻辑实例与端点分配）。

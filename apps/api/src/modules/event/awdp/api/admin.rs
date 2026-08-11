@@ -97,6 +97,25 @@ pub async fn start_awdp_event(
     UniResponse::ok_none().into()
 }
 
+/// POST /api/admin/events/{event_id}/awdp/break-to-fix —— Break 到期 → Fix（重置全部实例到 pristine）。
+#[post("{event_id}/awdp/break-to-fix")]
+pub async fn break_to_fix(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<()> {
+    let event_id = path.into_inner();
+    ensure_awdp_event(&ctx, event_id).await?;
+    crate::modules::event::awdp::service::event_service::transition_break_to_fix(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        event_id,
+    )
+    .await?;
+    UniResponse::ok_none().into()
+}
+
 /// POST /api/admin/events/{event_id}/awdp/finish —— 手动结束（Fix → Ended）。
 #[post("{event_id}/awdp/finish")]
 pub async fn finish_awdp_event(
@@ -219,5 +238,6 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(attach_gamebox)
         .service(detach_gamebox)
         .service(list_event_gameboxes)
-        .service(list_instances);
+        .service(list_instances)
+        .service(break_to_fix);
 }

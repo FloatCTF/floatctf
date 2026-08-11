@@ -3,7 +3,7 @@
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
@@ -187,4 +187,25 @@ pub async fn list_for_event_with_instances(
         out.push((ev, ext, inst));
     }
     Ok(out)
+}
+
+/// 该实例在指定 round 是否存在未完成的评估（pending/running）。
+pub async fn has_unfinished_for_instance(
+    db: &DatabaseConnection,
+    instance_id: Uuid,
+    fix_round_id: Uuid,
+) -> AwdpResult<bool> {
+    use sea_orm::sea_query::Condition;
+    let count = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::InstanceId.eq(instance_id))
+        .filter(awdp_evaluations::Column::FixRoundId.eq(fix_round_id))
+        .filter(
+            Condition::any()
+                .add(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Pending))
+                .add(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Running)),
+        )
+        .count(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(count > 0)
 }

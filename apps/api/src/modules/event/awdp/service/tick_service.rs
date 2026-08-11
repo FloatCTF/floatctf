@@ -125,75 +125,69 @@ async fn process_fix_round_cutoffs(
     now: chrono::DateTime<Utc>,
 ) -> AwdpResult<usize> {
     let mut processed = 0usize;
-    loop {
-        let Some(round) = round_repo::next_pending_due_round(db, run_id, now).await? else {
-            break;
-        };
+    // 每 tick 至多推进一轮（外层 tick 再次触发），避免同一 tick 内无限循环。
+    let Some(round) = round_repo::next_pending_due_round(db, run_id, now).await? else {
+        return Ok(processed);
+    };
 
-        // 标记 evaluating（CAS 由 next_pending_due_round 的状态过滤保证单次）。
-        round_repo::set_status(db, round.id, "evaluating").await?;
+    // 标记 evaluating（CAS 由 next_pending_due_round 的状态过滤保证单次）。
+    round_repo::set_status(db, round.id, "evaluating").await?;
 
-        // 物化该 round 的全部 official evaluation（run 内已启动实例）。
-        let instances = instance_repo::list_for_run(db, run_id).await?;
-        let mut created = 0usize;
-        for (instance, _ext) in &instances {
-            if instance.runtime_state == "pending" {
-                continue; // 未启动 = 未参赛
-            }
-            if materialize_official_evaluations(db, run_id, instance.id, round.id).await? {
-                created += 1;
+    // 物化该 round 的全部 official evaluation（run 内已启动实例）。
+    let instances = instance_repo::list_for_run(db, run_id).await?;
+    let mut created = 0usize;
+    for (instance, _ext) in &instances {
+        if instance.runtime_state == "pending" {
+            continue; // 未启动 = 未参赛
+        }
+        if materialize_official_evaluations(db, run_id, instance.id, round.id).await? {
+            created += 1;
+        }
+    }
+    info!(
+        run_id = %run_id,
+        round = round.sequence,
+        evaluations = created,
+        "AWDP round cutoff materialized"
+    );
+    processed += 1;
+
+    // 推进：next_action_at = 下一个回合 cutoff 或 Fix 结束。
+    let run = run_repo::require_by_id(db, run_id).await?;
+    match round_repo::next_pending_round(db, run_id).await? {
+        Some(next) => {
+            run_repo::touch_tick_state(
+                db,
+                run_id,
+                next.sequence,
+                next.cutoff_at.with_timezone(&Utc),
+            )
+            .await?;
+        }
+        None => {
+            // 最后一轮：标记 Ended（评估仍由 worker 完成并计分）。
+            let fix_end = run
+                .fix_ends_at
+                .map(|t| t.with_timezone(&Utc))
+                .unwrap_or_else(|| now + chrono::Duration::seconds(run.fix_duration_secs as i64));
+            match run_repo::transition_phase(
+                db,
+                run_id,
+                AwdpPhase::Fix,
+                AwdpPhase::Ended,
+                run_repo::PhaseTransitionPatch {
+                    finished_at: Some(fix_end),
+                    next_action_at: None,
+                    current_round: Some(run.current_round),
+                    ..Default::default()
+                },
+            )
+            .await
+            {
+                Ok(()) => info!(run_id = %run_id, "AWDP fix ended (final round cutoff)"),
+                Err(e) => warn!(run_id = %run_id, error = %e, "AWDP finalize skipped"),
             }
         }
-        info!(
-            run_id = %run_id,
-            round = round.sequence,
-            evaluations = created,
-            "AWDP round cutoff materialized"
-        );
-        processed += 1;
-
-        // 推进：next_action_at = 下一个回合 cutoff 或 Fix 结束。
-        let run = run_repo::require_by_id(db, run_id).await?;
-        match round_repo::next_pending_round(db, run_id).await? {
-            Some(next) => {
-                run_repo::touch_tick_state(
-                    db,
-                    run_id,
-                    next.sequence,
-                    next.cutoff_at.with_timezone(&Utc),
-                )
-                .await?;
-            }
-            None => {
-                // 最后一轮：标记 Ended（评估仍由 worker 完成并计分）。
-                let fix_end = run
-                    .fix_ends_at
-                    .map(|t| t.with_timezone(&Utc))
-                    .unwrap_or_else(|| {
-                        now + chrono::Duration::seconds(run.fix_duration_secs as i64)
-                    });
-                match run_repo::transition_phase(
-                    db,
-                    run_id,
-                    AwdpPhase::Fix,
-                    AwdpPhase::Ended,
-                    run_repo::PhaseTransitionPatch {
-                        finished_at: Some(fix_end),
-                        next_action_at: None,
-                        current_round: Some(run.current_round),
-                        ..Default::default()
-                    },
-                )
-                .await
-                {
-                    Ok(()) => info!(run_id = %run_id, "AWDP fix ended (final round cutoff)"),
-                    Err(e) => warn!(run_id = %run_id, error = %e, "AWDP finalize skipped"),
-                }
-            }
-        }
-
-        // 防止极端情况下同一 tick 无限循环（每轮最多推进一轮；外层 tick 再次触发）。
-        break;
     }
     Ok(processed)
 }

@@ -231,6 +231,8 @@ export type AwdpWorkbenchProps = {
 	onEarlyCheck?: (
 		egId: string,
 	) => Promise<EarlyCheckDto | undefined> | EarlyCheckDto | undefined;
+	/** 练习「End」：停止全部实例并恢复如初（仅在 practice 非 ended 时显示按钮）。 */
+	onEnd?: () => void | Promise<void>;
 	/** 练习模式手动控制阶段（break↔fix）。 */
 	onSetPhase?: (target: "break" | "fix") => void | Promise<void>;
 	/** Fix 阶段下载源码：返回 presigned URL（空则不打开）。 */
@@ -258,6 +260,7 @@ export function AwdpWorkbench({
 	onDownloadSource,
 	onEarlyCheck,
 	onSetPhase,
+	onEnd,
 	onTrainAgain,
 	onStartInstance,
 	onStopInstance,
@@ -418,6 +421,21 @@ export function AwdpWorkbench({
 			banner.showErrorBanner(e);
 		} finally {
 			setBusyKey(`phase:${target}`, false);
+		}
+	};
+
+	/** 练习「End」：停止全部实例并恢复如初（调用方负责失效/切换 UI 状态）。 */
+	const handleEnd = async () => {
+		if (!onEnd) {
+			return;
+		}
+		setBusyKey("end", true);
+		try {
+			await onEnd();
+		} catch (e) {
+			banner.showErrorBanner(e);
+		} finally {
+			setBusyKey("end", false);
 		}
 	};
 
@@ -760,10 +778,26 @@ export function AwdpWorkbench({
 		<div className="h-full w-full flex flex-col gap-2 min-h-0">
 			{/* 顶部：标题 + 描述（与挑战详情页同款：text-2xl + border-top 分隔） */}
 			{viewModel.title ? (
-				<div id="awdp-meta" className="shrink-0">
-					<p className="font-bold text-2xl">{viewModel.title}</p>
-					{viewModel.description ? (
-						<div className="border-top mt-2 pt-2">{viewModel.description}</div>
+				<div
+					id="awdp-meta"
+					className="shrink-0 flex items-start justify-between gap-2"
+				>
+					<div className="min-w-0">
+						<p className="font-bold text-2xl">{viewModel.title}</p>
+						{viewModel.description ? (
+							<div className="border-top mt-2 pt-2">
+								{viewModel.description}
+							</div>
+						) : null}
+					</div>
+					{onEnd && (phase === "break" || phase === "fix") ? (
+						<Button
+							variant="danger"
+							disabled={busy["end"]}
+							onClick={() => handleEnd()}
+						>
+							{busy["end"] ? "停止中…" : "End"}
+						</Button>
 					) : null}
 				</div>
 			) : null}

@@ -188,6 +188,20 @@ export const awdpRunApi = {
 		);
 		return res.data;
 	},
+	/** 练习「开始」：冻结 run → 回卷全新 Break + 启动实例（与 Challenge 练习 Launch 同效）。 */
+	startRun: async (runId: string) => {
+		const res = await service_api.post<UniResponse<AwdpRunDto>>(
+			`/service/awdp/runs/${runId}/start`,
+		);
+		return res.data;
+	},
+	/** 练习「End」：停止全部实例并恢复如初（计分/破解清零，回冻结 Break）。 */
+	endRun: async (runId: string) => {
+		const res = await service_api.post<UniResponse<AwdpRunDto>>(
+			`/service/awdp/runs/${runId}/end`,
+		);
+		return res.data;
+	},
 	setPhase: async (runId: string, phase: "break" | "fix") => {
 		const res = await service_api.post<UniResponse<AwdpRunDto>>(
 			`/service/awdp/runs/${runId}/phase`,

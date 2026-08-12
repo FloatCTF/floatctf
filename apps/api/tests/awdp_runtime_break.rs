@@ -366,7 +366,14 @@ async fn different_gameboxes_score_independently() {
     .expect("start B");
     assert_ne!(run_a.id, run_b.id, "不同 gamebox = 不同 run");
 
+    // start_training 只建 run（冻结）；实例由玩家点「开始」（start_instance）启动。
     let subject = Subject::user(user_id);
+    runtime::start_instance(&db, &docker, JWT_SECRET, run_a.id, gb_a, subject, "flag")
+        .await
+        .expect("begin A");
+    runtime::start_instance(&db, &docker, JWT_SECRET, run_b.id, gb_b, subject, "flag")
+        .await
+        .expect("begin B");
     let va = runtime::get_my_instance_view(&db, run_a.id, gb_a, subject)
         .await
         .unwrap()

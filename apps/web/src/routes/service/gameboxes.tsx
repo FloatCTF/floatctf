@@ -106,7 +106,7 @@ function RouteComponent() {
 			<banner.BannerComponent />
 			<GenericTable
 				subject="GameBoxCatalog"
-				subtitle="AWDP 训练场：点击名称开始训练（Break → Fix → Turns）。"
+				subtitle="AWDP 训练场：点击名称进入训练场，点「开始」启动训练（Break → Fix → Turns）。"
 				columns={columns}
 				filterKeys={filterKeys}
 				queryFn={awdpRunApi.gameboxCatalog}

@@ -175,3 +175,12 @@ pub async fn total_for_event(
         .map(|r| (r.user_id, r.team_id, r.total.unwrap_or(0)))
         .collect())
 }
+/// 删除 run 的全部计分记录（练习 End「恢复如初」用；幂等键随之失效，重新破解可再计分）。
+pub async fn delete_for_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<u64> {
+    let res = awdp_score_events::Entity::delete_many()
+        .filter(awdp_score_events::Column::RunId.eq(run_id))
+        .exec(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(res.rows_affected)
+}

@@ -561,12 +561,15 @@ async fn phase_transitions_are_cas_guarded() {
         .await
         .expect("create practice run");
 
-    // practice run 创建即 Break（不走 pending）。
+    // practice run 创建即 Break，但**冻结**（next_action_at=None，未点「开始」前 tick 不推进）。
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(row.phase, AwdpPhase::Break, "practice run 创建即 Break");
     assert!(row.started_at.is_some());
     assert!(row.break_ends_at.is_some());
-    assert!(row.next_action_at.is_some());
+    assert!(
+        row.next_action_at.is_none(),
+        "练习 run 创建即冻结（等玩家点开始）"
+    );
 
     // 非法迁移：pending → fix 直接拒绝（虽然当前是 break，但非法链仍被拒绝）。
     let err = run_repo::transition_phase(

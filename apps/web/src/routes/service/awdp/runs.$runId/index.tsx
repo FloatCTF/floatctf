@@ -1,11 +1,12 @@
-import { Spinner } from "@primer/react";
+import { Button, Spinner } from "@primer/react";
 import { InlineMessage } from "@primer/react/experimental";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { useMemo } from "react";
 
 import { awdpRunApi } from "@/api/awdpRuns";
+import { useMsgBanner } from "@/components";
 import {
 	AwdpWorkbench,
 	type AwdpWorkbenchViewModel,
@@ -29,8 +30,38 @@ function RouteComponent() {
 	useTitle("AWDP Training | FloatCTF");
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const banner = useMsgBanner({});
 	// SSE 实时刷新 + 断连轮询兜底（不渲染 live/poll 指示器）。
 	useAwdpRunStream({ runId });
+
+	/** 练习「开始」：冻结 run → 回卷全新 Break + 启动实例（与 Challenge 练习 Launch 同效）。 */
+	const startMutation = useMutation({
+		mutationFn: () => awdpRunApi.startRun(runId),
+		onSuccess: (res) => {
+			if (res.data) {
+				queryClient.setQueryData(["awdp-run", runId], res);
+			}
+			invalidate();
+		},
+		onError: (error) => {
+			banner.showErrorBanner(error);
+		},
+	});
+
+	/** 练习「End」：停止全部实例并恢复如初（回到「开始」态）。 */
+	const endMutation = useMutation({
+		mutationFn: () => awdpRunApi.endRun(runId),
+		onSuccess: (res) => {
+			if (res.data) {
+				queryClient.setQueryData(["awdp-run", runId], res);
+			}
+			invalidate();
+			banner.showBanner("success", "训练已结束，实例已停止，恢复初始状态");
+		},
+		onError: (error) => {
+			banner.showErrorBanner(error);
+		},
+	});
 
 	const runQuery = useQuery({
 		queryKey: ["awdp-run", runId],
@@ -38,6 +69,12 @@ function RouteComponent() {
 	});
 	const run = runQuery.data?.data;
 	const phase = run?.phase;
+	// 与 Challenge 练习一致：实例未运行（未点「开始」/ End 后）→ 只显示「开始」按钮；
+	// 实例运行中才显现时间面板与内容。
+	const running = (run?.instances ?? []).some(
+		(inst) => inst.runtime_state === "running",
+	);
+	const idle = (phase === "break" || phase === "fix") && !running;
 	const needTimeline = phase === "fix" || phase === "ended";
 
 	const roundsQuery = useQuery({
@@ -148,6 +185,9 @@ function RouteComponent() {
 				}
 				invalidate();
 			},
+			onEnd: async () => {
+				await endMutation.mutateAsync();
+			},
 			onDownloadSource: async (gameboxId: string) => {
 				const res = await awdpRunApi.sourceUrl(runId, gameboxId);
 				return res.data;
@@ -199,6 +239,34 @@ function RouteComponent() {
 		return (
 			<div className="p-4">
 				<InlineMessage variant="warning">Run not found.</InlineMessage>
+			</div>
+		);
+	}
+
+	// 与 Challenge 练习同款：未点「开始」（或 End 后）只显示标题 + 描述 + 「开始」按钮，
+	// 面板与内容在点击开始（实例运行）后才显现。
+	if (idle) {
+		return (
+			<div className="h-full w-full flex flex-col gap-2 justify-between min-h-0">
+				<div id="awdp-meta" className="shrink-0">
+					<p className="font-bold text-2xl">{run.gamebox_name}</p>
+					<div className="border-top mt-2 pt-2">
+						{run.gamebox_description || "AWDP 训练场"}
+					</div>
+				</div>
+				<banner.BannerComponent />
+				<div
+					id="awdp-content"
+					className="mb-4 flex justify-center flex-1 border-bottom"
+				>
+					<Button
+						variant="primary"
+						disabled={startMutation.isPending}
+						onClick={() => startMutation.mutate()}
+					>
+						{startMutation.isPending ? "Starting…" : "开始"}
+					</Button>
+				</div>
 			</div>
 		);
 	}

@@ -124,7 +124,8 @@ async fn mount_all_trainable_gameboxes(
 }
 
 /// 创建 practice run：gamebox × owner_user（个人练习，统一挂 `AWDPlusPractice` 虚拟 event）。
-/// 创建即 phase=Break（started_at / break_ends_at / next_action_at 由 snapshot 计算）。
+/// 创建即 phase=Break，但 **冻结**（next_action_at=None → tick 不推进），
+/// 等待玩家在训练页点「开始」（`start_practice_break`）才真正启动生命周期并计时。
 /// 同 user+gamebox 已有 active run → Conflict（幂等判定在 service 层完成）。
 pub async fn create_practice_run(
     db: &DatabaseConnection,
@@ -152,7 +153,8 @@ pub async fn create_practice_run(
         break_ends_at: Set(Some(break_ends.into())),
         current_round: Set(0),
         total_rounds: Set(config.total_rounds()),
-        next_action_at: Set(Some(break_ends.into())),
+        // 冻结：未点「开始」前 tick 不推进（find_due_runs 按 next_action_at <= now 过滤，NULL 不命中）。
+        next_action_at: Set(None),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
         ..Default::default()
@@ -424,6 +426,89 @@ pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> A
     am.finished_at = Set(None);
     am.current_round = Set(0);
     am.next_action_at = Set(Some(break_ends.into()));
+    am.early_patched_seq = Set(None);
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    // 撤销 fix 会话：删除回合（级联清 evaluations + fix 计分账本）。
+    crate::modules::event::awdp::repo::round_repo::clear_fix_session(&txn, run_id)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// 练习模式：点击「开始」→ 回卷到全新 Break 并解除冻结（next_action_at=break_ends，tick 恢复推进）。
+/// 与 End 共享回卷核心；仅练习 run（gamebox_id 非空）且 phase=Break|Fix 允许。
+/// 再次 Break→Fix 会重新物化全新回合时间线。
+pub async fn start_practice_break(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
+    rewind_practice_to_break(db, run_id, false).await
+}
+
+/// 练习模式：点击「End」→ 停止一切并恢复到初始状态：
+/// 回卷到全新 Break 并**重新冻结**（next_action_at=None，tick 不推进），
+/// 计分/破解账本的清理由 service 层负责（score/break delete_for_run）。
+pub async fn end_practice_session(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
+    rewind_practice_to_break(db, run_id, true).await
+}
+
+/// 练习模式回卷核心：锁行 → 校验（practice-only、phase=Break|Fix）→ 全新 Break 快照。
+/// `frozen=true`（End）时 next_action_at=None；`frozen=false`（开始）时为 break_ends。
+async fn rewind_practice_to_break(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    frozen: bool,
+) -> AwdpResult<()> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    let current = awdp_runs::Entity::find_by_id(run_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+
+    if current.gamebox_id.is_none() {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::InvalidState(
+            "只有练习 run 支持手动开始/结束".into(),
+        ));
+    }
+    if !matches!(current.phase, AwdpPhase::Break | AwdpPhase::Fix) {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::InvalidState(format!(
+            "只有 Break/Fix 阶段的练习 run 支持开始/结束（当前 {:?}）",
+            current.phase
+        )));
+    }
+
+    let now = Utc::now();
+    let break_ends = now + chrono::Duration::seconds(current.break_duration_secs as i64);
+    let mut am: awdp_runs::ActiveModel = current.clone().into();
+    am.phase = Set(AwdpPhase::Break);
+    am.started_at = Set(Some(now.into()));
+    am.break_ends_at = Set(Some(break_ends.into()));
+    am.fix_started_at = Set(None);
+    am.fix_ends_at = Set(None);
+    am.finished_at = Set(None);
+    am.current_round = Set(0);
+    am.next_action_at = Set(if frozen {
+        None
+    } else {
+        Some(break_ends.into())
+    });
     am.early_patched_seq = Set(None);
     am.updated_at = Set(now.into());
     am.update(&txn)

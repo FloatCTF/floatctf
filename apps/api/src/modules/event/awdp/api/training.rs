@@ -19,9 +19,11 @@ use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     entity::{awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase},
     modules::event::awdp::{
+        AwdpError,
         api::dto::*,
         repo::{
-            evaluation_repo, event_gamebox_repo, round_repo, run_repo, score_repo, writeup_repo,
+            break_repo, evaluation_repo, event_gamebox_repo, round_repo, run_repo, score_repo,
+            writeup_repo,
         },
         service::{
             break_service, evaluation, patch_service, practice_service,
@@ -285,6 +287,113 @@ pub async fn reset_run(
         json!({ "run_id": run.id }),
     )
     .await;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    UniResponse::ok(dto.into()).into()
+}
+
+/// POST /api/service/awdp/runs/{run_id}/start —— 练习「开始」：
+/// 冻结 run（创建后/End 后 next_action_at=None）→ 回卷全新 Break 并解除冻结（重新计时）；
+/// 已开始过的 run（next_action_at 非空，如手动停实例后恢复）→ 仅启动实例继续会话。
+/// 返回 AwdpRunDto（实例已 running → 前端显现面板与内容，与 Challenge 练习 Launch 同效）。
+#[post("awdp/runs/{run_id}/start")]
+pub async fn start_run(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdpRunDto> {
+    let run_id = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    if matches!(run.phase, AwdpPhase::Pending | AwdpPhase::Ended) {
+        return Err(AppError::from(AwdpError::InvalidState(format!(
+            "只有 Break/Fix 阶段的练习 run 可以开始（当前 {:?}）",
+            run.phase
+        ))));
+    }
+    let gamebox_id = run.gamebox_id.ok_or_else(|| {
+        AppError::from(AwdpError::InvalidState("只有练习 run 支持手动开始".into()))
+    })?;
+
+    // 冻结（创建后或 End 后）→ 回卷全新 Break 并解除冻结；会话中途恢复则仅启动实例。
+    if run.next_action_at.is_none() {
+        run_repo::start_practice_break(ctx.db.get_ref(), run.id).await?;
+    }
+
+    runtime::start_instance(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        run.id,
+        gamebox_id,
+        Subject::user(user.id),
+        &flag_prefix(&ctx).await,
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.begin",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
+    let run = run_repo::require_by_id(ctx.db.get_ref(), run.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    UniResponse::ok(dto.into()).into()
+}
+
+/// POST /api/service/awdp/runs/{run_id}/end —— 练习「End」：停止全部实例并恢复如初。
+/// 停止所有实例 → 回卷全新 Break 并重新冻结（next_action_at=None，tick 不推进）→
+/// 清空计分与破解账本（score/break delete_for_run），下次「开始」从全新 Break 开始。
+#[post("awdp/runs/{run_id}/end")]
+pub async fn end_run(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdpRunDto> {
+    let run_id = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    if run.gamebox_id.is_none() {
+        return Err(AppError::from(AwdpError::InvalidState(
+            "只有练习 run 支持手动结束".into(),
+        )));
+    }
+    if matches!(run.phase, AwdpPhase::Pending | AwdpPhase::Ended) {
+        return Err(AppError::from(AwdpError::InvalidState(format!(
+            "只有 Break/Fix 阶段的练习 run 可以结束（当前 {:?}）",
+            run.phase
+        ))));
+    }
+
+    // 1. 停止全部实例（保留逻辑实例/端点）。
+    let views = runtime::list_instances(ctx.db.get_ref(), run.id).await?;
+    for v in views {
+        runtime::stop_instance(
+            ctx.db.get_ref(),
+            ctx.docker.get_ref(),
+            v.instance_id,
+            Subject::user(user.id),
+        )
+        .await?;
+    }
+
+    // 2. 回卷全新 Break 并重新冻结 + 清空计分/破解账本（恢复如初）。
+    run_repo::end_practice_session(ctx.db.get_ref(), run.id).await?;
+    score_repo::delete_for_run(ctx.db.get_ref(), run.id).await?;
+    break_repo::delete_for_run(ctx.db.get_ref(), run.id).await?;
+
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.end",
+        json!({ "run_id": run.id }),
+    )
+    .await;
+    let run = run_repo::require_by_id(ctx.db.get_ref(), run.id).await?;
     let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
     UniResponse::ok(dto.into()).into()
 }
@@ -1112,6 +1221,8 @@ pub fn configure_training_routes(cfg: &mut web::ServiceConfig) {
         .service(start_training)
         .service(get_run_overview)
         .service(stop_run)
+        .service(start_run)
+        .service(end_run)
         .service(reset_run)
         .service(set_phase)
         .service(train_again)

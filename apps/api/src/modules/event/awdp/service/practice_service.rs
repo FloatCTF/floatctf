@@ -16,17 +16,16 @@ use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::AwdpConfig,
     repo::{event_gamebox_repo, run_repo},
-    service::runtime::{self, Subject},
 };
 
 /// Start Training（幂等）：返回 active practice run（已存在则直接返回）。
 pub async fn start_training(
     db: &DatabaseConnection,
-    docker: &Docker,
-    jwt_secret: &[u8],
+    _docker: &Docker,
+    _jwt_secret: &[u8],
     user_id: Uuid,
     gamebox_id: Uuid,
-    flag_prefix: &str,
+    _flag_prefix: &str,
 ) -> AwdpResult<awdp_runs::Model> {
     // 1. GameBox 必须是可见且完整的 [awdp] capability。
     let gamebox = require_trainable_gamebox(db, gamebox_id).await?;
@@ -51,24 +50,9 @@ pub async fn start_training(
         );
     }
 
-    // 4. 同步创建逻辑实例并启动。
-    let subject = Subject::user(user_id);
-    runtime::start_instance(
-        db,
-        docker,
-        jwt_secret,
-        run.id,
-        gamebox_id,
-        subject,
-        flag_prefix,
-    )
-    .await
-    .map_err(|e| {
-        // 启动失败不回滚 run 行（实例 pending 保留，前端可重试）。
-        tracing::warn!(run_id = %run.id, error = %e, "practice instance start failed");
-        e
-    })?;
-
+    // 4. 不启动实例：练习 run 创建即**冻结**（next_action_at=None，tick 不推进），
+    //    玩家在训练页点「开始」（POST /start → start_practice_break + start_instance）
+    //    才真正启动生命周期并计时（与 Challenge 练习 Launch 同效）。
     Ok(run)
 }
 

@@ -80,3 +80,13 @@ pub async fn list_for_run(
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
+
+/// 删除 run 的全部 Break 记录（练习 End「恢复如初」用；删除后同一 flag 可重新计分）。
+pub async fn delete_for_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<u64> {
+    let res = awdp_breaks::Entity::delete_many()
+        .filter(awdp_breaks::Column::RunId.eq(run_id))
+        .exec(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(res.rows_affected)
+}

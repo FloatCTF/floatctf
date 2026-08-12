@@ -292,6 +292,8 @@ export function AwdpWorkbench({
 	const [busy, setBusy] = useState<Record<string, boolean>>({});
 	const setBusyKey = (key: string, value: boolean) =>
 		setBusy((prev) => ({ ...prev, [key]: value }));
+	// 阶段切换（SegmentedControl break↔fix）进行中：页面级阻塞，所有按钮禁用。
+	const phaseBusy = !!(busy["phase:break"] || busy["phase:fix"]);
 
 	// ── handlers ────────────────────────────────────────────────────────────
 
@@ -485,6 +487,10 @@ export function AwdpWorkbench({
 	const renderGameBox = (gb: AwdpWorkbenchGameBox) => {
 		const inst = gb.instance;
 		const running = inst?.runtime_state === "running";
+		// pristine 重建（Reset）期间：本卡片所有按钮一并禁用，避免与容器重建竞态；
+		// 阶段切换（页面级 phaseBusy）同样禁用本卡片全部按钮。
+		const resetting = !!busy[`reset:${gb.id}`];
+		const cardBlocked = resetting || phaseBusy;
 		const check = checkResults[gb.id];
 		const patchStatus = lastPatch[gb.id];
 
@@ -539,13 +545,17 @@ export function AwdpWorkbench({
 							<>
 								<Button
 									variant="primary"
-									disabled={running || busy[`start:${gb.id}`]}
+									disabled={
+									cardBlocked || running || busy[`start:${gb.id}`]
+								}
 									onClick={() => handleInstanceOp("start", gb)}
 								>
 									Start
 								</Button>
 								<Button
-									disabled={!running || busy[`stop:${gb.id}`]}
+									disabled={
+									cardBlocked || !running || busy[`stop:${gb.id}`]
+								}
 									onClick={() => handleInstanceOp("stop", gb)}
 								>
 									Stop
@@ -554,10 +564,10 @@ export function AwdpWorkbench({
 						)}
 						<Button
 							variant="danger"
-							disabled={!inst || busy[`reset:${gb.id}`]}
+							disabled={cardBlocked || !inst || busy[`reset:${gb.id}`]}
 							onClick={() => handleInstanceOp("reset", gb)}
 						>
-							Reset
+							{resetting ? "Resetting…" : "Reset"}
 						</Button>
 					</div>
 				)}
@@ -579,7 +589,9 @@ export function AwdpWorkbench({
 							/>
 							<Button
 								variant="primary"
-								disabled={!flagInputs[gb.id] || busy[`break:${gb.id}`]}
+								disabled={
+									cardBlocked || !flagInputs[gb.id] || busy[`break:${gb.id}`]
+								}
 								onClick={() => handleSubmitBreak(gb)}
 							>
 								Submit
@@ -601,7 +613,9 @@ export function AwdpWorkbench({
 					<div className="flex flex-col gap-2 border-t pt-2">
 						<div className="flex items-center gap-2 flex-wrap">
 							<Button
-								disabled={busy[`source:${gb.id}`] || !onDownloadSource}
+								disabled={
+									cardBlocked || busy[`source:${gb.id}`] || !onDownloadSource
+								}
 								onClick={() => handleDownloadSource(gb)}
 							>
 								{busy[`source:${gb.id}`] ? "…" : "Download Source"}
@@ -622,13 +636,20 @@ export function AwdpWorkbench({
 							/>
 							<Button
 								variant="primary"
-								disabled={!patchFiles[gb.id] || busy[`patch:${gb.id}`]}
+								disabled={
+									cardBlocked || !patchFiles[gb.id] || busy[`patch:${gb.id}`]
+								}
 								onClick={() => handleUploadPatch(gb)}
 							>
 								{busy[`patch:${gb.id}`] ? "Applying…" : "Apply Patch"}
 							</Button>
 							<Button
-								disabled={checking[gb.id] || busy[`check:${gb.id}`] || !running}
+								disabled={
+									cardBlocked ||
+									checking[gb.id] ||
+									busy[`check:${gb.id}`] ||
+									!running
+								}
 								onClick={() => handleTestCheck(gb)}
 							>
 								{checking[gb.id] ? "Checking…" : "Test Check"}
@@ -637,6 +658,7 @@ export function AwdpWorkbench({
 								<Button
 									variant="primary"
 									disabled={
+										cardBlocked ||
 										earlyChecking[gb.id] ||
 										busy[`early:${gb.id}`] ||
 										!running ||
@@ -811,9 +833,9 @@ export function AwdpWorkbench({
 					now={now}
 					canControlPhase={viewModel.canControlPhase}
 					onSetPhase={onSetPhase ? handleSetPhase : undefined}
-					phaseBusy={!!(busy["phase:break"] || busy["phase:fix"])}
+					phaseBusy={phaseBusy}
 					onEnd={onEnd ? handleEnd : undefined}
-					endBusy={!!busy.end}
+					endBusy={!!busy.end || phaseBusy}
 				/>
 			</div>
 

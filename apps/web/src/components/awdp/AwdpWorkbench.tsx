@@ -531,22 +531,27 @@ export function AwdpWorkbench({
 					)}
 				</dl>
 
-				{/* 实例操作（break|fix） */}
+				{/* 实例操作（break|fix）：练习模式由页面级「开始 / End」统一管理生命周期，
+				   不再显示单实例 Start/Stop（与 开始/End 重复）；Reset 保留。竞赛模式保持原样。 */}
 				{active && (
 					<div className="flex items-center gap-2 mb-2">
-						<Button
-							variant="primary"
-							disabled={running || busy[`start:${gb.id}`]}
-							onClick={() => handleInstanceOp("start", gb)}
-						>
-							Start
-						</Button>
-						<Button
-							disabled={!running || busy[`stop:${gb.id}`]}
-							onClick={() => handleInstanceOp("stop", gb)}
-						>
-							Stop
-						</Button>
+						{!viewModel.isPractice && (
+							<>
+								<Button
+									variant="primary"
+									disabled={running || busy[`start:${gb.id}`]}
+									onClick={() => handleInstanceOp("start", gb)}
+								>
+									Start
+								</Button>
+								<Button
+									disabled={!running || busy[`stop:${gb.id}`]}
+									onClick={() => handleInstanceOp("stop", gb)}
+								>
+									Stop
+								</Button>
+							</>
+						)}
 						<Button
 							variant="danger"
 							disabled={!inst || busy[`reset:${gb.id}`]}

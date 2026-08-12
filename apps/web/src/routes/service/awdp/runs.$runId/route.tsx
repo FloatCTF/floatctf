@@ -33,8 +33,9 @@ function RouteComponent() {
 			</UnderlineNav>
 
 			<div className="flex h-full w-full min-h-0">
-				{/* 左侧：做题（Training 工作台 / WriteUp 大编辑器）；无顶部外边距，与右侧框对齐 */}
-				<div className="flex flex-col px-2 pb-2 flex-5 min-h-0">
+				{/* 左侧：做题（Training 工作台 / WriteUp 大编辑器）；上/下留出呼吸感（pt/pb-4），
+				   避免内容紧贴导航与底边，左右 px-4 保持适中 */}
+				<div className="flex flex-col px-4 pt-4 pb-4 flex-5 min-h-0">
 					<Outlet />
 				</div>
 

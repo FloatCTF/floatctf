@@ -836,6 +836,7 @@ export function AwdpWorkbench({
 					phaseBusy={phaseBusy}
 					onEnd={onEnd ? handleEnd : undefined}
 					endBusy={!!busy.end || phaseBusy}
+					endRunning={!!busy.end}
 				/>
 			</div>
 

@@ -215,11 +215,11 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		fireEvent.click(screen.getByRole("button", { name: /^Fix$/ }));
 		await waitFor(() => expect(onSetPhase).toHaveBeenCalledWith("fix"));
 
-		// pending：全部禁用（End 因 endBusy 显示为「停止中…」）
+		// pending：全部禁用（End 仍显示「End」，仅禁用；「停止中…」只在 End 本身进行中）
 		const expectedDisabled = [
 			/^Break$/,
 			/^Fix$/,
-			/停止中/,
+			/^End$/,
 			/^Reset$/,
 			/^Submit$/,
 		];
@@ -236,5 +236,56 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 			).toBe(false),
 		);
 		expect(screen.getByRole("button", { name: /^End$/ })).toBeDefined();
+	});
+
+	it("End 本身进行中才显示「停止中…」；阶段切换期间 End 保持「End」文案仅禁用", async () => {
+		let resolveEnd: (() => void) | undefined;
+		let resolvePhase: (() => void) | undefined;
+		const onEnd = vi.fn(
+			() =>
+				new Promise<void>((res) => {
+					resolveEnd = res;
+				}),
+		);
+		const onSetPhase = vi.fn(
+			(_t: "break" | "fix") =>
+				new Promise<void>((res) => {
+					resolvePhase = res;
+				}),
+		);
+		render(
+			<AwdpWorkbench
+				viewModel={vm("break")}
+				{...noopProps}
+				onSetPhase={onSetPhase}
+				onResetInstance={vi.fn()}
+				onEnd={onEnd}
+			/>,
+		);
+
+		// 1) End 本身进行中：文案「停止中…」且禁用；SegmentedControl 不受影响
+		fireEvent.click(screen.getByRole("button", { name: /^End$/ }));
+		await waitFor(() => expect(onEnd).toHaveBeenCalled());
+		expect(screen.getByRole("button", { name: /停止中/ })).toBeDefined();
+		expect(
+			screen.getByRole("button", { name: /停止中/ }).hasAttribute("disabled"),
+		).toBe(true);
+		expect(
+			screen.getByRole("button", { name: /^Break$/ }).hasAttribute("disabled"),
+		).toBe(false);
+		resolveEnd?.();
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: /^End$/ })).toBeDefined(),
+		);
+
+		// 2) 阶段切换期间：End 保持「End」文案，仅禁用
+		fireEvent.click(screen.getByRole("button", { name: /^Fix$/ }));
+		await waitFor(() => expect(onSetPhase).toHaveBeenCalledWith("fix"));
+		expect(screen.getByRole("button", { name: /^End$/ })).toBeDefined();
+		expect(
+			screen.getByRole("button", { name: /^End$/ }).hasAttribute("disabled"),
+		).toBe(true);
+		expect(screen.queryByRole("button", { name: /停止中/ })).toBeNull();
+		resolvePhase?.();
 	});
 });

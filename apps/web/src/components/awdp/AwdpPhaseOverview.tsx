@@ -388,7 +388,9 @@ export type AwdpPhaseOverviewProps = {
 	phaseBusy?: boolean;
 	/** 练习「End」：Row 1 最右侧（space-between）。 */
 	onEnd?: () => void | Promise<void>;
-	/** End 进行中。 */
+	/** End 进行中（仅 End 操作本身，不含阶段切换）：控制文案“停止中…”。 */
+	endRunning?: boolean;
+	/** End 按钮禁用条件：End 操作进行中或页面级阶段切换阻塞中。 */
 	endBusy?: boolean;
 };
 
@@ -414,6 +416,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 		onSetPhase,
 		phaseBusy,
 		onEnd,
+		endRunning,
 		endBusy,
 	} = props;
 	const meta = PHASE_META[phase] ?? PHASE_META.pending;
@@ -507,11 +510,11 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 					<Button
 						variant="danger"
 						size="small"
-						disabled={endBusy}
-						onClick={() => onEnd()}
-					>
-						{endBusy ? "停止中…" : "End"}
-					</Button>
+							disabled={endBusy}
+							onClick={() => onEnd()}
+						>
+							{endRunning ? "停止中…" : "End"}
+						</Button>
 				) : null}
 			</div>
 

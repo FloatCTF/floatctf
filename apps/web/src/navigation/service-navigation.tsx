@@ -73,15 +73,15 @@ export const serviceNavigation: NavigationSection[] = [
 					match: { mode: "segment-prefix" },
 				},
 			),
-			item("service.solves", "Solves", "/service/solves", {
-				icon: <LogIcon />,
+			item("service.gameboxes", "Gameboxes", "/service/gameboxes", {
+				icon: <PackageIcon />,
+				match: { mode: "segment-prefix" },
 			}),
 			item("service.instances", "Instances", "/service/instances", {
 				icon: <FlameIcon />,
 			}),
-			item("service.gameboxes", "Gameboxes", "/service/gameboxes", {
-				icon: <PackageIcon />,
-				match: { mode: "segment-prefix" },
+			item("service.solves", "Solves", "/service/solves", {
+				icon: <LogIcon />,
 			}),
 		],
 	},

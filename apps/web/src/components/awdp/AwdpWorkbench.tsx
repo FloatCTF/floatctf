@@ -781,34 +781,20 @@ export function AwdpWorkbench({
 
 	return (
 		<div className="h-full w-full flex flex-col gap-2 min-h-0">
-			{/* 顶部：标题 + 描述（与挑战详情页同款：text-2xl + border-top 分隔） */}
+			{/* 顶部：标题 + 描述（与挑战详情页同款：text-2xl + border-top 分隔，无按钮） */}
 			{viewModel.title ? (
-				<div
-					id="awdp-meta"
-					className="shrink-0 flex items-start justify-between gap-2"
-				>
-					<div className="min-w-0">
-						<p className="font-bold text-2xl">{viewModel.title}</p>
-						{viewModel.description ? (
-							<div className="border-top mt-2 pt-2">
-								{viewModel.description}
-							</div>
-						) : null}
-					</div>
-					{onEnd && (phase === "break" || phase === "fix") ? (
-						<Button
-							variant="danger"
-							disabled={busy.end}
-							onClick={() => handleEnd()}
-						>
-							{busy.end ? "停止中…" : "End"}
-						</Button>
+				<div id="awdp-meta" className="shrink-0">
+					<p className="font-bold text-2xl">{viewModel.title}</p>
+					{viewModel.description ? (
+						<div className="border-top mt-2 pt-2">
+							{viewModel.description}
+						</div>
 					) : null}
 				</div>
 			) : null}
 			<banner.BannerComponent />
 
-			{/* 顶部状态面板：Phase / Countdown / Score / Break→Fix Timeline（§3-21） */}
+			{/* 顶部状态卡片：阶段控制（练习 SegmentedControl / 竞赛 badge）+ End | 事件式倒计时 + 得分 | Break→Fix 时间线 */}
 			<div className="mb-2 shrink-0">
 				<AwdpPhaseOverview
 					phase={phase}
@@ -823,44 +809,13 @@ export function AwdpWorkbench({
 					nextCheckAt={viewModel.nextCheckAt}
 					score={viewModel.score}
 					now={now}
+					canControlPhase={viewModel.canControlPhase}
+					onSetPhase={onSetPhase ? handleSetPhase : undefined}
+					phaseBusy={!!(busy["phase:break"] || busy["phase:fix"])}
+					onEnd={onEnd ? handleEnd : undefined}
+					endBusy={!!busy.end}
 				/>
 			</div>
-
-			{/* 练习模式手动阶段控制（直接 break / 直接 fix） */}
-			{viewModel.canControlPhase &&
-			onSetPhase &&
-			(phase === "break" || phase === "fix") ? (
-				<div className="shrink-0 flex items-center gap-2 px-1">
-					{phase === "break" && (
-						<>
-							<Button
-								variant="primary"
-								disabled={busy["phase:fix"]}
-								onClick={() => handleSetPhase("fix")}
-							>
-								{busy["phase:fix"] ? "切换中…" : "直接进入 Fix"}
-							</Button>
-							<span className="text-xs opacity-60">
-								跳过 Break 等待，立即开始修复（实例将重置为 pristine）
-							</span>
-						</>
-					)}
-					{phase === "fix" && (
-						<>
-							<Button
-								disabled={busy["phase:break"]}
-								onClick={() => handleSetPhase("break")}
-							>
-								{busy["phase:break"] ? "切换中…" : "回到 Break"}
-							</Button>
-							<span className="text-xs opacity-60">
-								练习模式可自由切换阶段；回到 Break 会撤销当前 Fix
-								会话（回合/评估/计分清零）
-							</span>
-						</>
-					)}
-				</div>
-			) : null}
 
 			{/* GameBox 卡片列表（超出高度内部滚动，避免页面溢出） */}
 			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">

@@ -172,3 +172,29 @@ code {
 	pointer-events: none;
 	z-index: 1000;
 }
+
+/* ── AWDP 时间线已走过部分：event 赛事倒计时同款动画条纹 ────────────────── */
+.awdp-stripes {
+	background-image: repeating-linear-gradient(
+		45deg,
+		rgb(255 255 255 / 0.18) 0 6px,
+		transparent 6px 12px
+	);
+	background-size: 1rem 1rem;
+	animation: awdp-stripes-move 1s linear infinite;
+}
+
+@keyframes awdp-stripes-move {
+	from {
+		background-position: 0 0;
+	}
+	to {
+		background-position: 1rem 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.awdp-stripes {
+		animation: none;
+	}
+}

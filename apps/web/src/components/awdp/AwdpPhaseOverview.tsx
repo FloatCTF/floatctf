@@ -1,19 +1,21 @@
 /**
- * AWDP 顶部状态面板（Phase / Countdown / Score / Break→Fix Timeline）。
+ * AWDP 顶部状态卡片（Practice 与 Competition 共用，不复制两套 header）。
  *
- * 设计约束（玩家侧重设计 spec）：
- *  - Practice 与 Competition 共用同一组件（不复制两套 header）；
- *  - 视觉：compact、thin-border、信息密度高但不拥挤，沿用 FloatCTF
- *    Primer design tokens（--accent-fg / --attention-fg / --success-fg /
- *    --fgColor-muted / --borderColor-*），不引入新 UI 依赖；
- *  - Timeline 宽度按真实 duration 比例（break : fix），Fix 段按
- *    totalRounds 均分绘制 Turn 分隔线，marker 由真实 timestamps 计算；
- *  - 时间格式 MM:SS / H:MM:SS（tabular-nums 防抖动），禁止 "0h 45m 42s"；
- *  - 纯展示组件：数据由调用方（AwdpWorkbench）传入，无内部 API/轮询。
+ * 设计约束：
+ *  - 紧凑单卡片：Row 1 阶段控制 | Row 2 事件式倒计时 + 得分 | Row 3 Break→Fix 时间线；
+ *  - 练习模式（canControlPhase）：Row 1 左侧 <SegmentedControl>（左 Break / 右 Fix）
+ *    切换阶段，space-between 最右侧为「End」；竞赛模式显示 Phase badge；
+ *  - 倒计时文案与 event 赛事 RemainingTimer 同款（"Ends in: 45m 12s"），
+ *    tabular-nums 防抖动；
+ *  - Timeline 宽度按真实 duration 比例（break : fix），Fix 段按 totalRounds
+ *    均分 Turn 分隔线，marker 由真实 timestamps 计算；已走过（elapsed）填充
+ *    带 event 赛事同款动画条纹（.awdp-stripes）；
+ *  - 纯展示组件：数据/busy/回调由调用方（AwdpWorkbench）传入，无内部 API/轮询。
  *
  * 不变量：绝不在本组件内展示 exploit 内容/路径、source object key、credentials。
  */
-import { Label } from "@primer/react";
+import { BugIcon, ToolsIcon } from "@primer/octicons-react";
+import { Button, Label, SegmentedControl } from "@primer/react";
 
 import type { AwdpPhase } from "@/api/awdp";
 
@@ -87,6 +89,37 @@ export function formatScore(n: number): string {
 	return new Intl.NumberFormat("en-US").format(n);
 }
 
+/**
+ * event 赛事 RemainingTimer 同款剩余时间文案：d/h/m/s 分段（"1h 23m 45s" /
+ * "45m 12s" / "45s"）。null/非法 → "-"。
+ */
+export function formatEventRemaining(
+	seconds: number | null | undefined,
+): string {
+	if (seconds == null || !Number.isFinite(seconds)) {
+		return "-";
+	}
+	const s = Math.max(0, Math.floor(seconds));
+	const days = Math.floor(s / 86400);
+	const hours = Math.floor((s % 86400) / 3600);
+	const minutes = Math.floor((s % 3600) / 60);
+	const sec = s % 60;
+	const parts: string[] = [];
+	if (days) {
+		parts.push(`${days}d`);
+	}
+	if (hours) {
+		parts.push(`${hours}h`);
+	}
+	if (minutes) {
+		parts.push(`${minutes}m`);
+	}
+	if (sec || parts.length === 0) {
+		parts.push(`${sec}s`);
+	}
+	return parts.join(" ");
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Timeline 纯计算（导出供测试；now 用 Date.now()）
 // ────────────────────────────────────────────────────────────────────────────
@@ -118,7 +151,7 @@ export type AwdpTimelineState = {
 	fixFillPct: number;
 	/** Turn 分隔线绝对位置（不含 0/100 端点）。 */
 	turnBoundariesPct: number[];
-	/** Break 已过去秒数（label "14:18 / 1h" 用；无数据时 null）。 */
+	/** Break 已过去秒数（label 用；无数据时 null）。 */
 	elapsedBreakSecs: number | null;
 };
 
@@ -204,28 +237,17 @@ export function computeTimelineState(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Timeline
+// Timeline（紧凑版：仅段名 + track；Turn 分隔线保留在 track 内，去掉 T 文字行
+// 与底部 label 行以压缩高度）
 // ────────────────────────────────────────────────────────────────────────────
 
 type AwdpTimelineProps = {
 	state: AwdpTimelineState;
 	phase: AwdpPhase;
-	breakDurationSecs: number;
-	fixDurationSecs: number;
-	totalRounds: number;
-	/** Fix 时：显示 "Turn X / Y"；Ended：显示完成 turns。 */
-	currentRound: number;
 };
 
-/** 8px track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
-function AwdpTimeline({
-	state,
-	phase,
-	breakDurationSecs,
-	fixDurationSecs,
-	totalRounds,
-	currentRound,
-}: AwdpTimelineProps) {
+/** 紧凑 track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
+function AwdpTimeline({ state, phase }: AwdpTimelineProps) {
 	const markerColor =
 		phase === "break"
 			? "border-[var(--accent-fg)]"
@@ -235,30 +257,6 @@ function AwdpTimeline({
 					? "border-[var(--success-fg)]"
 					: "border-[var(--fgColor-muted)]";
 
-	// 底部 label（§12-14 语义）
-	let leftLabel: string;
-	let rightLabel: string;
-	if (phase === "break") {
-		leftLabel =
-			state.elapsedBreakSecs != null
-				? `${formatCountdown(state.elapsedBreakSecs)} / ${formatDuration(breakDurationSecs)}`
-				: formatDuration(breakDurationSecs);
-		rightLabel = `${formatDuration(fixDurationSecs)} Fix · ${totalRounds} turns`;
-	} else if (phase === "fix") {
-		leftLabel = "Completed";
-		rightLabel = `Turn ${currentRound} / ${totalRounds}`;
-	} else if (phase === "ended") {
-		leftLabel = "Completed";
-		rightLabel = `${totalRounds} / ${totalRounds} turns`;
-	} else {
-		leftLabel = `${formatDuration(breakDurationSecs)} Break`;
-		rightLabel = `${formatDuration(fixDurationSecs)} Fix · ${totalRounds} turns`;
-	}
-
-	const showTurnLabels =
-		(phase === "fix" || phase === "ended") &&
-		totalRounds > 0 &&
-		totalRounds <= 8;
 	const showTurnSeparators =
 		phase !== "break" && state.turnBoundariesPct.length > 0;
 
@@ -296,13 +294,13 @@ function AwdpTimeline({
 				aria-valuenow={Math.round(state.progress * 100)}
 				className="relative h-1.5 rounded-full bg-[var(--borderColor-default)] overflow-hidden"
 			>
-				{/* Break 段（按比例宽度，填充为已完成部分） */}
+				{/* Break 段（按比例宽度，填充为已完成部分，带 event 同款动画条纹） */}
 				<div
 					className="absolute inset-y-0 left-0 transition-[width] duration-200 ease-out motion-reduce:transition-none"
 					style={{ width: `${state.breakWidthPct}%` }}
 				>
 					<div
-						className="h-full bg-[var(--accent-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+						className="awdp-stripes h-full bg-[var(--accent-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
 						style={{ width: `${state.breakFillPct}%` }}
 					/>
 				</div>
@@ -316,7 +314,7 @@ function AwdpTimeline({
 					}}
 				>
 					<div
-						className="h-full bg-[var(--attention-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+						className="awdp-stripes h-full bg-[var(--attention-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
 						style={{ width: `${state.fixFillPct}%` }}
 					/>
 					{showTurnSeparators &&
@@ -337,43 +335,12 @@ function AwdpTimeline({
 					style={{ left: `${state.markerPct}%` }}
 				/>
 			</div>
-
-			{/* Turn labels（<=8 turns 才显示文字，避免拥挤） */}
-			{showTurnLabels && (
-				<div className="relative h-3.5 mt-0.5 text-[10px] leading-3.5 text-[var(--fgColor-muted)] tabular-nums select-none">
-					{Array.from({ length: totalRounds }, (_, i) => {
-						const left =
-							state.breakWidthPct +
-							((i + 0.5) / totalRounds) * state.fixWidthPct;
-						return (
-							<span
-								key={left}
-								aria-hidden="true"
-								className="absolute -translate-x-1/2"
-								style={{ left: `${left}%` }}
-							>
-								T{i + 1}
-							</span>
-						);
-					})}
-				</div>
-			)}
-
-			{/* 底部 label */}
-			<div className="flex items-center justify-between text-[11px] mt-1">
-				<span className="text-[var(--fgColor-muted)] tabular-nums">
-					{leftLabel}
-				</span>
-				<span className="text-[var(--fgColor-muted)] tabular-nums">
-					{rightLabel}
-				</span>
-			</div>
 		</div>
 	);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Phase Overview（顶部状态面板）
+// Phase Overview（顶部状态卡片）
 // ────────────────────────────────────────────────────────────────────────────
 
 export type AwdpPhaseOverviewProps = {
@@ -392,11 +359,21 @@ export type AwdpPhaseOverviewProps = {
 	score: number;
 	/** 当前时间戳（Date.now()，由调用方 1s 刷新）。 */
 	now: number;
+	/** 练习模式：Row 1 左侧显示 <SegmentedControl> 阶段控制（左 Break / 右 Fix）。 */
+	canControlPhase?: boolean;
+	/** 阶段切换回调（练习模式，target break|fix）。 */
+	onSetPhase?: (target: "break" | "fix") => void | Promise<void>;
+	/** 阶段切换进行中（禁用 SegmentedControl）。 */
+	phaseBusy?: boolean;
+	/** 练习「End」：Row 1 最右侧（space-between）。 */
+	onEnd?: () => void | Promise<void>;
+	/** End 进行中。 */
+	endBusy?: boolean;
 };
 
 /**
- * 顶部状态面板：Phase badge+描述（左）| SCORE（右）→ Countdown → Timeline。
- * 视线顺序：Phase → 剩余时间 → Turn/Next check → 得分（§21）。
+ * 顶部状态卡片：Row 1 阶段控制（练习 SegmentedControl / 竞赛 badge）| End →
+ * Row 2 事件式倒计时 + 得分（压缩单行）→ Row 3 Break→Fix 时间线。
  */
 export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 	const {
@@ -412,6 +389,11 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 		nextCheckAt,
 		score,
 		now,
+		canControlPhase,
+		onSetPhase,
+		phaseBusy,
+		onEnd,
+		endBusy,
 	} = props;
 	const meta = PHASE_META[phase] ?? PHASE_META.pending;
 	const state = computeTimelineState({
@@ -435,89 +417,99 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 		return Math.max(0, (t - now) / 1000);
 	};
 
-	// ── Countdown 区（§7：Break 主倒计时 / Fix 主 Next check、次 Fix ends）──
-	let countdownText = "-";
-	let countdownCaption = "remaining";
-	let countdownSecondary: string | null = null;
+	const practice = !!canControlPhase && !!onSetPhase;
+	const controllable = practice && (phase === "break" || phase === "fix");
 
+	// ── 事件式倒计时文案（与 event 赛事 RemainingTimer 同款）──
+	let countdownText = "Waiting to start";
 	if (phase === "break") {
-		countdownText = formatCountdown(secsUntil(breakEndsAt));
-		countdownCaption = "remaining";
+		countdownText = `Ends in: ${formatEventRemaining(secsUntil(breakEndsAt))}`;
 	} else if (phase === "fix") {
-		const next = secsUntil(nextCheckAt);
-		const fixEnd = secsUntil(fixEndsAt);
-		if (next == null) {
-			countdownText = "Pending";
-			countdownCaption = "next check";
-		} else {
-			countdownText = formatCountdown(next);
-			countdownCaption = "next check in";
-		}
-		countdownSecondary =
-			fixEnd != null ? `Fix ends in ${formatCountdown(fixEnd)}` : null;
+		countdownText = `Next check in: ${formatEventRemaining(secsUntil(nextCheckAt))}`;
 	} else if (phase === "ended") {
 		countdownText = "Finished";
-		countdownCaption = "";
-	} else {
-		// pending：无具体 start 时间 → Waiting to start（§15/§31）
-		countdownText = "Waiting to start";
-		countdownCaption = "";
 	}
 
 	return (
 		<section className="rounded border px-3 py-2">
-			{/* 第一行：Phase identity（左）| Score（右） */}
-			<div className="flex items-start justify-between gap-4 flex-wrap">
-				<div className="min-w-0">
-					<div className="flex items-center gap-2 flex-wrap">
-						<Label variant={meta.variant}>{meta.text}</Label>
+			{/* Row 1：阶段控制（SegmentedControl）| End —— space-between */}
+			<div className="flex items-center justify-between gap-4">
+				{controllable ? (
+					<div className="flex items-center gap-2 min-w-0">
+						<SegmentedControl
+							size="small"
+							aria-label="AWDP 阶段控制"
+							onChange={(index) => {
+								const target = index === 0 ? "break" : "fix";
+								if (target !== phase) {
+									onSetPhase(target);
+								}
+							}}
+						>
+							<SegmentedControl.Button
+								selected={phase === "break"}
+								disabled={phaseBusy}
+								leadingIcon={BugIcon}
+							>
+								Break
+							</SegmentedControl.Button>
+							<SegmentedControl.Button
+								selected={phase === "fix"}
+								disabled={phaseBusy}
+								leadingIcon={ToolsIcon}
+							>
+								Fix
+							</SegmentedControl.Button>
+						</SegmentedControl>
 						{phase === "fix" && (
 							<span className="text-xs font-semibold uppercase tracking-wide text-[var(--fgColor-muted)] tabular-nums">
 								Turn {currentRound} / {totalRounds}
 							</span>
 						)}
 					</div>
-					<p className="mt-0.5 text-xs text-[var(--fgColor-muted)]">
-						{meta.description}
-					</p>
-				</div>
-				<div className="text-right shrink-0">
-					<p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--fgColor-muted)]">
-						{phase === "ended" ? "Final Score" : "Score"}
-					</p>
-					<p className="text-xl leading-4 font-semibold tabular-nums text-[var(--fgColor-default)]">
-						{formatScore(score)}
-					</p>
-				</div>
+				) : (
+					<div className="flex items-center gap-2 flex-wrap min-w-0">
+						<Label variant={meta.variant}>{meta.text}</Label>
+						{phase === "fix" && (
+							<span className="text-xs font-semibold uppercase tracking-wide text-[var(--fgColor-muted)] tabular-nums">
+								Turn {currentRound} / {totalRounds}
+							</span>
+						)}
+						{!practice && (
+							<p className="text-xs text-[var(--fgColor-muted)]">
+								{meta.description}
+							</p>
+						)}
+					</div>
+				)}
+				{onEnd && (phase === "break" || phase === "fix") ? (
+					<Button
+						variant="danger"
+						size="small"
+						disabled={endBusy}
+						onClick={() => onEnd()}
+					>
+						{endBusy ? "停止中…" : "End"}
+					</Button>
+				) : null}
 			</div>
 
-			{/* 第二行：Countdown */}
-			<div className="mt-1.5">
-				<p className="text-xl leading-4 font-semibold tabular-nums text-[var(--fgColor-default)]">
+			{/* Row 2：事件式倒计时 | Score（压缩单行） */}
+			<div className="mt-1.5 flex items-baseline justify-between gap-4">
+				<p className="min-w-0 text-lg leading-5 font-semibold tabular-nums text-[var(--fgColor-default)]">
 					{countdownText}
 				</p>
-				{countdownCaption ? (
-					<p className="text-xs text-[var(--fgColor-muted)]">
-						{countdownCaption}
-					</p>
-				) : null}
-				{countdownSecondary ? (
-					<p className="mt-1 text-xs text-[var(--fgColor-muted)] tabular-nums">
-						{countdownSecondary}
-					</p>
-				) : null}
+				<p className="shrink-0 text-lg leading-5 font-semibold tabular-nums text-[var(--fgColor-default)]">
+					{formatScore(score)}
+					<span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--fgColor-muted)]">
+						{phase === "ended" ? "Final Score" : "Score"}
+					</span>
+				</p>
 			</div>
 
-			{/* 第三行：Break → Fix Timeline */}
+			{/* Row 3：Break → Fix Timeline */}
 			<div className="mt-1.5">
-				<AwdpTimeline
-					state={state}
-					phase={phase}
-					breakDurationSecs={breakDurationSecs}
-					fixDurationSecs={fixDurationSecs}
-					totalRounds={totalRounds}
-					currentRound={currentRound}
-				/>
+				<AwdpTimeline state={state} phase={phase} />
 			</div>
 		</section>
 	);

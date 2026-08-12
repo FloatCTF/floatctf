@@ -6,14 +6,33 @@
  *    Turn 分隔线（6 / 12+ turns）、marker 位置
  *  - 组件渲染：BREAK / FIX / ENDED 关键文案与 ARIA
  */
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Primer SegmentedControl 内部 useMedia（useResponsiveValue）依赖 window.matchMedia，
+// jsdom 未实现 → 测试前注入 stub。
+beforeAll(() => {
+	Object.defineProperty(window, "matchMedia", {
+		writable: true,
+		value: vi.fn().mockImplementation((query: string) => ({
+			matches: false,
+			media: query,
+			onchange: null,
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			dispatchEvent: vi.fn(),
+		})),
+	});
+});
 
 import {
 	AwdpPhaseOverview,
 	computeTimelineState,
 	formatCountdown,
 	formatDuration,
+	formatEventRemaining,
 	formatScore,
 } from "../AwdpPhaseOverview";
 
@@ -44,6 +63,23 @@ describe("formatDuration", () => {
 		expect(formatDuration(3600)).toBe("1h");
 		expect(formatDuration(5400)).toBe("1h 30m");
 		expect(formatDuration(0)).toBe("0m");
+	});
+});
+
+describe("formatEventRemaining", () => {
+	it("event 赛事同款 d/h/m/s 分段", () => {
+		expect(formatEventRemaining(900)).toBe("15m");
+		expect(formatEventRemaining(3599)).toBe("59m 59s");
+		expect(formatEventRemaining(3661)).toBe("1h 1m 1s");
+		expect(formatEventRemaining(5400)).toBe("1h 30m");
+		expect(formatEventRemaining(45)).toBe("45s");
+		expect(formatEventRemaining(86400 + 3600)).toBe("1d 1h");
+		expect(formatEventRemaining(0)).toBe("0s");
+	});
+	it("null/invalid → -", () => {
+		expect(formatEventRemaining(null)).toBe("-");
+		expect(formatEventRemaining(undefined)).toBe("-");
+		expect(formatEventRemaining(Number.NaN)).toBe("-");
 	});
 });
 
@@ -183,27 +219,28 @@ describe("AwdpPhaseOverview 渲染", () => {
 		now,
 	};
 
-	it("BREAK：badge / 描述 / countdown / Score / timeline ARIA", () => {
+	it("BREAK（竞赛）：badge / 描述 / 事件式倒计时 / Score / timeline ARIA", () => {
 		render(<AwdpPhaseOverview phase="break" {...base} />);
 		expect(screen.getByText("BREAK")).toBeDefined();
 		expect(
 			screen.getByText("Exploit the target and submit the flag"),
 		).toBeDefined();
+		// event 赛事同款倒计时文案：剩余 900s
+		expect(screen.getByText("Ends in: 15m")).toBeDefined();
 		expect(screen.getByText("Score")).toBeDefined();
 		expect(screen.getByText("1,000")).toBeDefined();
-		expect(screen.getByText("15:00")).toBeDefined(); // 900s remaining
-		expect(screen.getByText("remaining")).toBeDefined();
 		// Break 阶段不显示 Turn 文案
 		expect(screen.queryByText(/Turn \d/)).toBeNull();
 		const bar = screen.getByRole("progressbar");
 		expect(bar.getAttribute("aria-valuenow")).toBe("13"); // 900/7200≈12.5→13
 		expect(bar.getAttribute("aria-valuemin")).toBe("0");
 		expect(bar.getAttribute("aria-valuemax")).toBe("100");
-		expect(screen.getByText("15:00 / 30m")).toBeDefined();
-		expect(screen.getByText("1h 30m Fix · 6 turns")).toBeDefined();
+		// 竞赛模式无阶段控制/End
+		expect(screen.queryByRole("button", { name: /Fix/i })).toBeNull();
+		expect(screen.queryByRole("button", { name: /End/i })).toBeNull();
 	});
 
-	it("FIX：badge / Turn / next check / Completed", () => {
+	it("FIX（竞赛）：badge / Turn / next check / 事件式倒计时", () => {
 		render(
 			<AwdpPhaseOverview
 				phase="fix"
@@ -220,10 +257,8 @@ describe("AwdpPhaseOverview 渲染", () => {
 			screen.getByText("Patch the service before the next evaluation"),
 		).toBeDefined();
 		expect(screen.getAllByText("Turn 3 / 6").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("next check in")).toBeDefined();
-		expect(screen.getByText("05:00")).toBeDefined(); // 300s
-		expect(screen.getByText(/Fix ends in 1:25:00/)).toBeDefined();
-		expect(screen.getByText("Completed")).toBeDefined();
+		expect(screen.getByText("Next check in: 5m")).toBeDefined(); // 300s
+		expect(screen.getByText("Score")).toBeDefined();
 	});
 
 	it("ENDED：Final Score / Finished / 无 next check", () => {
@@ -232,8 +267,10 @@ describe("AwdpPhaseOverview 渲染", () => {
 		expect(screen.getByText("Final Score")).toBeDefined();
 		expect(screen.getByText("1,750")).toBeDefined();
 		expect(screen.getByText("Finished")).toBeDefined();
-		expect(screen.queryByText("next check in")).toBeNull();
-		expect(screen.getByText("6 / 6 turns")).toBeDefined();
+		expect(screen.queryByText(/Next check in/)).toBeNull();
+		expect(
+			screen.getByRole("progressbar").getAttribute("aria-valuenow"),
+		).toBe("100");
 	});
 
 	it("PENDING：Waiting to start / zero progress", () => {
@@ -250,5 +287,67 @@ describe("AwdpPhaseOverview 渲染", () => {
 		expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe(
 			"0",
 		);
+	});
+
+	it("练习模式：SegmentedControl Break|Fix + End（space-between 最右侧）", () => {
+		const onSetPhase = vi.fn();
+		const onEnd = vi.fn();
+		render(
+			<AwdpPhaseOverview
+				phase="break"
+				{...base}
+				canControlPhase
+				onSetPhase={onSetPhase}
+				onEnd={onEnd}
+			/>,
+		);
+		// 阶段控制按钮
+		expect(screen.getByRole("button", { name: /^Break$/ })).toBeDefined();
+		expect(screen.getByRole("button", { name: /^Fix$/ })).toBeDefined();
+		// End 在最右侧（space-between 最右侧元素）
+		const endBtn = screen.getByRole("button", { name: /^End$/ });
+		expect(endBtn).toBeDefined();
+		// 点击 Fix 切换阶段
+		fireEvent.click(screen.getByRole("button", { name: /^Fix$/ }));
+		expect(onSetPhase).toHaveBeenCalledWith("fix");
+		// 点击 End
+		fireEvent.click(endBtn);
+		expect(onEnd).toHaveBeenCalledTimes(1);
+	});
+
+	it("练习模式：当前阶段在 SegmentedControl 中 selected；phaseBusy 禁用按钮", () => {
+		const onSetPhase = vi.fn();
+		render(
+			<AwdpPhaseOverview
+				phase="fix"
+				{...base}
+				currentRound={2}
+				canControlPhase
+				onSetPhase={onSetPhase}
+				phaseBusy
+			/>,
+		);
+		const fixBtn = screen.getByRole("button", { name: /^Fix$/ });
+		expect(fixBtn.getAttribute("aria-current")).toBe("true");
+		expect(fixBtn.hasAttribute("disabled")).toBe(true);
+		expect(
+			screen.getByRole("button", { name: /^Break$/ }).hasAttribute("disabled"),
+		).toBe(true);
+		// Fix 阶段显示 Turn
+		expect(screen.getAllByText("Turn 2 / 6").length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("练习模式：点击当前阶段不改（same-phase no-op）", () => {
+		const onSetPhase = vi.fn();
+		render(
+			<AwdpPhaseOverview
+				phase="break"
+				{...base}
+				canControlPhase
+				onSetPhase={onSetPhase}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: /^Break$/ }));
+		expect(onSetPhase).not.toHaveBeenCalled();
 	});
 });

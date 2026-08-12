@@ -7,6 +7,7 @@ import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "@/routes/service/route";
 import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow } from "@/util";
+import { CheckIcon } from "@primer/octicons-react";
 
 export const Route = createFileRoute("/service/challenges/")({
 	component: RouteComponent,
@@ -36,6 +37,16 @@ function RouteComponent() {
 			field: "category",
 		},
 		{
+			accessorKey: "solved",
+			header: "Solved",
+			field: "solved",
+			renderCell: (row: ChallengesListItem) => {
+				return row.solved ? (
+					<CheckIcon size={16} fill="var(--fgColor-success)" />
+				) : null;
+			},
+		},
+		{
 			accessorKey: "author",
 			header: "Author",
 			field: "author",
@@ -60,7 +71,7 @@ function RouteComponent() {
 			},
 		},
 	];
-	const filterKeys = ["name", "category", "description"];
+	const filterKeys = ["name", "category", "description", "solved"];
 
 	return (
 		<GenericTable

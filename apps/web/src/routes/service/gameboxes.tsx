@@ -6,6 +6,7 @@ import { type GameBoxCatalogDto, awdpRunApi } from "@/api/awdpRuns";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
+import { CheckIcon } from "@primer/octicons-react";
 import { ServiceRouteGuard } from "./route";
 
 export const Route = createFileRoute("/service/gameboxes")({
@@ -75,6 +76,16 @@ function RouteComponent() {
 			},
 		},
 		{
+			accessorKey: "solved",
+			header: "Solved",
+			field: "solved",
+			renderCell: (row: GameBoxCatalogDto) => {
+				return row.solved ? (
+					<CheckIcon size={16} fill="var(--fgColor-success)" />
+				) : null;
+			},
+		},
+		{
 			accessorKey: "author",
 			header: "Author",
 			field: "author",
@@ -99,7 +110,7 @@ function RouteComponent() {
 			},
 		},
 	];
-	const filterKeys = ["name", "category", "description"];
+	const filterKeys = ["name", "category", "description", "solved"];
 
 	return (
 		<>

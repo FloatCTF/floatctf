@@ -289,6 +289,8 @@ pub struct GameBoxCatalogDto {
     pub recommended_pids_limit: i64,
     /// 当前 user 的 active practice run（若有）。
     pub active_training: Option<ActiveTrainingDto>,
+    /// 当前请求用户是否训练过该 GameBox（该用户对该 gamebox 的练习 run 至少启动过一次实例）。
+    pub solved: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

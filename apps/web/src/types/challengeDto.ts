@@ -17,6 +17,8 @@ export type ChallengesListItem = Omit<Challenges, "container_port"> & {
 	version?: string;
 	/** 包 manifest 作者（spec_json.author）。 */
 	author?: string;
+	/** 当前用户是否已解此题（选手列表接口返回；admin 恒 false）。 */
+	solved?: boolean;
 	build_status?: string;
 	image_ref?: string;
 	attachment?: ChallengeAttachmentDto;

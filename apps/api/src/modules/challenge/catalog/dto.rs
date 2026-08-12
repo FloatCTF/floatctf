@@ -43,6 +43,8 @@ pub struct ChallengesDto {
     pub recommended_cpu_millis: i64,
     pub recommended_memory_bytes: i64,
     pub recommended_pids_limit: i64,
+    /// 当前请求用户是否已解此题（选手列表接口按用户填充；admin/详情默认 false）。
+    pub solved: bool,
     /// 静态 flag 明文（secret）。仅 admin 接口填充；其他路径恒为 None。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub static_flag_value: Option<String>,
@@ -86,6 +88,7 @@ impl From<&challenges::Model> for ChallengesDto {
             recommended_cpu_millis: m.recommended_cpu_millis,
             recommended_memory_bytes: m.recommended_memory_bytes,
             recommended_pids_limit: m.recommended_pids_limit,
+            solved: false,           // 选手列表接口按用户覆盖；admin/详情无用户上下文
             static_flag_value: None, // secret：普通路径不返回
             attachment: m
                 .attachment_name

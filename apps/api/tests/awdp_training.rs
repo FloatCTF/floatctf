@@ -844,3 +844,72 @@ async fn practice_start_end_cycle() {
         .await;
     cleanup(&db).await;
 }
+
+/// 目录 Solved 列判定：该用户对该 gamebox 的练习 run **至少启动过一次实例** 才算。
+/// 冻结 run（目录点击创建、未点「开始」）不算；手动插入实例行后即算。
+#[tokio::test]
+async fn solved_gamebox_ids_require_started_instance() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let tag = format!("sol-{}", &Uuid::new_v4().to_string()[..8]);
+    let user_id = seed_user(&db, &tag).await;
+    let gb_id = seed_trainable_gamebox(&db, &tag).await;
+
+    use floatctf::modules::event::awdp::api::training::solved_gamebox_ids_for;
+
+    // 1. 冻结 run（无实例）：不算 solved。
+    let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
+        .await
+        .expect("create practice run");
+    let ids = solved_gamebox_ids_for(&db, user_id).await.expect("query");
+    assert!(!ids.contains(&gb_id), "冻结 run 无实例不应算 solved");
+
+    // 2. 手动插入 event_instances 根行 + awdp_instances 关联行 → solved。
+    let now = chrono::Utc::now().into();
+    let inst_id = Uuid::new_v4();
+    floatctf::entity::event_instances::ActiveModel {
+        id: Set(inst_id),
+        event_id: Set(run.event_id),
+        owner_user_id: Set(Some(user_id)),
+        owner_team_id: Set(None),
+        container_name: Set(format!("awdp-it-{}-{}", &tag, &inst_id.to_string()[..8])),
+        runtime_state: Set("running".into()),
+        runtime_generation: Set(1),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert event_instances");
+    floatctf::entity::awdp_instances::ActiveModel {
+        instance_id: Set(inst_id),
+        event_id: Set(run.event_id),
+        owner_user_id: Set(Some(user_id)),
+        owner_team_id: Set(None),
+        created_at: Set(now),
+        run_id: Set(run.id),
+        gamebox_id: Set(gb_id),
+    }
+    .insert(&db)
+    .await
+    .expect("insert awdp_instances");
+
+    let ids = solved_gamebox_ids_for(&db, user_id).await.expect("query");
+    assert!(ids.contains(&gb_id), "启动过实例应算 solved");
+
+    // 3. 其他用户视角不受影响。
+    let other_id = seed_user(&db, &format!("{tag}-o")).await;
+    let ids_other = solved_gamebox_ids_for(&db, other_id).await.expect("query");
+    assert!(!ids_other.contains(&gb_id), "他人不应算 solved");
+
+    // 清理（run 级联删 awdp_instances/event_instances）。
+    let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run.id)
+        .exec(&db)
+        .await;
+    cleanup(&db).await;
+}

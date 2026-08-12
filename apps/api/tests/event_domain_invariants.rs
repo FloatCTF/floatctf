@@ -711,3 +711,83 @@ async fn practice_solve_records_once_zero_points() {
 
     txn.rollback().await.ok();
 }
+
+/// 目录 Solved 列判定：个人 solve + 团队 solve（队友提交，队长经 event_team_members 也算）。
+#[tokio::test]
+async fn solved_challenge_ids_include_individual_and_team_solves() {
+    use floatctf::entity::{event_team_members, sea_orm_active_enums::EventTeamMemberRole};
+    use floatctf::modules::challenge::catalog::player::solved_challenge_ids_for;
+
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let txn = db.begin().await.expect("begin");
+
+    let practice = ensure_practice_jeopardy_event(&txn)
+        .await
+        .expect("practice");
+    let a = seed_user(&txn, "sol-a").await;
+    let b = seed_user(&txn, "sol-b").await;
+    let c = seed_user(&txn, "sol-c").await;
+    let ch1 = seed_challenge(&txn, "sol-1").await;
+    let ch2 = seed_challenge(&txn, "sol-2").await;
+
+    // 1. 个人 solve（练习事件）→ 本人算、无关用户不算。
+    jeopardy_challenge_solves::ActiveModel {
+        event_id: Set(practice.id),
+        challenge_id: Set(ch1.id),
+        user_id: Set(a.id),
+        team_id: Set(None),
+        obtained_points: Set(0.0),
+        bonus_points: Set(0.0),
+        ..Default::default()
+    }
+    .insert(&txn)
+    .await
+    .expect("individual solve");
+
+    let solved_a = solved_challenge_ids_for(&txn, a.id).await.expect("a");
+    assert!(solved_a.contains(&ch1.id), "个人 solve 应算");
+    let solved_c = solved_challenge_ids_for(&txn, c.id).await.expect("c");
+    assert!(!solved_c.contains(&ch1.id), "无关用户不算");
+
+    // 2. 团队 solve：b 提交（team_id 指向队伍），a 与 b 同队 → a 视角也算。
+    let ev = seed_jeopardy_event(&txn, ParticipantMode::Team, "sol-team").await;
+    let team = seed_team(&txn, ev.id, "sol-team").await;
+    for (i, uid) in [a.id, b.id].iter().enumerate() {
+        event_team_members::ActiveModel {
+            event_id: Set(ev.id),
+            team_id: Set(team.id),
+            user_id: Set(*uid),
+            role: Set(if i == 0 {
+                EventTeamMemberRole::Captain
+            } else {
+                EventTeamMemberRole::Member
+            }),
+            joined_at: Set(Utc::now().into()),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await
+        .expect("member");
+    }
+    jeopardy_challenge_solves::ActiveModel {
+        event_id: Set(ev.id),
+        challenge_id: Set(ch2.id),
+        user_id: Set(b.id),
+        team_id: Set(Some(team.id)),
+        obtained_points: Set(100.0),
+        bonus_points: Set(0.0),
+        ..Default::default()
+    }
+    .insert(&txn)
+    .await
+    .expect("team solve");
+
+    let solved_a2 = solved_challenge_ids_for(&txn, a.id).await.expect("a2");
+    assert!(solved_a2.contains(&ch2.id), "队友解题，队长视角应算");
+    let solved_c2 = solved_challenge_ids_for(&txn, c.id).await.expect("c2");
+    assert!(!solved_c2.contains(&ch2.id), "未入队用户不算");
+
+    txn.rollback().await.expect("rollback");
+}

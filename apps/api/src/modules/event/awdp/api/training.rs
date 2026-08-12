@@ -9,6 +9,7 @@
 //!   POST .../gameboxes/{gamebox_id}/break|patch|test-check；GET .../source
 
 use actix_web::web::{self, Json};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
@@ -17,7 +18,7 @@ use crate::api::FilterMapping;
 use crate::api::sea_orm_utils::{apply_filters, paginate_query};
 use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
-    entity::{awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase},
+    entity::{awdp_instances, awdp_runs, gameboxes, sea_orm_active_enums::AwdpPhase},
     modules::event::awdp::{
         AwdpError,
         api::dto::*,
@@ -31,7 +32,37 @@ use crate::{
         },
     },
 };
-use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, Value, sea_query::Expr};
+
+/// 当前用户是否训练过该 GameBox：该用户对该 gamebox 的练习 run 至少启动过一次实例
+/// （目录点击只创建冻结 run（无实例）不算；点过「开始」/ 训练过即算）。
+/// 用法：`Expr::cust_with_values(SQL, vec![Value::from(user_id)])`。
+const SOLVED_GAMEBOX_CONDITION_SQL: &str = r#"EXISTS (
+    SELECT 1 FROM public.awdp_instances i
+    WHERE i.gamebox_id = gameboxes.id
+      AND i.owner_user_id = $1
+)"#;
+const NOT_SOLVED_GAMEBOX_CONDITION_SQL: &str = r#"NOT EXISTS (
+    SELECT 1 FROM public.awdp_instances i
+    WHERE i.gamebox_id = gameboxes.id
+      AND i.owner_user_id = $1
+)"#;
+
+/// 取当前用户训练过（至少启动过一次实例）的 gamebox id 集合。
+pub async fn solved_gamebox_ids_for<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, sea_orm::DbErr> {
+    let rows = awdp_instances::Entity::find()
+        .filter(awdp_instances::Column::OwnerUserId.eq(user_id))
+        .select_only()
+        .column(awdp_instances::Column::GameboxId)
+        .distinct()
+        .into_tuple::<(Uuid,)>()
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().map(|(gamebox_id,)| gamebox_id).collect())
+}
 
 /// 练习动作留痕：写入 run 所属（虚拟训练）赛事的 event_logs，供 admin Logs Tab 查看。
 /// 留痕失败不阻塞用户操作。
@@ -107,6 +138,9 @@ pub async fn list_catalog(
     }
     let db = ctx.db.get_ref();
 
+    // 一次批量查询取当前用户训练过的 gamebox 集合（solved 列 + solved 筛选共用）。
+    let solved_gamebox_ids = solved_gamebox_ids_for(db, user.id).await?;
+
     // AWDP capability = 完整五列（source.zip 产物存在，DB CHECK 保证全有/全无），
     // 直接下沉到 WHERE，保证分页计数只统计 AWDP-capable 行。
     let stmt = gameboxes::Entity::find()
@@ -133,6 +167,23 @@ pub async fn list_catalog(
             key: "description",
             column: Box::new(|v: &str| {
                 Condition::all().add(gameboxes::Column::Description.contains(v))
+            }),
+        },
+        FilterMapping {
+            key: "solved",
+            column: Box::new(move |v: &str| {
+                let want_solved = matches!(
+                    v.trim().to_lowercase().as_str(),
+                    "true" | "1" | "yes" | "y" | "是"
+                );
+                Condition::all().add(Expr::cust_with_values(
+                    if want_solved {
+                        SOLVED_GAMEBOX_CONDITION_SQL
+                    } else {
+                        NOT_SOLVED_GAMEBOX_CONDITION_SQL
+                    },
+                    vec![Value::from(user.id)],
+                ))
             }),
         },
     ];
@@ -171,6 +222,7 @@ pub async fn list_catalog(
             recommended_cpu_millis: gb.recommended_cpu_millis,
             recommended_memory_bytes: gb.recommended_memory_bytes,
             recommended_pids_limit: gb.recommended_pids_limit,
+            solved: solved_gamebox_ids.contains(&gb.id),
             active_training,
         });
     }

@@ -57,6 +57,8 @@ export type GameBoxCatalogDto = {
 		phase: AwdpPhase;
 		score: number;
 	} | null;
+	/** 当前用户是否训练过该 GameBox（练习 run 至少启动过一次实例）。 */
+	solved: boolean;
 };
 
 /** Run 内逻辑实例。 */

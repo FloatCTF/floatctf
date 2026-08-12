@@ -44,6 +44,7 @@ async fn seed_event<C: sea_orm::ConnectionTrait + Send>(
     let event_id = Uuid::new_v4();
     let now = Utc::now();
     events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(event_id),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),

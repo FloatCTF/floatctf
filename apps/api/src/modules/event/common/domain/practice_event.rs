@@ -59,6 +59,7 @@ pub async fn ensure_practice_jeopardy_event<C: ConnectionTrait>(
         end_time: Set(None),
         rules: Set("do not cheat".into()),
         flag_prefix: Set(None),
+        is_virtual: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     };

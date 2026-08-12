@@ -40,16 +40,13 @@ pub async fn submit_flag(
         )));
     }
     // gamebox 归属：practice 必须是 run 自己的 gamebox；competition 必须挂载在本赛事。
-    match run.event_id {
-        None => {
-            if run.gamebox_id != Some(gamebox_id) {
-                return Err(AwdpError::Validation("gamebox 不属于该训练 run".into()));
-            }
+    if run.gamebox_id.is_some() {
+        if run.gamebox_id != Some(gamebox_id) {
+            return Err(AwdpError::Validation("gamebox 不属于该训练 run".into()));
         }
-        Some(event_id) => {
-            let _ = event_id;
-            // competition：gamebox 必须已挂载（runtime 解析路径也会校验）。
-        }
+    } else {
+        // competition：gamebox 必须已挂载（runtime 解析路径也会校验）。
+        let _ = run.event_id;
     }
 
     // 校验 flag（确定性 HMAC，双主体绑定）。

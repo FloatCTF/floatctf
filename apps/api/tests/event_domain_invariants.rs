@@ -13,11 +13,11 @@ use sea_orm::{
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awd_events, awd_network_allocations, challenge_instances, challenges, event_teams, events,
-    jeopardy_challenge_solves, jeopardy_event_challenges,
+    awd_events, awd_network_allocations, challenges, event_challenge_instance, event_instances,
+    event_teams, events, jeopardy_challenge_solves, jeopardy_event_challenges,
     sea_orm_active_enums::{
         AwdEventStatus, AwdNetworkAllocationKind, AwdPhase, EventFamily, EventPurpose,
-        InstanceStatus, ParticipantMode,
+        ParticipantMode,
     },
     users,
 };
@@ -128,6 +128,7 @@ async fn seed_jeopardy_event<C: ConnectionTrait>(
     let id = Uuid::new_v4();
     let now = Utc::now();
     events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(id),
         family: Set(EventFamily::Jeopardy),
         purpose: Set(EventPurpose::Competition),
@@ -169,6 +170,7 @@ async fn db_rejects_illegal_mode_combination() {
     let txn = db.begin().await.expect("begin");
     let now = Utc::now();
     let res = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
@@ -305,14 +307,11 @@ async fn db_rejects_cross_event_team_instance_and_solve() {
     .expect("event challenge");
 
     let inst = with_savepoint(&txn, "sp_cross_inst", async {
-        challenge_instances::ActiveModel {
+        event_challenge_instance::ActiveModel {
             id: Set(Uuid::new_v4()),
-            status: Set(InstanceStatus::Running),
             flag: Set("flag{x}".into()),
             challenge_id: Set(challenge.id),
             user_id: Set(user.id),
-            identifier: Set(format!("cross-{}", Uuid::new_v4().simple())),
-            destroy_at: Set((Utc::now() + Duration::hours(1)).into()),
             event_id: Set(event_a.id),
             team_id: Set(Some(team_b.id)),
             ..Default::default()
@@ -376,14 +375,11 @@ async fn db_enforces_participant_team_presence() {
 
     // Individual + team_id NOT NULL → reject (participant ownership)
     let bad_inst = with_savepoint(&txn, "sp_indiv_inst", async {
-        challenge_instances::ActiveModel {
+        event_challenge_instance::ActiveModel {
             id: Set(Uuid::new_v4()),
-            status: Set(InstanceStatus::Running),
             flag: Set("flag{i}".into()),
             challenge_id: Set(challenge.id),
             user_id: Set(user.id),
-            identifier: Set(format!("indiv-bad-{}", Uuid::new_v4().simple())),
-            destroy_at: Set((Utc::now() + Duration::hours(1)).into()),
             event_id: Set(indiv.id),
             team_id: Set(Some(indiv_team.id)),
             ..Default::default()
@@ -415,14 +411,11 @@ async fn db_enforces_participant_team_presence() {
 
     // Team + team_id NULL → reject
     let null_inst = with_savepoint(&txn, "sp_team_null_inst", async {
-        challenge_instances::ActiveModel {
+        event_challenge_instance::ActiveModel {
             id: Set(Uuid::new_v4()),
-            status: Set(InstanceStatus::Running),
             flag: Set("flag{t}".into()),
             challenge_id: Set(challenge.id),
             user_id: Set(user.id),
-            identifier: Set(format!("team-null-{}", Uuid::new_v4().simple())),
-            destroy_at: Set((Utc::now() + Duration::hours(1)).into()),
             event_id: Set(team_evt.id),
             team_id: Set(None),
             ..Default::default()
@@ -507,6 +500,7 @@ async fn db_awd_network_allocation_family_guard() {
     let awd_id = Uuid::new_v4();
     let now = Utc::now();
     events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(awd_id),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
@@ -635,14 +629,31 @@ async fn practice_solve_records_once_zero_points() {
     let challenge = seed_challenge(&txn, "prac-solve").await;
     let flag = "flag{practice}";
 
-    let instance = challenge_instances::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        status: Set(InstanceStatus::Running),
+    let instance_id = Uuid::new_v4();
+    event_instances::ActiveModel {
+        id: Set(instance_id),
+        event_id: Set(practice.id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        image_ref: Set(None),
+        container_id: Set(None),
+        container_name: Set(format!("JP-test-{}", instance_id.simple())),
+        runtime_state: Set("running".to_string()),
+        runtime_generation: Set(1),
+        created_at: Set(Utc::now().into()),
+        started_at: Set(Some(Utc::now().into())),
+        expires_at: Set(Some((Utc::now() + Duration::hours(1)).into())),
+        updated_at: Set(Utc::now().into()),
+        ..Default::default()
+    }
+    .insert(&txn)
+    .await
+    .expect("instance runtime");
+    let instance = event_challenge_instance::ActiveModel {
+        id: Set(instance_id),
         flag: Set(flag.into()),
         challenge_id: Set(challenge.id),
         user_id: Set(user.id),
-        identifier: Set(format!("JP-test-{}", Uuid::new_v4().simple())),
-        destroy_at: Set((Utc::now() + Duration::hours(1)).into()),
         event_id: Set(practice.id),
         team_id: Set(None),
         ..Default::default()

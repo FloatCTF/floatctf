@@ -8,7 +8,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::{
-    awdp_evaluations, awdp_instances, instances,
+    awdp_evaluations, awdp_instances, event_instances,
     sea_orm_active_enums::{AwdpEvaluationKind, AwdpEvaluationStatus},
 };
 use crate::modules::event::awdp::{AwdpError, AwdpResult};
@@ -168,7 +168,7 @@ pub async fn list_for_run_with_instances(
     Vec<(
         awdp_evaluations::Model,
         awdp_instances::Model,
-        instances::Model,
+        event_instances::Model,
     )>,
 > {
     let evals = list_for_run(db, run_id).await?;
@@ -179,7 +179,7 @@ pub async fn list_for_run_with_instances(
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?
             .ok_or_else(|| AwdpError::Internal("awdp instance missing".into()))?;
-        let inst = instances::Entity::find_by_id(ev.instance_id)
+        let inst = event_instances::Entity::find_by_id(ev.instance_id)
             .one(db)
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?

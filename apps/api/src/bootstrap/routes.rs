@@ -87,7 +87,9 @@ fn configure_admin_routes(cfg: &mut ServiceConfig) {
             // AWD 赛事级路由必须与 common 同 scope 注册，否则被吞（见 api/mod.rs 注释）
             .configure(crate::modules::event::awd::api::admin_events_routes)
             // AWDP 赛事级路由同组注册。
-            .configure(crate::modules::event::awdp::api::admin_events_routes),
+            .configure(crate::modules::event::awdp::api::admin_events_routes)
+            // 归一化实例：admin 赛事 Instance Tab（family 无关，服务于任意赛制赛事）。
+            .service(crate::modules::platform::operations::runtime_instances::get_event_instances),
     );
 
     // AWD 平台级路由（/api/admin/awd/*，无 events 前缀冲突）

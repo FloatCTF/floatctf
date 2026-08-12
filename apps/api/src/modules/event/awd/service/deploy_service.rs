@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::core::config::AwdStaticConfig;
 use crate::entity::{
-    awd_event_networks, awd_events, awd_gamebox_instances, awd_runtime_resources,
-    awd_team_networks, event_teams,
+    awd_event_networks, awd_events, awd_runtime_resources, awd_team_networks,
+    event_gamebox_instances, event_instances, event_teams,
     sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
 };
 use crate::modules::event::awd::{
@@ -402,45 +402,85 @@ async fn ensure_teams_and_gameboxes(
                     .await
                     .map_err(|e| AwdError::Database(e.to_string()))?;
 
-            let (instance_id, container_name) = if let Some(inst) = existing {
-                if inst.current_container_id.is_some()
-                    && matches!(
-                        inst.status,
-                        GameboxStatus::Ready | GameboxStatus::Running | GameboxStatus::Creating
+            // pair = (扩展 event_gamebox_instances, 归一化根 event_instances)。
+            // root.container_id 标识已有容器实现；重试（如 StartFailed）保留 id / generation。
+            let (instance_id, root_instance_id, container_name, runtime_generation) =
+                if let Some((inst, root)) = existing {
+                    if root.container_id.is_some()
+                        && matches!(
+                            inst.status,
+                            GameboxStatus::Ready | GameboxStatus::Running | GameboxStatus::Creating
+                        )
+                    {
+                        continue;
+                    }
+                    (
+                        inst.id,
+                        root.id,
+                        root.container_name.clone(),
+                        root.runtime_generation,
                     )
-                {
-                    continue;
-                }
-                (inst.id, inst.container_name)
-            } else {
-                let container_name = format!(
-                    "fctf-{}-t{}-team{}",
-                    &event_id.to_string()[..8],
-                    &eg.id.to_string()[..4],
-                    &team.id.to_string()[..4]
-                );
-                let id = Uuid::new_v4();
-                awd_gamebox_instances::ActiveModel {
-                    id: Set(id),
-                    event_id: Set(event_id),
-                    event_gamebox_id: Set(eg.id),
-                    team_id: Set(team.id),
-                    status: Set(GameboxStatus::Pending),
-                    container_name: Set(container_name.clone()),
-                    gamebox_ip: Set(gamebox_ip.parse().map_err(|e| {
-                        AwdError::Validation(format!("invalid gamebox_ip {gamebox_ip}: {e}"))
-                    })?),
-                    runtime_generation: Set(1),
-                    health_status: Set("unknown".to_string()),
-                    ..Default::default()
-                }
-                .insert(db)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-                (id, container_name)
-            };
+                } else {
+                    let container_name = format!(
+                        "fctf-{}-t{}-team{}",
+                        &event_id.to_string()[..8],
+                        &eg.id.to_string()[..4],
+                        &team.id.to_string()[..4]
+                    );
+                    let id = Uuid::new_v4();
+                    let now = chrono::Utc::now().into();
+                    // 单一归一化根：event_instances + event_gamebox_instances 同事务写入。
+                    // 镜像引用 = COALESCE(image_repo_digest, image_id)（同 effective_image_ref
+                    // 前两优先级；tag 不做根镜像引用）。
+                    let image_ref = resolved
+                        .gamebox
+                        .image_repo_digest
+                        .clone()
+                        .or_else(|| resolved.gamebox.image_id.clone());
+                    let txn = db
+                        .begin()
+                        .await
+                        .map_err(|e| AwdError::Database(e.to_string()))?;
+                    let root = event_instances::ActiveModel {
+                        id: Set(id),
+                        event_id: Set(event_id),
+                        owner_user_id: Set(None),
+                        owner_team_id: Set(Some(team.id)),
+                        image_ref: Set(image_ref),
+                        container_id: Set(None),
+                        container_name: Set(container_name.clone()),
+                        runtime_state: Set("pending".to_string()),
+                        runtime_generation: Set(1),
+                        created_at: Set(now),
+                        updated_at: Set(now),
+                        ..Default::default()
+                    }
+                    .insert(&txn)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                    event_gamebox_instances::ActiveModel {
+                        id: Set(id),
+                        instance_id: Set(root.id),
+                        event_id: Set(event_id),
+                        event_gamebox_id: Set(eg.id),
+                        team_id: Set(team.id),
+                        status: Set(GameboxStatus::Pending),
+                        gamebox_ip: Set(gamebox_ip.parse().map_err(|e| {
+                            AwdError::Validation(format!("invalid gamebox_ip {gamebox_ip}: {e}"))
+                        })?),
+                        health_status: Set("unknown".to_string()),
+                        ..Default::default()
+                    }
+                    .insert(&txn)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                    txn.commit()
+                        .await
+                        .map_err(|e| AwdError::Database(e.to_string()))?;
+                    (id, root.id, container_name, 1)
+                };
 
-            // Mark creating then create container（runtime_generation=1 首次部署）
+            // Mark creating then create container（首次部署 generation=1；重试沿用既有 generation）
             gamebox_set_status(db, instance_id, GameboxStatus::Creating).await?;
 
             let spec = gamebox_service::build_gamebox_runtime_spec(
@@ -454,7 +494,7 @@ async fn ensure_teams_and_gameboxes(
                 &gamebox_ip,
                 docker_network_name,
                 password.clone(),
-                1,
+                runtime_generation,
             )?;
 
             let handle = containers
@@ -464,10 +504,19 @@ async fn ensure_teams_and_gameboxes(
 
             match handle {
                 Ok(h) => {
-                    let mut active: awd_gamebox_instances::ActiveModel =
-                        awd_gamebox_instances::ActiveModel {
+                    // 容器创建成功：根写 container_id + running；扩展置 Ready
+                    gamebox_repo::update_runtime_root(
+                        db,
+                        root_instance_id,
+                        Some(&h.container_id),
+                        "running",
+                        None,
+                    )
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                    let mut active: event_gamebox_instances::ActiveModel =
+                        event_gamebox_instances::ActiveModel {
                             id: Set(instance_id),
-                            current_container_id: Set(Some(h.container_id)),
                             status: Set(GameboxStatus::Ready),
                             health_status: Set("unknown".to_string()),
                             ..Default::default()
@@ -479,6 +528,15 @@ async fn ensure_teams_and_gameboxes(
                 }
                 Err(e) => {
                     gamebox_set_status(db, instance_id, GameboxStatus::StartFailed).await?;
+                    // 根状态同步 failed（状态映射 start_failed → 'failed'）；best-effort。
+                    let _ = gamebox_repo::update_runtime_root(
+                        db,
+                        root_instance_id,
+                        None,
+                        "failed",
+                        None,
+                    )
+                    .await;
                     return Err(e);
                 }
             }
@@ -613,7 +671,7 @@ async fn gamebox_set_status(
     id: Uuid,
     status: GameboxStatus,
 ) -> AwdResult<()> {
-    let mut active: awd_gamebox_instances::ActiveModel = awd_gamebox_instances::ActiveModel {
+    let mut active: event_gamebox_instances::ActiveModel = event_gamebox_instances::ActiveModel {
         id: Set(id),
         status: Set(status),
         ..Default::default()

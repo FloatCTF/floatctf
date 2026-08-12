@@ -1,4 +1,6 @@
 import { Button, Label, ProgressBar, Spinner, TextInput } from "@primer/react";
+import type { InstancesDto as Instances } from "@/api/service/instances";
+
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
@@ -13,7 +15,7 @@ import {
 	challengeQueryOptions,
 } from "@/api/queries";
 import { useMsgBanner } from "@/components";
-import type { ChallengeInstances as Instances } from "@/entity";
+
 import { ServiceRouteGuard } from "@/routes/service/route";
 
 export const Route = createFileRoute("/service/challenges/$id/")({
@@ -134,7 +136,7 @@ function RouteComponent() {
 				{challengeStatus.isRunning ? (
 					<div className="w-full flex flex-col gap-2 mb-4">
 						<RemainingTimer
-							destroy_at={challengeStatus.instance.destroy_at}
+							destroy_at={challengeStatus.instance.destroy_at ?? ""}
 							onExpire={() => {
 								destroyInstance.mutate(challengeStatus.instance.id);
 							}}

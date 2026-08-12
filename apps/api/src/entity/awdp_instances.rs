@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub instance_id: Uuid,
-    pub event_id: Option<Uuid>,
+    pub event_id: Uuid,
     pub owner_user_id: Option<Uuid>,
     pub owner_team_id: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
@@ -27,6 +27,14 @@ pub enum Relation {
     )]
     AwdpRuns,
     #[sea_orm(
+        belongs_to = "super::event_instances::Entity",
+        from = "Column::InstanceId",
+        to = "super::event_instances::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventInstances,
+    #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "(Column::EventId, Column::OwnerTeamId)",
         to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
@@ -43,14 +51,6 @@ pub enum Relation {
     )]
     Gameboxes,
     #[sea_orm(
-        belongs_to = "super::instances::Entity",
-        from = "Column::InstanceId",
-        to = "super::instances::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Instances,
-    #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::OwnerUserId",
         to = "super::users::Column::Id",
@@ -66,6 +66,12 @@ impl Related<super::awdp_runs::Entity> for Entity {
     }
 }
 
+impl Related<super::event_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventInstances.def()
+    }
+}
+
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
@@ -75,12 +81,6 @@ impl Related<super::event_teams::Entity> for Entity {
 impl Related<super::gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Gameboxes.def()
-    }
-}
-
-impl Related<super::instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Instances.def()
     }
 }
 

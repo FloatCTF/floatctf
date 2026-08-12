@@ -7,13 +7,13 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_gamebox_instances, awd_wireguard_peers,
+    awd_wireguard_peers,
     sea_orm_active_enums::{AwdEventStatus, WgPeerStatus},
 };
 use crate::modules::event::awd::{
     AwdError, AwdResult,
     infrastructure::network::{AwdNetworkRuntime, PeerIdentity},
-    repo::event_repo,
+    repo::{event_repo, gamebox_repo},
 };
 use fcmc::AwdContainerRuntime;
 
@@ -47,27 +47,26 @@ pub async fn archive_event(
     }
 
     // 1. Stop and remove all GameBox containers
-    let instances = awd_gamebox_instances::Entity::find()
-        .filter(awd_gamebox_instances::Column::EventId.eq(event_id))
-        .all(db)
+    // pair：容器实现/名称在归一化根（event_instances）。
+    let instances = gamebox_repo::find_instances_by_event(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    for instance in &instances {
-        let target = instance
-            .current_container_id
+    for (_, root) in &instances {
+        let target = root
+            .container_id
             .as_deref()
-            .unwrap_or(instance.container_name.as_str());
+            .unwrap_or(root.container_name.as_str());
         if let Err(e) = containers.stop_container(target).await {
             info!(
                 "[Archive] stop {} ({}): {} — continuing remove",
-                target, instance.container_name, e
+                target, root.container_name, e
             );
         }
         if let Err(e) = containers.remove_container(target).await {
             info!(
                 "[Archive] remove {} ({}): {} — continuing",
-                target, instance.container_name, e
+                target, root.container_name, e
             );
         }
     }

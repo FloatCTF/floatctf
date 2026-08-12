@@ -25,7 +25,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_networks, awd_events, awd_gamebox_instances, awd_precheck_runs, awd_team_networks,
+    awd_event_networks, awd_events, awd_precheck_runs, awd_team_networks, event_gamebox_instances,
+    event_instances,
     sea_orm_active_enums::{AwdEventStatus, PrecheckStatus},
 };
 use crate::modules::event::awd::{
@@ -396,10 +397,11 @@ pub async fn run_precheck(
 
 /// P2-2 Docker 存活检查：FlagServer / JudgeServer 容器（名称含 kind）running；
 /// 所有 GameBox 实例（DB 行）inspect_container running。
+/// `instances` 为统一 pair：扩展（领域状态）+ 归一化根（容器实现/名称）。
 async fn check_containers(
     containers: &dyn AwdContainerRuntime,
     event_id: Uuid,
-    instances: &[awd_gamebox_instances::Model],
+    instances: &[(event_gamebox_instances::Model, event_instances::Model)],
 ) -> CheckReport {
     let mut report = CheckReport::default();
 
@@ -446,11 +448,11 @@ async fn check_containers(
             .notes
             .push(("gamebox".to_string(), "no GameBox instances".to_string()));
     }
-    for inst in instances {
-        let Some(container_id) = inst.current_container_id.as_deref() else {
+    for (_, root) in instances {
+        let Some(container_id) = root.container_id.as_deref() else {
             report.errors.push((
                 "gamebox".to_string(),
-                format!("{}: no current_container_id in DB", inst.container_name),
+                format!("{}: no container_id in DB", root.container_name),
             ));
             continue;
         };
@@ -459,7 +461,7 @@ async fn check_containers(
         match by_id {
             Ok(state) if state.running => {
                 report.notes.push((
-                    format!("gamebox:{}", inst.container_name),
+                    format!("gamebox:{}", root.container_name),
                     format!("running: {}", state.container_id),
                 ));
             }
@@ -467,15 +469,15 @@ async fn check_containers(
                 "gamebox".to_string(),
                 format!(
                     "{}: container not running (status: {})",
-                    inst.container_name, state.status
+                    root.container_name, state.status
                 ),
             )),
             Err(e) => {
                 // inspect 失败：回退按容器名在列表里找一次（container_id 可能因重置变化）。
-                match live_by_name.get(inst.container_name.as_str()) {
+                match live_by_name.get(root.container_name.as_str()) {
                     Some(state) if state.running => {
                         report.notes.push((
-                            format!("gamebox:{}", inst.container_name),
+                            format!("gamebox:{}", root.container_name),
                             format!("running (by name): {}", state.container_id),
                         ));
                     }
@@ -483,14 +485,14 @@ async fn check_containers(
                         "gamebox".to_string(),
                         format!(
                             "{}: container not running (status: {})",
-                            inst.container_name, state.status
+                            root.container_name, state.status
                         ),
                     )),
                     None => report.errors.push((
                         "gamebox".to_string(),
                         format!(
                             "{}: inspect_container({container_id}) failed: {e}",
-                            inst.container_name
+                            root.container_name
                         ),
                     )),
                 }
@@ -512,7 +514,7 @@ async fn check_ssh(
     containers: &dyn AwdContainerRuntime,
     crypto: &AwdCrypto,
     event_id: Uuid,
-    instances: &[awd_gamebox_instances::Model],
+    instances: &[(event_gamebox_instances::Model, event_instances::Model)],
 ) -> CheckReport {
     let mut report = CheckReport::default();
 
@@ -543,7 +545,7 @@ async fn check_ssh(
     }
 
     let runner = RealCommandRunner;
-    for inst in instances {
+    for (inst, root) in instances {
         // 解密 ssh_password（凭据完整性检查；解密结果仅用于校验，不参与 ssh 参数、不落日志）
         let network = match awd_team_networks::Entity::find()
             .filter(awd_team_networks::Column::EventId.eq(event_id))
@@ -557,7 +559,7 @@ async fn check_ssh(
                     "ssh".to_string(),
                     format!(
                         "{}: no awd_team_networks row for team {}",
-                        inst.container_name, inst.team_id
+                        root.container_name, inst.team_id
                     ),
                 ));
                 continue;
@@ -578,7 +580,7 @@ async fn check_ssh(
         if let Err(e) = crypto.decrypt(&blob, &aad) {
             report.errors.push((
                 "ssh".to_string(),
-                format!("{}: ssh_password 解密失败: {e}", inst.container_name),
+                format!("{}: ssh_password 解密失败: {e}", root.container_name),
             ));
             continue;
         }
@@ -601,7 +603,7 @@ async fn check_ssh(
                     "ssh".to_string(),
                     format!(
                         "{} ({}): 无法执行 ssh: {e}",
-                        inst.container_name, inst.gamebox_ip
+                        root.container_name, inst.gamebox_ip
                     ),
                 ));
                 continue;
@@ -609,7 +611,7 @@ async fn check_ssh(
         };
         if out.exit_code == 0 {
             report.notes.push((
-                format!("ssh:{}", inst.container_name),
+                format!("ssh:{}", root.container_name),
                 format!("{}: ssh 可达", inst.gamebox_ip),
             ));
         } else {
@@ -617,7 +619,7 @@ async fn check_ssh(
                 "ssh".to_string(),
                 format!(
                     "{} ({}): ssh 探测失败 (exit {}): {}",
-                    inst.container_name,
+                    root.container_name,
                     inst.gamebox_ip,
                     out.exit_code,
                     out.stderr.trim()

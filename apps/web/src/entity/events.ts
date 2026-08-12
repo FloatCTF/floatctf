@@ -16,4 +16,5 @@ export type Events = {
   purpose: EventPurpose;
   participant_mode: ParticipantMode;
   system_key?: string;
+  is_virtual: boolean;
 };

@@ -90,13 +90,6 @@ export enum GameboxStatus {
   Stopped = 'stopped',
 }
 
-export enum InstanceStatus {
-  Pending = 'pending',
-  Running = 'running',
-  Completed = 'completed',
-  Failed = 'failed',
-}
-
 export enum JudgeTaskStatus {
   Pending = 'pending',
   Running = 'running',

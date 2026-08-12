@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     core::AppConfig,
-    entity::{challenge_instances, event_teams, event_users, events, users},
+    entity::{event_challenge_instance, event_instances, event_teams, event_users, events, users},
     infrastructure::{WebDb, WebDocker},
     modules::event::common::domain::time_state::event_time_status_of,
 };
@@ -202,7 +202,9 @@ pub struct SubmitFlagRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModeInstanceResult {
-    pub instance: challenge_instances::Model,
+    pub instance: event_challenge_instance::Model,
+    /// 归一化运行时行（instances，id 与 instance 相同）。
+    pub runtime: event_instances::Model,
     pub challenge_name: String,
     pub nickname: String,
 }

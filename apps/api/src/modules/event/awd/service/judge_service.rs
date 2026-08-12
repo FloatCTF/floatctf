@@ -10,7 +10,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_gamebox_instances, awd_judge_batches, awd_judge_tasks, awd_team_bans,
+    awd_judge_batches, awd_judge_tasks, awd_team_bans, event_gamebox_instances,
     sea_orm_active_enums::{BanStatus, GameboxStatus, JudgeTaskStatus},
 };
 use crate::modules::event::awd::{
@@ -119,13 +119,13 @@ pub async fn create_batch(
         }
 
         for eg in &event_gameboxes {
-            // Find the instance for this team × EventGameBox
+            // Find the instance for this team × EventGameBox（pair：扩展 + 归一化根）
             let instance = instances
                 .iter()
-                .find(|i| i.team_id == team.id && i.event_gamebox_id == eg.id);
+                .find(|(ext, _)| ext.team_id == team.id && ext.event_gamebox_id == eg.id);
 
             let (instance_id, status) = match instance {
-                Some(inst) => {
+                Some((inst, _root)) => {
                     // Skip if resetting or not healthy
                     if inst.status == GameboxStatus::Resetting
                         || inst.status == GameboxStatus::Pending
@@ -232,8 +232,8 @@ pub async fn dispatch_batch(
         );
     }
 
-    let instances = awd_gamebox_instances::Entity::find()
-        .filter(awd_gamebox_instances::Column::Id.is_in(instance_ids))
+    let instances = event_gamebox_instances::Entity::find()
+        .filter(event_gamebox_instances::Column::Id.is_in(instance_ids))
         .all(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?

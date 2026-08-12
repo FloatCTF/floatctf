@@ -812,7 +812,7 @@ async fn build_run_dto(
         gamebox_name: gamebox.name.clone(),
         gamebox_category: gamebox.category.clone(),
         gamebox_description: gamebox.description.clone(),
-        event_id: run.event_id,
+        event_id: Some(run.event_id),
         phase: run.phase.clone(),
         break_duration_secs: run.break_duration_secs,
         fix_duration_secs: run.fix_duration_secs,

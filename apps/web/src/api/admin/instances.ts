@@ -1,5 +1,5 @@
 import { type QueryParams, type UniResponse, admin_api } from "@/api/axios";
-import type { ChallengeInstances as Instances } from "@/entity";
+import type { InstancesDto } from "@/api/service/instances";
 
 /**
  * 管理端统一实例条目（归一化视图）。
@@ -27,12 +27,21 @@ export type AdminInstanceRow = {
 };
 
 export const instanceAdminApi = {
+	/** 全局归一化实例列表（challenge + AWD/AWDP gamebox）。 */
 	fetch: async (
 		params: QueryParams = {},
 	): Promise<UniResponse<AdminInstanceRow[]>> => {
 		const res = await admin_api.get("/instances", { params });
 		return res.data;
 	},
+	/** 某赛事的归一化实例列表（admin 赛事 Instance Tab）。 */
+	listForEvent: async (
+		eventId: string,
+		params: QueryParams = {},
+	): Promise<UniResponse<AdminInstanceRow[]>> => {
+		const res = await admin_api.get(`/events/${eventId}/instances`, { params });
+		return res.data;
+	},
 };
 
-export type { Instances };
+export type { InstancesDto as Instances };

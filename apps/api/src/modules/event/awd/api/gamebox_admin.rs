@@ -668,8 +668,8 @@ pub async fn delete_event_gamebox(
         return Err(AppError::NotFound("EventGameBox not found".into()).into());
     }
 
-    let instance_count = crate::entity::awd_gamebox_instances::Entity::find()
-        .filter(crate::entity::awd_gamebox_instances::Column::EventGameboxId.eq(event_gamebox_id))
+    let instance_count = crate::entity::event_gamebox_instances::Entity::find()
+        .filter(crate::entity::event_gamebox_instances::Column::EventGameboxId.eq(event_gamebox_id))
         .count(db)
         .await
         .map_err(AppError::from)?;

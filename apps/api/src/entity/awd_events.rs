@@ -64,8 +64,6 @@ pub enum Relation {
     AwdFlagIssues,
     #[sea_orm(has_many = "super::awd_flag_submissions::Entity")]
     AwdFlagSubmissions,
-    #[sea_orm(has_many = "super::awd_gamebox_instances::Entity")]
-    AwdGameboxInstances,
     #[sea_orm(has_many = "super::awd_internal_token_rotations::Entity")]
     AwdInternalTokenRotations,
     #[sea_orm(has_many = "super::awd_judge_batches::Entity")]
@@ -90,6 +88,8 @@ pub enum Relation {
     AwdTeamNetworks,
     #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
     AwdWireguardPeers,
+    #[sea_orm(has_many = "super::event_gamebox_instances::Entity")]
+    EventGameboxInstances,
     #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
@@ -121,12 +121,6 @@ impl Related<super::awd_flag_issues::Entity> for Entity {
 impl Related<super::awd_flag_submissions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdFlagSubmissions.def()
-    }
-}
-
-impl Related<super::awd_gamebox_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdGameboxInstances.def()
     }
 }
 
@@ -199,6 +193,12 @@ impl Related<super::awd_team_networks::Entity> for Entity {
 impl Related<super::awd_wireguard_peers::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdWireguardPeers.def()
+    }
+}
+
+impl Related<super::event_gamebox_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventGameboxInstances.def()
     }
 }
 

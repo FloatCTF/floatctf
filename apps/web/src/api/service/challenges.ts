@@ -1,8 +1,8 @@
+import type { InstancesDto as Instances } from "./instances";
 import type {
 	ChallengeSets,
 	ChallengeWriteup,
 	Challenges,
-	ChallengeInstances as Instances,
 } from "@/entity";
 import type { ChallengeWriteupResult } from "@/routes/service/challenges/$id/writeup";
 import type { ChallengesListItem } from "@/types/challengeDto";

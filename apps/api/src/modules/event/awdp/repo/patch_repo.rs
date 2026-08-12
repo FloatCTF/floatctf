@@ -27,7 +27,7 @@ pub async fn create_submission(
     awdp_patch_submissions::ActiveModel {
         id: Set(Uuid::new_v4()),
         run_id: Set(run_id),
-        event_id: Set(event_id),
+        event_id: Set(Some(event_id)),
         instance_id: Set(instance_id),
         fix_round_id: Set(Some(fix_round_id)),
         user_id: Set(user_id),

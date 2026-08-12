@@ -1,4 +1,6 @@
 import { TriangleDownIcon } from "@primer/octicons-react";
+import type { InstancesDto as Instances } from "@/api/service/instances";
+
 import { Button, Label, SelectPanel, Spinner, TextInput } from "@primer/react";
 import { Banner, DataTable, Dialog, Table } from "@primer/react/experimental";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +13,7 @@ import { RemainingTimer } from "../../challenges/$id";
 import { serviceApi } from "@/api";
 import type { UniResponse } from "@/api/axios";
 import { useMsgBanner } from "@/components";
-import type { Challenges, ChallengeInstances as Instances } from "@/entity";
+
 import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow } from "@/util";
 import type { AxiosError } from "axios";
@@ -271,7 +273,7 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 					{challengeStatus.isRunning ? (
 						<div className="w-full flex flex-col gap-2 mb-4">
 							<RemainingTimer
-								destroy_at={challengeStatus.instance.destroy_at}
+								destroy_at={challengeStatus.instance.destroy_at ?? ""}
 								onExpire={() => {
 									refetch_instance({ cancelRefetch: true });
 									destroyInstance.mutate(challengeStatus.instance.id);

@@ -6,8 +6,8 @@ use sea_orm::Condition;
 
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
-    api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenge_instances, challenges, events, sea_orm_active_enums::InstanceStatus},
+    api::{FilterMapping, build_filter_condition, prelude::*},
+    entity::{challenges, event_challenge_instance, event_instances, events},
     modules::event::{
         common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::context::EventContextBuilder,
@@ -34,57 +34,58 @@ pub async fn get_instances(
             key: "id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    challenge_instances::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                    event_challenge_instance::Column::Id
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
         },
         FilterMapping {
             key: "status",
-            column: Box::new(|v| {
-                Condition::all().add(
-                    challenge_instances::Column::Status
-                        .eq(serde_json::from_str(v).unwrap_or(InstanceStatus::Running)),
-                )
-            }),
+            column: Box::new(|v| Condition::all().add(event_instances::Column::RuntimeState.eq(v))),
         },
         FilterMapping {
             key: "identifier",
             column: Box::new(|v| {
-                Condition::all().add(challenge_instances::Column::Identifier.contains(v))
+                Condition::all().add(event_instances::Column::ContainerName.contains(v))
             }),
         },
         FilterMapping {
             key: "challenge_id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    challenge_instances::Column::ChallengeId
+                    event_challenge_instance::Column::ChallengeId
                         .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
         },
     ];
 
-    let stmt = challenge_instances::Entity::find()
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(challenge_instances::Column::EventId.eq(practice.id))
-        .filter(challenge_instances::Column::UserId.eq(user.id));
-    let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
-    let stmt = stmt.order_by_desc(challenge_instances::Column::UpdatedAt);
+    let stmt = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::EventId.eq(practice.id))
+        .filter(event_challenge_instance::Column::UserId.eq(user.id))
+        .find_also_related(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"));
+    let stmt = if let Some(cond) = build_filter_condition(query_params.filter.clone(), &mappings) {
+        stmt.filter(cond)
+    } else {
+        stmt
+    };
+    let stmt = stmt.order_by_desc(event_instances::Column::UpdatedAt);
 
-    let (mut items, total_items) =
-        if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
-            paginate_query(stmt, ctx.db.get_ref(), limit, page).await?
-        } else {
-            let items = stmt.all(ctx.db.get_ref()).await?;
-            (items.clone(), items.len())
-        };
-
-    for item in &mut items {
-        item.flag.clear();
-    }
+    // SelectTwo 无法用 paginate_query（仅支持 Select<E>），手动分页。
+    let total_items = stmt.clone().count(ctx.db.get_ref()).await?;
+    let items = if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
+        stmt.limit(limit)
+            .offset((page.saturating_sub(1)) * limit)
+            .all(ctx.db.get_ref())
+            .await?
+    } else {
+        stmt.all(ctx.db.get_ref()).await?
+    };
+    let mut items = items;
 
     // 批量查询题目名称，避免逐行查询。
-    let challenge_ids: Vec<Uuid> = items.iter().map(|i| i.challenge_id).collect();
+    let challenge_ids: Vec<Uuid> = items.iter().map(|(i, _)| i.challenge_id).collect();
     let challenge_titles = if challenge_ids.is_empty() {
         std::collections::HashMap::new()
     } else {
@@ -102,18 +103,20 @@ pub async fn get_instances(
 
     let dtos: Vec<InstancesDto> = items
         .into_iter()
-        .map(|m| {
+        .filter_map(|(m, runtime)| {
+            let runtime = runtime?;
+            let mut dto = InstancesDto::from_pair(&m, &runtime);
+            dto.flag.clear();
             let challenge_id = m.challenge_id;
-            let dto = InstancesDto::from(m);
-            dto.with_names(
+            Some(dto.with_names(
                 challenge_titles.get(&challenge_id).cloned(),
                 Some(event_title.clone()),
                 Some(user_name.clone()),
-            )
+            ))
         })
         .collect();
 
-    query_params.total = Some(total_items);
+    query_params.total = Some(total_items as usize);
 
     UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
@@ -128,15 +131,18 @@ pub async fn get_instance(
     let instance_id = instance_id.into_inner();
     let user = user.into_inner();
 
-    let mut model = challenge_instances::Entity::find_by_id(instance_id)
-        .filter(challenge_instances::Column::UserId.eq(user.id))
+    let (model, runtime) = event_challenge_instance::Entity::find_by_id(instance_id)
+        .filter(event_challenge_instance::Column::UserId.eq(user.id))
+        .find_also_related(event_instances::Entity)
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+    let runtime = runtime.ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
 
-    model.flag.clear();
+    let mut dto = InstancesDto::from_pair(&model, &runtime);
+    dto.flag.clear();
 
-    UniResponse::ok(Some(model.into())).into()
+    UniResponse::ok(Some(dto)).into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -193,7 +199,15 @@ pub async fn launch_instance(
         )
         .await;
 
-    UniResponse::ok(Some(instance.into())).into()
+    // 补查运行时行构建 DTO（launch 已写入双表）。
+    let (_, runtime) = event_challenge_instance::Entity::find_by_id(instance.id)
+        .find_also_related(event_instances::Entity)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound("instance not found".into()))?;
+    let runtime = runtime.ok_or(AppError::NotFound("instance runtime not found".into()))?;
+
+    UniResponse::ok(Some(InstancesDto::from_pair(&instance, &runtime))).into()
 }
 
 /// DELETE /api/instances/{instance_id}
@@ -207,8 +221,8 @@ pub async fn destroy_instance(
     let instance_id = instance_id.into_inner();
 
     // 加载实例以解析所属赛事（练习或竞赛）。
-    let instance = challenge_instances::Entity::find_by_id(instance_id)
-        .filter(challenge_instances::Column::UserId.eq(user.id))
+    let instance = event_challenge_instance::Entity::find_by_id(instance_id)
+        .filter(event_challenge_instance::Column::UserId.eq(user.id))
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;

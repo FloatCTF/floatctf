@@ -8,7 +8,7 @@ use crate::modules::challenge::catalog::ChallengesDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenge_instances, challenges, sea_orm_active_enums::InstanceStatus},
+    entity::{challenges, event_challenge_instance, event_instances},
 };
 
 /// GET /api/challenges
@@ -99,13 +99,18 @@ pub async fn get_challenge_instance(
         )
         .await
         .map_err(|e| crate::api::AppError::Internal(e.to_string()))?;
-    let instance = challenge_instances::Entity::find()
-        .filter(challenge_instances::Column::ChallengeId.eq(challenge_id))
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(challenge_instances::Column::UserId.eq(user.id))
-        .filter(challenge_instances::Column::EventId.eq(practice.id))
+    let instance = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::ChallengeId.eq(challenge_id))
+        .filter(event_challenge_instance::Column::UserId.eq(user.id))
+        .filter(event_challenge_instance::Column::EventId.eq(practice.id))
+        .find_also_related(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"))
         .one(ctx.db.get_ref())
         .await?;
 
-    UniResponse::ok(instance.map(Into::into)).into()
+    let dto = instance.and_then(|(inst, runtime)| {
+        runtime.map(|runtime| InstancesDto::from_pair(&inst, &runtime))
+    });
+
+    UniResponse::ok(dto).into()
 }

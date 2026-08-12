@@ -28,7 +28,7 @@ pub async fn create_score_event(
     let model = awdp_score_events::ActiveModel {
         id: Set(Uuid::new_v4()),
         run_id: Set(run_id),
-        event_id: Set(event_id),
+        event_id: Set(Some(event_id)),
         user_id: Set(user_id),
         team_id: Set(team_id),
         gamebox_id: Set(gamebox_id),

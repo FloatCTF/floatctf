@@ -62,7 +62,7 @@ pub async fn get_my_gameboxes(
 
     let response: Vec<GameBoxResponse> = instances
         .into_iter()
-        .map(|i| GameBoxResponse {
+        .map(|(i, root)| GameBoxResponse {
             id: i.id,
             team_id: i.team_id,
             event_gamebox_id: i.event_gamebox_id,
@@ -73,7 +73,7 @@ pub async fn get_my_gameboxes(
                 .unwrap_or_default(),
             status: format!("{:?}", i.status).to_lowercase(),
             gamebox_ip: i.gamebox_ip.ip().to_string(),
-            container_name: i.container_name,
+            container_name: root.container_name,
             health_status: i.health_status,
         })
         .collect();
@@ -176,10 +176,11 @@ pub async fn submit_flag(
         .ok_or_else(|| AppError::NotFound("No active round".into()))?;
 
     // 从 Instance → EventGameBox 解析计分配置（§28：攻击分属于 EventGameBox）
-    let instance = gamebox_repo::find_instance_by_id(ctx.db.get_ref(), gamebox_instance_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .unwrap();
+    let (instance, _root) =
+        gamebox_repo::find_instance_by_id(ctx.db.get_ref(), gamebox_instance_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .unwrap();
     let resolved =
         crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
             ctx.db.get_ref(),
@@ -266,7 +267,7 @@ pub async fn get_ssh_config(
             .map_err(|e| AppError::Database(e.to_string()))?;
 
     let mut info = Vec::with_capacity(instances.len());
-    for inst in instances {
+    for (inst, root) in instances {
         let resolved =
             crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
                 ctx.db.get_ref(),
@@ -278,7 +279,7 @@ pub async fn get_ssh_config(
             id: inst.id,
             gamebox_ip: inst.gamebox_ip.ip().to_string(),
             username: resolved.username.clone(),
-            container_name: inst.container_name,
+            container_name: root.container_name,
             health_status: inst.health_status,
         });
     }

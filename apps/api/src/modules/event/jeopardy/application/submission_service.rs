@@ -10,7 +10,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenge_instances, challenges, sea_orm_active_enums::InstanceStatus, users},
+    entity::{challenges, event_challenge_instance, event_instances, users},
     infrastructure::settings::get_setting,
     modules::event::jeopardy::{
         application::instance_service::InstanceService,
@@ -64,11 +64,13 @@ impl JeopardySubmissionService {
 
         let txn = self.db.begin().await?;
 
-        let instance = challenge_instances::Entity::find_by_id(req.instance_id)
-            .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+        let instance = event_challenge_instance::Entity::find_by_id(req.instance_id)
+            .find_also_related(event_instances::Entity)
+            .filter(event_instances::Column::RuntimeState.eq("running"))
             .one(&txn)
             .await?
-            .ok_or_else(|| anyhow!("no instance"))?;
+            .ok_or_else(|| anyhow!("no instance"))?
+            .0;
 
         // Team instances are launched by one member but any teammate may submit.
         // Ownership is enforced via team membership + event join checks at the strategy layer.
@@ -162,11 +164,9 @@ mod team_duplicate_solve_tests {
     };
 
     use crate::entity::{
-        challenges, event_team_members, event_teams, event_users, events,
-        jeopardy_challenge_solves, jeopardy_event_challenges,
-        sea_orm_active_enums::{
-            EventFamily, EventPurpose, EventTeamMemberRole, InstanceStatus, ParticipantMode,
-        },
+        challenges, event_challenge_instance, event_instances, event_team_members, event_teams,
+        event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
     };
 
     fn db_url() -> String {
@@ -188,6 +188,7 @@ mod team_duplicate_solve_tests {
         let now = Utc::now();
         let event_id = Uuid::new_v4();
         events::ActiveModel {
+            is_virtual: Set(false),
             id: Set(event_id),
             family: Set(EventFamily::Jeopardy),
             purpose: Set(EventPurpose::Competition),
@@ -287,14 +288,30 @@ mod team_duplicate_solve_tests {
 
         let flag = format!("flag{{{tag}}}");
         let instance_a = Uuid::new_v4();
-        challenge_instances::ActiveModel {
+        event_instances::ActiveModel {
             id: Set(instance_a),
-            status: Set(InstanceStatus::Running),
+            event_id: Set(event_id),
+            owner_user_id: Set(Some(user_a)),
+            owner_team_id: Set(Some(team_id)),
+            image_ref: Set(None),
+            container_id: Set(None),
+            container_name: Set(format!("JT-a-{tag}")),
+            runtime_state: Set("running".to_string()),
+            runtime_generation: Set(1),
+            created_at: Set(now.into()),
+            started_at: Set(Some(now.into())),
+            expires_at: Set(Some((now + Duration::hours(1)).into())),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("inst-a runtime");
+        event_challenge_instance::ActiveModel {
+            id: Set(instance_a),
             flag: Set(flag.clone()),
             challenge_id: Set(challenge_id),
             user_id: Set(user_a),
-            identifier: Set(format!("JT-a-{tag}")),
-            destroy_at: Set((now + Duration::hours(1)).into()),
             event_id: Set(event_id),
             team_id: Set(Some(team_id)),
             ..Default::default()
@@ -333,14 +350,30 @@ mod team_duplicate_solve_tests {
         assert!(points_after_a > 0.0, "first solve awards points");
 
         let instance_b = Uuid::new_v4();
-        challenge_instances::ActiveModel {
+        event_instances::ActiveModel {
             id: Set(instance_b),
-            status: Set(InstanceStatus::Running),
+            event_id: Set(event_id),
+            owner_user_id: Set(Some(user_b)),
+            owner_team_id: Set(Some(team_id)),
+            image_ref: Set(None),
+            container_id: Set(None),
+            container_name: Set(format!("JT-b-{tag}")),
+            runtime_state: Set("running".to_string()),
+            runtime_generation: Set(1),
+            created_at: Set(now.into()),
+            started_at: Set(Some(now.into())),
+            expires_at: Set(Some((now + Duration::hours(1)).into())),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("inst-b runtime");
+        event_challenge_instance::ActiveModel {
+            id: Set(instance_b),
             flag: Set(flag.clone()),
             challenge_id: Set(challenge_id),
             user_id: Set(user_b),
-            identifier: Set(format!("JT-b-{tag}")),
-            destroy_at: Set((now + Duration::hours(1)).into()),
             event_id: Set(event_id),
             team_id: Set(Some(team_id)),
             ..Default::default()
@@ -401,11 +434,13 @@ pub async fn submit_practice(
 
     use crate::entity::jeopardy_challenge_solves;
 
-    let instance = challenge_instances::Entity::find_by_id(instance_id)
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+    let instance = event_challenge_instance::Entity::find_by_id(instance_id)
+        .find_also_related(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"))
         .one(db)
         .await?
-        .ok_or_else(|| anyhow!("no instance"))?;
+        .ok_or_else(|| anyhow!("no instance"))?
+        .0;
 
     let challenge_id = instance.challenge_id;
     let event_id = instance.event_id;

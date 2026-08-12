@@ -1,8 +1,8 @@
+import type { InstancesDto as Instances } from "./instances";
 import type {
     EventAnnouncements,
     EventTeams,
     EventUsers,
-    ChallengeInstances as Instances,
 } from "@/entity";
 import type { EventInfo } from "@/routes/service/events";
 import type { EventChallengeResult } from "@/routes/service/events/jeopardy.$id/challenges";

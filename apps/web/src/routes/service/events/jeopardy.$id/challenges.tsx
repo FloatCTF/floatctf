@@ -1,3 +1,4 @@
+import type { InstancesDto as Instances } from "@/api/service/instances";
 import {
 	CheckIcon,
 	SparkleFillIcon,
@@ -18,7 +19,7 @@ import { RemainingTimer } from "../../challenges/$id";
 
 import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
-import type { ChallengeInstances as Instances } from "@/entity";
+
 import type { ChallengesListItem } from "@/types/challengeDto";
 import type { AxiosError } from "axios";
 export const Route = createFileRoute("/service/events/jeopardy/$id/challenges")(
@@ -343,7 +344,7 @@ function ChallengeDialog({
 					{challengeStatus.isRunning ? (
 						<div className="w-full flex flex-col gap-2 mb-4">
 							<RemainingTimer
-								destroy_at={challengeStatus.instance.destroy_at}
+								destroy_at={challengeStatus.instance.destroy_at ?? ""}
 								onExpire={() => {
 									refetch_instance({ cancelRefetch: true });
 									destroyInstance.mutate(challengeStatus.instance.id);

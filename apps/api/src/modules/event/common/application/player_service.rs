@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenge_instances, challenges, event_announcements, event_team_members, event_teams,
+        challenges, event_announcements, event_challenge_instance, event_team_members, event_teams,
         event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
         sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
         users,
@@ -67,7 +67,7 @@ pub struct EventChallengeResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventInstanceResult {
-    pub instance: challenge_instances::Model,
+    pub instance: event_challenge_instance::Model,
     pub challenge_name: String,
     pub user_nickname: String,
 }
@@ -322,7 +322,7 @@ pub async fn get_challenge_instance(
     event_id: Uuid,
     challenge_id: Uuid,
     user: users::Model,
-) -> Result<challenge_instances::Model, AppError> {
+) -> Result<crate::modules::event::jeopardy::api::InstancesDto, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
@@ -338,9 +338,11 @@ pub async fn get_challenge_instance(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    jeopardy_instance::get_instance_by_challenge_id(&event_ctx, challenge_id)
+    let result = jeopardy_instance::get_instance_by_challenge_id(&event_ctx, challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))
+        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))?;
+
+    Ok(crate::modules::event::jeopardy::api::InstancesDto::from_pair(&result.0, &result.1))
 }
 
 // ── Team membership workflows ─────────────────────────────────────────────

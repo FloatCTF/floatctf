@@ -30,6 +30,7 @@ pub struct Model {
     pub participant_mode: ParticipantMode,
     #[sea_orm(column_type = "Text", nullable, unique)]
     pub system_key: Option<String>,
+    pub is_virtual: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -44,10 +45,12 @@ pub enum Relation {
     AwdpEvents,
     #[sea_orm(has_one = "super::awdp_runs::Entity")]
     AwdpRuns,
-    #[sea_orm(has_many = "super::challenge_instances::Entity")]
-    ChallengeInstances,
     #[sea_orm(has_many = "super::event_announcements::Entity")]
     EventAnnouncements,
+    #[sea_orm(has_many = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
+    #[sea_orm(has_many = "super::event_instances::Entity")]
+    EventInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
     EventLogs,
     #[sea_orm(has_many = "super::event_team_members::Entity")]
@@ -94,15 +97,21 @@ impl Related<super::awdp_runs::Entity> for Entity {
     }
 }
 
-impl Related<super::challenge_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeInstances.def()
-    }
-}
-
 impl Related<super::event_announcements::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventAnnouncements.def()
+    }
+}
+
+impl Related<super::event_challenge_instance::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventChallengeInstance.def()
+    }
+}
+
+impl Related<super::event_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventInstances.def()
     }
 }
 

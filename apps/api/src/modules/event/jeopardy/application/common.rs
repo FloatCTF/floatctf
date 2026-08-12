@@ -3,7 +3,7 @@
 pub use anyhow::{Context, Result, anyhow};
 
 use crate::{
-    entity::{challenge_instances, users},
+    entity::{event_challenge_instance, users},
     infrastructure::settings::get_setting,
     infrastructure::{WebDb, WebDocker},
     modules::event::jeopardy::application::instance_service::InstanceService,
@@ -23,7 +23,7 @@ pub async fn launch_instance(
     user_id: Uuid,
     team_id: Option<Uuid>,
     flag_prefix: Option<String>,
-) -> anyhow::Result<challenge_instances::Model> {
+) -> anyhow::Result<event_challenge_instance::Model> {
     let service = InstanceService::with_docker(db.get_ref().clone(), docker.get_ref().clone());
     service
         .launch(

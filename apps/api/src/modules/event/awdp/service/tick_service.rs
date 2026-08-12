@@ -46,9 +46,7 @@ pub async fn tick_once(
         match run.phase {
             AwdpPhase::Pending => {
                 // competition run：start_time 到点才 Break（admin start 已在 handler 内立即转 Break）。
-                let Some(event_id) = run.event_id else {
-                    continue;
-                };
+                let event_id = run.event_id;
                 let event = events::Entity::find_by_id(event_id)
                     .one(db)
                     .await

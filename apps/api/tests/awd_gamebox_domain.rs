@@ -14,8 +14,8 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use uuid::Uuid;
 
 use floatctf::entity::{
-    awd_event_gameboxes, awd_event_networks, awd_events, awd_gamebox_instances, awd_team_networks,
-    awdp_event_gameboxes, event_teams, events, gameboxes, sea_orm_active_enums,
+    awd_event_gameboxes, awd_event_networks, awd_events, awd_team_networks, awdp_event_gameboxes,
+    event_gamebox_instances, event_teams, events, gameboxes, sea_orm_active_enums,
     sea_orm_active_enums::{
         AwdEventStatus, AwdPhase, EventFamily, EventPurpose, GameboxStatus, ParticipantMode,
     },
@@ -58,6 +58,7 @@ async fn cleanup_domain_fixtures(db: &sea_orm::DatabaseConnection) {
 async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(event_id),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
@@ -497,17 +498,35 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
     let eg_id = seed_event_gamebox(&db, event_id, gb_id, 10, 100).await;
 
     let instance_id = Uuid::new_v4();
+    let root_id = Uuid::new_v4();
     let now = chrono::Utc::now();
-    awd_gamebox_instances::ActiveModel {
+    // 归一化：先插根表（运行时身份），再插 AWD 关联（instance_id → 根）。
+    floatctf::entity::event_instances::ActiveModel {
+        id: Set(root_id),
+        event_id: Set(event_id),
+        owner_user_id: Set(None),
+        owner_team_id: Set(Some(team_id)),
+        image_ref: Set(Some("img:v1".into())),
+        container_id: Set(Some("cid-old".into())),
+        container_name: Set(format!("fctf-gb-reset-{}", &event_id.to_string()[..8])),
+        runtime_state: Set("running".to_string()),
+        runtime_generation: Set(1),
+        created_at: Set(now.into()),
+        started_at: Set(Some(now.into())),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert root");
+    event_gamebox_instances::ActiveModel {
         id: Set(instance_id),
+        instance_id: Set(root_id),
         event_id: Set(event_id),
         event_gamebox_id: Set(eg_id),
         team_id: Set(team_id),
         status: Set(GameboxStatus::Ready),
-        container_name: Set(format!("fctf-gb-reset-{}", &event_id.to_string()[..8])),
         gamebox_ip: Set("10.42.1.10".parse().unwrap()),
-        runtime_generation: Set(1),
-        current_container_id: Set(Some("cid-old".into())),
         health_status: Set("healthy".into()),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -531,7 +550,7 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
     .await;
     result.expect("reset succeeds");
 
-    let inst = floatctf::entity::awd_gamebox_instances::Entity::find_by_id(instance_id)
+    let inst = floatctf::entity::event_gamebox_instances::Entity::find_by_id(instance_id)
         .one(&db)
         .await
         .expect("reload")
@@ -540,11 +559,17 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
     assert_eq!(inst.event_gamebox_id, eg_id);
     assert_eq!(inst.team_id, team_id);
     assert_eq!(inst.gamebox_ip.to_string(), "10.42.1.10/32");
-    assert_eq!(inst.runtime_generation, 2);
-    let new_cid = inst.current_container_id.as_deref().expect("new container");
+    assert_eq!(inst.status, GameboxStatus::Ready);
+    // 运行时身份在根表：generation +1、container_id 更新。
+    let root = floatctf::entity::event_instances::Entity::find_by_id(inst.instance_id)
+        .one(&db)
+        .await
+        .expect("root reload")
+        .expect("root exists");
+    assert_eq!(root.runtime_generation, 2);
+    let new_cid = root.container_id.as_deref().expect("new container");
     assert_ne!(new_cid, "cid-old");
     assert!(new_cid.starts_with("cid-new-"));
-    assert_eq!(inst.status, GameboxStatus::Ready);
 
     let recorded = runtime.last_reset_spec.lock().unwrap().clone();
     let spec = recorded.expect("reset spec recorded");
@@ -664,6 +689,7 @@ async fn delete_awdp_referenced_gamebox_rejected() {
     let now = chrono::Utc::now();
     let event_id = Uuid::new_v4();
     events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(event_id),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Practice),

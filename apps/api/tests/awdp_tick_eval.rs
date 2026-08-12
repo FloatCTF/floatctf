@@ -115,6 +115,7 @@ async fn seed_event_and_gamebox_with_judge(
 ) -> (Uuid, Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Competition),
@@ -489,6 +490,7 @@ async fn tick_starts_pending_event_at_start_time() {
     // 事件 start_time 在过去、未手动开始 → tick 自动建 run 并进入 Break。
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Competition),

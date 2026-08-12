@@ -69,7 +69,7 @@ async fn manual_check_locked(
     docker: &Docker,
     run_id: Uuid,
     instance_id: Uuid,
-    instance: &crate::entity::instances::Model,
+    instance: &crate::entity::event_instances::Model,
 ) -> AwdpResult<ManualCheckResult> {
     let evaluation = evaluation_repo::create_manual(db, run_id, instance_id).await?;
 

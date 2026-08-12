@@ -1,5 +1,6 @@
-export type Instances = {
+export type EventInstances = {
   id: string;
+  event_id: string;
   owner_user_id?: string;
   owner_team_id?: string;
   image_ref?: string;

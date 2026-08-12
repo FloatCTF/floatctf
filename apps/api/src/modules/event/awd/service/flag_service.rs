@@ -172,8 +172,8 @@ pub async fn validate_submission(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("Invalid or expired flag".into()))?;
 
-    // 4. Get GameBox instance to find victim team
-    let instance = gamebox_repo::find_instance_by_id(db, issue.gamebox_instance_id)
+    // 4. Get GameBox instance to find victim team（pair：扩展 + 归一化根）
+    let (instance, _root) = gamebox_repo::find_instance_by_id(db, issue.gamebox_instance_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;

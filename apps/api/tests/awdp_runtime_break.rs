@@ -107,6 +107,7 @@ async fn seed_competition_run_in_break(
 ) -> (Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Competition),
@@ -601,6 +602,7 @@ async fn team_shares_instance_and_score() {
     // Team 事件（competition team）。
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Competition),

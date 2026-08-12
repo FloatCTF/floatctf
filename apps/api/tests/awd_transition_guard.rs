@@ -78,6 +78,7 @@ async fn seed_event_network<C: ConnectionTrait + Send>(
 async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, awd_events::Model) {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        is_virtual: Set(false),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
         participant_mode: Set(ParticipantMode::Team),

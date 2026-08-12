@@ -7,7 +7,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_gamebox_instances, awd_reset_records, awd_team_networks,
+    awd_reset_records, awd_team_networks, event_gamebox_instances,
     sea_orm_active_enums::{GameboxStatus, ScoreEventType},
 };
 use crate::modules::event::awd::{
@@ -66,7 +66,8 @@ pub async fn execute_reset(
     }
 
     // 2. Load instance（先解析真实 team_id，再按 actor 做 ownership 校验）
-    let instance = gamebox_repo::find_instance_by_id(db, ctx.instance_id)
+    // pair：扩展（AWD 领域状态）+ 归一化根（容器实现/代际/名称）。
+    let (instance, root) = gamebox_repo::find_instance_by_id(db, ctx.instance_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;
@@ -137,7 +138,7 @@ pub async fn execute_reset(
     // 8. Set reset protection window
     let protection_until =
         chrono::Utc::now() + chrono::Duration::seconds(awd_event.reset_protection_secs as i64);
-    let mut active: awd_gamebox_instances::ActiveModel = awd_gamebox_instances::ActiveModel {
+    let mut active: event_gamebox_instances::ActiveModel = event_gamebox_instances::ActiveModel {
         id: Set(ctx.instance_id),
         reset_protection_until: Set(Some(protection_until.into())),
         ..Default::default()
@@ -173,8 +174,8 @@ pub async fn execute_reset(
         gamebox_service::decrypt_team_ssh_password(&crypto, ctx.event_id, &team_net).await?;
 
     // logical identity 不变（id / event_gamebox_id / team_id / IP / credential），
-    // runtime_generation + 1（§20/§24）
-    let next_generation = instance.runtime_generation + 1;
+    // runtime_generation + 1（§20/§24；代际存于归一化根）
+    let next_generation = root.runtime_generation + 1;
     let recreate_spec = gamebox_service::build_gamebox_runtime_spec(
         &resolved,
         &awd_event,
@@ -182,7 +183,7 @@ pub async fn execute_reset(
         instance.id,
         instance.event_gamebox_id,
         instance.team_id,
-        &instance.container_name,
+        &root.container_name,
         &instance.gamebox_ip.ip().to_string(),
         &network_name,
         password,
@@ -195,22 +196,30 @@ pub async fn execute_reset(
             team_id: instance.team_id,
             event_gamebox_id: instance.event_gamebox_id,
             instance_id: instance.id,
-            container_name: instance.container_name.clone(),
+            container_name: root.container_name.clone(),
             recreate_spec,
         })
         .await
     {
         Ok(handle) => {
-            let mut inst: awd_gamebox_instances::ActiveModel = awd_gamebox_instances::ActiveModel {
+            // 扩展：Ready；归一化根：container_id + generation + running
+            let inst: event_gamebox_instances::ActiveModel = event_gamebox_instances::ActiveModel {
                 id: Set(ctx.instance_id),
-                current_container_id: Set(Some(handle.container_id)),
-                runtime_generation: Set(next_generation),
                 status: Set(GameboxStatus::Ready),
                 ..Default::default()
             };
             inst.update(db)
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?;
+            gamebox_repo::update_runtime_root(
+                db,
+                root.id,
+                Some(&handle.container_id),
+                "running",
+                Some(next_generation),
+            )
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
         }
         Err(e) => {
             error!("GameBox docker reset failed: {}", e);

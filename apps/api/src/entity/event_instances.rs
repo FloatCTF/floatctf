@@ -4,10 +4,11 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "instances")]
+#[sea_orm(table_name = "event_instances")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    pub event_id: Uuid,
     pub owner_user_id: Option<Uuid>,
     pub owner_team_id: Option<Uuid>,
     #[sea_orm(column_type = "Text", nullable)]
@@ -34,6 +35,26 @@ pub enum Relation {
     AwdpInstances,
     #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
     AwdpPatchSubmissions,
+    #[sea_orm(has_one = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
+    #[sea_orm(has_one = "super::event_gamebox_instances::Entity")]
+    EventGameboxInstances,
+    #[sea_orm(
+        belongs_to = "super::event_teams::Entity",
+        from = "(Column::EventId, Column::OwnerTeamId)",
+        to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventTeams,
+    #[sea_orm(
+        belongs_to = "super::events::Entity",
+        from = "Column::EventId",
+        to = "super::events::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    Events,
     #[sea_orm(has_many = "super::instance_endpoints::Entity")]
     InstanceEndpoints,
     #[sea_orm(
@@ -61,6 +82,30 @@ impl Related<super::awdp_instances::Entity> for Entity {
 impl Related<super::awdp_patch_submissions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpPatchSubmissions.def()
+    }
+}
+
+impl Related<super::event_challenge_instance::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventChallengeInstance.def()
+    }
+}
+
+impl Related<super::event_gamebox_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventGameboxInstances.def()
+    }
+}
+
+impl Related<super::event_teams::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventTeams.def()
+    }
+}
+
+impl Related<super::events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Events.def()
     }
 }
 

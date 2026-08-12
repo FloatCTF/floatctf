@@ -1,19 +1,21 @@
 import { Button } from "@primer/react";
+import type { InstancesDto as Instances } from "@/api/service/instances";
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
-import type { ChallengeInstances as Instances } from "@/entity";
+
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 
 /** 列表页展示类型：实例基础字段 + 关联名称（后端计算字段）。 */
 type InstanceRow = Instances & {
-	challenge_title?: string;
-	event_title?: string;
-	user_name?: string;
+	challenge_title?: string | null;
+	event_title?: string | null;
+	user_name?: string | null;
 };
 
 export const Route = createFileRoute("/service/instances")({

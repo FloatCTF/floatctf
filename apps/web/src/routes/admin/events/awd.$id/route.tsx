@@ -96,6 +96,9 @@ function RouteComponent() {
 						<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
 							Ops
 						</RouterNavItem>
+						<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
+							Instance
+						</RouterNavItem>
 						{event.family === EventFamily.Awd && (
 							<RouterNavItem to="/admin/events/awd/$id/teams" params={{ id }}>
 								Teams

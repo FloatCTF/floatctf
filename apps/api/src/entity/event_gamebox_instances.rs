@@ -6,15 +6,13 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "awd_gamebox_instances")]
+#[sea_orm(table_name = "event_gamebox_instances")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub event_id: Uuid,
     pub team_id: Uuid,
     pub status: GameboxStatus,
-    #[sea_orm(unique)]
-    pub container_name: String,
     #[sea_orm(column_type = "custom(\"inet\")")]
     pub gamebox_ip: IpNetwork,
     pub health_status: String,
@@ -24,8 +22,8 @@ pub struct Model {
     pub updated_at: DateTimeWithTimeZone,
     pub deleted_at: Option<DateTimeWithTimeZone>,
     pub event_gamebox_id: Uuid,
-    pub runtime_generation: i64,
-    pub current_container_id: Option<String>,
+    #[sea_orm(unique)]
+    pub instance_id: Uuid,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -56,6 +54,14 @@ pub enum Relation {
     AwdResetRecords,
     #[sea_orm(has_many = "super::awd_score_events::Entity")]
     AwdScoreEvents,
+    #[sea_orm(
+        belongs_to = "super::event_instances::Entity",
+        from = "Column::InstanceId",
+        to = "super::event_instances::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventInstances,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "Column::TeamId",
@@ -105,6 +111,12 @@ impl Related<super::awd_reset_records::Entity> for Entity {
 impl Related<super::awd_score_events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdScoreEvents.def()
+    }
+}
+
+impl Related<super::event_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventInstances.def()
     }
 }
 

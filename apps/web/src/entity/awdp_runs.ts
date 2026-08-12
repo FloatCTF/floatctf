@@ -2,7 +2,7 @@ import type { AwdpPhase } from './sea_orm_active_enums';
 
 export type AwdpRuns = {
   id: string;
-  event_id?: string;
+  event_id: string;
   gamebox_id?: string;
   owner_user_id?: string;
   owner_team_id?: string;

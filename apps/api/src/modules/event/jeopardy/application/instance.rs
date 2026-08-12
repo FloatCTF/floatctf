@@ -5,8 +5,9 @@ use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use uuid::Uuid;
 
 use crate::entity::{
-    challenge_instances, challenges, jeopardy_challenge_solves, jeopardy_event_challenges,
-    sea_orm_active_enums::{EventPurpose, InstanceStatus, ParticipantMode},
+    challenges, event_challenge_instance, event_instances, jeopardy_challenge_solves,
+    jeopardy_event_challenges,
+    sea_orm_active_enums::{EventPurpose, ParticipantMode},
     users,
 };
 use crate::modules::event::jeopardy::application::{
@@ -21,7 +22,7 @@ use crate::modules::event::jeopardy::domain::solve::SolveSubject;
 pub async fn launch_instance(
     ctx: &EventContext,
     challenge_id: Uuid,
-) -> Result<challenge_instances::Model> {
+) -> Result<event_challenge_instance::Model> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
 
@@ -50,13 +51,16 @@ pub async fn launch_instance(
             .ok_or_else(|| anyhow!("challenge is not in this event"))?;
     }
 
-    let mut running_q = challenge_instances::Entity::find()
-        .filter(challenge_instances::Column::EventId.eq(event_id))
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running));
+    let mut running_q = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::EventId.eq(event_id))
+        .inner_join(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"));
     running_q = match participant.subject {
-        SolveSubject::User => running_q.filter(challenge_instances::Column::UserId.eq(user_id)),
+        SolveSubject::User => {
+            running_q.filter(event_challenge_instance::Column::UserId.eq(user_id))
+        }
         SolveSubject::Team => {
-            running_q.filter(challenge_instances::Column::TeamId.eq(team_id.expect("team")))
+            running_q.filter(event_challenge_instance::Column::TeamId.eq(team_id.expect("team")))
         }
     };
     let running_count = running_q.count(db).await?;
@@ -72,14 +76,17 @@ pub async fn launch_instance(
         ));
     }
 
-    let mut existing_q = challenge_instances::Entity::find()
-        .filter(challenge_instances::Column::EventId.eq(event_id))
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(challenge_instances::Column::ChallengeId.eq(challenge_id));
+    let mut existing_q = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::EventId.eq(event_id))
+        .inner_join(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"))
+        .filter(event_challenge_instance::Column::ChallengeId.eq(challenge_id));
     existing_q = match participant.subject {
-        SolveSubject::User => existing_q.filter(challenge_instances::Column::UserId.eq(user_id)),
+        SolveSubject::User => {
+            existing_q.filter(event_challenge_instance::Column::UserId.eq(user_id))
+        }
         SolveSubject::Team => {
-            existing_q.filter(challenge_instances::Column::TeamId.eq(team_id.expect("team")))
+            existing_q.filter(event_challenge_instance::Column::TeamId.eq(team_id.expect("team")))
         }
     };
     if let Some(instance) = existing_q.one(db).await? {
@@ -147,40 +154,66 @@ pub async fn get_instances(ctx: &EventContext) -> Result<Vec<ModeInstanceResult>
 
     match participant.subject {
         SolveSubject::User => {
-            let data = challenge_instances::Entity::find()
-                .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
-                .filter(challenge_instances::Column::UserId.eq(ctx.user.id))
-                .filter(challenge_instances::Column::EventId.eq(ctx.event.id))
+            let data = event_challenge_instance::Entity::find()
+                .filter(event_challenge_instance::Column::UserId.eq(ctx.user.id))
+                .filter(event_challenge_instance::Column::EventId.eq(ctx.event.id))
+                .find_also_related(event_instances::Entity)
                 .find_also_related(challenges::Entity)
-                .find_also_related(users::Entity)
+                .filter(event_instances::Column::RuntimeState.eq("running"))
                 .all(db)
                 .await?;
 
+            // 昵称单独批量水合（find_also_related 最多支持 3 实体）。
+            let user_ids: Vec<Uuid> = data.iter().map(|(i, _, _)| i.user_id).collect();
+            let mut nickname_by_id = std::collections::HashMap::new();
+            if !user_ids.is_empty() {
+                for user in users::Entity::find()
+                    .filter(users::Column::Id.is_in(user_ids))
+                    .all(db)
+                    .await?
+                {
+                    nickname_by_id.insert(user.id, user.nickname);
+                }
+            }
+
             Ok(data
                 .into_iter()
-                .map(|(instance, challenge_opt, user_opt)| ModeInstanceResult {
-                    instance,
-                    challenge_name: challenge_opt.map(|c| c.name).unwrap_or_default(),
-                    nickname: user_opt.map(|u| u.nickname).unwrap_or_default(),
+                .filter_map(|(instance, runtime_opt, challenge_opt)| {
+                    runtime_opt.map(|runtime| {
+                        let nickname = nickname_by_id
+                            .get(&instance.user_id)
+                            .cloned()
+                            .unwrap_or_default();
+                        ModeInstanceResult {
+                            instance,
+                            runtime,
+                            challenge_name: challenge_opt.map(|c| c.name).unwrap_or_default(),
+                            nickname,
+                        }
+                    })
                 })
                 .collect())
         }
         SolveSubject::Team => {
             let team_id = participant.team_id.expect("team");
-            let data = challenge_instances::Entity::find()
-                .filter(challenge_instances::Column::EventId.eq(ctx.event.id))
-                .filter(challenge_instances::Column::TeamId.eq(team_id))
-                .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
+            let data = event_challenge_instance::Entity::find()
+                .filter(event_challenge_instance::Column::EventId.eq(ctx.event.id))
+                .filter(event_challenge_instance::Column::TeamId.eq(team_id))
+                .find_also_related(event_instances::Entity)
                 .find_also_related(challenges::Entity)
+                .filter(event_instances::Column::RuntimeState.eq("running"))
                 .all(db)
                 .await?;
 
             Ok(data
                 .into_iter()
-                .map(|(instance, challenge_opt)| ModeInstanceResult {
-                    instance,
-                    challenge_name: challenge_opt.map(|c| c.name).unwrap_or_default(),
-                    nickname: "team_".to_string(),
+                .filter_map(|(instance, runtime_opt, challenge_opt)| {
+                    runtime_opt.map(|runtime| ModeInstanceResult {
+                        instance,
+                        runtime,
+                        challenge_name: challenge_opt.map(|c| c.name).unwrap_or_default(),
+                        nickname: "team_".to_string(),
+                    })
                 })
                 .collect())
         }
@@ -191,7 +224,7 @@ pub async fn get_instances(ctx: &EventContext) -> Result<Vec<ModeInstanceResult>
 pub async fn get_instance_by_challenge_id(
     ctx: &EventContext,
     challenge_id: Uuid,
-) -> Result<challenge_instances::Model> {
+) -> Result<(event_challenge_instance::Model, event_instances::Model)> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
 
@@ -203,19 +236,22 @@ pub async fn get_instance_by_challenge_id(
     let participant = resolve_participant(ctx).await?;
     let db = ctx.db.get_ref();
 
-    let mut q = challenge_instances::Entity::find()
-        .filter(challenge_instances::Column::EventId.eq(ctx.event.id))
-        .filter(challenge_instances::Column::Status.eq(InstanceStatus::Running))
-        .filter(challenge_instances::Column::ChallengeId.eq(challenge_id));
+    let mut q = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::EventId.eq(ctx.event.id))
+        .filter(event_challenge_instance::Column::ChallengeId.eq(challenge_id))
+        .find_also_related(event_instances::Entity)
+        .filter(event_instances::Column::RuntimeState.eq("running"));
 
     q = match participant.subject {
-        SolveSubject::User => q.filter(challenge_instances::Column::UserId.eq(ctx.user.id)),
-        SolveSubject::Team => {
-            q.filter(challenge_instances::Column::TeamId.eq(participant.team_id.expect("team")))
-        }
+        SolveSubject::User => q.filter(event_challenge_instance::Column::UserId.eq(ctx.user.id)),
+        SolveSubject::Team => q.filter(
+            event_challenge_instance::Column::TeamId.eq(participant.team_id.expect("team")),
+        ),
     };
 
-    q.one(db).await?.ok_or_else(|| anyhow!("no instance"))
+    let (instance, runtime) = q.one(db).await?.ok_or_else(|| anyhow!("no instance"))?;
+    let runtime = runtime.ok_or_else(|| anyhow!("no runtime for instance"))?;
+    Ok((instance, runtime))
 }
 
 /// 当前用户的逐题解题状态（战队模式按战队作用域）。

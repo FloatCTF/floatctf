@@ -95,6 +95,12 @@ function RouteComponent() {
                 >
                     Data Present
                 </RouterNavItem>
+                <RouterNavItem
+                    to="/admin/events/jeopardy/$id/instance"
+                    params={{ id }}
+                >
+                    Instance
+                </RouterNavItem>
             </UnderlineNav>
             <EventContext.Provider value={event}>
                 <Outlet /> {/* 普通 TanStack Router 的 Outlet */}

@@ -45,6 +45,7 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
 async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        is_virtual: Set(false),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
         participant_mode: Set(ParticipantMode::Team),
@@ -120,8 +121,8 @@ async fn cleanup_event(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
         .filter(awd_rounds::Column::EventId.eq(event_id))
         .exec(db)
         .await;
-    let _ = floatctf::entity::awd_gamebox_instances::Entity::delete_many()
-        .filter(floatctf::entity::awd_gamebox_instances::Column::EventId.eq(event_id))
+    let _ = floatctf::entity::event_gamebox_instances::Entity::delete_many()
+        .filter(floatctf::entity::event_gamebox_instances::Column::EventId.eq(event_id))
         .exec(db)
         .await;
     let _ = floatctf::entity::awd_event_gameboxes::Entity::delete_many()
@@ -416,7 +417,7 @@ async fn seed_submission_fixture(
     Uuid, // flag_issue_id
 ) {
     use floatctf::entity::{
-        awd_event_gameboxes, awd_flag_issues, awd_gamebox_instances, awd_rounds, event_teams,
+        awd_event_gameboxes, awd_flag_issues, awd_rounds, event_gamebox_instances, event_teams,
         gameboxes,
         sea_orm_active_enums::{
             AwdPhase, EventFamily, EventPurpose, GameboxStatus, ParticipantMode, RoundStatus,
@@ -542,18 +543,35 @@ async fn seed_submission_fixture(
     .await
     .expect("insert event_gamebox");
 
-    // Instance（logical identity；container 只是 runtime）
+    // Instance（归一化：根表 = 运行时；AWD 关联 = 领域状态）
     let instance_id = Uuid::new_v4();
-    awd_gamebox_instances::ActiveModel {
+    let root_id = Uuid::new_v4();
+    floatctf::entity::event_instances::ActiveModel {
+        id: Set(root_id),
+        event_id: Set(event_id),
+        owner_user_id: Set(None),
+        owner_team_id: Set(Some(victim_team_id)),
+        image_ref: Set(Some("img:v1".into())),
+        container_id: Set(Some(format!("cid-{tag}"))),
+        container_name: Set(format!("fctf-gb-{}-{tag}", &event_id.to_string()[..8])),
+        runtime_state: Set("running".to_string()),
+        runtime_generation: Set(1),
+        created_at: Set(now.into()),
+        started_at: Set(Some(now.into())),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("insert root");
+    event_gamebox_instances::ActiveModel {
         id: Set(instance_id),
+        instance_id: Set(root_id),
         event_id: Set(event_id),
         event_gamebox_id: Set(event_gamebox_id),
         team_id: Set(victim_team_id),
         status: Set(GameboxStatus::Ready),
-        container_name: Set(format!("fctf-gb-{}-{tag}", &event_id.to_string()[..8])),
         gamebox_ip: Set("10.42.1.10".parse().unwrap()),
-        runtime_generation: Set(1),
-        current_container_id: Set(Some(format!("cid-{tag}"))),
         health_status: Set("healthy".into()),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),

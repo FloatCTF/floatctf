@@ -131,6 +131,7 @@ async fn seed_user(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
 async fn seed_run_in_break(db: &sea_orm::DatabaseConnection, tag: &str) -> (Uuid, Uuid, Uuid) {
     let base = chrono::Utc::now();
     let event = events::ActiveModel {
+        is_virtual: Set(false),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Competition),

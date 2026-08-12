@@ -163,6 +163,7 @@ pub async fn create_event(
         ));
     }
     let new_event = events::ActiveModel {
+        is_virtual: Set(false),
         family: Set(mode.family),
         purpose: Set(mode.purpose),
         participant_mode: Set(mode.participant_mode),

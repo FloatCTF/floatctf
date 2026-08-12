@@ -42,8 +42,6 @@ pub enum Relation {
     AwdpRuns,
     #[sea_orm(has_many = "super::awdp_score_events::Entity")]
     AwdpScoreEvents,
-    #[sea_orm(has_many = "super::challenge_instances::Entity")]
-    ChallengeInstances,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
     #[sea_orm(has_many = "super::discussion_comments::Entity")]
@@ -52,6 +50,10 @@ pub enum Relation {
     DiscussionLikes,
     #[sea_orm(has_many = "super::discussions::Entity")]
     Discussions,
+    #[sea_orm(has_many = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
+    #[sea_orm(has_many = "super::event_instances::Entity")]
+    EventInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
     EventLogs,
     #[sea_orm(has_many = "super::event_team_members::Entity")]
@@ -60,8 +62,6 @@ pub enum Relation {
     EventUsers,
     #[sea_orm(has_many = "super::event_writeup::Entity")]
     EventWriteup,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
     #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
     JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::logs::Entity")]
@@ -122,12 +122,6 @@ impl Related<super::awdp_score_events::Entity> for Entity {
     }
 }
 
-impl Related<super::challenge_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeInstances.def()
-    }
-}
-
 impl Related<super::challenge_writeup::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ChallengeWriteup.def()
@@ -152,6 +146,18 @@ impl Related<super::discussions::Entity> for Entity {
     }
 }
 
+impl Related<super::event_challenge_instance::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventChallengeInstance.def()
+    }
+}
+
+impl Related<super::event_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventInstances.def()
+    }
+}
+
 impl Related<super::event_logs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventLogs.def()
@@ -173,12 +179,6 @@ impl Related<super::event_users::Entity> for Entity {
 impl Related<super::event_writeup::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventWriteup.def()
-    }
-}
-
-impl Related<super::instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Instances.def()
     }
 }
 

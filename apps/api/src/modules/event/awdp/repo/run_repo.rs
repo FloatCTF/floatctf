@@ -10,7 +10,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::entity::{awdp_runs, events, sea_orm_active_enums::AwdpPhase};
+use crate::entity::{awdp_runs, events, gameboxes, sea_orm_active_enums::AwdpPhase, users};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::{AwdpConfig, AwdpPhaseExt},
@@ -33,7 +33,77 @@ pub async fn require_by_id<C: ConnectionTrait>(
         .ok_or_else(|| AwdpError::NotFound(format!("awdp run {run_id} not found")))
 }
 
-/// 创建 practice run：gamebox × owner_user（个人练习，无 event）。
+/// 幂等确保 (user, gamebox) 的虚拟训练 event 存在（AWDP practice 挂靠 event 维度）。
+/// system_key = 'awdp-practice:{user_id}:{gamebox_id}'（唯一，并发安全）。
+/// 虚拟 event：family=awdp, purpose=practice, participant_mode=individual，
+/// hidden=true + is_virtual=true（不出现在赛事列表）。
+pub async fn ensure_practice_event(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    gamebox_id: Uuid,
+) -> AwdpResult<Uuid> {
+    let system_key = format!("awdp-practice:{user_id}:{gamebox_id}");
+
+    let find = || async {
+        events::Entity::find()
+            .filter(events::Column::SystemKey.eq(&system_key))
+            .one(db)
+            .await
+            .map(|e| e.map(|e| e.id))
+    };
+    if let Some(id) = find()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+    {
+        return Ok(id);
+    }
+
+    let now = Utc::now().fixed_offset();
+    let title = {
+        let nickname = users::Entity::find_by_id(user_id)
+            .one(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .map(|u| u.nickname)
+            .unwrap_or_else(|| "user".into());
+        let gb_name = gameboxes::Entity::find_by_id(gamebox_id)
+            .one(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .map(|g| g.name)
+            .unwrap_or_else(|| "GameBox".into());
+        format!("{nickname} 的 {gb_name} 训练场")
+    };
+
+    let model = events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        family: Set(crate::entity::sea_orm_active_enums::EventFamily::Awdp),
+        purpose: Set(crate::entity::sea_orm_active_enums::EventPurpose::Practice),
+        participant_mode: Set(crate::entity::sea_orm_active_enums::ParticipantMode::Individual),
+        system_key: Set(Some(system_key.clone())),
+        title: Set(title),
+        description: Set(Some("AWDP 训练（虚拟赛事）".into())),
+        hidden: Set(true),
+        allow_join: Set(false),
+        start_time: Set(now),
+        end_time: Set(None),
+        rules: Set(String::new()),
+        flag_prefix: Set(None),
+        is_virtual: Set(true),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+    match model.insert(db).await {
+        Ok(m) => Ok(m.id),
+        // 并发 ensure：system_key 唯一冲突 → 重新查询。
+        Err(_) => find()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .ok_or_else(|| AwdpError::Database("virtual event create race".into())),
+    }
+}
+
+/// 创建 practice run：gamebox × owner_user（个人练习，挂虚拟 event）。
 /// 创建即 phase=Break（started_at / break_ends_at / next_action_at 由 snapshot 计算）。
 /// 同 user+gamebox 已有 active run → Conflict（幂等判定在 service 层完成）。
 pub async fn create_practice_run(
@@ -43,11 +113,12 @@ pub async fn create_practice_run(
     config: &AwdpConfig,
 ) -> AwdpResult<awdp_runs::Model> {
     config.validate()?;
+    let event_id = ensure_practice_event(db, owner_user_id, gamebox_id).await?;
     let now = Utc::now();
     let break_ends = now + chrono::Duration::seconds(config.break_duration_secs as i64);
     let model = awdp_runs::ActiveModel {
         id: Set(Uuid::new_v4()),
-        event_id: Set(None),
+        event_id: Set(event_id),
         gamebox_id: Set(Some(gamebox_id)),
         owner_user_id: Set(Some(owner_user_id)),
         owner_team_id: Set(None),
@@ -68,7 +139,7 @@ pub async fn create_practice_run(
     };
     match model.insert(db).await {
         Ok(m) => Ok(m),
-        Err(e) if e.to_string().contains("awdp_runs_practice_active_uidx") => Err(
+        Err(e) if e.to_string().contains("awdp_runs_event_active_uidx") => Err(
             AwdpError::Conflict("该 GameBox 已有一个进行中的训练 run".into()),
         ),
         Err(e) => Err(AwdpError::Database(e.to_string())),
@@ -109,7 +180,7 @@ pub async fn create_competition_run(
     let now = Utc::now();
     let model = awdp_runs::ActiveModel {
         id: Set(Uuid::new_v4()),
-        event_id: Set(Some(event_id)),
+        event_id: Set(event_id),
         gamebox_id: Set(None),
         owner_user_id: Set(None),
         owner_team_id: Set(None),
@@ -329,11 +400,7 @@ pub async fn find_due_runs(
     Ok(rows)
 }
 
-/// 冗余 event_id（域表 team 复合 FK → event_teams(event_id,id) 需要）。
-/// competition 行 = run.event_id；practice 行 = None。
-pub async fn event_id_for_team_fk(
-    db: &DatabaseConnection,
-    run_id: Uuid,
-) -> AwdpResult<Option<Uuid>> {
+/// run 的 event（域表 team 复合 FK → event_teams(event_id,id) 需要；practice 也是虚拟 event）。
+pub async fn event_id_for_team_fk(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<Uuid> {
     Ok(require_by_id(db, run_id).await?.event_id)
 }

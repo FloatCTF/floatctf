@@ -18,8 +18,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::{
-    awdp_event_gameboxes, awdp_instances, awdp_runs, gameboxes, instance_endpoints, instances,
-    sea_orm_active_enums::AwdpPhase,
+    awdp_event_gameboxes, awdp_instances, awdp_runs, event_instances, gameboxes,
+    instance_endpoints, sea_orm_active_enums::AwdpPhase,
 };
 use crate::infrastructure::settings::get_setting;
 use crate::modules::event::awdp::{
@@ -73,26 +73,25 @@ impl Subject {
 }
 
 /// 解析 run 的 gamebox 运行规格：
-///   competition（run.event_id）→ 赛事挂载行 override（eg）或 GameBox 默认；
-///   practice（event_id NULL）→ GameBox 默认规格。
+///   practice（run.gamebox_id 命中）→ GameBox 默认规格（虚拟 event，无挂载行）；
+///   competition（真实赛事）→ 赛事挂载行 override（eg）或 GameBox 默认。
 pub async fn resolve_run_gamebox_spec(
     db: &DatabaseConnection,
     run: &awdp_runs::Model,
     gamebox_id: Uuid,
 ) -> AwdpResult<(Option<awdp_event_gameboxes::Model>, gameboxes::Model)> {
-    match run.event_id {
-        Some(event_id) => {
-            let eg = event_gamebox_repo::find_for_event_and_gamebox(db, event_id, gamebox_id)
-                .await?
-                .ok_or_else(|| AwdpError::Validation("gamebox 未挂载到本赛事".into()))?;
-            let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
-            Ok((Some(eg), gamebox))
-        }
-        None => {
-            let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
-            Ok((None, gamebox))
-        }
+    if run.gamebox_id == Some(gamebox_id) {
+        // practice：虚拟 event，直接 GameBox 默认规格。
+        let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
+        return Ok((None, gamebox));
     }
+    // competition：gamebox 必须已挂载到赛事。
+    let event_id = run.event_id;
+    let eg = event_gamebox_repo::find_for_event_and_gamebox(db, event_id, gamebox_id)
+        .await?
+        .ok_or_else(|| AwdpError::Validation("gamebox 未挂载到本赛事".into()))?;
+    let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
+    Ok((Some(eg), gamebox))
 }
 
 /// 启动/复用实例（幂等：已 running 直接返回）。
@@ -198,7 +197,7 @@ async fn launch_container(
     db: &DatabaseConnection,
     runtime: &DockerContainerRuntime,
     run_id: Uuid,
-    instance: &instances::Model,
+    instance: &event_instances::Model,
     ext: &awdp_instances::Model,
     eg: &Option<awdp_event_gameboxes::Model>,
     gamebox: &gameboxes::Model,
@@ -207,7 +206,7 @@ async fn launch_container(
     existing_endpoints: &[instance_endpoints::Model],
     node_ip: &str,
     generation: i64,
-) -> AwdpResult<(instances::Model, Vec<instance_endpoints::Model>)> {
+) -> AwdpResult<(event_instances::Model, Vec<instance_endpoints::Model>)> {
     // 按 healthchecks 暴露端口（protocol+port 去重）；复用既有 host 端口。
     let healthchecks = parse_healthchecks(&healthchecks_of(eg, gamebox))?;
     let mut seen: HashMap<(String, u16), ()> = HashMap::new();
@@ -486,7 +485,7 @@ pub async fn stop_instance(
 }
 
 /// 校验归属（Team 成员共享实例）。
-fn assert_owner(instance: &instances::Model, subject: Subject) -> AwdpResult<()> {
+fn assert_owner(instance: &event_instances::Model, subject: Subject) -> AwdpResult<()> {
     let owned = match subject {
         Subject {
             user_id: Some(u),
@@ -544,7 +543,7 @@ pub async fn get_my_instance_view(
 
 async fn build_view(
     db: &DatabaseConnection,
-    instance: &instances::Model,
+    instance: &event_instances::Model,
     ext: &awdp_instances::Model,
     _eg: &Option<awdp_event_gameboxes::Model>,
     gamebox: &gameboxes::Model,

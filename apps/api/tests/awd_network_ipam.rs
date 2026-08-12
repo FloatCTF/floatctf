@@ -60,6 +60,7 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
 async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
     let event_id = Uuid::new_v4();
     let parent = events::ActiveModel {
+        is_virtual: Set(false),
         family: Set(EventFamily::Awd),
         purpose: Set(EventPurpose::Competition),
         participant_mode: Set(ParticipantMode::Team),

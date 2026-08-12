@@ -8,7 +8,7 @@ use crate::modules::event::common::api::EventUsersDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{apply_filters, prelude::*},
-    entity::{challenge_instances, event_announcements, event_teams, event_users, events},
+    entity::{event_announcements, event_challenge_instance, event_teams, event_users, events},
     modules::event::common::application::player_service::{self as svc},
     modules::platform::files::download::presign_private_download_url,
 };
@@ -35,7 +35,9 @@ pub async fn get_events(
     let query_params = query_params.0;
     let mappings = svc::player_event_filter_mappings();
 
-    let stmt = events::Entity::find().filter(events::Column::Hidden.eq(false));
+    let stmt = events::Entity::find()
+        .filter(events::Column::Hidden.eq(false))
+        .filter(events::Column::IsVirtual.eq(false));
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
     let stmt = stmt.order_by_desc(events::Column::UpdatedAt);
 
@@ -115,7 +117,7 @@ pub async fn get_event_challenge_instance(
         user,
     )
     .await?;
-    UniResponse::ok(Some(instance.into())).into()
+    UniResponse::ok(Some(instance)).into()
 }
 
 /// POST /api/events/{event_id}/team

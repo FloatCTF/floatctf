@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_networks, awd_events, awd_gamebox_instances,
+    awd_event_networks, awd_events, event_gamebox_instances,
     sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
 };
 use crate::modules::event::awd::{
@@ -116,14 +116,23 @@ async fn recover_event(
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    for instance in &instances {
-        match live_by_name.get(&instance.container_name) {
+    for (instance, root) in &instances {
+        match live_by_name.get(&root.container_name) {
             Some(state) if state.running => {
-                if instance.current_container_id.as_deref() != Some(state.container_id.as_str()) {
-                    let mut active: awd_gamebox_instances::ActiveModel =
-                        awd_gamebox_instances::ActiveModel {
+                if root.container_id.as_deref() != Some(state.container_id.as_str()) {
+                    // 根：容器实现同步 + running；扩展：Ready（§54 desired-state 对账）
+                    crate::modules::event::awd::repo::gamebox_repo::update_runtime_root(
+                        db,
+                        root.id,
+                        Some(&state.container_id),
+                        "running",
+                        None,
+                    )
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                    let active: event_gamebox_instances::ActiveModel =
+                        event_gamebox_instances::ActiveModel {
                             id: Set(instance.id),
-                            current_container_id: Set(Some(state.container_id.clone())),
                             status: Set(GameboxStatus::Ready),
                             ..Default::default()
                         };
@@ -144,7 +153,7 @@ async fn recover_event(
                 ) {
                     warn!(
                         "[Recovery] Instance {} ({}) missing in Docker — marking missing",
-                        instance.id, instance.container_name
+                        instance.id, root.container_name
                     );
                     crate::modules::event::awd::repo::gamebox_repo::update_instance_status(
                         db,

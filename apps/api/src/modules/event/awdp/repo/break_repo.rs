@@ -48,7 +48,7 @@ pub async fn record_break(
         id: Set(Uuid::new_v4()),
         run_id: Set(run_id),
         gamebox_id: Set(gamebox_id),
-        event_id: Set(event_id),
+        event_id: Set(Some(event_id)),
         user_id: Set(user_id),
         team_id: Set(team_id),
         flag_sha256: Set(flag_sha256.to_string()),

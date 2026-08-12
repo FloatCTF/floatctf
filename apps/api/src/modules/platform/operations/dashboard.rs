@@ -12,9 +12,9 @@ use uuid::Uuid;
 
 use crate::api::{extractor::auth::SuperAdminJwtGuard, prelude::*};
 use crate::entity::{
-    announcements, awd_events, challenge_instances, challenges, discussions, events, gameboxes,
-    jeopardy_challenge_solves, logs, scheduled_tasks, sea_orm_active_enums::AwdEventStatus, users,
-    weapons,
+    announcements, awd_events, challenges, discussions, event_challenge_instance, event_instances,
+    events, gameboxes, jeopardy_challenge_solves, logs, scheduled_tasks,
+    sea_orm_active_enums::AwdEventStatus, users, weapons,
 };
 
 /// AWD 状态机中表示“出问题、需要管理员介入”的异常态。
@@ -145,7 +145,7 @@ pub async fn get_dashboard_summary(
         weapons: weapons::Entity::find().count(db).await? as usize,
         announcements: announcements::Entity::find().count(db).await? as usize,
         discussions: discussions::Entity::find().count(db).await? as usize,
-        instances: challenge_instances::Entity::find().count(db).await? as usize,
+        instances: event_instances::Entity::find().count(db).await? as usize,
         gameboxes: gameboxes::Entity::find().count(db).await? as usize,
     };
 

@@ -58,22 +58,16 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::challenge_instances::Entity")]
-    ChallengeInstances,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
+    #[sea_orm(has_many = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
     #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
     JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::jeopardy_event_challenges::Entity")]
     JeopardyEventChallenges,
-}
-
-impl Related<super::challenge_instances::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeInstances.def()
-    }
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {
@@ -85,6 +79,12 @@ impl Related<super::challenge_set_items::Entity> for Entity {
 impl Related<super::challenge_writeup::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ChallengeWriteup.def()
+    }
+}
+
+impl Related<super::event_challenge_instance::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventChallengeInstance.def()
     }
 }
 

@@ -29,7 +29,8 @@ function RouteComponent() {
 	useTitle("AWDP Training | FloatCTF");
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const stream = useAwdpRunStream({ runId });
+	// SSE 实时刷新 + 断连轮询兜底（不渲染 live/poll 指示器）。
+	useAwdpRunStream({ runId });
 
 	const runQuery = useQuery({
 		queryKey: ["awdp-run", runId],
@@ -204,11 +205,6 @@ function RouteComponent() {
 
 	return (
 		<div className="h-full w-full flex flex-col min-h-0">
-			<div className="flex items-center gap-2">
-				<span className="text-xs opacity-60 ml-auto">
-					{stream.connected ? "live" : "poll"}
-				</span>
-			</div>
 			<AwdpWorkbench viewModel={viewModel} {...callbacks} />
 		</div>
 	);

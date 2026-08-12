@@ -265,7 +265,7 @@ function AwdpTimeline({
 	return (
 		<div>
 			{/* 段名 */}
-			<div className="flex items-center justify-between text-xs mb-1.5">
+			<div className="flex items-center justify-between text-[11px] mb-1">
 				<span
 					className={
 						phase === "break"
@@ -294,7 +294,7 @@ function AwdpTimeline({
 				aria-valuemin={0}
 				aria-valuemax={100}
 				aria-valuenow={Math.round(state.progress * 100)}
-				className="relative h-2 rounded-full bg-[var(--borderColor-default)] overflow-hidden"
+				className="relative h-1.5 rounded-full bg-[var(--borderColor-default)] overflow-hidden"
 			>
 				{/* Break 段（按比例宽度，填充为已完成部分） */}
 				<div
@@ -333,14 +333,14 @@ function AwdpTimeline({
 				{/* marker */}
 				<div
 					aria-hidden="true"
-					className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 ${markerColor} transition-[left] duration-200 ease-out motion-reduce:transition-none`}
+					className={`absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 ${markerColor} transition-[left] duration-200 ease-out motion-reduce:transition-none`}
 					style={{ left: `${state.markerPct}%` }}
 				/>
 			</div>
 
 			{/* Turn labels（<=8 turns 才显示文字，避免拥挤） */}
 			{showTurnLabels && (
-				<div className="relative h-4 mt-0.5 text-[10px] leading-4 text-[var(--fgColor-muted)] tabular-nums select-none">
+				<div className="relative h-3.5 mt-0.5 text-[10px] leading-3.5 text-[var(--fgColor-muted)] tabular-nums select-none">
 					{Array.from({ length: totalRounds }, (_, i) => {
 						const left =
 							state.breakWidthPct +
@@ -360,7 +360,7 @@ function AwdpTimeline({
 			)}
 
 			{/* 底部 label */}
-			<div className="flex items-center justify-between text-xs mt-1.5">
+			<div className="flex items-center justify-between text-[11px] mt-1">
 				<span className="text-[var(--fgColor-muted)] tabular-nums">
 					{leftLabel}
 				</span>
@@ -465,7 +465,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 	}
 
 	return (
-		<section className="rounded border p-3">
+		<section className="rounded border px-3 py-2">
 			{/* 第一行：Phase identity（左）| Score（右） */}
 			<div className="flex items-start justify-between gap-4 flex-wrap">
 				<div className="min-w-0">
@@ -477,7 +477,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 							</span>
 						)}
 					</div>
-					<p className="mt-1 text-sm text-[var(--fgColor-muted)]">
+					<p className="mt-0.5 text-xs text-[var(--fgColor-muted)]">
 						{meta.description}
 					</p>
 				</div>
@@ -485,15 +485,15 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 					<p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--fgColor-muted)]">
 						{phase === "ended" ? "Final Score" : "Score"}
 					</p>
-					<p className="text-2xl leading-6 font-semibold tabular-nums text-[var(--fgColor-default)]">
+					<p className="text-xl leading-4 font-semibold tabular-nums text-[var(--fgColor-default)]">
 						{formatScore(score)}
 					</p>
 				</div>
 			</div>
 
 			{/* 第二行：Countdown */}
-			<div className="mt-3">
-				<p className="text-2xl leading-7 font-semibold tabular-nums text-[var(--fgColor-default)]">
+			<div className="mt-1.5">
+				<p className="text-xl leading-4 font-semibold tabular-nums text-[var(--fgColor-default)]">
 					{countdownText}
 				</p>
 				{countdownCaption ? (
@@ -509,7 +509,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 			</div>
 
 			{/* 第三行：Break → Fix Timeline */}
-			<div className="mt-3">
+			<div className="mt-1.5">
 				<AwdpTimeline
 					state={state}
 					phase={phase}

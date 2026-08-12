@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 
 import { awdpRunApi } from "@/api/awdpRuns";
 import { MDPlusEditor, useMsgBanner } from "@/components";
-
 export function RunWriteupEditor({ runId }: { runId: string }) {
 	const banner = useMsgBanner();
 	const queryClient = useQueryClient();
@@ -43,14 +42,6 @@ export function RunWriteupEditor({ runId }: { runId: string }) {
 	return (
 		<div className="flex h-full flex-col min-h-0">
 			<banner.BannerComponent />
-			<div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs text-[var(--fgColor-muted)]">
-				<span className="font-semibold uppercase tracking-wide">Writeup</span>
-				{writeupQuery.data?.data?.updated_at && (
-					<span className="opacity-70">
-						Saved {new Date(writeupQuery.data.data.updated_at).toLocaleString()}
-					</span>
-				)}
-			</div>
 			<MDPlusEditor
 				className="flex-1 min-h-0"
 				value={markdown}

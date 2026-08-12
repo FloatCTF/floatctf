@@ -54,4 +54,9 @@ export const instanceServiceApi = {
         const res = await service_api.delete(`/instances/${id}`);
         return res.data;
     },
+    /** 批量删除（复选框选中后）：挑战实例销毁 / AWDP 实例停容器并移除行。 */
+    bulkDelete: async (id_list: string[]): Promise<UniResponse<number>> => {
+        const res = await service_api.delete("/instances", { data: { id_list } });
+        return res.data;
+    },
 };

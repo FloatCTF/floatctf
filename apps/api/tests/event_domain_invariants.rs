@@ -1087,3 +1087,216 @@ async fn collect_practice_instances_merges_challenge_and_awdp() {
     let _ = users::Entity::delete_by_id(user.id).exec(&db).await;
     let _ = users::Entity::delete_by_id(other.id).exec(&db).await;
 }
+
+/// 批量删除练习实例：挑战行走 destroy（停容器 + completed），AWDP 行停容器 + 删根行
+/// （CASCADE 清 awdp_instances），run 保留；缺失行幂等跳过；非本人行报 Forbidden。
+#[tokio::test]
+async fn bulk_delete_practice_instances_mixed_families() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let docker = match bollard::Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skip bulk_delete: docker client ({e})");
+            return;
+        }
+    };
+
+    use floatctf::entity::{awdp_instances, awdp_runs, gameboxes};
+    use floatctf::modules::event::jeopardy::api::instances::bulk_delete_practice_instances;
+
+    let practice = ensure_practice_jeopardy_event(&db)
+        .await
+        .expect("practice event");
+    let user = seed_user(&db, "bdel").await;
+    let other = seed_user(&db, "bdel-other").await;
+    let mut ch = seed_challenge(&db, "bdel").await;
+    challenges::ActiveModel {
+        id: Set(ch.id),
+        flag_type: Set(Some("static".into())),
+        static_flag_value: Set(Some(format!("flag{{bdel-{}}}", ch.id.simple()))),
+        build_status: Set(Some("ready".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .expect("static challenge");
+
+    // --- 挑战练习实例（非 Docker 题） ---
+    let inst_a = Uuid::new_v4();
+    event_instances::ActiveModel {
+        id: Set(inst_a),
+        event_id: Set(practice.id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        container_name: Set(format!("tst-bdel-chal-{}", &inst_a.to_string()[..8])),
+        runtime_state: Set("running".into()),
+        runtime_generation: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("challenge runtime");
+    event_challenge_instance::ActiveModel {
+        id: Set(inst_a),
+        event_id: Set(practice.id),
+        user_id: Set(user.id),
+        team_id: Set(None),
+        challenge_id: Set(ch.id),
+        flag: Set(format!("flag{{chal-{}}}", inst_a.simple())),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("challenge instance");
+
+    // --- AWDP 练习实例（state=stopped 避免 docker 调用） ---
+    let awdp_event_id = Uuid::new_v4();
+    events::ActiveModel {
+        id: Set(awdp_event_id),
+        title: Set(format!(
+            "awdp-bdel-test-{}",
+            &awdp_event_id.to_string()[..8]
+        )),
+        system_key: Set(Some(format!(
+            "awdp-bdel-test:{}",
+            &awdp_event_id.to_string()[..8]
+        ))),
+        family: Set(EventFamily::Awdp),
+        purpose: Set(EventPurpose::Practice),
+        participant_mode: Set(ParticipantMode::Individual),
+        is_virtual: Set(true),
+        hidden: Set(true),
+        start_time: Set(Utc::now().into()),
+        end_time: Set(None),
+        rules: Set(String::new()),
+        allow_join: Set(true),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("awdp practice event");
+    let gb_id = Uuid::new_v4();
+    gameboxes::ActiveModel {
+        id: Set(gb_id),
+        name: Set(format!("gb-bdel-{}", &gb_id.to_string()[..8])),
+        safe_name: Set(format!("gb-bdel-{}", &gb_id.to_string()[..8])),
+        category: Set("pwn".into()),
+        description: Set("test".into()),
+        hidden: Set(false),
+        recommended_cpu_millis: Set(1000),
+        recommended_memory_bytes: Set(0),
+        recommended_pids_limit: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("gamebox");
+    let run_id = Uuid::new_v4();
+    awdp_runs::ActiveModel {
+        id: Set(run_id),
+        event_id: Set(awdp_event_id),
+        gamebox_id: Set(Some(gb_id)),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        phase: Set(floatctf::entity::sea_orm_active_enums::AwdpPhase::Break),
+        break_duration_secs: Set(3600),
+        fix_duration_secs: Set(3600),
+        fix_round_interval_secs: Set(600),
+        break_score: Set(1000),
+        fix_round_score: Set(150),
+        current_round: Set(0),
+        total_rounds: Set(6),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("practice run");
+    let inst_b = Uuid::new_v4();
+    event_instances::ActiveModel {
+        id: Set(inst_b),
+        event_id: Set(awdp_event_id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        container_name: Set(format!("tst-bdel-gb-{}", &inst_b.to_string()[..8])),
+        runtime_state: Set("stopped".into()),
+        runtime_generation: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("gamebox runtime");
+    awdp_instances::ActiveModel {
+        instance_id: Set(inst_b),
+        event_id: Set(awdp_event_id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        run_id: Set(run_id),
+        gamebox_id: Set(gb_id),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("awdp instance");
+
+    // --- 非本人：Forbidden ---
+    let forbidden = bulk_delete_practice_instances(&db, &docker, other.id, vec![inst_a]).await;
+    assert!(
+        matches!(forbidden, Err(floatctf::api::AppError::Forbidden(_))),
+        "其他用户批量删除应 Forbidden"
+    );
+
+    // --- 缺失 id：幂等跳过，不影响总数 ---
+    let none = bulk_delete_practice_instances(&db, &docker, user.id, vec![Uuid::new_v4()]).await;
+    assert_eq!(none.expect("skip missing"), 0);
+
+    // --- 本人批量删除两类实例 ---
+    let deleted = bulk_delete_practice_instances(&db, &docker, user.id, vec![inst_a, inst_b])
+        .await
+        .expect("bulk delete");
+    assert_eq!(deleted, 2, "应删除/销毁两条");
+
+    let chal_row = event_instances::Entity::find_by_id(inst_a)
+        .one(&db)
+        .await
+        .expect("chal row")
+        .expect("挑战行保留（completed）");
+    assert_eq!(
+        chal_row.runtime_state, "completed",
+        "挑战行 destroy 后为 completed"
+    );
+    assert!(
+        event_instances::Entity::find_by_id(inst_b)
+            .one(&db)
+            .await
+            .expect("gb row")
+            .is_none(),
+        "AWDP 根行应被删除"
+    );
+    let awdp_cnt = awdp_instances::Entity::find()
+        .filter(awdp_instances::Column::InstanceId.eq(inst_b))
+        .count(&db)
+        .await
+        .expect("awdp count");
+    assert_eq!(awdp_cnt, 0, "awdp_instances 应随根行 CASCADE 删除");
+    assert!(
+        awdp_runs::Entity::find_by_id(run_id)
+            .one(&db)
+            .await
+            .expect("run")
+            .is_some(),
+        "run 应保留（可重新 Start）"
+    );
+
+    // --- 清理 ---
+    let _ = event_instances::Entity::delete_by_id(inst_a)
+        .exec(&db)
+        .await;
+    let _ = awdp_runs::Entity::delete_by_id(run_id).exec(&db).await;
+    let _ = gameboxes::Entity::delete_by_id(gb_id).exec(&db).await;
+    let _ = challenges::Entity::delete_by_id(ch.id).exec(&db).await;
+    let _ = events::Entity::delete_by_id(awdp_event_id).exec(&db).await;
+    let _ = users::Entity::delete_by_id(user.id).exec(&db).await;
+    let _ = users::Entity::delete_by_id(other.id).exec(&db).await;
+}

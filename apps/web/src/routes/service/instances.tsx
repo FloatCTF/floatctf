@@ -49,7 +49,6 @@ function RouteComponent() {
 			banner.showErrorBanner(error);
 		},
 	});
-
 	const columns = [
 		{
 			accessorKey: "challenge_title",
@@ -153,10 +152,10 @@ function RouteComponent() {
 			columns={columns}
 			filterKeys={filterKeys}
 			queryFn={serviceApi.instances.fetch}
+			removeFn={serviceApi.instances.bulkDelete}
 			enableInternalActions={false}
 			externalBanner={banner}
 			disableAdd={true}
-			disableSelect={true}
 		/>
 	);
 }

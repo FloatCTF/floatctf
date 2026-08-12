@@ -13,6 +13,7 @@ pub fn configure_instance_routes(cfg: &mut ServiceConfig) {
     cfg.service(instances::get_instances)
         .service(instances::get_instance)
         .service(instances::launch_instance)
+        .service(instances::bulk_destroy_instances)
         .service(instances::destroy_instance);
 }
 

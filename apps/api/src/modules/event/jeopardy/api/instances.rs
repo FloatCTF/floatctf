@@ -1,5 +1,7 @@
 use sea_orm::{DatabaseConnection, DbErr};
 
+use bollard::Docker;
+
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::prelude::*,
@@ -229,6 +231,101 @@ pub async fn get_instances(
 
     query_params.total = Some(total);
     UniResponse::ok_meta(Some(items), query_params.into()).into()
+}
+
+/// 批量删除当前用户的练习实例（挑战销毁 / AWDP 停容器+删行）。
+/// 挑战行走 destroy（停容器 + 标 completed，幂等）；AWDP 行走 runtime::stop_instance
+/// 停容器后删除 event_instances 根行（CASCADE 清 awdp_instances/endpoints/评估/补丁，
+/// run 保留、可重新 Start 实例）。缺失行跳过（幂等），非本人/非练习实例行报错中止。
+pub async fn bulk_delete_practice_instances(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    user_id: Uuid,
+    id_list: Vec<Uuid>,
+) -> Result<u64, AppError> {
+    let mut deleted = 0u64;
+    for id in id_list {
+        let Some(row) = event_instances::Entity::find_by_id(id).one(db).await? else {
+            continue; // 已被删除 → 幂等跳过
+        };
+        if row.owner_user_id != Some(user_id) {
+            return Err(AppError::Forbidden(format!(
+                "instance {} does not belong to you",
+                id
+            )));
+        }
+        if event_challenge_instance::Entity::find_by_id(id)
+            .one(db)
+            .await?
+            .is_some()
+        {
+            // 挑战练习实例：销毁（停容器 + completed，幂等）。
+            let service = crate::modules::event::jeopardy::application::instance_service::
+                InstanceService::with_docker(db.clone(), docker.clone());
+            service
+                .destroy_owned(id, user_id)
+                .await
+                .map_err(|e| AppError::BadRequest(format!("destroy instance {id}: {e}")))?;
+            deleted += 1;
+        } else if awdp_instances::Entity::find()
+            .filter(awdp_instances::Column::InstanceId.eq(id))
+            .one(db)
+            .await?
+            .is_some()
+        {
+            // AWDP 练习实例：停容器 + 删根行（CASCADE）。
+            use crate::modules::event::awdp::service::runtime as awdp_runtime;
+            let subject = awdp_runtime::Subject {
+                user_id: Some(user_id),
+                team_id: None,
+            };
+            awdp_runtime::stop_instance(db, docker, id, subject)
+                .await
+                .map_err(|e| AppError::Internal(format!("stop awdp instance {id}: {e}")))?;
+            event_instances::Entity::delete_by_id(id).exec(db).await?;
+            deleted += 1;
+        } else {
+            return Err(AppError::NotFound(format!(
+                "{} not a practice instance",
+                id
+            )));
+        }
+    }
+    Ok(deleted)
+}
+
+/// DELETE /api/instances — 批量删除当前用户的练习实例（复选框批量删除）。
+#[delete("")]
+pub async fn bulk_destroy_instances(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    dir: Json<crate::api::dto::DeleteItemsRequest>,
+) -> UniResult<u64> {
+    let user = user.into_inner();
+    let dir = dir.into_inner();
+
+    let deleted = bulk_delete_practice_instances(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        user.id,
+        dir.id_list,
+    )
+    .await?;
+
+    ctx.log
+        .add_log(
+            "INFO",
+            "INSTANCE",
+            "BULK_DELETE",
+            format!("批量删除 {} 个练习实例", deleted).as_str(),
+            json!({}),
+            user.id.into(),
+            None,
+            Some(&ctx.req),
+        )
+        .await;
+
+    UniResponse::ok(deleted.into()).into()
 }
 
 /// GET /api/instances/{instance_id}

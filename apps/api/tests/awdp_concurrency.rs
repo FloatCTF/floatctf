@@ -165,7 +165,9 @@ async fn seed_run_in_break(db: &sea_orm::DatabaseConnection, tag: &str) -> (Uuid
         run_repo::PhaseTransitionPatch {
             started_at: Some(now),
             break_ends_at: Some(now - chrono::Duration::minutes(1)),
-            next_action_at: Some(now - chrono::Duration::minutes(1)),
+            // 故意远早于现在：并行全量测试时保证本 run 稳定在 find_due_runs
+            // 的 10 条批次内（不会因为其他测试二进制并发的 due run 而饿死）。
+            next_action_at: Some(now - chrono::Duration::minutes(30)),
             ..Default::default()
         },
     )
@@ -283,7 +285,9 @@ async fn expire_round(db: &sea_orm::DatabaseConnection, run_id: Uuid, sequence: 
     }
     let row = run_repo::require_by_id(db, run_id).await.unwrap();
     let mut am: floatctf::entity::awdp_runs::ActiveModel = row.into();
-    am.next_action_at = Set(Some((now - chrono::Duration::seconds(1)).into()));
+    // 用非常旧的 next_action_at，保证并行全量测试时该 run 稳定落入
+    // find_due_runs 的 10 条批次（其他测试二进制并发的 due run 不会更旧）。
+    am.next_action_at = Set(Some((now - chrono::Duration::minutes(30)).into()));
     am.updated_at = Set(now.into());
     am.update(db).await.unwrap();
 }

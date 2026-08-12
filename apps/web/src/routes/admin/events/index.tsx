@@ -5,9 +5,11 @@ import {
 	TextInput,
 	Textarea,
 	ToggleSwitch,
+	UnderlineNav,
 } from "@primer/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useReactive } from "ahooks";
+import { useState } from "react";
 
 import { adminApi } from "@/api";
 import { EventStatusBadge, GenericTable } from "@/components";
@@ -292,27 +294,52 @@ function RouteComponent() {
 		},
 	];
 	const filterKeys = ["id", "family", "purpose", "participant_mode", "title", "hidden", "allow_join"];
+	// NormalEvents / VirtualEvents 子菜单：普通赛事 vs 虚拟（训练）赛事。
+	const [view, setView] = useState<"normal" | "virtual">("normal");
+	const subject = view === "virtual" ? "VirtualEvents" : "Events";
+	const baseFilter = view === "virtual" ? "is_virtual:true" : "is_virtual:false";
 	return (
-		<GenericTable
-			subject="Events"
-			columns={columns}
-			filterKeys={filterKeys}
-			queryFn={adminApi.events.fetch}
-			createFn={adminApi.events.create}
-			removeFn={adminApi.events.remove}
-			patchFn={async (data) => {
-				// 绝不send immutable mode identity on patch (backend rejects changes too).
-				const {
-					family: _family,
-					purpose: _purpose,
-					participant_mode: _participant_mode,
-					system_key: _system_key,
-					...rest
-				} = data as Partial<Events>;
-				return adminApi.events.patch(rest);
-			}}
-			mutationColumns={mutationColumns}
-			mutationData={mutationEvent}
-		/>
+		<>
+			<UnderlineNav aria-label="Events view">
+				<UnderlineNav.Item
+					aria-current={view === "normal" ? "page" : undefined}
+					onClick={() => setView("normal")}
+				>
+					NormalEvents
+				</UnderlineNav.Item>
+				<UnderlineNav.Item
+					aria-current={view === "virtual" ? "page" : undefined}
+					onClick={() => setView("virtual")}
+				>
+					VirtualEvents
+				</UnderlineNav.Item>
+			</UnderlineNav>
+			<GenericTable
+				subject={subject}
+				columns={columns}
+				filterKeys={filterKeys}
+				queryFn={async (params) => {
+					const filter = params?.filter
+						? `${baseFilter} & ${params.filter}`
+						: baseFilter;
+					return adminApi.events.fetch({ ...params, filter });
+				}}
+				createFn={view === "normal" ? adminApi.events.create : undefined}
+				removeFn={adminApi.events.remove}
+				patchFn={async (data) => {
+					// 绝不send immutable mode identity on patch (backend rejects changes too).
+					const {
+						family: _family,
+						purpose: _purpose,
+						participant_mode: _participant_mode,
+						system_key: _system_key,
+						...rest
+					} = data as Partial<Events>;
+					return adminApi.events.patch(rest);
+				}}
+				mutationColumns={view === "normal" ? mutationColumns : undefined}
+				mutationData={view === "normal" ? mutationEvent : undefined}
+			/>
+		</>
 	);
 }

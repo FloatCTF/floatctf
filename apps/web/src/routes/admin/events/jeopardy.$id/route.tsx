@@ -51,56 +51,75 @@ function RouteComponent() {
                 {event.title} #{event.id}
             </h3>
             <UnderlineNav aria-label="Repository">
-                <RouterNavItem to="/admin/events/jeopardy/$id" params={{ id }}>
-                    Challenges
-                </RouterNavItem>
-                {event?.participant_mode === ParticipantMode.Individual && (
-                    <RouterNavItem
-                        to="/admin/events/jeopardy/$id/users"
-                        params={{ id }}
-                    >
-                        Users
-                    </RouterNavItem>
-                )}
+                {event.is_virtual ? (
+                    <>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/instance"
+                            params={{ id }}
+                        >
+                            Instance
+                        </RouterNavItem>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/logs"
+                            params={{ id }}
+                        >
+                            Logs
+                        </RouterNavItem>
+                    </>
+                ) : (
+                    <>
+                        <RouterNavItem to="/admin/events/jeopardy/$id" params={{ id }}>
+                            Challenges
+                        </RouterNavItem>
+                        {event?.participant_mode === ParticipantMode.Individual && (
+                            <RouterNavItem
+                                to="/admin/events/jeopardy/$id/users"
+                                params={{ id }}
+                            >
+                                Users
+                            </RouterNavItem>
+                        )}
 
-                {event?.participant_mode === ParticipantMode.Team && (
-                    <RouterNavItem
-                        to="/admin/events/jeopardy/$id/teams"
-                        params={{ id }}
-                    >
-                        Teams
-                    </RouterNavItem>
+                        {event?.participant_mode === ParticipantMode.Team && (
+                            <RouterNavItem
+                                to="/admin/events/jeopardy/$id/teams"
+                                params={{ id }}
+                            >
+                                Teams
+                            </RouterNavItem>
+                        )}
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/announcements"
+                            params={{ id }}
+                        >
+                            Announcements
+                        </RouterNavItem>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/writeups"
+                            params={{ id }}
+                        >
+                            WriteUps
+                        </RouterNavItem>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/logs"
+                            params={{ id }}
+                        >
+                            Logs
+                        </RouterNavItem>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/data_present"
+                            params={{ id }}
+                        >
+                            Data Present
+                        </RouterNavItem>
+                        <RouterNavItem
+                            to="/admin/events/jeopardy/$id/instance"
+                            params={{ id }}
+                        >
+                            Instance
+                        </RouterNavItem>
+                    </>
                 )}
-                <RouterNavItem
-                    to="/admin/events/jeopardy/$id/announcements"
-                    params={{ id }}
-                >
-                    Announcements
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/jeopardy/$id/writeups"
-                    params={{ id }}
-                >
-                    WriteUps
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/jeopardy/$id/logs"
-                    params={{ id }}
-                >
-                    Logs
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/jeopardy/$id/data_present"
-                    params={{ id }}
-                >
-                    Data Present
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/jeopardy/$id/instance"
-                    params={{ id }}
-                >
-                    Instance
-                </RouterNavItem>
             </UnderlineNav>
             <EventContext.Provider value={event}>
                 <Outlet /> {/* 普通 TanStack Router 的 Outlet */}

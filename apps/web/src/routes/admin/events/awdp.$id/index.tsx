@@ -1,11 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
 
 import { AdminRouteGuard } from "../../route";
+import { EventContext } from "./route";
 
 /**
- * AWDP 赛事入口页：Configure 是 AWDP 参数与首次保存的唯一入口。
+ * AWDP 赛事入口页：普通赛事默认 Configure；虚拟（训练）赛事只有
+ * Instance / Logs 两个 tab，默认进 Instance。
  */
 export const Route = createFileRoute("/admin/events/awdp/$id/")({
 	component: RouteComponent,
@@ -14,15 +16,18 @@ export const Route = createFileRoute("/admin/events/awdp/$id/")({
 
 function RouteComponent() {
 	const { id } = Route.useParams();
+	const event = useContext(EventContext);
 	const navigate = useNavigate();
 
 	useEffect(() => {
 		navigate({
-			to: "/admin/events/awdp/$id/configure",
+			to: event?.is_virtual
+				? "/admin/events/awdp/$id/instance"
+				: "/admin/events/awdp/$id/configure",
 			params: { id },
 			replace: true,
 		});
-	}, [id, navigate]);
+	}, [event?.is_virtual, id, navigate]);
 
 	return null;
 }

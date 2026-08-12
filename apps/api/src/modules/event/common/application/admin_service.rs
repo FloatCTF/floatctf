@@ -305,7 +305,7 @@ pub async fn delete_events(db: &DatabaseConnection, id_list: Vec<Uuid>) -> Resul
     Ok(deleted)
 }
 
-pub fn admin_event_filter_mappings() -> [FilterMapping; 7] {
+pub fn admin_event_filter_mappings() -> [FilterMapping; 8] {
     [
         FilterMapping {
             key: "id",
@@ -349,6 +349,13 @@ pub fn admin_event_filter_mappings() -> [FilterMapping; 7] {
             key: "hidden",
             column: Box::new(|v| {
                 Condition::all().add(events::Column::Hidden.eq(v.parse::<bool>().unwrap_or(true)))
+            }),
+        },
+        FilterMapping {
+            key: "is_virtual",
+            column: Box::new(|v| {
+                Condition::all()
+                    .add(events::Column::IsVirtual.eq(v.parse::<bool>().unwrap_or(false)))
             }),
         },
         FilterMapping {

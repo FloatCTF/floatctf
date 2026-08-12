@@ -11,9 +11,9 @@ import {
 } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { useCallback, useContext, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
 import { ActionSelect, GenericTable, useMsgBanner } from "@/components";
@@ -44,6 +44,17 @@ export type EventChallengeResult = {
 function RouteComponent() {
 	const event = useContext(EventContext);
 	const { id } = Route.useParams();
+	const navigate = useNavigate();
+	// 虚拟（训练）赛事：默认进 Instance tab。
+	useEffect(() => {
+		if (event?.is_virtual) {
+			navigate({
+				to: "/admin/events/jeopardy/$id/instance",
+				params: { id },
+				replace: true,
+			});
+		}
+	}, [event?.is_virtual, id, navigate]);
 	const queryClient = useQueryClient();
 	const subject = `event_challenges: ${id}`;
 	const banner = useMsgBanner();

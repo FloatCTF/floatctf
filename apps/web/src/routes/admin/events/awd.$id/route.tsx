@@ -46,6 +46,7 @@ function RouteComponent() {
 	const configured = Boolean(statusQuery.data?.data);
 	useEffect(() => {
 		if (
+			!event?.is_virtual &&
 			!statusQuery.isLoading &&
 			!statusQuery.isError &&
 			!configured &&
@@ -59,6 +60,7 @@ function RouteComponent() {
 		}
 	}, [
 		configured,
+		event?.is_virtual,
 		id,
 		location.pathname,
 		navigate,
@@ -82,40 +84,53 @@ function RouteComponent() {
 				{event.title} #{event.id}
 			</h3>
 			<UnderlineNav aria-label="AWD Event">
-				<RouterNavItem to="/admin/events/awd/$id/configure" params={{ id }}>
-					Configure
-				</RouterNavItem>
-				{configured && (
+				{event.is_virtual ? (
 					<>
-						<RouterNavItem to="/admin/events/awd/$id/gameboxes" params={{ id }}>
-							GameBoxes
-						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awd/$id/network" params={{ id }}>
-							Network
-						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
-							Ops
-						</RouterNavItem>
 						<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
 							Instance
-						</RouterNavItem>
-						{event.family === EventFamily.Awd && (
-							<RouterNavItem to="/admin/events/awd/$id/teams" params={{ id }}>
-								Teams
-							</RouterNavItem>
-						)}
-						<RouterNavItem
-							to="/admin/events/awd/$id/announcements"
-							params={{ id }}
-						>
-							Announcements
-						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awd/$id/writeups" params={{ id }}>
-							WriteUps
 						</RouterNavItem>
 						<RouterNavItem to="/admin/events/awd/$id/logs" params={{ id }}>
 							Logs
 						</RouterNavItem>
+					</>
+				) : (
+					<>
+						<RouterNavItem to="/admin/events/awd/$id/configure" params={{ id }}>
+							Configure
+						</RouterNavItem>
+						{configured && (
+							<>
+								<RouterNavItem to="/admin/events/awd/$id/gameboxes" params={{ id }}>
+									GameBoxes
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/network" params={{ id }}>
+									Network
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
+									Ops
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
+									Instance
+								</RouterNavItem>
+								{event.family === EventFamily.Awd && (
+									<RouterNavItem to="/admin/events/awd/$id/teams" params={{ id }}>
+										Teams
+									</RouterNavItem>
+								)}
+								<RouterNavItem
+									to="/admin/events/awd/$id/announcements"
+									params={{ id }}
+								>
+									Announcements
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/writeups" params={{ id }}>
+									WriteUps
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/logs" params={{ id }}>
+									Logs
+								</RouterNavItem>
+							</>
+						)}
 					</>
 				)}
 			</UnderlineNav>

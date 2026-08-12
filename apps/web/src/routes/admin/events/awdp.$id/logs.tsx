@@ -6,7 +6,7 @@ import { Label } from "@primer/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AdminRouteGuard } from "../../route";
 
-export const Route = createFileRoute("/admin/events/awd/$id/logs")({
+export const Route = createFileRoute("/admin/events/awdp/$id/logs")({
 	component: RouteComponent,
 	loader: AdminRouteGuard,
 });

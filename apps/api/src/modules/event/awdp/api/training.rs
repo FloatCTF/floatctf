@@ -31,6 +31,27 @@ use crate::{
 };
 use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
 
+/// 练习动作留痕：写入 run 所属（虚拟训练）赛事的 event_logs，供 admin Logs Tab 查看。
+/// 留痕失败不阻塞用户操作。
+async fn log_practice_action(
+    ctx: &ReqCtx,
+    event_id: Uuid,
+    user_id: Uuid,
+    action: &str,
+    details: serde_json::Value,
+) {
+    crate::modules::event::common::application::event_log_service::insert_event_log(
+        ctx.db.get_ref(),
+        event_id,
+        Some(user_id),
+        None,
+        "info",
+        action,
+        details,
+    )
+    .await;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // helpers
 // ────────────────────────────────────────────────────────────────────────────
@@ -181,6 +202,14 @@ pub async fn start_training(
     )
     .await
     .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.start",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
     let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
     UniResponse::ok(dto.into()).into()
 }
@@ -220,6 +249,14 @@ pub async fn stop_run(user: UserJwtGuard, ctx: ReqCtx, path: web::Path<Uuid>) ->
         )
         .await?;
     }
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.stop",
+        json!({ "run_id": run.id }),
+    )
+    .await;
     UniResponse::ok_none().into()
 }
 
@@ -240,6 +277,14 @@ pub async fn reset_run(
         run.id,
     )
     .await?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.reset",
+        json!({ "run_id": run.id }),
+    )
+    .await;
     let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
     UniResponse::ok(dto.into()).into()
 }
@@ -263,6 +308,14 @@ pub async fn train_again(
     )
     .await
     .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.restart",
+        json!({ "run_id": run.id, "old_run_id": old_run_id }),
+    )
+    .await;
     let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
     UniResponse::ok(dto.into()).into()
 }
@@ -297,6 +350,14 @@ pub async fn submit_break_flag(
             run.break_score,
         );
     }
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.break_submit",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id, "scored": result.scored }),
+    )
+    .await;
     UniResponse::ok(
         BreakSubmitResponse {
             accepted: result.accepted,
@@ -337,6 +398,14 @@ pub async fn download_source(
     )
     .await
     .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        _user.id,
+        "awdp.train.source_download",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
     UniResponse::ok(url.into()).into()
 }
 
@@ -394,6 +463,14 @@ pub async fn upload_patch(
         view.instance_id,
         status,
     );
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.patch",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id, "status": status }),
+    )
+    .await;
     UniResponse::ok(
         PatchSubmitResponse {
             status: status.into(),
@@ -435,6 +512,18 @@ pub async fn manual_test_check(
         view.instance_id,
         result.healthcheck_ok && result.judge_ok,
     );
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.test_check",
+        json!({
+            "run_id": run.id,
+            "gamebox_id": gamebox_id,
+            "ok": result.healthcheck_ok && result.judge_ok,
+        }),
+    )
+    .await;
     UniResponse::ok(
         ManualCheckDto {
             healthcheck_ok: result.healthcheck_ok,
@@ -468,6 +557,14 @@ pub async fn start_my_instance(
     )
     .await
     .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.instance_start",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
     UniResponse::ok(InstanceViewDto::from(&view).into()).into()
 }
 
@@ -511,6 +608,14 @@ pub async fn stop_my_instance(
     )
     .await
     .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.instance_stop",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
     UniResponse::ok_none().into()
 }
 
@@ -540,6 +645,14 @@ pub async fn reset_my_instance(
     )
     .await
     .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.instance_reset",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
+    )
+    .await;
     UniResponse::ok(InstanceViewDto::from(&view).into()).into()
 }
 
@@ -711,6 +824,14 @@ pub async fn save_run_writeup(
             Some(&ctx.req),
         )
         .await;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.writeup",
+        json!({ "run_id": run.id }),
+    )
+    .await;
     UniResponse::ok(
         AwdpRunWriteupDto {
             run_id: run.id,

@@ -42,22 +42,35 @@ function RouteComponent() {
 				{event.title} #{event.id}
 			</h3>
 			<UnderlineNav aria-label="AWDP Event">
-				<RouterNavItem to="/admin/events/awdp/$id/configure" params={{ id }}>
-					Configure
-				</RouterNavItem>
-				{configured && (
+				{event.is_virtual ? (
 					<>
-						<RouterNavItem to="/admin/events/awdp/$id/gameboxes" params={{ id }}>
-							GameBoxes
+						<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>
+							Instance
 						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
-							Ops
+						<RouterNavItem to="/admin/events/awdp/$id/logs" params={{ id }}>
+							Logs
+						</RouterNavItem>
+					</>
+				) : (
+					<>
+						<RouterNavItem to="/admin/events/awdp/$id/configure" params={{ id }}>
+							Configure
+						</RouterNavItem>
+						{configured && (
+							<>
+								<RouterNavItem to="/admin/events/awdp/$id/gameboxes" params={{ id }}>
+									GameBoxes
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
+									Ops
+								</RouterNavItem>
+							</>
+						)}
+						<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>
+							Instance
 						</RouterNavItem>
 					</>
 				)}
-				<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>
-					Instance
-				</RouterNavItem>
 			</UnderlineNav>
 			<EventContext.Provider value={event}>
 				<Outlet />

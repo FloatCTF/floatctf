@@ -124,6 +124,20 @@ pub async fn list_for_run(
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
+/// 撤销 fix 会话：删除 run 全部 fix_rounds（级联删除 evaluations + fix 计分账本；
+/// patch_submissions.fix_round_id 置 NULL 保留审计）。返回删除行数。
+pub async fn clear_fix_session<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    run_id: Uuid,
+) -> AwdpResult<usize> {
+    let res = awdp_fix_rounds::Entity::delete_many()
+        .filter(awdp_fix_rounds::Column::RunId.eq(run_id))
+        .exec(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(res.rows_affected as usize)
+}
+
 /// 标记回合状态（evaluating / completed）。
 pub async fn set_status(db: &DatabaseConnection, round_id: Uuid, status: &str) -> AwdpResult<()> {
     let now = Utc::now().into();

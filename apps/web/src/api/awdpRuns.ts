@@ -96,6 +96,8 @@ export type AwdpRunDto = {
 	/** Fix 阶段才非空。 */
 	source_code_dir: string | null;
 	instances: RunInstanceDto[];
+	/** 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；null=未确认）。 */
+	early_patched_seq: number | null;
 };
 
 /** run 化后的评估（列形状对齐 awdp_evaluations 的 run_id/gamebox_id 重构）。 */
@@ -132,6 +134,17 @@ export type AwdpRunWriteupDto = {
 	run_id: string;
 	content: string;
 	updated_at: string | null;
+};
+
+/** 练习提前 Check 结果（status=patched → 从 target_round 起自动计分）。 */
+export type EarlyCheckDto = {
+	status: string;
+	swept: boolean;
+	swept_rounds: number;
+	target_round: number;
+	healthcheck_result: string | null;
+	judge_result: string | null;
+	exploit_result: string | null;
 };
 
 /** source presigned URL 响应（后端实现：直接返回 URL 字符串，非对象）。 */
@@ -172,6 +185,19 @@ export const awdpRunApi = {
 	resetRun: async (runId: string) => {
 		const res = await service_api.post<UniResponse<AwdpRunDto>>(
 			`/service/awdp/runs/${runId}/reset`,
+		);
+		return res.data;
+	},
+	setPhase: async (runId: string, phase: "break" | "fix") => {
+		const res = await service_api.post<UniResponse<AwdpRunDto>>(
+			`/service/awdp/runs/${runId}/phase`,
+			{ phase },
+		);
+		return res.data;
+	},
+	earlyCheck: async (runId: string, gameboxId: string) => {
+		const res = await service_api.post<UniResponse<EarlyCheckDto>>(
+			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/early-check`,
 		);
 		return res.data;
 	},

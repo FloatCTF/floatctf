@@ -28,6 +28,7 @@ import type {
 	ManualCheckDto,
 	PatchSubmitResponse,
 } from "@/api/awdp";
+import type { EarlyCheckDto } from "@/api/awdpRuns";
 import { useMsgBanner } from "@/components";
 import { AwdpPhaseOverview } from "@/components/awdp/AwdpPhaseOverview";
 
@@ -201,6 +202,10 @@ export type AwdpWorkbenchViewModel = {
 	scoreHistory?: AwdpScoreEventView[];
 	/** 控制 Train Again 等 practice 专属交互。 */
 	isPractice: boolean;
+	/** 练习模式手动控制阶段（break↔fix）。 */
+	canControlPhase?: boolean;
+	/** 练习提前 Check 确认修复的起始回合序号（该轮起自动计分）。 */
+	earlyPatchedSeq?: number | null;
 };
 
 export type AwdpWorkbenchProps = {
@@ -222,6 +227,12 @@ export type AwdpWorkbenchProps = {
 	onTestCheck: (
 		egId: string,
 	) => Promise<ManualCheckDto | undefined> | ManualCheckDto | undefined;
+	/** 练习提前 Check（官方评估管线；PATCHED → 该轮起自动计分）。 */
+	onEarlyCheck?: (
+		egId: string,
+	) => Promise<EarlyCheckDto | undefined> | EarlyCheckDto | undefined;
+	/** 练习模式手动控制阶段（break↔fix）。 */
+	onSetPhase?: (target: "break" | "fix") => void | Promise<void>;
 	/** Fix 阶段下载源码：返回 presigned URL（空则不打开）。 */
 	onDownloadSource?: (
 		egId: string,
@@ -245,6 +256,8 @@ export function AwdpWorkbench({
 	onUploadPatch,
 	onTestCheck,
 	onDownloadSource,
+	onEarlyCheck,
+	onSetPhase,
 	onTrainAgain,
 	onStartInstance,
 	onStopInstance,
@@ -266,6 +279,12 @@ export function AwdpWorkbench({
 	const [checkResults, setCheckResults] = useState<
 		Record<string, ManualCheckDto | undefined>
 	>({});
+	const [earlyCheckResults, setEarlyCheckResults] = useState<
+		Record<string, EarlyCheckDto | undefined>
+	>({});
+	const [earlyChecking, setEarlyChecking] = useState<Record<string, boolean>>(
+		{},
+	);
 	const [checking, setChecking] = useState<Record<string, boolean>>({});
 	const [busy, setBusy] = useState<Record<string, boolean>>({});
 	const setBusyKey = (key: string, value: boolean) =>
@@ -385,6 +404,47 @@ export function AwdpWorkbench({
 			banner.showErrorBanner(e);
 		} finally {
 			setBusyKey(key, false);
+		}
+	};
+
+	const handleSetPhase = async (target: "break" | "fix") => {
+		if (!onSetPhase) {
+			return;
+		}
+		setBusyKey(`phase:${target}`, true);
+		try {
+			await onSetPhase(target);
+		} catch (e) {
+			banner.showErrorBanner(e);
+		} finally {
+			setBusyKey(`phase:${target}`, false);
+		}
+	};
+
+	const handleEarlyCheck = async (gb: AwdpWorkbenchGameBox) => {
+		if (!onEarlyCheck) {
+			return;
+		}
+		const key = `early:${gb.id}`;
+		setBusyKey(key, true);
+		setEarlyChecking((prev) => ({ ...prev, [gb.id]: true }));
+		setEarlyCheckResults((prev) => ({ ...prev, [gb.id]: undefined }));
+		try {
+			const res = await onEarlyCheck(gb.id);
+			if (res) {
+				setEarlyCheckResults((prev) => ({ ...prev, [gb.id]: res }));
+				if (res.swept) {
+					banner.showBanner(
+						"success",
+						`Check 通过：从第 ${res.target_round} 轮起自动计分（+${viewModel.fixRoundScore} × ${res.swept_rounds} 轮）`,
+					);
+				}
+			}
+		} catch (e) {
+			banner.showErrorBanner(e);
+		} finally {
+			setBusyKey(key, false);
+			setEarlyChecking((prev) => ({ ...prev, [gb.id]: false }));
 		}
 	};
 
@@ -550,6 +610,24 @@ export function AwdpWorkbench({
 							>
 								{checking[gb.id] ? "Checking…" : "Test Check"}
 							</Button>
+							{viewModel.isPractice && onEarlyCheck && (
+								<Button
+									variant="primary"
+									disabled={
+										earlyChecking[gb.id] ||
+										busy[`early:${gb.id}`] ||
+										!running ||
+										viewModel.earlyPatchedSeq != null
+									}
+									onClick={() => handleEarlyCheck(gb)}
+								>
+									{earlyChecking[gb.id]
+										? "Checking…"
+										: viewModel.earlyPatchedSeq != null
+											? "已确认修复"
+											: "提前 Check"}
+								</Button>
+							)}
 						</div>
 						<div className="text-sm flex items-center gap-2">
 							<span className="opacity-70">Last patch:</span>
@@ -585,6 +663,33 @@ export function AwdpWorkbench({
 									Judge：{check.judge_ok ? "PASS" : "FAIL"}
 								</span>
 								<span className="ml-2 text-xs opacity-60">（不计分）</span>
+							</div>
+						)}
+						{earlyCheckResults[gb.id] && (
+							<div className="text-sm">
+								<span
+									className={
+										earlyCheckResults[gb.id]!.swept
+											? "text-green-600"
+											: "text-red-600"
+									}
+								>
+									{EVAL_STATUS_LABEL[earlyCheckResults[gb.id]!.status] ??
+										earlyCheckResults[gb.id]!.status}
+								</span>
+								{earlyCheckResults[gb.id]!.swept && (
+									<span className="ml-2 text-green-600 font-medium">
+										从第 {earlyCheckResults[gb.id]!.target_round} 轮起自动计分
+										（+{viewModel.fixRoundScore} ×{" "}
+										{earlyCheckResults[gb.id]!.swept_rounds} 轮）
+									</span>
+								)}
+								{!earlyCheckResults[gb.id]!.swept &&
+									earlyCheckResults[gb.id]!.exploit_result && (
+										<span className="ml-2 text-xs opacity-60">
+											{earlyCheckResults[gb.id]!.exploit_result}
+										</span>
+									)}
 							</div>
 						)}
 					</div>
@@ -682,6 +787,42 @@ export function AwdpWorkbench({
 				/>
 			</div>
 
+			{/* 练习模式手动阶段控制（直接 break / 直接 fix） */}
+			{viewModel.canControlPhase &&
+			onSetPhase &&
+			(phase === "break" || phase === "fix") ? (
+				<div className="shrink-0 flex items-center gap-2 px-1">
+					{phase === "break" && (
+						<>
+							<Button
+								variant="primary"
+								disabled={busy["phase:fix"]}
+								onClick={() => handleSetPhase("fix")}
+							>
+								{busy["phase:fix"] ? "切换中…" : "直接进入 Fix"}
+							</Button>
+							<span className="text-xs opacity-60">
+								跳过 Break 等待，立即开始修复（实例将重置为 pristine）
+							</span>
+						</>
+					)}
+					{phase === "fix" && (
+						<>
+							<Button
+								disabled={busy["phase:break"]}
+								onClick={() => handleSetPhase("break")}
+							>
+								{busy["phase:break"] ? "切换中…" : "回到 Break"}
+							</Button>
+							<span className="text-xs opacity-60">
+								练习模式可自由切换阶段；回到 Break 会撤销当前 Fix
+								会话（回合/评估/计分清零）
+							</span>
+						</>
+					)}
+				</div>
+			) : null}
+
 			{/* GameBox 卡片列表（超出高度内部滚动，避免页面溢出） */}
 			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
 				{viewModel.gameboxes.map(renderGameBox)}
@@ -693,6 +834,12 @@ export function AwdpWorkbench({
 				{phase === "fix" || phase === "ended" ? (
 					<section className="p-3 rounded border">
 						<h4 className="font-bold mb-2">Official History</h4>
+						{viewModel.earlyPatchedSeq != null && (
+							<p className="text-sm text-green-600 font-medium mb-2">
+								✓ 已提前确认修复：从第 {viewModel.earlyPatchedSeq} 轮起自动计分
+								（练习模式）
+							</p>
+						)}
 						<Table.Container>
 							<DataTable
 								aria-labelledby="awdp-official-history"

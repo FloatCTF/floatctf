@@ -34,9 +34,8 @@ pub async fn create_official(
     };
     match model.insert(db).await {
         Ok(m) => Ok(m),
-        Err(sea_orm::DbErr::Exec(inner))
-            if inner.to_string().contains("awdp_evaluations_official_uidx") =>
-        {
+        // INSERT..RETURNING 的冲突按 DbErr::Query 上报（非 Exec）——变体无关匹配。
+        Err(e) if e.to_string().contains("awdp_evaluations_official_uidx") => {
             awdp_evaluations::Entity::find()
                 .filter(awdp_evaluations::Column::FixRoundId.eq(fix_round_id))
                 .filter(awdp_evaluations::Column::InstanceId.eq(instance_id))
@@ -145,6 +144,15 @@ pub async fn finish(
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?;
     Ok(())
+}
+
+/// 按 id 取评估（练习提前 Check 重取终态用）。
+pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> AwdpResult<awdp_evaluations::Model> {
+    awdp_evaluations::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("evaluation not found".into()))
 }
 
 /// run 的全部评估（选手视角过滤在 service 层）。

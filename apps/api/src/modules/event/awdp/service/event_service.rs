@@ -54,6 +54,12 @@ pub async fn transition_break_to_fix(
     Ok(())
 }
 
+/// Fix → Break 回退（练习模式手动控制阶段）：撤销 fix 会话（时间戳/回合/计分清零）。
+/// 仅练习 run 允许；competition run 受 tick/管理端线性状态机约束。
+pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
+    run_repo::transition_fix_to_break(db, run_id).await
+}
+
 /// run 下全部已启动实例 reset 到 pristine（Break→Fix / 管理端 / 玩家 run reset）。
 pub async fn reset_all_run_instances(
     db: &DatabaseConnection,

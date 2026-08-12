@@ -489,3 +489,178 @@ async fn train_again_preserves_old_run_history() {
     .await;
     cleanup(&db).await;
 }
+
+/// 练习模式手动控制阶段（plan 新需求）：
+///   break → 直接进入 Fix（回合物化）→ 提前 Check 记录 → Fix → 回到 Break
+///   （fix 会话撤销：回合/评估/计分清零，early_patched_seq 清零）→ 再进 Fix（全新时间线）。
+/// 不依赖真实 Docker 操作（无实例时 transition_break_to_fix 的 reset 为空操作）。
+#[tokio::test]
+async fn practice_phase_control_jump_fix_and_back() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    cleanup(&db).await;
+
+    use floatctf::entity::sea_orm_active_enums::AwdpPhase;
+    use floatctf::modules::event::awdp::service::event_service;
+
+    let user_id = seed_user(&db, "phase").await;
+    let gb_id = seed_trainable_gamebox(&db, "phase").await;
+    // 直接建 run（不启动实例）→ phase=Break。
+    let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
+        .await
+        .expect("create practice run");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Break);
+    assert_eq!(
+        floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+            .await
+            .unwrap()
+            .len(),
+        0,
+        "Break 阶段无回合"
+    );
+
+    // 1. 直接进入 Fix（无需等待 break_duration）。
+    event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run.id)
+        .await
+        .expect("jump to fix");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Fix, "手动进入 Fix");
+    assert!(row.fix_started_at.is_some() && row.fix_ends_at.is_some());
+    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(rounds.len(), 6, "fix 会话物化 6 个回合");
+    assert_eq!(rounds[0].sequence, 1);
+
+    // 2. 提前 Check 标记（service 层写入）。
+    run_repo::set_early_patched(&db, run.id, 1)
+        .await
+        .expect("set early patched");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.early_patched_seq, Some(1));
+
+    // 3. 回到 Break：fix 会话整体撤销。
+    event_service::transition_fix_to_break(&db, run.id)
+        .await
+        .expect("back to break");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Break, "手动回到 Break");
+    assert!(row.fix_started_at.is_none() && row.fix_ends_at.is_none());
+    assert_eq!(row.current_round, 0);
+    assert_eq!(
+        row.early_patched_seq, None,
+        "提前 Check 标记随 fix 会话清零"
+    );
+    assert!(
+        floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "fix 会话回合已删除"
+    );
+    assert!(row.break_ends_at.is_some(), "回到 Break 重新计时");
+
+    // 4. 再进 Fix：重新物化全新时间线（新 fix_started_at）。
+    event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run.id)
+        .await
+        .expect("re-enter fix");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Fix);
+    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(rounds.len(), 6, "重新物化 6 回合（无残留）");
+
+    // 5. competition run 不允许 Fix→Break 回退。
+    let (ev, comp_run, _) = {
+        let base = chrono::Utc::now();
+        let ev = floatctf::entity::events::ActiveModel {
+            is_virtual: Set(false),
+            id: Set(Uuid::new_v4()),
+            family: Set(floatctf::entity::sea_orm_active_enums::EventFamily::Awdp),
+            purpose: Set(floatctf::entity::sea_orm_active_enums::EventPurpose::Competition),
+            participant_mode: Set(
+                floatctf::entity::sea_orm_active_enums::ParticipantMode::Individual,
+            ),
+            system_key: Set(None),
+            title: Set(format!(
+                "awdp-it-phasecomp-{}",
+                &Uuid::new_v4().to_string()[..8]
+            )),
+            description: Set(None),
+            start_time: Set((base - chrono::Duration::hours(1)).into()),
+            hidden: Set(true),
+            allow_join: Set(false),
+            rules: Set(String::new()),
+            flag_prefix: Set(None),
+            end_time: Set(Some((base + chrono::Duration::hours(2)).into())),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        floatctf::modules::event::awdp::repo::event_repo::ensure_by_event_id(
+            &db,
+            ev.id,
+            &AwdpConfig::default(),
+        )
+        .await
+        .unwrap();
+        let run = run_repo::create_competition_run(&db, ev.id, &AwdpConfig::default())
+            .await
+            .unwrap();
+        let now = chrono::Utc::now();
+        run_repo::transition_phase(
+            &db,
+            run.id,
+            AwdpPhase::Pending,
+            AwdpPhase::Break,
+            run_repo::PhaseTransitionPatch {
+                started_at: Some(now),
+                break_ends_at: Some(now - chrono::Duration::minutes(1)),
+                next_action_at: Some(now - chrono::Duration::minutes(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        run_repo::transition_phase(
+            &db,
+            run.id,
+            AwdpPhase::Break,
+            AwdpPhase::Fix,
+            run_repo::PhaseTransitionPatch {
+                fix_started_at: Some(now),
+                fix_ends_at: Some(now + chrono::Duration::hours(1)),
+                current_round: Some(0),
+                next_action_at: Some(now + chrono::Duration::minutes(10)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        (ev.id, run.id, ())
+    };
+    let err = event_service::transition_fix_to_break(&db, comp_run)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("练习"),
+        "competition run 回退被拒: {err}"
+    );
+    let _ = floatctf::entity::events::Entity::delete_by_id(ev)
+        .exec(&db)
+        .await;
+
+    // 清理。
+    let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run.id)
+        .exec(&db)
+        .await;
+    cleanup(&db).await;
+}

@@ -11,7 +11,10 @@ use crate::infrastructure::script_runner::{parse_batch_results, run_script};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::fix_idempotency_key,
-    repo::{evaluation_repo, event_gamebox_repo, instance_repo, patch_repo, run_repo, score_repo},
+    repo::{
+        evaluation_repo, event_gamebox_repo, instance_repo, patch_repo, round_repo, run_repo,
+        score_repo,
+    },
     service::{lock::InstanceAdvisoryLock, runtime::Subject},
 };
 
@@ -293,17 +296,32 @@ async fn process_official_locked(
     docker: &Docker,
     ev: &crate::entity::awdp_evaluations::Model,
 ) -> AwdpResult<()> {
-    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
-
     let (_instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
     let run = run_repo::require_by_id(db, ext.run_id).await?;
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
     let round_id = ev
         .fix_round_id
         .ok_or_else(|| AwdpError::Internal("official evaluation missing fix_round_id".into()))?;
+    let round = round_repo::find_by_id(db, round_id).await?;
+    run_official_pipeline(db, docker, &run, &gamebox, ev, &round).await?;
+    Ok(())
+}
+
+/// 共享官方评估管线：NO_PATCH 短路 → Healthcheck → Judge → Exploit → 计分。
+/// 返回终态（worker 与练习提前 Check 共用，保证语义一致）。
+#[allow(clippy::too_many_arguments)]
+async fn run_official_pipeline(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    run: &crate::entity::awdp_runs::Model,
+    gamebox: &crate::entity::gameboxes::Model,
+    ev: &crate::entity::awdp_evaluations::Model,
+    round: &crate::entity::awdp_fix_rounds::Model,
+) -> AwdpResult<crate::entity::sea_orm_active_enums::AwdpEvaluationStatus> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
 
     // 1. NO_PATCH 短路（plan §21/§33：本轮无 APPLIED patch → +0，不浪费资源）。
-    if !patch_repo::has_applied_patch(db, ev.instance_id, round_id).await? {
+    if !patch_repo::has_applied_patch(db, ev.instance_id, round.id).await? {
         evaluation_repo::finish(
             db,
             ev.id,
@@ -315,14 +333,12 @@ async fn process_official_locked(
             None,
         )
         .await?;
-        return Ok(());
+        return Ok(S::NoPatch);
     }
 
-    let instance = {
-        // 容器可能已停 → 评估前确保运行（评估官方语义：对当前 instance 状态判）。
-        let (inst, _) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
-        inst
-    };
+    // 容器可能已停 → 评估前确保运行（评估官方语义：对当前 instance 状态判）。
+    // 计分主体取实例归属（competition 的 run 无主体；practice 与 run 一致）。
+    let (instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
     let runtime = DockerContainerRuntime::new(docker.clone());
     let container_ip = if instance.runtime_state == "running" {
         let state = runtime
@@ -400,7 +416,7 @@ async fn process_official_locked(
             None,
         )
         .await?;
-        return Ok(());
+        return Ok(S::ServiceDown);
     }
 
     // 3. Judge（check.py）。
@@ -452,7 +468,7 @@ async fn process_official_locked(
             None,
         )
         .await?;
-        return Ok(());
+        return Ok(S::FunctionalBroken);
     }
 
     // 4. Official exploit（平台侧执行；成功 = VULNERABLE +0，失败 = PATCHED +score）。
@@ -504,17 +520,18 @@ async fn process_official_locked(
             None,
         )
         .await?;
+        Ok(S::Vulnerable)
     } else {
         // PATCHED → +fix_round_score（幂等键 awdp:fix:{run}:{round}:{instance}）。
-        let key = fix_idempotency_key(ext.run_id, round_id, ev.instance_id);
+        let key = fix_idempotency_key(run.id, round.id, ev.instance_id);
         let _scored = score_repo::create_score_event(
             db,
-            ext.run_id,
+            run.id,
             ext.owner_user_id,
             ext.owner_team_id,
             ext.gamebox_id,
             "fix",
-            Some(round_id),
+            Some(round.id),
             run.fix_round_score,
             &key,
         )
@@ -530,6 +547,159 @@ async fn process_official_locked(
             None,
         )
         .await?;
+        Ok(S::Patched)
     }
-    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Practice 提前 Check（练习模式）：一次 check 成功 → 从该轮起全部回合自动计分
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 提前 Check 结果（练习模式；status=Patched 时触发自动计分）。
+#[derive(Debug, Clone)]
+pub struct EarlyCheckResult {
+    pub status: crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
+    /// status == Patched（本轮起自动计分）。
+    pub swept: bool,
+    /// 自动计分的回合数（当前轮起含：total_rounds - target_round + 1）。
+    pub swept_rounds: i32,
+    pub target_round: i32,
+    pub healthcheck_result: Option<String>,
+    pub judge_result: Option<String>,
+    pub exploit_result: Option<String>,
+}
+
+/// 练习提前 Check：对下一未完成回合立即执行官方评估管线（healthcheck→judge→exploit）。
+/// PATCHED（修复成功）→ 从该轮起（含）全部剩余回合直接计分 + 结算评估（幂等）。
+/// 仅练习 run（gamebox_id 非空）且 Fix 阶段可用；exploit 全程平台侧执行，不下发给玩家。
+pub async fn early_check(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    run_id: Uuid,
+    instance_id: Uuid,
+    subject: Subject,
+) -> AwdpResult<EarlyCheckResult> {
+    use crate::entity::sea_orm_active_enums::AwdpPhase;
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if run.gamebox_id.is_none() {
+        return Err(AwdpError::InvalidState("提前 Check 仅练习模式可用".into()));
+    }
+    if run.phase != AwdpPhase::Fix {
+        return Err(AwdpError::InvalidState(
+            "提前 Check 仅在 Fix 阶段可用".into(),
+        ));
+    }
+    let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    {
+        let owned = match subject {
+            Subject {
+                user_id: Some(u),
+                team_id: None,
+            } => instance.owner_user_id == Some(u),
+            Subject {
+                user_id: None,
+                team_id: Some(t),
+            } => instance.owner_team_id == Some(t),
+            _ => false,
+        };
+        if !owned {
+            return Err(AwdpError::Forbidden(
+                "instance does not belong to you".into(),
+            ));
+        }
+    }
+
+    let lock = InstanceAdvisoryLock::acquire(db, instance_id).await?;
+    let result = early_check_locked(db, docker, &run, instance_id).await;
+    lock.release().await;
+    result
+}
+
+async fn early_check_locked(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    run: &crate::entity::awdp_runs::Model,
+    instance_id: Uuid,
+) -> AwdpResult<EarlyCheckResult> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
+
+    // 目标回合：下一个未完成回合（pending 或 evaluating）——即「当前 turn」。
+    let round = round_repo::next_due_round(db, run.id)
+        .await?
+        .ok_or_else(|| AwdpError::InvalidState("所有回合均已评估/结束".into()))?;
+    let (gamebox, ext) = {
+        let (_inst, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+        (
+            event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?,
+            ext,
+        )
+    };
+
+    // 物化 official 评估（round × instance 唯一；幂等返回既有行）。
+    let ev = evaluation_repo::create_official(db, run.id, instance_id, round.id).await?;
+
+    // 若该轮评估已是终态：PATCHED 直接复用（避免 NO_PATCH 覆盖已确认修复），
+    // 其余终态（VULNERABLE/BROKEN/DOWN）重跑给玩家二次机会；pending/running 则执行。
+    let terminal = match &ev.status {
+        S::Pending | S::Running => None,
+        s => Some(s.clone()),
+    };
+    if terminal.is_none() || terminal != Some(S::Patched) {
+        run_official_pipeline(db, docker, run, &gamebox, &ev, &round).await?;
+    }
+    // 重取终态（finish 之后 ev 内存态过期）。
+    let fresh = evaluation_repo::find_by_id(db, ev.id).await?;
+    let status = fresh.status;
+
+    let mut result = EarlyCheckResult {
+        status: status.clone(),
+        swept: false,
+        swept_rounds: 0,
+        target_round: round.sequence,
+        healthcheck_result: fresh.healthcheck_result.clone(),
+        judge_result: fresh.judge_result.clone(),
+        exploit_result: fresh.exploit_result.clone(),
+    };
+
+    if status == S::Patched {
+        // 从当前轮起（含）全部剩余回合自动计分（幂等账本 + 幂等评估结算）。
+        run_repo::set_early_patched(db, run.id, round.sequence).await?;
+        let mut swept = 0i32;
+        for seq in round.sequence..=run.total_rounds {
+            let Some(r) = round_repo::find_by_sequence(db, run.id, seq).await? else {
+                continue;
+            };
+            if seq != round.sequence {
+                let eval = evaluation_repo::create_official(db, run.id, instance_id, r.id).await?;
+                evaluation_repo::finish(
+                    db,
+                    eval.id,
+                    S::Patched,
+                    Some("early check: 修复已确认，自动计分"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+            }
+            let key = fix_idempotency_key(run.id, r.id, instance_id);
+            let _scored = score_repo::create_score_event(
+                db,
+                run.id,
+                ext.owner_user_id,
+                ext.owner_team_id,
+                ext.gamebox_id,
+                "fix",
+                Some(r.id),
+                run.fix_round_score,
+                &key,
+            )
+            .await?;
+            swept += 1;
+        }
+        result.swept = true;
+        result.swept_rounds = swept;
+    }
+    Ok(result)
 }

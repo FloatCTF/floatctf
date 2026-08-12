@@ -106,6 +106,8 @@ function RouteComponent() {
 				: [],
 			scoreHistory: scoresQuery.data?.data?.history ?? [],
 			isPractice: true,
+			canControlPhase: true,
+			earlyPatchedSeq: run.early_patched_seq ?? null,
 		};
 	}, [run, roundsQuery.data, evalsQuery.data, scoresQuery.data, needTimeline]);
 
@@ -132,6 +134,18 @@ function RouteComponent() {
 				const res = await awdpRunApi.testCheck(runId, gameboxId);
 				invalidate();
 				return res.data;
+			},
+			onEarlyCheck: async (gameboxId: string) => {
+				const res = await awdpRunApi.earlyCheck(runId, gameboxId);
+				invalidate();
+				return res.data;
+			},
+			onSetPhase: async (target: "break" | "fix") => {
+				const res = await awdpRunApi.setPhase(runId, target);
+				if (res.data) {
+					queryClient.setQueryData(["awdp-run", runId], res);
+				}
+				invalidate();
 			},
 			onDownloadSource: async (gameboxId: string) => {
 				const res = await awdpRunApi.sourceUrl(runId, gameboxId);

@@ -377,6 +377,87 @@ pub async fn transition_phase(
     Ok(())
 }
 
+/// 练习模式 Fix→Break 回退（用户手动控制阶段；不走 can_transition_to 的线性状态机）。
+///
+/// 语义：撤销整个 fix 会话——时间戳/current_round/early_patched_seq 清零，
+/// 删除该 run 的全部 fix_rounds（级联删除 evaluations 与 fix 计分账本，
+/// patch_submissions 的 fix_round_id 置 NULL 保留审计）。之后再次 Break→Fix
+/// 会重新物化全新回合时间线。仅练习 run（gamebox_id 非空）允许。
+pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    let current = awdp_runs::Entity::find_by_id(run_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+
+    if current.gamebox_id.is_none() {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::InvalidState(
+            "只有练习 run 支持手动回到 Break".into(),
+        ));
+    }
+    if current.phase != AwdpPhase::Fix {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::Conflict(format!(
+            "concurrent AWDP phase transition: current={:?} expected=Fix",
+            current.phase
+        )));
+    }
+
+    let now = Utc::now();
+    let break_ends = now + chrono::Duration::seconds(current.break_duration_secs as i64);
+    let mut am: awdp_runs::ActiveModel = current.clone().into();
+    am.phase = Set(AwdpPhase::Break);
+    am.break_ends_at = Set(Some(break_ends.into()));
+    am.fix_started_at = Set(None);
+    am.fix_ends_at = Set(None);
+    am.finished_at = Set(None);
+    am.current_round = Set(0);
+    am.next_action_at = Set(Some(break_ends.into()));
+    am.early_patched_seq = Set(None);
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    // 撤销 fix 会话：删除回合（级联清 evaluations + fix 计分账本）。
+    crate::modules::event::awdp::repo::round_repo::clear_fix_session(&txn, run_id)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// 练习模式：记录提前 Check 确认修复的起始回合序号（该轮起自动计分）。
+pub async fn set_early_patched(db: &DatabaseConnection, run_id: Uuid, seq: i32) -> AwdpResult<()> {
+    let now = Utc::now();
+    let mut am: awdp_runs::ActiveModel = awdp_runs::Entity::find_by_id(run_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?
+        .into();
+    am.early_patched_seq = Set(Some(seq));
+    am.updated_at = Set(now.into());
+    am.update(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(())
+}
+
 /// 轻量更新 next_action_at / current_round（tick 推进用）。
 pub async fn touch_tick_state(
     db: &DatabaseConnection,

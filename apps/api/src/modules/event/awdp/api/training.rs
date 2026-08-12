@@ -289,6 +289,90 @@ pub async fn reset_run(
     UniResponse::ok(dto.into()).into()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SetPhaseForm {
+    /// 目标阶段：break 或 fix（练习模式手动控制）。
+    pub phase: String,
+}
+
+/// POST /api/service/awdp/runs/{run_id}/phase —— 练习模式手动控制阶段（直接 break / 直接 fix）。
+/// 仅 practice run：break→fix 立即进入修复阶段（重置实例 pristine）；
+/// fix→break 撤销整个 fix 会话（回合/评估/计分清零，重新物化全新时间线）。
+#[post("awdp/runs/{run_id}/phase")]
+pub async fn set_phase(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
+    path: web::Path<Uuid>,
+    form: Json<SetPhaseForm>,
+) -> UniResult<AwdpRunDto> {
+    let run_id = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    if run.gamebox_id.is_none() {
+        return Err(AppError::InvalidState("手动控制阶段仅练习模式可用".into()));
+    }
+    let target = form.phase.as_str();
+    match target {
+        "fix" => match run.phase {
+            AwdpPhase::Fix => {}
+            AwdpPhase::Break => {
+                crate::modules::event::awdp::service::event_service::transition_break_to_fix(
+                    ctx.db.get_ref(),
+                    ctx.docker.get_ref(),
+                    ctx.config.auth.jwt_secret.expose().as_bytes(),
+                    run.id,
+                )
+                .await
+                .map_err(AppError::from)?;
+                crate::modules::event::awdp::realtime::run_phase_changed(&state, run.id, "fix");
+            }
+            other => {
+                return Err(AppError::InvalidState(format!(
+                    "当前阶段 {:?} 不能直接进入 Fix",
+                    other
+                )));
+            }
+        },
+        "break" => match run.phase {
+            AwdpPhase::Break => {}
+            AwdpPhase::Fix => {
+                crate::modules::event::awdp::service::event_service::transition_fix_to_break(
+                    ctx.db.get_ref(),
+                    run.id,
+                )
+                .await
+                .map_err(AppError::from)?;
+                crate::modules::event::awdp::realtime::run_phase_changed(&state, run.id, "break");
+            }
+            other => {
+                return Err(AppError::InvalidState(format!(
+                    "当前阶段 {:?} 不能回到 Break",
+                    other
+                )));
+            }
+        },
+        other => {
+            return Err(AppError::Validation(format!(
+                "phase 只能是 break 或 fix（got {other:?}）"
+            )));
+        }
+    }
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.phase",
+        json!({ "run_id": run.id, "phase": target }),
+    )
+    .await;
+    let run = run_repo::require_by_id(ctx.db.get_ref(), run.id)
+        .await
+        .map_err(AppError::from)?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    UniResponse::ok(dto.into()).into()
+}
+
 /// POST /api/service/awdp/runs/{run_id}/restart-training —— Train Again（ended → 新 run）。
 #[post("awdp/runs/{run_id}/restart-training")]
 pub async fn train_again(
@@ -530,6 +614,69 @@ pub async fn manual_test_check(
             healthcheck_detail: result.healthcheck_detail,
             judge_ok: result.judge_ok,
             judge_detail: result.judge_detail,
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// POST .../early-check —— 练习提前 Check（官方评估管线；PATCHED → 从该轮起自动计分）。
+#[post("awdp/runs/{run_id}/gameboxes/{gamebox_id}/early-check")]
+pub async fn early_check_run(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<EarlyCheckDto> {
+    let (run_id, gamebox_id) = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    let Some(view) =
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, gamebox_id, Subject::user(user.id))
+            .await?
+    else {
+        return Err(AppError::NotFound("instance not started".into()));
+    };
+    let result = evaluation::early_check(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        run.id,
+        view.instance_id,
+        Subject::user(user.id),
+    )
+    .await
+    .map_err(AppError::from)?;
+    if result.swept {
+        crate::modules::event::awdp::realtime::run_score_changed(
+            &state,
+            run.id,
+            "fix",
+            run.fix_round_score * result.swept_rounds as i64,
+        );
+    }
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.early_check",
+        json!({
+            "run_id": run.id,
+            "gamebox_id": gamebox_id,
+            "status": result.status,
+            "swept": result.swept,
+            "swept_rounds": result.swept_rounds,
+        }),
+    )
+    .await;
+    UniResponse::ok(
+        EarlyCheckDto {
+            status: result.status,
+            swept: result.swept,
+            swept_rounds: result.swept_rounds,
+            target_round: result.target_round,
+            healthcheck_result: result.healthcheck_result,
+            judge_result: result.judge_result,
+            exploit_result: result.exploit_result,
         }
         .into(),
     )
@@ -954,6 +1101,7 @@ async fn build_run_dto(
         } else {
             None
         },
+        early_patched_seq: run.early_patched_seq,
         instances: instances.iter().map(RunInstanceDto::from).collect(),
     })
 }
@@ -965,11 +1113,13 @@ pub fn configure_training_routes(cfg: &mut web::ServiceConfig) {
         .service(get_run_overview)
         .service(stop_run)
         .service(reset_run)
+        .service(set_phase)
         .service(train_again)
         .service(submit_break_flag)
         .service(download_source)
         .service(upload_patch)
         .service(manual_test_check)
+        .service(early_check_run)
         .service(start_my_instance)
         .service(get_my_instance)
         .service(stop_my_instance)

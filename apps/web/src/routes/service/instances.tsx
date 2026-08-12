@@ -29,7 +29,15 @@ function RouteComponent() {
 	const banner = useMsgBanner();
 	const queryClient = useQueryClient();
 
-	const filterKeys = ["id", "status", "identifier", "challenge_id", "event_id"];
+	const filterKeys = [
+		"id",
+		"status",
+		"identifier",
+		"challenge_id",
+		"event_id",
+		"gamebox_id",
+		"run_id",
+	];
 
 	const mutationInstance = useMutation({
 		mutationFn: serviceApi.instances.destroy,
@@ -45,20 +53,31 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge_title",
-			header: "Challenge",
+			header: "Content",
 			field: "challenge_title",
 			rowHeader: true,
 			renderCell: (row: InstanceRow) => {
-				return row.challenge_id ? (
-					<AppLink
-						to={"/service/challenges/$id"}
-						params={{ id: row.challenge_id }}
-					>
-						{row.challenge_title ?? row.challenge_id}
-					</AppLink>
-				) : (
-					<span>—</span>
-				);
+				if (row.challenge_id) {
+					return (
+						<AppLink
+							to={"/service/challenges/$id"}
+							params={{ id: row.challenge_id }}
+						>
+							{row.challenge_title ?? row.challenge_id}
+						</AppLink>
+					);
+				}
+				if (row.run_id) {
+					return (
+						<AppLink
+							to={"/service/awdp/runs/$runId"}
+							params={{ runId: row.run_id }}
+						>
+							{row.gamebox_title ?? row.gamebox_id ?? "—"}
+						</AppLink>
+					);
+				}
+				return <span>—</span>;
 			},
 		},
 		{
@@ -100,17 +119,30 @@ function RouteComponent() {
 			header: "Action",
 			field: "action",
 			renderCell: (row: Instances) => {
-				return (
-					<Button
-						variant="invisible"
-						onClick={() => {
-							mutationInstance.mutate(row.id);
-						}}
-						style={{ color: "#DB0000" }}
-					>
-						Destroy
-					</Button>
-				);
+				if (row.challenge_id) {
+					return (
+						<Button
+							variant="invisible"
+							onClick={() => {
+								mutationInstance.mutate(row.id);
+							}}
+							style={{ color: "#DB0000" }}
+						>
+							Destroy
+						</Button>
+					);
+				}
+				if (row.run_id) {
+					return (
+						<AppLink
+							to={"/service/awdp/runs/$runId"}
+							params={{ runId: row.run_id }}
+						>
+							Open
+						</AppLink>
+					);
+				}
+				return null;
 			},
 		},
 	];

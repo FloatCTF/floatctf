@@ -10,7 +10,8 @@ pub struct InstancesDto {
     pub status: String,
     pub flag: String,
     pub content: Option<String>,
-    pub challenge_id: Uuid,
+    /// 关联挑战（AWDP 练习实例为 None，用 gamebox_id/run_id 标识）。
+    pub challenge_id: Option<Uuid>,
     pub event_id: Uuid,
     pub team_id: Option<Uuid>,
     pub user_id: Uuid,
@@ -26,6 +27,12 @@ pub struct InstancesDto {
     pub event_title: Option<String>,
     /// 启动用户昵称（列表页展示用，非数据库列）。
     pub user_name: Option<String>,
+    /// AWDP 练习 run id（列表页跳转训练场用，非数据库列）。
+    pub run_id: Option<Uuid>,
+    /// AWDP 练习 GameBox id（列表页跳转/筛选用，非数据库列）。
+    pub gamebox_id: Option<Uuid>,
+    /// AWDP 练习 GameBox 名（列表页展示用，非数据库列）。
+    pub gamebox_title: Option<String>,
 }
 
 impl InstancesDto {
@@ -39,7 +46,7 @@ impl InstancesDto {
             status: runtime.runtime_state.clone(),
             flag: instance.flag.clone(),
             content: instance.content.clone(),
-            challenge_id: instance.challenge_id,
+            challenge_id: Some(instance.challenge_id),
             event_id: instance.event_id,
             team_id: instance.team_id,
             user_id: instance.user_id,
@@ -50,6 +57,9 @@ impl InstancesDto {
             challenge_title: None,
             event_title: None,
             user_name: None,
+            run_id: None,
+            gamebox_id: None,
+            gamebox_title: None,
         }
     }
 

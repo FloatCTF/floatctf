@@ -1,21 +1,202 @@
-use std::str::FromStr;
-
-use actix_web::web;
-
-use sea_orm::Condition;
+use sea_orm::{DatabaseConnection, DbErr};
 
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
-    api::{FilterMapping, build_filter_condition, prelude::*},
-    entity::{challenges, event_challenge_instance, event_instances, events},
+    api::prelude::*,
+    entity::{
+        awdp_instances, awdp_runs, challenges, event_challenge_instance, event_instances, events,
+        gameboxes, users,
+    },
     modules::event::{
         common::domain::practice_event::require_practice_jeopardy_event,
-        jeopardy::application::context::EventContextBuilder,
-        jeopardy::application::instance as jeopardy_instance,
+        jeopardy::{
+            application::context::EventContextBuilder, application::instance as jeopardy_instance,
+        },
     },
 };
 
-/// GET /api/instances — 当前用户的系统练习实例列表
+/// 汇总当前用户的全部系统练习实例（Jeopardy 练习 + AWDP 练习），
+/// 供 GET /api/instances 与 DB-gated 测试复用。
+/// - 基础行：`event_instances`（归一化单根）中 owner_user_id = 用户 且 running；
+/// - 家族分类：`event_challenge_instance`（id 1:1）→ 挑战练习实例；
+///   `awdp_instances`（instance_id 关联且 run 为练习）→ AWDP 练习实例；
+/// - 批量补充展示名：挑战名 / GameBox 名 / 赛事标题 / 用户昵称；
+/// - AWDP 实例不返回 flag（flag 在容器内部，列表不暴露）；
+/// - 竞赛/团队实例（owner_user_id 为空）不会出现在练习视图。
+pub async fn collect_practice_instances(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<Vec<InstancesDto>, DbErr> {
+    use std::collections::HashMap;
+
+    let rows = event_instances::Entity::find()
+        .filter(event_instances::Column::OwnerUserId.eq(user_id))
+        .filter(event_instances::Column::RuntimeState.eq("running"))
+        .order_by_desc(event_instances::Column::UpdatedAt)
+        .all(db)
+        .await?;
+
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // 家族关联行（批量拉取，避免逐行查询）。
+    let challenge_rows = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::Id.is_in(ids.iter().copied()))
+        .all(db)
+        .await?;
+    let awdp_pairs = awdp_instances::Entity::find()
+        .filter(awdp_instances::Column::InstanceId.is_in(ids.iter().copied()))
+        .find_also_related(awdp_runs::Entity)
+        .filter(awdp_runs::Column::GameboxId.is_not_null())
+        .all(db)
+        .await?;
+
+    // 批量展示名。
+    let challenge_titles: HashMap<Uuid, String> = {
+        let challenge_ids: Vec<Uuid> = challenge_rows.iter().map(|m| m.challenge_id).collect();
+        if challenge_ids.is_empty() {
+            HashMap::new()
+        } else {
+            challenges::Entity::find()
+                .filter(challenges::Column::Id.is_in(challenge_ids))
+                .all(db)
+                .await?
+                .into_iter()
+                .map(|c| (c.id, c.name))
+                .collect()
+        }
+    };
+    let gamebox_titles: HashMap<Uuid, String> = {
+        let gamebox_ids: Vec<Uuid> = awdp_pairs.iter().map(|(m, _)| m.gamebox_id).collect();
+        if gamebox_ids.is_empty() {
+            HashMap::new()
+        } else {
+            gameboxes::Entity::find()
+                .filter(gameboxes::Column::Id.is_in(gamebox_ids))
+                .all(db)
+                .await?
+                .into_iter()
+                .map(|g| (g.id, g.name))
+                .collect()
+        }
+    };
+    let event_titles: HashMap<Uuid, String> = {
+        let event_ids: Vec<Uuid> = rows.iter().map(|r| r.event_id).collect();
+        events::Entity::find()
+            .filter(events::Column::Id.is_in(event_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|e| (e.id, e.title))
+            .collect()
+    };
+    let user_name = users::Entity::find_by_id(user_id)
+        .one(db)
+        .await?
+        .map(|u| u.nickname);
+
+    let mut dtos = Vec::with_capacity(rows.len());
+    for runtime in &rows {
+        if let Some(inst) = challenge_rows.iter().find(|m| m.id == runtime.id) {
+            let mut dto = InstancesDto::from_pair(inst, runtime);
+            dto.flag.clear();
+            dto.challenge_title = challenge_titles.get(&inst.challenge_id).cloned();
+            dto.event_title = event_titles.get(&runtime.event_id).cloned();
+            dto.user_name = user_name.clone();
+            dtos.push(dto);
+        } else if let Some((ext, run)) =
+            awdp_pairs.iter().find(|(m, _)| m.instance_id == runtime.id)
+        {
+            if run.is_none() {
+                continue;
+            }
+            let dto = InstancesDto {
+                id: runtime.id,
+                status: runtime.runtime_state.clone(),
+                flag: String::new(),
+                content: None,
+                challenge_id: None,
+                event_id: runtime.event_id,
+                team_id: ext.owner_team_id,
+                user_id,
+                identifier: runtime.container_name.clone(),
+                created_at: runtime.created_at,
+                updated_at: runtime.updated_at,
+                destroy_at: runtime.expires_at,
+                challenge_title: None,
+                event_title: event_titles.get(&runtime.event_id).cloned(),
+                user_name: user_name.clone(),
+                run_id: Some(ext.run_id),
+                gamebox_id: Some(ext.gamebox_id),
+                gamebox_title: gamebox_titles.get(&ext.gamebox_id).cloned(),
+            };
+            dtos.push(dto);
+        }
+        // 无家族关联的孤儿行跳过（不属于当前用户的练习视图）。
+    }
+    Ok(dtos)
+}
+
+/// 内存版过滤匹配（与 build_filter_condition 同款 token 语义：& 与 |，空格并入 value）。
+fn match_instances_filter(dto: &InstancesDto, filter: &str) -> bool {
+    let tokens: Vec<&str> = filter.split_whitespace().collect();
+    let mut or_groups: Vec<Vec<(&str, String)>> = Vec::new();
+    let mut and_group: Vec<(&str, String)> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = tokens[i];
+        if token == "&" {
+            i += 1;
+            continue;
+        }
+        if token == "|" {
+            if !and_group.is_empty() {
+                or_groups.push(std::mem::take(&mut and_group));
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(pos) = token.find(':') {
+            let key = &token[..pos];
+            let mut value = token[pos + 1..].to_string();
+            i += 1;
+            while i < tokens.len() && tokens[i] != "&" && tokens[i] != "|" {
+                value.push(' ');
+                value.push_str(tokens[i]);
+                i += 1;
+            }
+            and_group.push((key, value));
+        } else {
+            i += 1;
+        }
+    }
+    if !and_group.is_empty() {
+        or_groups.push(and_group);
+    }
+    if or_groups.is_empty() {
+        return true;
+    }
+
+    let matches = |key: &str, value: &str| -> bool {
+        match key {
+            "id" => dto.id.to_string() == value,
+            "status" => dto.status == value,
+            "identifier" => dto.identifier.contains(value),
+            "challenge_id" => dto.challenge_id.is_some_and(|id| id.to_string() == value),
+            "event_id" => dto.event_id.to_string() == value,
+            "gamebox_id" => dto.gamebox_id.is_some_and(|id| id.to_string() == value),
+            "run_id" => dto.run_id.is_some_and(|id| id.to_string() == value),
+            _ => true,
+        }
+    };
+    or_groups
+        .iter()
+        .any(|group| group.iter().all(|(k, v)| matches(k, v)))
+}
+
+/// GET /api/instances — 当前用户的系统练习实例列表（挑战练习 + AWDP 练习）
 #[get("")]
 pub async fn get_instances(
     user: UserJwtGuard,
@@ -25,100 +206,29 @@ pub async fn get_instances(
     let user = user.into_inner();
     let mut query_params = query_params.0;
 
-    let practice = require_practice_jeopardy_event(ctx.db.get_ref())
+    let mut items = collect_practice_instances(ctx.db.get_ref(), user.id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let mappings = [
-        FilterMapping {
-            key: "id",
-            column: Box::new(|v| {
-                Condition::all().add(
-                    event_challenge_instance::Column::Id
-                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
-                )
-            }),
-        },
-        FilterMapping {
-            key: "status",
-            column: Box::new(|v| Condition::all().add(event_instances::Column::RuntimeState.eq(v))),
-        },
-        FilterMapping {
-            key: "identifier",
-            column: Box::new(|v| {
-                Condition::all().add(event_instances::Column::ContainerName.contains(v))
-            }),
-        },
-        FilterMapping {
-            key: "challenge_id",
-            column: Box::new(|v| {
-                Condition::all().add(
-                    event_challenge_instance::Column::ChallengeId
-                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
-                )
-            }),
-        },
-    ];
+    if let Some(filter) = query_params.filter.clone() {
+        if !filter.trim().is_empty() {
+            items.retain(|dto| match_instances_filter(dto, &filter));
+        }
+    }
+    let total = items.len();
 
-    let stmt = event_challenge_instance::Entity::find()
-        .filter(event_challenge_instance::Column::EventId.eq(practice.id))
-        .filter(event_challenge_instance::Column::UserId.eq(user.id))
-        .find_also_related(event_instances::Entity)
-        .filter(event_instances::Column::RuntimeState.eq("running"));
-    let stmt = if let Some(cond) = build_filter_condition(query_params.filter.clone(), &mappings) {
-        stmt.filter(cond)
-    } else {
-        stmt
-    };
-    let stmt = stmt.order_by_desc(event_instances::Column::UpdatedAt);
-
-    // SelectTwo 无法用 paginate_query（仅支持 Select<E>），手动分页。
-    let total_items = stmt.clone().count(ctx.db.get_ref()).await?;
     let items = if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
-        stmt.limit(limit)
-            .offset((page.saturating_sub(1)) * limit)
-            .all(ctx.db.get_ref())
-            .await?
-    } else {
-        stmt.all(ctx.db.get_ref()).await?
-    };
-    let mut items = items;
-
-    // 批量查询题目名称，避免逐行查询。
-    let challenge_ids: Vec<Uuid> = items.iter().map(|(i, _)| i.challenge_id).collect();
-    let challenge_titles = if challenge_ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        challenges::Entity::find()
-            .filter(challenges::Column::Id.is_in(challenge_ids))
-            .all(ctx.db.get_ref())
-            .await?
+        items
             .into_iter()
-            .map(|c| (c.id, c.name))
-            .collect::<std::collections::HashMap<Uuid, String>>()
+            .skip((page.saturating_sub(1) * limit) as usize)
+            .take(limit as usize)
+            .collect::<Vec<_>>()
+    } else {
+        items
     };
 
-    let event_title = practice.title.clone();
-    let user_name = user.nickname.clone();
-
-    let dtos: Vec<InstancesDto> = items
-        .into_iter()
-        .filter_map(|(m, runtime)| {
-            let runtime = runtime?;
-            let mut dto = InstancesDto::from_pair(&m, &runtime);
-            dto.flag.clear();
-            let challenge_id = m.challenge_id;
-            Some(dto.with_names(
-                challenge_titles.get(&challenge_id).cloned(),
-                Some(event_title.clone()),
-                Some(user_name.clone()),
-            ))
-        })
-        .collect();
-
-    query_params.total = Some(total_items as usize);
-
-    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
+    query_params.total = Some(total);
+    UniResponse::ok_meta(Some(items), query_params.into()).into()
 }
 
 /// GET /api/instances/{instance_id}

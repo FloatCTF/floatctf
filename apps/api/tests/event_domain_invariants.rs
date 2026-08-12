@@ -885,3 +885,205 @@ async fn practice_relaunch_after_destroy_removes_completed_row() {
     let _ = challenges::Entity::delete_by_id(ch.id).exec(&db).await;
     let _ = users::Entity::delete_by_id(user.id).exec(&db).await;
 }
+
+/// 归一化后用户侧练习实例列表应为合并视图：Jeopardy 练习 + AWDP 练习（同一根表 event_instances）。
+/// 覆盖：两类实例都出现、AWDP 行带 run_id/gamebox_id/gamebox_title 且 flag 为空、
+/// 其他用户看不到、竞赛实例（owner_user_id 为空）不出现。
+#[tokio::test]
+async fn collect_practice_instances_merges_challenge_and_awdp() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+
+    use floatctf::entity::{awdp_instances, awdp_runs, gameboxes};
+    use floatctf::modules::event::jeopardy::api::instances::collect_practice_instances;
+
+    let practice = ensure_practice_jeopardy_event(&db)
+        .await
+        .expect("practice event");
+    let user = seed_user(&db, "pinst").await;
+    let other = seed_user(&db, "pinst-other").await;
+    let mut ch = seed_challenge(&db, "pinst").await;
+    challenges::ActiveModel {
+        id: Set(ch.id),
+        flag_type: Set(Some("static".into())),
+        static_flag_value: Set(Some(format!("flag{{pinst-{}}}", ch.id.simple()))),
+        build_status: Set(Some("ready".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .expect("static challenge");
+
+    // --- Jeopardy 练习实例（挑战行） ---
+    let inst_a = Uuid::new_v4();
+    event_instances::ActiveModel {
+        id: Set(inst_a),
+        event_id: Set(practice.id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        container_name: Set(format!("tst-chal-{}", &inst_a.to_string()[..8])),
+        runtime_state: Set("running".into()),
+        runtime_generation: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("challenge runtime");
+    event_challenge_instance::ActiveModel {
+        id: Set(inst_a),
+        event_id: Set(practice.id),
+        user_id: Set(user.id),
+        team_id: Set(None),
+        challenge_id: Set(ch.id),
+        flag: Set(format!("flag{{chal-{}}}", inst_a.simple())),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("challenge instance");
+
+    // --- AWDP 练习实例（gamebox 行，挂虚拟 awdp 练习 event） ---
+    let awdp_event_id = Uuid::new_v4();
+    events::ActiveModel {
+        id: Set(awdp_event_id),
+        title: Set(format!(
+            "awdp-practice-test-{}",
+            &awdp_event_id.to_string()[..8]
+        )),
+        system_key: Set(Some(format!(
+            "awdp-practice-test:{}",
+            &awdp_event_id.to_string()[..8]
+        ))),
+        family: Set(EventFamily::Awdp),
+        purpose: Set(EventPurpose::Practice),
+        participant_mode: Set(ParticipantMode::Individual),
+        is_virtual: Set(true),
+        hidden: Set(true),
+        start_time: Set(Utc::now().into()),
+        end_time: Set(None),
+        rules: Set(String::new()),
+        allow_join: Set(true),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("awdp practice event");
+    let gb_id = Uuid::new_v4();
+    gameboxes::ActiveModel {
+        id: Set(gb_id),
+        name: Set(format!("gb-pinst-{}", &gb_id.to_string()[..8])),
+        safe_name: Set(format!("gb-pinst-{}", &gb_id.to_string()[..8])),
+        category: Set("pwn".into()),
+        description: Set("test".into()),
+        hidden: Set(false),
+        recommended_cpu_millis: Set(1000),
+        recommended_memory_bytes: Set(0),
+        recommended_pids_limit: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("gamebox");
+    let run_id = Uuid::new_v4();
+    awdp_runs::ActiveModel {
+        id: Set(run_id),
+        event_id: Set(awdp_event_id),
+        gamebox_id: Set(Some(gb_id)),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        phase: Set(floatctf::entity::sea_orm_active_enums::AwdpPhase::Break),
+        break_duration_secs: Set(3600),
+        fix_duration_secs: Set(3600),
+        fix_round_interval_secs: Set(600),
+        break_score: Set(1000),
+        fix_round_score: Set(150),
+        current_round: Set(0),
+        total_rounds: Set(6),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("practice run");
+    let inst_b = Uuid::new_v4();
+    event_instances::ActiveModel {
+        id: Set(inst_b),
+        event_id: Set(awdp_event_id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        container_name: Set(format!("tst-gb-{}", &inst_b.to_string()[..8])),
+        runtime_state: Set("running".into()),
+        runtime_generation: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("gamebox runtime");
+    awdp_instances::ActiveModel {
+        instance_id: Set(inst_b),
+        event_id: Set(awdp_event_id),
+        owner_user_id: Set(Some(user.id)),
+        owner_team_id: Set(None),
+        run_id: Set(run_id),
+        gamebox_id: Set(gb_id),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("awdp instance");
+
+    // --- 其他用户视角：空 ---
+    let other_view = collect_practice_instances(&db, other.id)
+        .await
+        .expect("other view");
+    assert!(other_view.is_empty(), "其他用户应看不到当前用户实例");
+
+    // --- 当前用户视角：两类都出现 ---
+    let dtos = collect_practice_instances(&db, user.id)
+        .await
+        .expect("collect");
+    assert_eq!(dtos.len(), 2, "应合并 Jeopardy 练习 + AWDP 练习各一条");
+
+    let chal = dtos
+        .iter()
+        .find(|d| d.challenge_id.is_some())
+        .expect("chal row");
+    assert_eq!(chal.id, inst_a);
+    assert_eq!(
+        chal.identifier,
+        format!("tst-chal-{}", &inst_a.to_string()[..8])
+    );
+    assert_eq!(
+        chal.challenge_title.as_deref(),
+        Some(ch.name.as_str()),
+        "挑战名应补齐"
+    );
+    assert_eq!(chal.status, "running");
+
+    let gb = dtos
+        .iter()
+        .find(|d| d.run_id.is_some())
+        .expect("gamebox row");
+    assert_eq!(gb.id, inst_b);
+    assert_eq!(gb.challenge_id, None, "AWDP 实例无 challenge_id");
+    assert_eq!(gb.run_id, Some(run_id));
+    assert_eq!(gb.gamebox_id, Some(gb_id));
+    assert_eq!(
+        gb.gamebox_title.as_deref(),
+        Some(format!("gb-pinst-{}", &gb_id.to_string()[..8]).as_str())
+    );
+    assert_eq!(gb.flag, "", "AWDP 实例不返回 flag");
+    assert!(gb.content.is_none());
+
+    // --- 清理 ---
+    let _ = event_instances::Entity::delete_many()
+        .filter(event_instances::Column::Id.is_in(vec![inst_a, inst_b]))
+        .exec(&db)
+        .await;
+    let _ = awdp_runs::Entity::delete_by_id(run_id).exec(&db).await;
+    let _ = gameboxes::Entity::delete_by_id(gb_id).exec(&db).await;
+    let _ = challenges::Entity::delete_by_id(ch.id).exec(&db).await;
+    let _ = events::Entity::delete_by_id(awdp_event_id).exec(&db).await;
+    let _ = users::Entity::delete_by_id(user.id).exec(&db).await;
+    let _ = users::Entity::delete_by_id(other.id).exec(&db).await;
+}

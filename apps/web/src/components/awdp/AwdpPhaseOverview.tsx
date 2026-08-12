@@ -244,18 +244,16 @@ export function computeTimelineState(
 type AwdpTimelineProps = {
 	state: AwdpTimelineState;
 	phase: AwdpPhase;
+	totalRounds: number;
 };
 
 /** 紧凑 track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
-function AwdpTimeline({ state, phase }: AwdpTimelineProps) {
+function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
+	// 进度条已走过部分整体为绿色（success），marker 跟随。
 	const markerColor =
-		phase === "break"
-			? "border-[var(--accent-fg)]"
-			: phase === "fix"
-				? "border-[var(--attention-fg)]"
-				: phase === "ended"
-					? "border-[var(--success-fg)]"
-					: "border-[var(--fgColor-muted)]";
+		phase === "pending"
+			? "border-[var(--fgColor-muted)]"
+			: "border-[var(--fgColor-success)]";
 
 	const showTurnSeparators =
 		phase !== "break" && state.turnBoundariesPct.length > 0;
@@ -300,7 +298,7 @@ function AwdpTimeline({ state, phase }: AwdpTimelineProps) {
 					style={{ width: `${state.breakWidthPct}%` }}
 				>
 					<div
-						className="awdp-stripes h-full bg-[var(--accent-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+						className="awdp-stripes h-full bg-[var(--fgColor-success)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
 						style={{ width: `${state.breakFillPct}%` }}
 					/>
 				</div>
@@ -314,7 +312,7 @@ function AwdpTimeline({ state, phase }: AwdpTimelineProps) {
 					}}
 				>
 					<div
-						className="awdp-stripes h-full bg-[var(--attention-fg)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+						className="awdp-stripes h-full bg-[var(--fgColor-success)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
 						style={{ width: `${state.fixFillPct}%` }}
 					/>
 					{showTurnSeparators &&
@@ -335,6 +333,29 @@ function AwdpTimeline({ state, phase }: AwdpTimelineProps) {
 					style={{ left: `${state.markerPct}%` }}
 				/>
 			</div>
+
+			{/* 时间节点：Fix/Ended 且回合数 <= 8 时显示 T1..Tn（每个 Turn 起点/段中心），避免拥挤 */}
+			{(phase === "fix" || phase === "ended") &&
+				totalRounds > 0 &&
+				totalRounds <= 8 && (
+					<div className="relative mt-0.5 h-3.5 text-[10px] leading-none text-[var(--fgColor-muted)] tabular-nums select-none">
+						{Array.from({ length: totalRounds }, (_, i) => {
+							const left =
+								state.breakWidthPct +
+								((i + 0.5) / totalRounds) * state.fixWidthPct;
+							return (
+								<span
+									key={left}
+									aria-hidden="true"
+									className="absolute -translate-x-1/2"
+									style={{ left: `${left}%` }}
+								>
+									T{i + 1}
+								</span>
+							);
+						})}
+					</div>
+				)}
 		</div>
 	);
 }
@@ -509,7 +530,11 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 
 			{/* Row 3：Break → Fix Timeline */}
 			<div className="mt-1.5">
-				<AwdpTimeline state={state} phase={phase} />
+				<AwdpTimeline
+					state={state}
+					phase={phase}
+					totalRounds={totalRounds}
+				/>
 			</div>
 		</section>
 	);

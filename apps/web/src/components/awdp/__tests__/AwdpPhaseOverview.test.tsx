@@ -259,6 +259,32 @@ describe("AwdpPhaseOverview 渲染", () => {
 		expect(screen.getAllByText("Turn 3 / 6").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("Next check in: 5m")).toBeDefined(); // 300s
 		expect(screen.getByText("Score")).toBeDefined();
+		// 时间节点：Fix 且 totalRounds<=8 时显示 T1..T6（每个 Turn 段中心）
+		expect(screen.getAllByText(/^T[1-6]$/).length).toBe(6);
+	});
+
+	it("进度条已走过部分整体为绿色（success）——Break/Fix 填充 + marker 无 accent/attention 旧色", () => {
+		const { container } = render(
+			<AwdpPhaseOverview
+				phase="fix"
+				{...base}
+				currentRound={3}
+				startedAt={new Date(now - 3600_000).toISOString()}
+				fixStartedAt={new Date(now - 300_000).toISOString()}
+				fixEndsAt={new Date(now + 5100_000).toISOString()}
+				nextCheckAt={new Date(now + 300_000).toISOString()}
+			/>,
+		);
+		const green = container.querySelectorAll('[class*="--fgColor-success"]');
+		expect(green.length).toBeGreaterThanOrEqual(3); // break fill + fix fill + marker
+		expect(container.querySelectorAll('[class*="--accent-fg"]').length).toBe(0);
+		expect(container.querySelectorAll('[class*="--attention-fg"]').length).toBe(0);
+	});
+
+	it("BREAK 阶段不显示 T 标签（时间节点仅 Fix/Ended）", () => {
+		render(<AwdpPhaseOverview phase="break" {...base} />);
+		expect(screen.queryAllByText(/^T[1-6]$/).length).toBe(0);
+		expect(screen.queryByText(/Turn \d/)).toBeNull();
 	});
 
 	it("ENDED：Final Score / Finished / 无 next check", () => {

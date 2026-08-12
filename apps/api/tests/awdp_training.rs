@@ -572,7 +572,18 @@ async fn practice_phase_control_jump_fix_and_back() {
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(row.early_patched_seq, Some(1));
 
-    // 3. 回到 Break：fix 会话整体撤销。
+    // 3. 回到 Break：fix 会话整体撤销（started_at 同步重置为当前时刻，时间线/倒计时重新计时）。
+    //    先把 started_at 伪造成 1 小时前，验证回退会重置时间线起点。
+    {
+        let am = floatctf::entity::awdp_runs::ActiveModel {
+            id: Set(run.id),
+            started_at: Set(Some(
+                (chrono::Utc::now() - chrono::Duration::hours(1)).into(),
+            )),
+            ..Default::default()
+        };
+        am.update(&db).await.unwrap();
+    }
     event_service::transition_fix_to_break(&db, run.id)
         .await
         .expect("back to break");
@@ -592,6 +603,14 @@ async fn practice_phase_control_jump_fix_and_back() {
         "fix 会话回合已删除"
     );
     assert!(row.break_ends_at.is_some(), "回到 Break 重新计时");
+    let started = row.started_at.expect("started_at 已重置");
+    let drift = (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
+        .num_seconds()
+        .abs();
+    assert!(
+        drift < 30,
+        "回退后 started_at 应≈当前时刻（实际偏移 {drift}s）"
+    );
 
     // 4. 再进 Fix：重新物化全新时间线（新 fix_started_at）。
     event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run.id)

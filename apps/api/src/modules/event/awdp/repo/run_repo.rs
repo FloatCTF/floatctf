@@ -420,6 +420,7 @@ pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> A
     let break_ends = now + chrono::Duration::seconds(current.break_duration_secs as i64);
     let mut am: awdp_runs::ActiveModel = current.clone().into();
     am.phase = Set(AwdpPhase::Break);
+    am.started_at = Set(Some(now.into())); // 回卷即重新开始 Break：时间线/倒计时从此刻重新计时
     am.break_ends_at = Set(Some(break_ends.into()));
     am.fix_started_at = Set(None);
     am.fix_ends_at = Set(None);

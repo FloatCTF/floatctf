@@ -976,20 +976,27 @@ async fn practice_early_check_sweeps_future_rounds() {
     );
 
     // 幂等：后续 tick（cutoff 到期）不重复加分、不新增评估。
+    // 注：不调全局 worker_round 断言 n==0——共享 dev DB 下并行测试二进制可能同时
+    // 产生 pending 评估（全局 claim 计数天然竞态），只断言本 run 的回合/评估/分数不变。
     expire_round(&db, run.id, 2).await;
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r2 cutoff");
-    let n = evaluation::worker_round(&db, &docker, 8)
-        .await
-        .expect("worker after sweep");
-    assert_eq!(n, 0, "sweep 后无 pending 评估可执行");
     let score2 = score_repo::my_total(&db, run.id, Some(user_id), None)
         .await
         .unwrap();
     assert_eq!(score2, score, "不重复加分");
     let evals2 = evaluation_repo::list_for_run(&db, run.id).await.unwrap();
     assert_eq!(evals2.len(), 6, "不新增评估");
+    assert!(
+        evals2.iter().all(|e| {
+            !matches!(
+                e.status,
+                AwdpEvaluationStatus::Pending | AwdpEvaluationStatus::Running
+            )
+        }),
+        "sweep 后本 run 不应残留 pending/running 评估"
+    );
 
     // 再跑一次提前 Check：幂等（同轮复用 PATCHED，sweep 空转）。
     let res2 = evaluation::early_check(&db, &docker, run.id, inst.instance_id, sub)

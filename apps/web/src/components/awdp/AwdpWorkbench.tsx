@@ -793,10 +793,10 @@ export function AwdpWorkbench({
 					{onEnd && (phase === "break" || phase === "fix") ? (
 						<Button
 							variant="danger"
-							disabled={busy["end"]}
+							disabled={busy.end}
 							onClick={() => handleEnd()}
 						>
-							{busy["end"] ? "停止中…" : "End"}
+							{busy.end ? "停止中…" : "End"}
 						</Button>
 					) : null}
 				</div>

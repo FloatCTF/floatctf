@@ -81,8 +81,7 @@ function RouteComponent() {
 		},
 	});
 	const navigate = useNavigate();
-	// biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
-	useEffect(() => {
+		useEffect(() => {
 		if (instance_data?.data) {
 			challengeStatus.isRunning = true;
 			challengeStatus.instance = instance_data.data;

@@ -235,8 +235,7 @@ function ChallengeDialog({
 	});
 
 	// useEffect 只在 instance_data 更新时执行一次
-	// biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
-	useEffect(() => {
+		useEffect(() => {
 		if (open) {
 			if (instance_data?.data) {
 				challengeStatus.isRunning = true;

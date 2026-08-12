@@ -88,8 +88,7 @@ pub async fn get_events(
         &mappings,
         &query_params,
         Some(Box::new(|stmt| {
-            stmt.filter(events::Column::IsVirtual.eq(false))
-                .order_by_desc(events::Column::UpdatedAt)
+            stmt.order_by_desc(events::Column::UpdatedAt)
         })),
     )
     .await?;

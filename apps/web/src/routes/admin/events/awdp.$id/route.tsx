@@ -50,14 +50,14 @@ function RouteComponent() {
 						<RouterNavItem to="/admin/events/awdp/$id/gameboxes" params={{ id }}>
 							GameBoxes
 						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>
-							Instance
-						</RouterNavItem>
 						<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
 							Ops
 						</RouterNavItem>
 					</>
 				)}
+				<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>
+					Instance
+				</RouterNavItem>
 			</UnderlineNav>
 			<EventContext.Provider value={event}>
 				<Outlet />

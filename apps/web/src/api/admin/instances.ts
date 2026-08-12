@@ -27,13 +27,6 @@ export type AdminInstanceRow = {
 };
 
 export const instanceAdminApi = {
-	/** 全局归一化实例列表（challenge + AWD/AWDP gamebox）。 */
-	fetch: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<AdminInstanceRow[]>> => {
-		const res = await admin_api.get("/instances", { params });
-		return res.data;
-	},
 	/** 某赛事的归一化实例列表（admin 赛事 Instance Tab）。 */
 	listForEvent: async (
 		eventId: string,

@@ -7,7 +7,6 @@ import {
 	LogIcon,
 	PackageIcon,
 	PeopleIcon,
-	ServerIcon,
 	TrophyIcon,
 	XCircleIcon,
 } from "@primer/octicons-react";
@@ -367,12 +366,6 @@ function StatBlocks({
 			value: summary.stats.challenges,
 			href: "/admin/challenges",
 			icon: <TrophyIcon />,
-		},
-		{
-			label: "Instances",
-			value: summary.stats.instances,
-			href: "/admin/instances",
-			icon: <ServerIcon />,
 		},
 		{
 			label: "AWD GameBoxes",

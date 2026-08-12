@@ -1,9 +1,9 @@
-//! 管理端统一实例视图（归一化后：单一根表 event_instances）。
+//! 管理端每赛事实例视图（归一化后：单一根表 event_instances）。
 //!
 //! 所有实例（challenge / AWD gamebox / AWDP gamebox）都挂在 `event_instances`
 //! 根表上，各自经关联表（event_challenge_instance / event_gamebox_instances /
-//! awdp_instances）挂靠。列表以 event_instances 为主查询，批量加载三张关联表
-//! 分类 + 水合展示字段，内存分页（跨 family 无法用 SQL 分页）。
+//! awdp_instances）挂靠。admin 从赛事管理页（含虚拟训练赛事）的 Instance Tab
+//! 查看某赛事下的实例，不再提供全局实例列表。
 //! 刻意不返回 flag（管理端列表不再展示实例 flag）。
 
 use std::{collections::HashMap, str::FromStr};
@@ -12,7 +12,6 @@ use sea_orm::entity::prelude::DateTimeWithTimeZone;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use serde::Serialize;
 
-use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::prelude::*,
     entity::{
@@ -71,58 +70,6 @@ fn parse_filter_tokens(filter: &str) -> Vec<(String, String)> {
 
 fn uuid_or_nil(v: &str) -> Uuid {
     Uuid::from_str(v).unwrap_or(Uuid::nil())
-}
-
-/// GET /api/admin/instances —— 归一化实例列表：
-/// 根表 event_instances 过滤 + 三张关联表分类，按 updated_at 倒序，内存分页。
-#[get("")]
-pub async fn get_instances(
-    _user: SuperAdminJwtGuard,
-    ctx: ReqCtx,
-    query_params: Query<QueryParams>,
-) -> UniResult<Vec<AdminInstanceRow>> {
-    let mut query_params = query_params.0;
-    let db = ctx.db.get_ref();
-
-    let pairs = parse_filter_tokens(query_params.filter.as_deref().unwrap_or(""));
-
-    // ── 1. 根表过滤（event_instances 列；family 专属键留到分类后内存过滤） ──
-    let mut q = event_instances::Entity::find();
-    let mut family_keys: Vec<(String, String)> = Vec::new();
-    for (k, v) in &pairs {
-        match k.as_str() {
-            "id" => q = q.filter(event_instances::Column::Id.eq(uuid_or_nil(v))),
-            "status" => q = q.filter(event_instances::Column::RuntimeState.contains(v.clone())),
-            "identifier" | "ref" => {
-                q = q.filter(event_instances::Column::ContainerName.contains(v.clone()))
-            }
-            "event_id" => q = q.filter(event_instances::Column::EventId.eq(uuid_or_nil(v))),
-            "user_id" => q = q.filter(event_instances::Column::OwnerUserId.eq(uuid_or_nil(v))),
-            "team_id" => q = q.filter(event_instances::Column::OwnerTeamId.eq(uuid_or_nil(v))),
-            _ => family_keys.push((k.clone(), v.clone())),
-        }
-    }
-    let root_rows = q
-        .order_by_desc(event_instances::Column::UpdatedAt)
-        .all(db)
-        .await?;
-    let mut rows = build_admin_rows(db, root_rows, &family_keys).await?;
-
-    // ── 排序 + 内存分页（跨 family 无法 SQL 分页） ──
-    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    let total: usize = rows.len();
-    let total_u64 = total as u64;
-    let page = query_params.page.unwrap_or(1).max(1);
-    let limit = query_params.limit.unwrap_or(total_u64.max(1)).max(1);
-    let start = ((page - 1) as usize) * (limit as usize);
-    let page_rows = rows
-        .into_iter()
-        .skip(start)
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-
-    query_params.total = Some(total);
-    UniResponse::ok_meta(page_rows.into(), query_params.into()).into()
 }
 
 /// GET /api/admin/events/{event_id}/instances —— 某赛事的实例列表（admin 赛事 Instance Tab）。
@@ -391,22 +338,4 @@ async fn build_admin_rows(
     }
 
     Ok(rows)
-}
-
-/// GET /api/admin/instances/{instance_id} —— 实例详情（challenge 实例，含 flag 兼容）。
-#[get("/{instance_id}")]
-pub async fn get_instance(
-    _user: SuperAdminJwtGuard,
-    ctx: ReqCtx,
-    instance_id: Path<Uuid>,
-) -> UniResult<InstancesDto> {
-    let instance_id = instance_id.into_inner();
-    let (model, runtime) = event_challenge_instance::Entity::find_by_id(instance_id)
-        .find_also_related(event_instances::Entity)
-        .one(ctx.db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
-    let runtime = runtime.ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
-
-    UniResponse::ok(Some(InstancesDto::from_pair(&model, &runtime))).into()
 }

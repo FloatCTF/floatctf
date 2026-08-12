@@ -51,12 +51,6 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .service(settings::patch_setting),
     );
 
-    cfg.service(
-        scope("/instances")
-            .service(operations::runtime_instances::get_instances)
-            .service(operations::runtime_instances::get_instance),
-    );
-
     cfg.service(scope("/dashboard").service(operations::dashboard::get_dashboard_summary));
 
     cfg.service(

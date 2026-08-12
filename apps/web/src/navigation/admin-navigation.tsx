@@ -13,7 +13,6 @@ import {
 	MegaphoneIcon,
 	PackageIcon,
 	PasskeyFillIcon,
-	ServerIcon,
 	ShieldLockIcon,
 	TasklistIcon,
 	TerminalIcon,
@@ -113,9 +112,6 @@ export const adminNavigation: NavigationSection[] = [
 			},
 			item("content.gameboxes", "GameBoxes", "/admin/awd/gameboxes", {
 				icon: <PackageIcon />,
-			}),
-			item("content.instances", "Instances", "/admin/instances", {
-				icon: <ServerIcon />,
 			}),
 			item("content.weapons", "Weapons", "/admin/weapons", {
 				icon: <GiftIcon />,

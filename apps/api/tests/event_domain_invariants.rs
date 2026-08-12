@@ -791,3 +791,97 @@ async fn solved_challenge_ids_include_individual_and_team_solves() {
 
     txn.rollback().await.expect("rollback");
 }
+
+/// 回归（练习复练）：identifier 对 (event, user, challenge) 是确定性的（`JP-{user}-{challenge}`），
+/// 销毁后行保留为 completed 且容器名仍占着唯一索引，再次启动同一题会撞
+/// `event_instances_container_name_uidx` → 400（修复前复练被阻塞）。
+/// 非 Docker 题（container_port None）全流程不触 Docker，可 DB-gated 直测。
+/// 用 `#[actix_web::test]`：launch 会 `actix_web::rt::spawn` 自动销毁任务，需 actix 运行时。
+#[actix_web::test]
+async fn practice_relaunch_after_destroy_removes_completed_row() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let docker = match bollard::Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skip practice_relaunch: docker client ({e})");
+            return;
+        }
+    };
+
+    use floatctf::modules::event::jeopardy::{
+        application::instance_service::InstanceService,
+        infrastructure::container_runtime::DockerInstanceRuntime,
+    };
+
+    let practice = ensure_practice_jeopardy_event(&db)
+        .await
+        .expect("practice event");
+    let user = seed_user(&db, "relaunch").await;
+    let mut ch = seed_challenge(&db, "relaunch").await;
+    challenges::ActiveModel {
+        id: Set(ch.id),
+        flag_type: Set(Some("static".into())),
+        static_flag_value: Set(Some(format!("flag{{relaunch-{}}}", ch.id.simple()))),
+        build_status: Set(Some("ready".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .expect("make static non-docker challenge");
+
+    let service = InstanceService::with_docker(db.clone(), docker);
+
+    let identifier = format!(
+        "JP-{}-{}",
+        &user.id.to_string()[..8],
+        &ch.id.to_string()[..8]
+    );
+
+    // 1. 第一次启动（非 Docker：content 空、无容器调用）。
+    let first = service
+        .launch(practice.id, ch.id, identifier.clone(), user.id, None, None)
+        .await
+        .expect("first launch");
+    let first_id = first.id;
+
+    // 2. 销毁 → runtime_state completed（非 Docker：不调 stop_and_remove）。
+    service
+        .destroy_owned(first_id, user.id)
+        .await
+        .expect("destroy");
+    let state = event_instances::Entity::find_by_id(first_id)
+        .one(&db)
+        .await
+        .expect("row")
+        .expect("exists");
+    assert_eq!(state.runtime_state, "completed", "销毁后应为 completed");
+
+    // 3. 再次启动同一题（修复前：撞 event_instances_container_name_uidx 报错）。
+    let second = service
+        .launch(practice.id, ch.id, identifier.clone(), user.id, None, None)
+        .await
+        .expect("relaunch after destroy must succeed");
+
+    assert_ne!(second.id, first_id, "重新启动应创建新实例行");
+    let second_state = event_instances::Entity::find_by_id(second.id)
+        .one(&db)
+        .await
+        .expect("row")
+        .expect("exists");
+    assert_eq!(second_state.runtime_state, "running", "新实例应 running");
+    assert_eq!(second_state.container_name, identifier);
+
+    // 同容器名最多一行（旧 completed 行已被清掉）。
+    let cnt = event_instances::Entity::find()
+        .filter(event_instances::Column::ContainerName.eq(identifier.as_str()))
+        .count(&db)
+        .await
+        .expect("count");
+    assert_eq!(cnt, 1, "同一容器名只允许一行");
+
+    // 清理。
+    let _ = challenges::Entity::delete_by_id(ch.id).exec(&db).await;
+    let _ = users::Entity::delete_by_id(user.id).exec(&db).await;
+}

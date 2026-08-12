@@ -54,6 +54,24 @@ pub async fn list_cleanup_candidates(
         .collect())
 }
 
+/// 删除同容器名、状态为 `completed` 的旧实例行。
+///
+/// 练习/竞赛 identifier 对 (event, user/team, challenge) 是确定性的（如练习 `JP-{user}-{challenge}`）：
+/// 实例销毁后行保留为 `completed`，容器名仍占着 `event_instances_container_name_uidx`，
+/// 再次启动同一题会撞唯一约束报 400（练习复练被阻塞）。容器已移除、行已无价值，
+/// 启动前先清掉旧行（id → event_instances 级联删除 event_challenge_instance 关联行）。
+pub async fn delete_completed_by_container_name(
+    db: &DatabaseConnection,
+    container_name: &str,
+) -> Result<u64, sea_orm::DbErr> {
+    let result = event_instances::Entity::delete_many()
+        .filter(event_instances::Column::ContainerName.eq(container_name))
+        .filter(event_instances::Column::RuntimeState.eq("completed"))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
+}
+
 /// 流转 instances.runtime_state（expected → next），乐观并发保护。
 pub async fn transition_runtime_state(
     db: &DatabaseConnection,

@@ -6,7 +6,8 @@
 pub mod common;
 
 pub mod awd;
-pub(crate) mod jeopardy;
+/// 解题（Jeopardy）引擎。`pub` 以便集成测试（tests/）直接使用其服务（与 awd/awdp 一致）。
+pub mod jeopardy;
 
 /// AWD Plus 模块骨架（引擎未实现，见模块内文档）。
 pub mod awdp;

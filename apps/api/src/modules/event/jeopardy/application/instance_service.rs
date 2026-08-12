@@ -57,6 +57,11 @@ impl InstanceService {
         team_id: Option<Uuid>,
         flag_prefix: Option<String>,
     ) -> anyhow::Result<event_challenge_instance::Model> {
+        // identifier 对 (event, user/team, challenge) 是确定性的（练习 `JP-{user}-{challenge}` 等）：
+        // 销毁（completed）后行仍占着容器名唯一索引，再次启动同一题会撞
+        // event_instances_container_name_uidx → 400（练习复练被阻塞）。先清掉同容器名已完成行。
+        repo::delete_completed_by_container_name(&self.db, &identifier).await?;
+
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&self.db)
             .await?

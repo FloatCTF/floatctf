@@ -4,9 +4,9 @@
 //! AWD 为独立引擎，见 `modules::event::awd`。
 
 pub mod api;
-pub(crate) mod application;
+pub mod application;
 pub(crate) mod domain;
-pub(crate) mod infrastructure;
+pub mod infrastructure;
 
 // crate 内部调用方的便捷再导出
 pub(crate) use application::instance_service::InstanceService;

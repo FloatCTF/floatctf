@@ -69,7 +69,7 @@ function RouteComponent() {
 	});
 	const run = runQuery.data?.data;
 	const phase = run?.phase;
-	// 与 Challenge 练习一致：实例未运行（未点「开始」/ End 后）→ 只显示「开始」按钮；
+	// 与 Challenge 练习一致：实例未运行（未点 Launch / End 后）→ 只显示 Launch 按钮；
 	// 实例运行中才显现时间面板与内容。
 	const running = (run?.instances ?? []).some(
 		(inst) => inst.runtime_state === "running",
@@ -248,7 +248,7 @@ function RouteComponent() {
 	if (idle) {
 		return (
 			<div className="h-full w-full flex flex-col gap-2 justify-between min-h-0">
-				<div id="awdp-meta" className="shrink-0">
+				<div id="awdp-meta" className="flex-6">
 					<p className="font-bold text-2xl">{run.gamebox_name}</p>
 					<div className="border-top mt-2 pt-2">
 						{run.gamebox_description || "AWDP 训练场"}
@@ -264,7 +264,7 @@ function RouteComponent() {
 						disabled={startMutation.isPending}
 						onClick={() => startMutation.mutate()}
 					>
-						{startMutation.isPending ? "Starting…" : "开始"}
+						{startMutation.isPending ? "Launching…" : "Launch"}
 					</Button>
 				</div>
 			</div>

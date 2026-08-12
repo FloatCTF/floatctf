@@ -1,4 +1,5 @@
 import { Button, Label } from "@primer/react";
+import type { UniResponse } from "@/api/axios";
 import type { InstancesDto as Instances } from "@/api/service/instances";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -41,7 +42,19 @@ function RouteComponent() {
 
 	const mutationInstance = useMutation({
 		mutationFn: serviceApi.instances.destroy,
-		onSuccess: () => {
+		onSuccess: (_data, id: string) => {
+			// 乐观移除：destroy 成功后立即从缓存剔除该行（不依赖 refetch，
+			// refetch 慢/失败时行也会立刻消失），再 invalidate 兜底拉真实状态。
+			queryClient.setQueriesData(
+				{ queryKey: [subject] },
+				(old: UniResponse<Instances[]> | undefined) => {
+					if (!old || !Array.isArray(old.data)) return old;
+					return {
+						...old,
+						data: old.data.filter((row) => row.id !== id),
+					};
+				},
+			);
 			queryClient.invalidateQueries({ queryKey: [subject] });
 			banner.showBanner("success", "Instance destroyed successfully");
 		},

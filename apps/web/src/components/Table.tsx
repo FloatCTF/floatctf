@@ -305,7 +305,22 @@ export const GenericTable = <T extends object>({
     // 变更
     const deleteMutation = useMutation({
         mutationFn: removeFn,
-        onSuccess: () => {
+        onSuccess: (_data, ids: string[]) => {
+            // 乐观移除：删除成功后立即从所有 [subject, ...] 缓存里剔除对应行，
+            // 列表马上消失；再 invalidate 拉取服务端真实状态兜底。
+            // 之前只 invalidate 依赖后台 refetch，refetch 慢/失败时（React Query
+            // 保留上次成功数据）已删行会残留到手动刷新，用户反馈过此类问题。
+            const removed = new Set(ids);
+            queryClient.setQueriesData(
+                { queryKey: [subject] },
+                (old: UniResponse<T[]> | undefined) => {
+                    if (!old || !Array.isArray(old.data)) return old;
+                    return {
+                        ...old,
+                        data: old.data.filter((row) => !removed.has(safeGetRowId(row))),
+                    };
+                },
+            );
             queryClient.invalidateQueries({ queryKey: [subject] });
             banner.showBanner("success", `Delete ${subject} successfully`);
         },

@@ -137,6 +137,9 @@ function AddGameBoxButton({
 			if (refresh_query_key) {
 				queryClient.invalidateQueries({ queryKey: [refresh_query_key] });
 			}
+			// 同时刷新弹窗内嵌的 library 选择器（LIB_QUERY_KEY），
+			// 否则刚挂载的 GameBox 在重新打开弹窗时仍可被重复选择。
+			queryClient.invalidateQueries({ queryKey: [LIB_QUERY_KEY] });
 			setIsOpen(false);
 			setUserSelectedRowIds(new Set());
 			banner.showBanner("success", "Add Event GameBoxes Success");

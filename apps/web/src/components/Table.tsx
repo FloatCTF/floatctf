@@ -92,6 +92,8 @@ type GenericTableProps<T> = {
     selectedRowIds?: Set<string>;
     onSelectedRowIdsChange?: (ids: Set<string>) => void;
     filterKeys?: string[];
+    /** 查询缓存新鲜时间，默认 30s；传 0 时每次挂载/翻页都重新请求（如 Instances 页）。 */
+    staleTime?: number;
 } & RequireGetRowId<T> &
     React.HTMLAttributes<HTMLDivElement>;
 
@@ -110,6 +112,7 @@ export const GenericTable = <T extends object>({
     enableInternalActions = true,
     disableAdd = false,
     disableSelect = false,
+    staleTime = 30_000,
     hideTitle = false,
     disablePagination = false,
     subtitle,
@@ -148,7 +151,8 @@ export const GenericTable = <T extends object>({
         queryFn: () => queryFn({ page, limit, filter }),
         // 列表数据缓存 30s，重复进入/翻页不重复请求；
         // 翻页时保留上一页数据占位，避免整表骨架屏闪烁。
-        staleTime: 30_000,
+        // staleTime 可覆盖（如 Instances 页传 0，切回标签必刷新）。
+        staleTime,
         refetchOnWindowFocus: false,
         placeholderData: keepPreviousData,
     });

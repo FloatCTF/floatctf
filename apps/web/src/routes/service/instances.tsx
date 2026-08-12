@@ -1,4 +1,4 @@
-import { Button } from "@primer/react";
+import { Button, Label } from "@primer/react";
 import type { InstancesDto as Instances } from "@/api/service/instances";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -80,6 +80,16 @@ function RouteComponent() {
 			},
 		},
 		{
+			accessorKey: "instance_type",
+			header: "Type",
+			field: "instance_type",
+			renderCell: (row: InstanceRow) => (
+				<Label variant={row.run_id ? "success" : "accent"}>
+					{row.run_id ? "Gamebox" : "Challenge"}
+				</Label>
+			),
+		},
+		{
 			accessorKey: "status",
 			header: "Status",
 			field: "status",
@@ -153,6 +163,7 @@ function RouteComponent() {
 			filterKeys={filterKeys}
 			queryFn={serviceApi.instances.fetch}
 			removeFn={serviceApi.instances.bulkDelete}
+			staleTime={0}
 			enableInternalActions={false}
 			externalBanner={banner}
 			disableAdd={true}

@@ -72,17 +72,29 @@ impl TaskHandler for CheckPracticeEventHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
+        let _ = &task;
+        // Jeopardy 练习赛事：practice:jeopardy
         info!(
             "{} ensuring practice:jeopardy system event",
             self.task_key()
         );
-        let _ = &task;
         let practice_event = ensure_practice_jeopardy_event(self.db.get_ref()).await?;
         info!(
             "{} practice event ready id={} system_key={:?}",
             self.task_key(),
             practice_event.id,
             practice_event.system_key
+        );
+        // AWDP 练习赛事：AWDPlusPractice（system_key=awdp-practice，练习模块单挂载点）
+        let awdp_event_id =
+            crate::modules::event::awdp::repo::run_repo::ensure_practice_event(self.db.get_ref())
+                .await
+                .map_err(|e| anyhow::anyhow!("ensure AWDPlusPractice failed: {e}"))?;
+        info!(
+            "{} AWDPlusPractice ready id={} system_key={}",
+            self.task_key(),
+            awdp_event_id,
+            crate::core::system_ids::EVENT_PRACTICE_AWDP_SYSTEM_KEY
         );
         Ok(())
     }

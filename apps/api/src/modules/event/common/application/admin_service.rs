@@ -163,7 +163,8 @@ pub async fn create_event(
         ));
     }
     let new_event = events::ActiveModel {
-        is_virtual: Set(false),
+        // 练习模式（purpose='practice'）即虚拟赛事，由 events_virtual_by_purpose_check 约束。
+        is_virtual: Set(purpose == EventPurpose::Practice),
         family: Set(mode.family),
         purpose: Set(mode.purpose),
         participant_mode: Set(mode.participant_mode),

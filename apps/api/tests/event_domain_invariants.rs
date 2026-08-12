@@ -557,6 +557,8 @@ async fn practice_bootstrap_idempotent_and_fields() {
     assert_eq!(first.participant_mode, ParticipantMode::Individual);
     assert!(first.hidden);
     assert!(!first.allow_join);
+    // 练习模式即虚拟赛事（is_virtual 与 purpose 一致性由 CHECK 约束保证）。
+    assert!(first.is_virtual);
     assert!(first.end_time.is_none());
 
     let count = events::Entity::find()

@@ -689,7 +689,6 @@ async fn delete_awdp_referenced_gamebox_rejected() {
     let now = chrono::Utc::now();
     let event_id = Uuid::new_v4();
     events::ActiveModel {
-        is_virtual: Set(false),
         id: Set(event_id),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Practice),
@@ -701,6 +700,7 @@ async fn delete_awdp_referenced_gamebox_rejected() {
         end_time: Set(Some((now + chrono::Duration::hours(1)).into())),
         hidden: Set(true),
         allow_join: Set(false),
+        is_virtual: Set(true),
         rules: Set(String::new()),
         flag_prefix: Set(None),
         ..Default::default()

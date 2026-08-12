@@ -57,7 +57,7 @@ async fn create_event(
     use sea_orm::{ActiveModelTrait, ActiveValue::Set};
     let base = chrono::Utc::now();
     events::ActiveModel {
-        is_virtual: Set(false),
+        is_virtual: Set(mode.is_practice()),
         id: Set(Uuid::new_v4()),
         family: Set(mode.family.clone()),
         purpose: Set(mode.purpose.clone()),
@@ -139,7 +139,7 @@ async fn db_check_rejects_awdp_practice_team() {
     use sea_orm::{ActiveModelTrait, ActiveValue::Set};
     let base = chrono::Utc::now();
     let res = events::ActiveModel {
-        is_virtual: Set(false),
+        is_virtual: Set(true),
         id: Set(Uuid::new_v4()),
         family: Set(EventFamily::Awdp),
         purpose: Set(EventPurpose::Practice),

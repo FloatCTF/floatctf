@@ -34,6 +34,12 @@ pub const EVENT_PRACTICE_JEOPARDY: Uuid = Uuid::from_u128(1);
 /// [`EVENT_PRACTICE_JEOPARDY`] 的语义键（`events.system_key` 部分唯一）。
 pub const EVENT_PRACTICE_JEOPARDY_SYSTEM_KEY: &str = "practice:jeopardy";
 
+/// AWDP 练习系统虚拟赛事主键（`system_key = awdp-practice`，练习模块单挂载点）。
+pub const EVENT_PRACTICE_AWDP: Uuid = Uuid::from_u128(2);
+
+/// [`EVENT_PRACTICE_AWDP`] 的语义键（`events.system_key` 部分唯一）。
+pub const EVENT_PRACTICE_AWDP_SYSTEM_KEY: &str = "awdp-practice";
+
 /// 平台启动类调度任务种子列表：`(主键, 显示名, task_key 字符串, 触发类型)`。
 ///
 /// `task_key` 须与 [`crate::scheduler::task_key::TaskKey`] 的入库字符串一致。

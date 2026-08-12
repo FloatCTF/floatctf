@@ -33,20 +33,17 @@ pub async fn require_by_id<C: ConnectionTrait>(
         .ok_or_else(|| AwdpError::NotFound(format!("awdp run {run_id} not found")))
 }
 
-/// 幂等确保 (user, gamebox) 的虚拟训练 event 存在（AWDP practice 挂靠 event 维度）。
-/// system_key = 'awdp-practice:{user_id}:{gamebox_id}'（唯一，并发安全）。
+/// 幂等确保 AWDP 练习系统虚拟赛事 `AWDPlusPractice` 存在（练习模块单挂载点）。
+/// system_key = 'awdp-practice'（固定，唯一）；固定主键 `EVENT_PRACTICE_AWDP`。
 /// 虚拟 event：family=awdp, purpose=practice, participant_mode=individual，
 /// hidden=true + is_virtual=true（不出现在赛事列表）。
-pub async fn ensure_practice_event(
-    db: &DatabaseConnection,
-    user_id: Uuid,
-    gamebox_id: Uuid,
-) -> AwdpResult<Uuid> {
-    let system_key = format!("awdp-practice:{user_id}:{gamebox_id}");
+pub async fn ensure_practice_event(db: &DatabaseConnection) -> AwdpResult<Uuid> {
+    use crate::core::system_ids::{EVENT_PRACTICE_AWDP, EVENT_PRACTICE_AWDP_SYSTEM_KEY};
+    let system_key = EVENT_PRACTICE_AWDP_SYSTEM_KEY;
 
     let find = || async {
         events::Entity::find()
-            .filter(events::Column::SystemKey.eq(&system_key))
+            .filter(events::Column::SystemKey.eq(system_key))
             .one(db)
             .await
             .map(|e| e.map(|e| e.id))
@@ -59,30 +56,16 @@ pub async fn ensure_practice_event(
     }
 
     let now = Utc::now().fixed_offset();
-    let title = {
-        let nickname = users::Entity::find_by_id(user_id)
-            .one(db)
-            .await
-            .map_err(|e| AwdpError::Database(e.to_string()))?
-            .map(|u| u.nickname)
-            .unwrap_or_else(|| "user".into());
-        let gb_name = gameboxes::Entity::find_by_id(gamebox_id)
-            .one(db)
-            .await
-            .map_err(|e| AwdpError::Database(e.to_string()))?
-            .map(|g| g.name)
-            .unwrap_or_else(|| "GameBox".into());
-        format!("{nickname} 的 {gb_name} 训练场")
-    };
-
     let model = events::ActiveModel {
-        id: Set(Uuid::new_v4()),
+        id: Set(EVENT_PRACTICE_AWDP),
         family: Set(crate::entity::sea_orm_active_enums::EventFamily::Awdp),
         purpose: Set(crate::entity::sea_orm_active_enums::EventPurpose::Practice),
         participant_mode: Set(crate::entity::sea_orm_active_enums::ParticipantMode::Individual),
-        system_key: Set(Some(system_key.clone())),
-        title: Set(title),
-        description: Set(Some("AWDP 训练（虚拟赛事）".into())),
+        system_key: Set(Some(system_key.to_string())),
+        title: Set("AWDPlusPractice".into()),
+        description: Set(Some(
+            "AWDP 练习（虚拟赛事）：练习模块 gamebox 统一挂载点".into(),
+        )),
         hidden: Set(true),
         allow_join: Set(false),
         start_time: Set(now),
@@ -94,7 +77,15 @@ pub async fn ensure_practice_event(
         updated_at: Set(now),
     };
     match model.insert(db).await {
-        Ok(m) => Ok(m.id),
+        Ok(m) => {
+            // 新库首建：把当前全部可训练的 gamebox 批量挂载到 AWDPlusPractice
+            // （练习模块 gamebox 都挂载到这个虚拟赛事；后续新增 gamebox 由
+            // start_training 的 ensure_mounted 按需补挂）。
+            if let Err(e) = mount_all_trainable_gameboxes(db, m.id).await {
+                tracing::warn!(event_id = %m.id, error = %e, "batch mount practice gameboxes skipped");
+            }
+            Ok(m.id)
+        }
         // 并发 ensure：system_key 唯一冲突 → 重新查询。
         Err(_) => find()
             .await
@@ -103,7 +94,36 @@ pub async fn ensure_practice_event(
     }
 }
 
-/// 创建 practice run：gamebox × owner_user（个人练习，挂虚拟 event）。
+/// 批量挂载当前全部可训练 gamebox 到 `AWDPlusPractice`（练习模块全量挂载）。
+async fn mount_all_trainable_gameboxes(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> AwdpResult<usize> {
+    use crate::modules::gamebox::BUILD_STATUS_READY;
+    let gbs = gameboxes::Entity::find()
+        .filter(gameboxes::Column::Hidden.eq(false))
+        .filter(gameboxes::Column::BuildStatus.eq(BUILD_STATUS_READY))
+        .filter(gameboxes::Column::AwdpSourceArtifactKey.is_not_null())
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let mut n = 0usize;
+    for gb in gbs {
+        match crate::modules::event::awdp::repo::event_gamebox_repo::ensure_mounted(
+            db, event_id, gb.id,
+        )
+        .await
+        {
+            Ok(_) => n += 1,
+            Err(e) => {
+                tracing::warn!(gamebox_id = %gb.id, error = %e, "mount trainable gamebox skipped")
+            }
+        }
+    }
+    Ok(n)
+}
+
+/// 创建 practice run：gamebox × owner_user（个人练习，统一挂 `AWDPlusPractice` 虚拟 event）。
 /// 创建即 phase=Break（started_at / break_ends_at / next_action_at 由 snapshot 计算）。
 /// 同 user+gamebox 已有 active run → Conflict（幂等判定在 service 层完成）。
 pub async fn create_practice_run(
@@ -113,7 +133,7 @@ pub async fn create_practice_run(
     config: &AwdpConfig,
 ) -> AwdpResult<awdp_runs::Model> {
     config.validate()?;
-    let event_id = ensure_practice_event(db, owner_user_id, gamebox_id).await?;
+    let event_id = ensure_practice_event(db).await?;
     let now = Utc::now();
     let break_ends = now + chrono::Duration::seconds(config.break_duration_secs as i64);
     let model = awdp_runs::ActiveModel {

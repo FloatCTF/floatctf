@@ -99,6 +99,56 @@ pub async fn detach_gamebox(db: &DatabaseConnection, id: Uuid) -> AwdpResult<()>
     Ok(())
 }
 
+/// 幂等挂载（练习模块专用）：确保 (event_id, gamebox_id) 挂载行存在。
+/// 供 `start_training` 使用——练习 gamebox 统一挂到 `AWDPlusPractice` 虚拟赛事上，
+/// 便于 admin 在赛事 GameBoxes/Instance 维度统一查看。已存在则直接返回（含并发安全）。
+pub async fn ensure_mounted(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    gamebox_id: Uuid,
+) -> AwdpResult<awdp_event_gameboxes::Model> {
+    let find = || async {
+        awdp_event_gameboxes::Entity::find()
+            .filter(awdp_event_gameboxes::Column::EventId.eq(event_id))
+            .filter(awdp_event_gameboxes::Column::GameboxId.eq(gamebox_id))
+            .one(db)
+            .await
+    };
+    if let Some(existing) = find()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+    {
+        return Ok(existing);
+    }
+
+    let gamebox: gameboxes::Model = library::find_gamebox_by_id(db, gamebox_id)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("GameBox not found".into()))?;
+    let now = Utc::now().into();
+    let model = awdp_event_gameboxes::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        gamebox_id: Set(gamebox_id),
+        enabled: Set(true),
+        hidden: Set(false),
+        cpu_millis: Set(gamebox.recommended_cpu_millis),
+        memory_bytes: Set(gamebox.recommended_memory_bytes),
+        pids_limit: Set(gamebox.recommended_pids_limit),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    match model.insert(db).await {
+        Ok(m) => Ok(m),
+        // 并发 ensure：唯一冲突 → 重新查询。
+        Err(_) => find()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .ok_or_else(|| AwdpError::Database("ensure_mounted race".into())),
+    }
+}
+
 pub async fn set_enabled(
     db: &DatabaseConnection,
     id: Uuid,

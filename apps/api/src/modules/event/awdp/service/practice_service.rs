@@ -2,10 +2,10 @@
 //!
 //! - `start_training`：玩家 Start Training → 创建 practice run（phase=Break，默认配置快照）
 //!   并同步创建/启动逻辑实例。幂等：同 user+gamebox 已有 active run 直接返回。
+//! - 练习 gamebox 统一挂载到系统虚拟赛事 `AWDPlusPractice`（`ensure_mounted`），
+//!   操作日志随 run.event_id 落入该事件。
 //! - `train_again`：ended run 重新训练 → 创建**新** run（复用 gamebox），
 //!   不触碰旧 run 行（历史/分数/rounds 永久保留）。
-//!
-//! 不创建任何 Event（Training 是 run 维度，不是 event 维度）。
 
 use bollard::Docker;
 use sea_orm::DatabaseConnection;
@@ -40,6 +40,16 @@ pub async fn start_training(
     // 3. 创建 run（phase=Break，默认配置快照：started_at/break_ends_at/next_action_at 内部计算）。
     let config = AwdpConfig::default();
     let run = run_repo::create_practice_run(db, gamebox_id, user_id, &config).await?;
+
+    // 3.5 幂等挂载：练习 gamebox 统一挂到 AWDPlusPractice 虚拟赛事（失败不阻断训练）。
+    if let Err(e) = event_gamebox_repo::ensure_mounted(db, run.event_id, gamebox_id).await {
+        tracing::warn!(
+            run_id = %run.id,
+            gamebox_id = %gamebox_id,
+            error = %e,
+            "ensure_mounted practice gamebox skipped"
+        );
+    }
 
     // 4. 同步创建逻辑实例并启动。
     let subject = Subject::user(user_id);

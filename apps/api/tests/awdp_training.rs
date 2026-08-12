@@ -109,13 +109,21 @@ async fn seed_trainable_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> 
 }
 
 async fn cleanup(db: &sea_orm::DatabaseConnection) {
-    for row in gameboxes::Entity::find()
-        .filter(gameboxes::Column::SafeName.like("awdp-it-gb-%"))
+    use sea_orm::EntityTrait;
+    // 先删 AWDPlusPractice 上的挂载行（awdp_event_gameboxes.gamebox_id RESTRICT）。
+    for row in floatctf::entity::gameboxes::Entity::find()
+        .filter(floatctf::entity::gameboxes::Column::SafeName.like("awdp-it-gb-%"))
         .all(db)
         .await
         .unwrap()
     {
-        let _ = gameboxes::Entity::delete_by_id(row.id).exec(db).await;
+        let _ = floatctf::entity::awdp_event_gameboxes::Entity::delete_many()
+            .filter(floatctf::entity::awdp_event_gameboxes::Column::GameboxId.eq(row.id))
+            .exec(db)
+            .await;
+        let _ = floatctf::entity::gameboxes::Entity::delete_by_id(row.id)
+            .exec(db)
+            .await;
     }
 }
 

@@ -76,6 +76,11 @@ async fn cleanup(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
         .await
         .unwrap()
     {
+        // 练习挂载行（AWDPlusPractice）会 RESTRICT gamebox 删除，先清挂载。
+        let _ = floatctf::entity::awdp_event_gameboxes::Entity::delete_many()
+            .filter(floatctf::entity::awdp_event_gameboxes::Column::GameboxId.eq(row.id))
+            .exec(db)
+            .await;
         let _ = gameboxes::Entity::delete_by_id(row.id).exec(db).await;
     }
 }

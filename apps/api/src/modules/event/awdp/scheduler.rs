@@ -81,13 +81,13 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
     let specs = [
         (
             TaskKey::AwdpTick,
-            "AWDP 阶段推进/回合物化",
+            "AWDP Practice 阶段推进/回合物化",
             "*/10 * * * * *",
             10i64,
         ),
         (
             TaskKey::AwdpEvalWorker,
-            "AWDP 评估 worker",
+            "AWDP Practice 评估 worker",
             "*/3 * * * * *",
             3i64,
         ),
@@ -106,7 +106,10 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
             id: Set(Uuid::new_v4()),
             group_id: Set(None),
             task_name: Set(name.to_string()),
-            description: Set(Some(format!("recurring {} (awdp engine)", key.as_str()))),
+            description: Set(Some(format!(
+                "recurring {}（AWDPlusPractice 引擎）",
+                key.as_str()
+            ))),
             task_key: Set(key.as_str().to_string()),
             trigger_type: Set("cron".to_string()),
             status: Set("pending".to_string()),

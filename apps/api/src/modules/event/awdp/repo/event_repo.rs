@@ -7,7 +7,10 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::entity::{awdp_events, awdp_runs, events, sea_orm_active_enums::EventFamily};
+use crate::entity::{
+    awdp_events, awdp_runs, events,
+    sea_orm_active_enums::{EventFamily, EventPurpose},
+};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::{AwdpConfig, AwdpConfigPatch},
@@ -174,6 +177,9 @@ pub async fn find_unstarted_awdp_events(
 
     let rows = events::Entity::find()
         .filter(events::Column::Family.eq(EventFamily::Awdp))
+        // 仅 competition 事件由 tick 自动建 run；AWDPlusPractice 等 practice 虚拟赛事
+        // 由 start_training 挂载（practice run 不经过 pending 自动启动）。
+        .filter(events::Column::Purpose.eq(EventPurpose::Competition))
         .filter(events::Column::StartTime.lte(now))
         .order_by_asc(events::Column::StartTime)
         .all(db)

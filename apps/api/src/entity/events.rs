@@ -43,7 +43,7 @@ pub enum Relation {
     AwdpEventGameboxes,
     #[sea_orm(has_one = "super::awdp_events::Entity")]
     AwdpEvents,
-    #[sea_orm(has_one = "super::awdp_runs::Entity")]
+    #[sea_orm(has_many = "super::awdp_runs::Entity")]
     AwdpRuns,
     #[sea_orm(has_many = "super::event_announcements::Entity")]
     EventAnnouncements,

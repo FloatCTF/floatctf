@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(unique)]
     pub event_id: Uuid,
     pub gamebox_id: Option<Uuid>,
     pub owner_user_id: Option<Uuid>,

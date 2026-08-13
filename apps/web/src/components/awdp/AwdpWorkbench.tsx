@@ -543,7 +543,20 @@ export function AwdpWorkbench({
 					<div className="flex flex-col gap-2 border-t pt-2">
 						{viewModel.judgeEndpoint && (
 							<div className="flex flex-col gap-1 rounded border border-dashed border-gray-300 p-2">
-								<p className="font-mono text-xs">Flag Endpoint: http://judge-server/flag</p>
+								{gb.category.toLowerCase() === "web" ? (
+									<a
+										href={viewModel.judgeEndpoint.flagUrl}
+										target="_blank"
+										rel="noreferrer"
+										className="font-mono text-xs text-blue-600 underline"
+									>
+										Flag Endpoint: {viewModel.judgeEndpoint.flagUrl}
+									</a>
+								) : (
+									<p className="font-mono text-xs">
+										Flag Endpoint: {viewModel.judgeEndpoint.flagUrl}
+									</p>
+								)}
 								<p className="text-xs text-gray-500">
 									Available from your GameBox only
 								</p>

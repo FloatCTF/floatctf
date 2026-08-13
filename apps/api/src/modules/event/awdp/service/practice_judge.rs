@@ -164,17 +164,19 @@ pub async fn deploy_judge(
             ))
         })?;
 
-    // 3. 已有容器：running → 幂等成功；停止/消失 → 重建。
+    // 3. 已有容器：running 且 env 与期望一致 → 幂等成功；env 漂移（配置变更/测试污染）或停止/消失 → 重建。
     match runtime
         .inspect_container(PRACTICE_JUDGE_CONTAINER_NAME)
         .await
     {
-        Ok(state) if state.running => {
-            info!("[PracticeJudge] judge container already running — skip");
+        Ok(state) if state.running && running_judge_env_matches(docker, config, event_id).await => {
+            info!("[PracticeJudge] judge container already running with matching env — skip");
             return Ok(());
         }
         Ok(_) => {
-            warn!("[PracticeJudge] judge container exists but not running — recreating");
+            warn!(
+                "[PracticeJudge] judge container 不存在/非 running/env 与期望不一致 — recreating"
+            );
             let _ = runtime
                 .stop_and_remove(PRACTICE_JUDGE_CONTAINER_NAME, fcmc::IMMEDIATE_STOP_TIMEOUT)
                 .await;
@@ -205,7 +207,7 @@ pub async fn deploy_judge(
         ]),
         network_name: Some(PRACTICE_NETWORK_NAME.to_string()),
         fixed_ip: Some(config.practice_judge_ip.clone()),
-        // data plane DNS alias：GameBox 内 `awdp-judge` 可解析（不暴露动态 IP 契约）。
+        // data plane DNS alias：GameBox 内 `judge-server` 可解析（不暴露动态 IP 契约）。
         network_aliases: vec![
             crate::modules::event::awdp::domain::judge::JUDGE_DATA_ALIAS.to_string(),
         ],
@@ -296,4 +298,30 @@ fn container_conflict(e: &anyhow::Error) -> bool {
         cause = err.source();
     }
     false
+}
+
+/// 已运行的 judge 容器 env 是否与期望一致（PLATFORM_INTERNAL_URL / EVENT_ID / WORKER_ID）。
+/// 不一致说明容器由旧配置或测试环境部署（如 host.docker.internal 残留），必须重建，
+/// 否则真实实例的 /flag、claim、result 全链路都会 502。
+async fn running_judge_env_matches(
+    docker: &bollard::Docker,
+    config: &AwdpStaticConfig,
+    event_id: Uuid,
+) -> bool {
+    let Ok(info) = docker
+        .inspect_container(
+            PRACTICE_JUDGE_CONTAINER_NAME,
+            None::<bollard::container::InspectContainerOptions>,
+        )
+        .await
+    else {
+        return false;
+    };
+    let envs: Vec<String> = info.config.and_then(|c| c.env).unwrap_or_default();
+    let get = |k: &str| envs.iter().find_map(|e| e.strip_prefix(k)).map(str::trim);
+    let want_event = event_id.to_string();
+    let want_worker = format!("practice-judge-{}", &event_id.to_string()[..8]);
+    get("PLATFORM_INTERNAL_URL=") == Some(config.platform_internal_url.trim())
+        && get("EVENT_ID=") == Some(want_event.as_str())
+        && get("WORKER_ID=") == Some(want_worker.as_str())
 }

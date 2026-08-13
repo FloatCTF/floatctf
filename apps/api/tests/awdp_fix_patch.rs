@@ -224,11 +224,26 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
-        practice_judge_data_host: "awdp-judge".to_string(),
+        practice_judge_data_host: "judge-server".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,
         eval_max_attempts: 3,
     }
+}
+
+/// 移除部署的 JudgeServer 容器（best-effort）：测试用 host.docker.internal env 部署的
+/// judge 若残留会污染真实环境（deploy_judge 幂等但带 env 漂移自愈，见 practice_judge.rs）。
+async fn remove_judge_container() {
+    let Ok(docker) = bollard::Docker::connect_with_local_defaults() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker);
+    let _ = fcmc::ContainerRuntime::stop_and_remove(
+        &rt,
+        floatctf::modules::event::awdp::domain::judge::PRACTICE_JUDGE_CONTAINER_NAME,
+        fcmc::IMMEDIATE_STOP_TIMEOUT,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -240,6 +255,7 @@ async fn patch_and_reset_lifecycle() {
     let Some(docker) = docker_or_skip() else {
         return;
     };
+    remove_judge_container().await;
     let rt = fcmc::DockerContainerRuntime::new(docker.clone());
     if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
         .await
@@ -481,6 +497,7 @@ async fn break_to_fix_resets_all_instances() {
     let Some(docker) = docker_or_skip() else {
         return;
     };
+    remove_judge_container().await;
     let rt = fcmc::DockerContainerRuntime::new(docker.clone());
     if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
         .await

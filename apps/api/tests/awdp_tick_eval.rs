@@ -60,7 +60,23 @@ fn docker_or_skip() -> Option<bollard::Docker> {
 }
 
 /// 清掉之前失败运行遗留的 awdp 测试数据（events 级联 + gameboxes 前缀）。
+/// 移除部署的 JudgeServer 容器（best-effort）：测试用 host.docker.internal env 部署的
+/// judge 若残留会污染真实环境（deploy_judge 幂等但带 env 漂移自愈，见 practice_judge.rs）。
+async fn remove_judge_container() {
+    let Ok(docker) = bollard::Docker::connect_with_local_defaults() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker);
+    let _ = fcmc::ContainerRuntime::stop_and_remove(
+        &rt,
+        floatctf::modules::event::awdp::domain::judge::PRACTICE_JUDGE_CONTAINER_NAME,
+        fcmc::IMMEDIATE_STOP_TIMEOUT,
+    )
+    .await;
+}
+
 async fn cleanup_leftovers(db: &sea_orm::DatabaseConnection) {
+    remove_judge_container().await;
     for row in events::Entity::find()
         .filter(events::Column::Title.like("awdp-it-%"))
         .all(db)
@@ -316,7 +332,7 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
-        practice_judge_data_host: "awdp-judge".to_string(),
+        practice_judge_data_host: "judge-server".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,
         eval_max_attempts: 3,

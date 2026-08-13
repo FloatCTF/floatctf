@@ -113,7 +113,7 @@ pub struct AwdpStaticConfig {
     pub practice_network_subnet: String,
     /// 练习子网内 JudgeServer 固定 IP。
     pub practice_judge_ip: String,
-    /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 awdp-judge）。
+    /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 judge-server）。
     pub practice_judge_data_host: String,
     /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达；
     /// 宿主部署时用 data 网络网关直连宿主 API，host firewall 限制 GameBox 访问；
@@ -321,7 +321,7 @@ fn default_eval_max_attempts() -> i32 {
 }
 
 fn default_practice_judge_data_host() -> String {
-    "awdp-judge".to_string()
+    "judge-server".to_string()
 }
 
 fn default_practice_judgeserver_image() -> String {

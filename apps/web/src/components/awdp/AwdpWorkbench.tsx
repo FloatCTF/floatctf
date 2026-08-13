@@ -543,28 +543,10 @@ export function AwdpWorkbench({
 					<div className="flex flex-col gap-2 border-t pt-2">
 						{viewModel.judgeEndpoint && (
 							<div className="flex flex-col gap-1 rounded border border-dashed border-gray-300 p-2">
-								<p className="text-sm font-semibold">Flag Server</p>
-								<p className="font-mono text-xs break-all">
-									{viewModel.judgeEndpoint.flagUrl}
-								</p>
+								<p className="font-mono text-xs">judge-server/flag</p>
 								<p className="text-xs text-gray-500">
 									Available from your GameBox only
 								</p>
-								<div className="flex items-center gap-2">
-									<code className="flex-1 rounded bg-gray-100 px-2 py-1 text-xs overflow-x-auto whitespace-nowrap">
-										curl {viewModel.judgeEndpoint.flagUrl}
-									</code>
-									<Button
-										size="small"
-										onClick={() => {
-											navigator.clipboard
-												.writeText(`curl ${viewModel.judgeEndpoint!.flagUrl}`)
-												.catch(() => {});
-										}}
-									>
-										Copy
-									</Button>
-								</div>
 							</div>
 						)}
 						<div className="flex items-center gap-2">

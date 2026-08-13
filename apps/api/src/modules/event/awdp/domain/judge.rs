@@ -17,6 +17,9 @@ pub const PRACTICE_DYNAMIC_POOL: &str = "10.42.2.128/25";
 /// JudgeServer data plane 监听端口（与 crates/awdp-judgeserver DATA_LISTEN_ADDR 默认一致）。
 pub const PRACTICE_JUDGE_PORT: u16 = 8080;
 
+/// JudgeServer data plane DNS alias（练习 data 网络内 GameBox 可解析；玩家 contract）。
+pub const JUDGE_DATA_ALIAS: &str = "awdp-judge";
+
 /// 练习 JudgeServer 容器名（平台部署，固定名称便于幂等重建）。
 pub const PRACTICE_JUDGE_CONTAINER_NAME: &str = "fctf-awdp-practice-judge";
 

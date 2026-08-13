@@ -38,7 +38,7 @@
 //! - `HEARTBEAT_INTERVAL_SECS` — 心跳间隔（默认 30，须明显小于 lease）
 //! - `WORK_DIR` — 临时脚本目录（默认 `/tmp/judge`）
 
-use actix_web::{App, HttpResponse, HttpServer, middleware::Logger, web};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, middleware::Logger, web};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -732,6 +732,57 @@ async fn healthz() -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
 }
 
+/// GET /flag —— Break flag（plan §8/§9）。
+///
+/// 不接受任何身份参数：调用者身份 = 真实 TCP peer IP（`req.peer_addr()`）。
+/// JudgeServer 把 source_ip 转发给 FloatCTF internal API 解析；
+/// 仅 Break 阶段返回纯 flag 文本，其余 403/409。
+async fn handle_flag(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    let Some(peer) = req.peer_addr() else {
+        return HttpResponse::BadRequest().finish();
+    };
+    let source_ip = peer.ip().to_string();
+    if source_ip.is_empty() || source_ip == "::1" {
+        return HttpResponse::Forbidden().finish();
+    }
+
+    let url = format!("{}/internal/awdp/flag/resolve", state.platform_url);
+    let body = serde_json::json!({ "source_ip": source_ip });
+    match state
+        .client
+        .post(&url)
+        .bearer_auth(&state.internal_token)
+        .json(&body)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            // UniResponse<{code,message,data,meta}> → 取 data 作为 flag 文本。
+            match resp.json::<serde_json::Value>().await {
+                Ok(v) => {
+                    let data = v.get("data").and_then(|d| d.as_str());
+                    match data {
+                        Some(flag) => HttpResponse::Ok().body(flag.to_string()),
+                        None => HttpResponse::InternalServerError().finish(),
+                    }
+                }
+                Err(_) => HttpResponse::InternalServerError().finish(),
+            }
+        }
+        Ok(resp) => {
+            // 403（未知 source）/ 409（非 Break）→ 原样透传状态。
+            tracing::warn!(source_ip, status = %resp.status(), "flag resolve rejected");
+            let _ = resp;
+            HttpResponse::Forbidden().finish()
+        }
+        Err(e) => {
+            tracing::warn!(source_ip, error = %e, "flag resolve network error");
+            HttpResponse::BadGateway().finish()
+        }
+    }
+}
+
 // ── main ──
 
 #[actix_web::main]
@@ -812,6 +863,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .app_data(web::Data::new(state.clone()))
             .route("/healthz", web::get().to(healthz))
+            .route("/flag", web::get().to(handle_flag))
     })
     .bind(&data_listen)?
     .run()

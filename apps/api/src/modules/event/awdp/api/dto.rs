@@ -329,6 +329,19 @@ pub struct AwdpRunDto {
     pub instances: Vec<RunInstanceDto>,
     /// 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；NULL=未确认）。
     pub early_patched_seq: Option<i32>,
+    /// 练习 data plane Flag Server endpoint（仅 GameBox 内部网络可达；Fix 阶段弱化）。
+    pub judge_endpoint: Option<JudgeEndpointDto>,
+}
+
+/// JudgeServer data plane 玩家可见端点（plan §50/§51）。
+#[derive(Debug, Clone, Serialize)]
+pub struct JudgeEndpointDto {
+    /// data plane 基址（GameBox 内部网络 DNS alias）。
+    pub base_url: String,
+    /// Break flag 端点（GET）。
+    pub flag_url: String,
+    /// 可达范围（固定 "gamebox_internal"）。
+    pub scope: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

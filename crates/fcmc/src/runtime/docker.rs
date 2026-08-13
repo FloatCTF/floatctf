@@ -619,6 +619,11 @@ pub(crate) fn spec_to_create_body(spec: ContainerSpec) -> bollard::secret::Conta
                         ipv4_address: Some(ip.clone()),
                         ..Default::default()
                     }),
+                    aliases: if spec.network_aliases.is_empty() {
+                        None
+                    } else {
+                        Some(spec.network_aliases.clone())
+                    },
                     ..Default::default()
                 },
             );
@@ -670,6 +675,7 @@ mod tests {
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
+            network_aliases: vec![],
             port_bindings: vec![],
             auto_remove: true,
             resources: ResourceLimits::default(),

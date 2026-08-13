@@ -224,6 +224,7 @@ impl AwdContainerRuntime for DockerRuntime {
                 labels,
                 network_name: Some(spec.network_name),
                 fixed_ip: Some(spec.fixed_ip),
+                network_aliases: vec![],
                 port_bindings: vec![],
                 auto_remove: false,
                 resources: ResourceLimits {
@@ -276,6 +277,7 @@ impl AwdContainerRuntime for DockerRuntime {
                 labels,
                 network_name: Some(spec.network_name),
                 fixed_ip: Some(spec.fixed_ip),
+                network_aliases: vec![],
                 port_bindings: vec![],
                 auto_remove: false,
                 resources: ResourceLimits {

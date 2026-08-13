@@ -100,6 +100,12 @@ export type AwdpRunDto = {
 	instances: RunInstanceDto[];
 	/** 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；null=未确认）。 */
 	early_patched_seq: number | null;
+	/** 练习 data plane Flag Server endpoint（仅 GameBox 内部网络可达）。 */
+	judge_endpoint: {
+		base_url: string;
+		flag_url: string;
+		scope: "gamebox_internal";
+	} | null;
 };
 
 /** run 化后的评估（列形状对齐 awdp_evaluations 的 run_id/gamebox_id 重构）。 */

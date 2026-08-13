@@ -113,6 +113,8 @@ pub struct AwdpStaticConfig {
     pub practice_network_subnet: String,
     /// 练习子网内 JudgeServer 固定 IP。
     pub practice_judge_ip: String,
+    /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 awdp-judge）。
+    pub practice_judge_data_host: String,
     /// JudgeServer 回调平台使用的基址（容器视角；默认 host.docker.internal）。
     pub platform_internal_url: String,
     /// 评估 lease 时长（秒）：worker claim 后持有；到期未心跳可被回收重领。
@@ -284,6 +286,8 @@ struct AwdpToml {
     practice_network_subnet: String,
     #[serde(default = "default_practice_judge_ip")]
     practice_judge_ip: String,
+    #[serde(default = "default_practice_judge_data_host")]
+    practice_judge_data_host: String,
     #[serde(default = "default_platform_internal_url")]
     platform_internal_url: String,
     #[serde(default = "default_eval_lease_duration_secs")]
@@ -298,6 +302,7 @@ impl Default for AwdpToml {
             practice_judgeserver_image: default_practice_judgeserver_image(),
             practice_network_subnet: default_practice_network_subnet(),
             practice_judge_ip: default_practice_judge_ip(),
+            practice_judge_data_host: default_practice_judge_data_host(),
             platform_internal_url: default_platform_internal_url(),
             eval_lease_duration_secs: default_eval_lease_duration_secs(),
             eval_max_attempts: default_eval_max_attempts(),
@@ -311,6 +316,10 @@ fn default_eval_lease_duration_secs() -> i64 {
 
 fn default_eval_max_attempts() -> i32 {
     3
+}
+
+fn default_practice_judge_data_host() -> String {
+    "awdp-judge".to_string()
 }
 
 fn default_practice_judgeserver_image() -> String {
@@ -450,6 +459,7 @@ impl AppConfig {
                 practice_judgeserver_image: file.awdp.practice_judgeserver_image,
                 practice_network_subnet: file.awdp.practice_network_subnet,
                 practice_judge_ip: file.awdp.practice_judge_ip,
+                practice_judge_data_host: file.awdp.practice_judge_data_host,
                 platform_internal_url: file.awdp.platform_internal_url,
                 eval_lease_duration_secs: file.awdp.eval_lease_duration_secs,
                 eval_max_attempts: file.awdp.eval_max_attempts,

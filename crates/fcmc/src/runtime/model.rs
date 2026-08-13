@@ -77,6 +77,8 @@ pub struct ContainerSpec {
     /// Attach to this network name (also sets network_mode when no host networking).
     pub network_name: Option<String>,
     pub fixed_ip: Option<String>,
+    /// 容器在 primary 网络上的 DNS aliases（Docker embedded DNS 可解析）。
+    pub network_aliases: Vec<String>,
     pub port_bindings: Vec<PortBinding>,
     pub auto_remove: bool,
     pub resources: ResourceLimits,

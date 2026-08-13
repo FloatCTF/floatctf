@@ -146,6 +146,12 @@ function RouteComponent() {
 			isPractice: true,
 			canControlPhase: true,
 			earlyPatchedSeq: run.early_patched_seq ?? null,
+			judgeEndpoint: run.judge_endpoint
+				? {
+					baseUrl: run.judge_endpoint.base_url,
+					flagUrl: run.judge_endpoint.flag_url,
+				}
+				: null,
 		};
 	}, [run, roundsQuery.data, evalsQuery.data, scoresQuery.data, needTimeline]);
 

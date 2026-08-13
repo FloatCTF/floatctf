@@ -50,6 +50,7 @@ async fn extract_source_zip_from_real_gamebox_image() {
     };
     let handle = rt
         .create_container(fcmc::ContainerSpec {
+            network_aliases: vec![],
             name: "awdp-src-itest".into(),
             image: gamebox_image().into(),
             env: vec![],

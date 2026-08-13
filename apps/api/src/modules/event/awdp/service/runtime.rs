@@ -304,6 +304,7 @@ async fn launch_container(
             None
         },
         fixed_ip: None,
+        network_aliases: vec![],
         port_bindings,
         auto_remove: true,
         resources,

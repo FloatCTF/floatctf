@@ -48,6 +48,7 @@ pub async fn extract_awdp_source_zip(
         labels: Default::default(),
         network_name: None,
         fixed_ip: None,
+        network_aliases: vec![],
         port_bindings: vec![],
         auto_remove: true,
         resources: fcmc::ResourceLimits::default(),

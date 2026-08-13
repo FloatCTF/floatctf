@@ -421,6 +421,7 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
+            network_aliases: vec![],
             port_bindings: vec![PortBinding {
                 container_port: format!("{}/tcp", docker_meta.port),
                 host_ip: Some("0.0.0.0".into()),
@@ -542,6 +543,7 @@ pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
+            network_aliases: vec![],
             port_bindings: vec![
                 PortBinding {
                     container_port: "80/tcp".into(),

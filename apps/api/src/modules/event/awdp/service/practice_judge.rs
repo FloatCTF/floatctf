@@ -224,6 +224,10 @@ pub async fn deploy_judge(
         ]),
         network_name: Some(PRACTICE_NETWORK_NAME.to_string()),
         fixed_ip: Some(config.practice_judge_ip.clone()),
+        // data plane DNS alias：GameBox 内 `awdp-judge` 可解析（不暴露动态 IP 契约）。
+        network_aliases: vec![
+            crate::modules::event::awdp::domain::judge::JUDGE_DATA_ALIAS.to_string(),
+        ],
         port_bindings: vec![],
         auto_remove: false,
         resources: ResourceLimits {

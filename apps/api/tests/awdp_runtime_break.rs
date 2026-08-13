@@ -9,8 +9,10 @@
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
+use fcmc::ContainerRuntime;
+
 use floatctf::entity::{
-    events, gameboxes,
+    awdp_runs, events, gameboxes,
     sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::{
@@ -219,6 +221,7 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
+        practice_judge_data_host: "awdp-judge".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,
         eval_max_attempts: 3,
@@ -704,6 +707,8 @@ async fn team_shares_instance_and_score() {
     .unwrap();
 
     // team + 两个成员。
+    use fcmc::ContainerRuntime;
+
     use floatctf::entity::{event_team_members, event_teams};
     let team_id = Uuid::new_v4();
     let now = chrono::Utc::now().into();
@@ -828,4 +833,148 @@ async fn team_shares_instance_and_score() {
     assert_eq!(total, run_row.break_score);
 
     cleanup(&db, event.id).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §63 Break Flag Data API（resolve_break_flag：source-IP 识别实例）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// /flag 解析：source-IP → 实例 → Break 阶段确定性 flag。
+/// - 本实例 IP → 自己的 flag（与 submit_flag 期望一致）；
+/// - 未知 source IP → Forbidden；
+/// - Fix 阶段 → Conflict。
+#[tokio::test]
+async fn break_flag_resolve_by_source_ip() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+    let user_id = seed_user(&db, "flgapi").await;
+    let gb_id = seed_awdp_gamebox(
+        &db,
+        "flgapi",
+        serde_json::json!([{"type": "http", "port": 80, "path": "/", "expected_status": 200}]),
+        None,
+    )
+    .await;
+    let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
+    // 练习 run（实例加入 fctf-awdp-practice data 网络；/flag 是练习功能）。
+    let run = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db, &docker, JWT_SECRET, user_id, gb_id, "flag",
+    )
+    .await
+    .unwrap();
+    let view = floatctf::modules::event::awdp::service::runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start");
+
+    // 容器内网 IP（practice 子网；无 ensure 子网时也可能在默认 bridge——resolve 只看 data 网络）。
+    let container_ip = rt
+        .inspect_container(&view_instance_container_name(&db, view.instance_id).await)
+        .await
+        .expect("inspect")
+        .ip_address
+        .expect("container ip");
+
+    // 1. 本实例 IP → 返回确定性 flag。
+    let flag = floatctf::modules::event::awdp::service::break_service::resolve_break_flag(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &container_ip,
+    )
+    .await
+    .expect("resolve by source ip");
+    assert!(
+        flag.starts_with("flag{") && flag.ends_with('}'),
+        "flag 格式"
+    );
+
+    // 2. 与 submit_flag 的期望一致（确定性派生）。
+    let expected = floatctf::modules::event::awdp::domain::flag::awdp_flag(
+        JWT_SECRET,
+        run.id,
+        gb_id,
+        Some(user_id),
+        None,
+        "flag",
+    );
+    assert_eq!(flag, expected, "source-IP 解析与本地派生一致");
+
+    // 3. 未知 source IP → Forbidden。
+    let err = floatctf::modules::event::awdp::service::break_service::resolve_break_flag(
+        &db,
+        &docker,
+        JWT_SECRET,
+        "10.99.99.99",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Forbidden(_)),
+        "未知 source IP 必须 Forbidden: {err}"
+    );
+
+    // 4. Fix 阶段 → Conflict。
+    floatctf::modules::event::awdp::service::event_service::transition_break_to_fix(
+        &db, &docker, JWT_SECRET, run.id,
+    )
+    .await
+    .expect("to fix");
+    let err2 = floatctf::modules::event::awdp::service::break_service::resolve_break_flag(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &container_ip,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err2, floatctf::modules::event::awdp::AwdpError::Conflict(_)),
+        "Fix 阶段必须拒绝 /flag: {err2}"
+    );
+
+    let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
+        &db,
+        &docker,
+        view.instance_id,
+        subject,
+    )
+    .await;
+    let _ = awdp_runs::Entity::delete_by_id(run.id).exec(&db).await;
+    let _ = gameboxes::Entity::delete_by_id(gb_id).exec(&db).await;
+}
+
+async fn view_instance_container_name(
+    db: &sea_orm::DatabaseConnection,
+    instance_id: uuid::Uuid,
+) -> String {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    floatctf::entity::event_instances::Entity::find()
+        .filter(floatctf::entity::event_instances::Column::Id.eq(instance_id))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .container_name
 }

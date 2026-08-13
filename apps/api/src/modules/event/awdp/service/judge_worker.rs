@@ -61,6 +61,12 @@ pub struct HeartbeatRequest {
     pub worker_id: String,
 }
 
+/// Break flag 解析请求（JudgeServer `/flag` 转发，source_ip = 真实 TCP peer）。
+#[derive(Debug, Deserialize)]
+pub struct ResolveFlagRequest {
+    pub source_ip: String,
+}
+
 /// result 请求（JudgeServer → FloatCTF）。
 #[derive(Debug, Deserialize)]
 pub struct ResultRequest {

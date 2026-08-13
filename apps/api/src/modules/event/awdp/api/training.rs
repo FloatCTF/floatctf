@@ -264,7 +264,7 @@ pub async fn start_training(
         json!({ "run_id": run.id, "gamebox_id": gamebox_id }),
     )
     .await;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -282,7 +282,7 @@ pub async fn get_run_overview(
     let run_id = path.into_inner();
     let user = user.into_inner();
     let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -339,7 +339,7 @@ pub async fn reset_run(
         json!({ "run_id": run.id }),
     )
     .await;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -393,7 +393,7 @@ pub async fn start_run(
     )
     .await;
     let run = run_repo::require_by_id(ctx.db.get_ref(), run.id).await?;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -447,7 +447,7 @@ pub async fn end_run(
     )
     .await;
     let run = run_repo::require_by_id(ctx.db.get_ref(), run.id).await?;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -531,7 +531,7 @@ pub async fn set_phase(
     let run = run_repo::require_by_id(ctx.db.get_ref(), run.id)
         .await
         .map_err(AppError::from)?;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -562,7 +562,7 @@ pub async fn train_again(
         json!({ "run_id": run.id, "old_run_id": old_run_id }),
     )
     .await;
-    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id).await?;
+    let dto = build_run_dto(ctx.db.get_ref(), &run, user.id, &ctx.config.awdp).await?;
     UniResponse::ok(dto.into()).into()
 }
 
@@ -1230,6 +1230,7 @@ async fn build_run_dto(
     db: &sea_orm::DatabaseConnection,
     run: &awdp_runs::Model,
     user_id: Uuid,
+    awdp_config: &crate::core::config::AwdpStaticConfig,
 ) -> Result<AwdpRunDto, AppError> {
     let gamebox_id = run
         .gamebox_id
@@ -1266,6 +1267,19 @@ async fn build_run_dto(
         },
         early_patched_seq: run.early_patched_seq,
         instances: instances.iter().map(RunInstanceDto::from).collect(),
+        judge_endpoint: Some(JudgeEndpointDto {
+            base_url: format!(
+                "http://{}:{}",
+                awdp_config.practice_judge_data_host,
+                crate::modules::event::awdp::domain::judge::PRACTICE_JUDGE_PORT
+            ),
+            flag_url: format!(
+                "http://{}:{}/flag",
+                awdp_config.practice_judge_data_host,
+                crate::modules::event::awdp::domain::judge::PRACTICE_JUDGE_PORT
+            ),
+            scope: "gamebox_internal".to_string(),
+        }),
     })
 }
 

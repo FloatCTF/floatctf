@@ -66,6 +66,7 @@ fn challenge_container_spec(
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
+            network_aliases: vec![],
             port_bindings: vec![PortBinding {
                 container_port: container_port.clone(),
                 host_ip: Some("0.0.0.0".into()),

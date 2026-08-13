@@ -99,7 +99,8 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
     for (key, name, cron_expr, every_secs) in specs {
         let exists = scheduled_tasks::Entity::find()
             .filter(scheduled_tasks::Column::TaskKey.eq(key.as_str()))
-            .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
+            // 任何状态（含 failed，等待 init_and_recover 复活）都算已 seed，避免重复行。
+            .filter(scheduled_tasks::Column::Status.is_in(["pending", "running", "failed"]))
             .one(db)
             .await?;
         if exists.is_some() {

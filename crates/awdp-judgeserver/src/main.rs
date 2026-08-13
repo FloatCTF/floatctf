@@ -709,6 +709,17 @@ async fn pull_loop(state: Arc<AppState>) {
 }
 
 /// claim：调平台 internal API 领取 job。
+/// 解析平台 claim 响应：UniResponse 包装 {code,message,data:{lease_seconds,jobs},meta}，取 data 反序列化。
+/// （纯函数，便于单测）
+fn parse_claim_response(body: &str) -> Result<ClaimResponse, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("claim response body: {e}"))?;
+    let data = v
+        .get("data")
+        .ok_or_else(|| "claim response missing data field".to_string())?;
+    serde_json::from_value(data.clone()).map_err(|e| format!("claim response parse: {e}"))
+}
+
 async fn claim(state: &AppState, capacity: u64) -> Result<ClaimResponse, String> {
     let url = format!("{}/internal/awdp/judge/jobs/claim", state.platform_url);
     let body = ClaimRequest {
@@ -728,9 +739,11 @@ async fn claim(state: &AppState, capacity: u64) -> Result<ClaimResponse, String>
     if !status.is_success() {
         return Err(format!("claim rejected: HTTP {status}"));
     }
-    resp.json::<ClaimResponse>()
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("claim response parse: {e}"))
+        .map_err(|e| format!("claim response body: {e}"))?;
+    parse_claim_response(&text)
 }
 
 /// 心跳间隔 = min(配置, max(5s, lease/3))，保证明显小于 lease。
@@ -917,7 +930,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .app_data(web::Data::new(state.clone()))
+            .app_data(web::Data::new((*state).clone()))
             .route("/healthz", web::get().to(healthz))
             .route("/flag", web::get().to(handle_flag))
             .route("/proof/{token}", web::get().to(handle_proof))
@@ -996,6 +1009,41 @@ mod tests {
         assert!(parse_batch_results("").is_err());
         assert!(parse_batch_results("not json").is_err());
         assert!(parse_batch_results("[]").is_err());
+    }
+
+    #[test]
+    fn parse_claim_response_unwraps_uniresponse_data() {
+        // 平台响应是 UniResponse 包装（code/message/data/meta），data 才是 {lease_seconds, jobs}。
+        let body =
+            r#"{"code":0,"message":"OK","data":{"lease_seconds":120,"jobs":[]},"meta":null}"#;
+        let resp = parse_claim_response(body).unwrap();
+        assert_eq!(resp.lease_seconds, 120);
+        assert!(resp.jobs.is_empty());
+
+        // 带 job 的响应：job 字段齐全。
+        let body = r#"{"code":0,"message":"OK","data":{"lease_seconds":120,"jobs":[{
+            "evaluation_id":"11111111-1111-1111-1111-111111111111",
+            "attempt":1,
+            "lease_token":"abc",
+            "kind":"manual",
+            "run_id":"22222222-2222-2222-2222-222222222222",
+            "round_id":null,
+            "instance_id":"33333333-3333-3333-3333-333333333333",
+            "runtime_generation":1,
+            "target_ip":"10.42.2.141",
+            "healthchecks":[{"type":"http","port":80}],
+            "judge_script":null,
+            "exploit_script":null,
+            "proof_url":null
+        }]},"meta":null}"#;
+        let resp = parse_claim_response(body).unwrap();
+        assert_eq!(resp.jobs.len(), 1);
+        assert_eq!(resp.jobs[0].kind, "manual");
+        assert_eq!(resp.jobs[0].target_ip.as_deref(), Some("10.42.2.141"));
+
+        // 缺失 data 字段 / 非 JSON → Err（不再静默吞掉导致 job 永不执行）。
+        assert!(parse_claim_response("{\"code\":0}").is_err());
+        assert!(parse_claim_response("not json").is_err());
     }
 
     #[test]

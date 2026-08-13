@@ -2030,6 +2030,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "floatctf-awdp-judgeserver"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "dotenvy",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

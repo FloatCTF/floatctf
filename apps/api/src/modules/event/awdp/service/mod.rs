@@ -6,6 +6,7 @@ pub mod event_service;
 pub mod judge_worker;
 pub mod lock;
 pub mod patch_service;
+pub mod practice_acl;
 pub mod practice_judge;
 pub mod practice_service;
 pub mod runtime;

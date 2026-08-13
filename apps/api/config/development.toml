@@ -42,7 +42,7 @@ judgeserver_image = "floatctf/awd-judgeserver:latest"
 practice_judgeserver_image = "floatctf/awdp-judgeserver:latest"
 practice_network_subnet = "10.42.2.0/24"
 practice_judge_ip = "10.42.2.2"
-platform_internal_url = "http://host.docker.internal:9090"
+platform_internal_url = "http://10.42.2.128:9090"  # 宿主 API（data 网络网关；host firewall 限制 GameBox 访问）
 
 # GameBox package import / image pipeline.
 # push = false → LocalOnly：本地 build+inspect 后以 image_id 为 pin，不要求 registry。

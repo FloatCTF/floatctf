@@ -82,6 +82,13 @@ pub async fn ensure_practice_network(
             return Err(AwdpError::Docker(format!("create practice network: {e}")));
         }
     }
+    // data plane ACL（best-effort：nft 不可用/无权限时跳过，不阻塞实例启动）。
+    let _ = crate::modules::event::awdp::service::practice_acl::apply_practice_acl(
+        docker,
+        &config.practice_judge_ip,
+        &crate::modules::event::awdp::service::practice_acl::DEFAULT_BLOCKED_HOST_PORTS,
+    )
+    .await?;
     Ok(PRACTICE_NETWORK_NAME.to_string())
 }
 
@@ -147,8 +154,17 @@ pub async fn deploy_judge(
 ) -> AwdpResult<()> {
     let runtime = DockerContainerRuntime::new(docker.clone());
 
-    // 1. 子网 ensure（练习实例启动路径也会 ensure，这里部署侧再保证一次）。
+    // 1. 子网 ensure（练习实例启动路径也会 ensure，这里部署侧再保证一次）+
+    //    control 子网 + data plane ACL（best-effort）。
     let _ = ensure_practice_network(docker, config).await?;
+    let _ =
+        crate::modules::event::awdp::service::practice_acl::ensure_control_network(docker).await?;
+    let _ = crate::modules::event::awdp::service::practice_acl::apply_practice_acl(
+        docker,
+        &config.practice_judge_ip,
+        &crate::modules::event::awdp::service::practice_acl::DEFAULT_BLOCKED_HOST_PORTS,
+    )
+    .await?;
 
     // 2. 镜像 ensure（pin 不可变）。
     ImageRuntime::ensure_image(&runtime, &config.practice_judgeserver_image, None)
@@ -227,6 +243,27 @@ pub async fn deploy_judge(
         .create_and_start(spec)
         .await
         .map_err(|e| AwdpError::Docker(format!("deploy practice judge: {e}")))?;
+
+    // 4. 加入 control 网络（internal=true；GameBox 无权加入）。
+    //    注意：control 网络无出站 → JudgeServer 到宿主 API 走 data 网络网关
+    //    （PLATFORM_INTERNAL_URL 由配置给出，host firewall 限制 GameBox 访问）。
+    if let Err(e) = docker
+        .connect_network(
+            crate::modules::event::awdp::domain::judge::CONTROL_NETWORK_NAME,
+            bollard::network::ConnectNetworkOptions::<String> {
+                container: handle.container_id.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        warn!(
+            container = %handle.container_id,
+            error = %e,
+            "[PracticeJudge] connect control network failed (best-effort)"
+        );
+    }
+
     practice_judge_repo::update_container_state(
         db,
         event_id,

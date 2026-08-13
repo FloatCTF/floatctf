@@ -41,11 +41,21 @@ const statusToVariant = (status: string) => {
 };
 
 function RouteComponent() {
-	// ServiceTasks / SystemTask 子菜单：管理员自建任务 vs 平台内置/引擎任务
-	// （内置任务 = protected 引擎任务（awdp.tick 等）∪ 启动维护任务固定主键）。
-	const [view, setView] = useState<"service" | "system">("service");
-	const subject = view === "system" ? "SystemTask" : "ServiceTasks";
-	const baseFilter = view === "system" ? "kind:system" : "kind:service";
+	// ServiceTasks / SystemTask / EventTasks 子菜单：管理员自建任务 vs 平台内置/引擎任务
+	// vs 赛事运行时一次性任务（group_id 指向赛事，如 awd.round.end）。
+	const [view, setView] = useState<"service" | "system" | "event">("service");
+	const subject =
+		view === "system"
+			? "SystemTask"
+			: view === "event"
+				? "EventTasks"
+				: "ServiceTasks";
+	const baseFilter =
+		view === "system"
+			? "kind:system"
+			: view === "event"
+				? "kind:event"
+				: "kind:service";
 
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
@@ -328,6 +338,12 @@ function RouteComponent() {
 				>
 					SystemTask
 				</UnderlineNav.Item>
+				<UnderlineNav.Item
+					aria-current={view === "event" ? "page" : undefined}
+					onClick={() => setView("event")}
+				>
+					EventTasks
+				</UnderlineNav.Item>
 			</UnderlineNav>
 			<GenericTable
 				subject={subject}
@@ -341,7 +357,7 @@ function RouteComponent() {
 				createFn={
 					view === "service" ? adminApi.scheduled_tasks.create : undefined
 				}
-				disableAdd={view === "system"}
+				disableAdd={view !== "service"}
 				removeFn={
 					view === "service" ? adminApi.scheduled_tasks.remove : undefined
 				}

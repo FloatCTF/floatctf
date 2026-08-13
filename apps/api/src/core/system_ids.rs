@@ -13,13 +13,13 @@ use uuid::Uuid;
 
 // ── scheduled_tasks：平台启动/维护任务 ──────────────────────────────────────
 
-/// 任务键 `CHECK_PRACTICE_EVENT`：启动时 ensure 系统练习赛事 `practice:jeopardy`。
+/// 任务键 `system.practice.check`：启动时 ensure 系统练习赛事 `practice:jeopardy`。
 pub const SCHED_CHECK_PRACTICE_EVENT: Uuid = Uuid::from_u128(0);
 
-/// 任务键 `CLEAN_INSTANCES`：清理到期/残留的题目实例。
+/// 任务键 `system.practice.clean`：清理到期/残留的题目实例。
 pub const SCHED_CLEAN_INSTANCES: Uuid = Uuid::from_u128(1);
 
-/// 任务键 `CLEAN_RUSTFS`：回收对象存储中未引用文件。
+/// 任务键 `platform.rustfs.clean`：回收对象存储中未引用文件。
 pub const SCHED_CLEAN_RUSTFS: Uuid = Uuid::from_u128(2);
 
 // ── events：系统托管赛事 ────────────────────────────────────────────────────
@@ -49,16 +49,21 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
         (
             SCHED_CHECK_PRACTICE_EVENT,
             "检查练习event",
-            "CHECK_PRACTICE_EVENT",
+            "system.practice.check",
             "startup",
         ),
         (
             SCHED_CLEAN_INSTANCES,
             "实例清理",
-            "CLEAN_INSTANCES",
+            "system.practice.clean",
             "startup",
         ),
-        (SCHED_CLEAN_RUSTFS, "RUSTFS文件清理", "CLEAN_RUSTFS", "cron"),
+        (
+            SCHED_CLEAN_RUSTFS,
+            "RUSTFS文件清理",
+            "platform.rustfs.clean",
+            "cron",
+        ),
     ]
 }
 

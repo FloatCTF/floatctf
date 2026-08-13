@@ -399,9 +399,9 @@ pub async fn upload_patch(
     )
     .await
     .map_err(AppError::from)?;
-    let status = match result {
-        patch_service::PatchResult::Applied => "applied",
-        patch_service::PatchResult::Failed => "failed",
+    let (status, error_message) = match result {
+        patch_service::PatchResult::Applied => ("applied", None),
+        patch_service::PatchResult::Failed(reason) => ("failed", Some(reason)),
     };
     crate::modules::event::awdp::realtime::patch_applied(
         &state,
@@ -412,6 +412,7 @@ pub async fn upload_patch(
     UniResponse::ok(
         PatchSubmitResponse {
             status: status.into(),
+            error_message,
         }
         .into(),
     )

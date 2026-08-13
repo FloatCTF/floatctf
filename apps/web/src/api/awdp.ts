@@ -71,6 +71,7 @@ export type BreakSubmitResponse = {
 
 export type PatchSubmitResponse = {
 	status: "applied" | "failed";
+	error_message?: string | null;
 };
 
 export type ManualCheckDto = {

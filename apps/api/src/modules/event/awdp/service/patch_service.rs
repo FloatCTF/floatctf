@@ -133,7 +133,39 @@ pub fn extract_patch_payload(bytes: &[u8]) -> Result<PatchPayload, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatchResult {
     Applied,
-    Failed,
+    /// 脚本执行失败（退出码非 0 / 超时），携带面向用户的失败原因。
+    Failed(String),
+}
+
+/// 构造脚本失败的面向用户原因：超时 / 退出码非 0，并附 stdout/stderr 摘要（≤400 字符）。
+fn script_failure_reason(timed_out: bool, stdout: &str, stderr: &str) -> String {
+    let detail = if !stderr.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    let detail = detail.trim();
+    // 按 char 边界安全截断，避免切到 UTF-8 中间字节。
+    let detail = detail
+        .char_indices()
+        .take_while(|(i, _)| *i < 400)
+        .map(|(_, c)| c)
+        .collect::<String>();
+    if timed_out {
+        format!(
+            "patch script 执行超时（{}s）{}",
+            PATCH_EXEC_TIMEOUT_SECS,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        )
+    } else if detail.is_empty() {
+        "patch script 执行失败（退出码非 0，无输出）".to_string()
+    } else {
+        format!("patch script 执行失败（退出码非 0）: {detail}")
+    }
 }
 
 /// 提交并应用 patch（幂等入口：加锁 → cp+restart → 解锁）。
@@ -306,6 +338,7 @@ async fn apply_patch_locked(
 
     let exit_ok = outcome.exit_code == Some(0) && !outcome.timed_out;
     if !exit_ok {
+        let reason = script_failure_reason(outcome.timed_out, &outcome.stdout, &outcome.stderr);
         patch_repo::finish_apply(
             db,
             submission.id,
@@ -313,14 +346,10 @@ async fn apply_patch_locked(
             outcome.exit_code.map(|c| c as i32),
             &outcome.stdout,
             &outcome.stderr,
-            Some(if outcome.timed_out {
-                "patch script timed out"
-            } else {
-                "patch script exited nonzero"
-            }),
+            Some(&reason),
         )
         .await?;
-        return Ok(PatchResult::Failed);
+        return Ok(PatchResult::Failed(reason));
     }
 
     // 8. restart 同一容器（保留 writable layer：patch 生效）。

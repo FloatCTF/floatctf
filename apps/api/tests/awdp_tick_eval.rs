@@ -694,9 +694,13 @@ async fn patch_eligibility_requires_current_round_patch() {
     )
     .await
     .expect("failing patch");
-    assert_eq!(
-        r,
-        floatctf::modules::event::awdp::service::patch_service::PatchResult::Failed
+    assert!(
+        matches!(
+            r,
+            floatctf::modules::event::awdp::service::patch_service::PatchResult::Failed(_)
+        ),
+        "{:?}",
+        r
     );
     expire_round(&db, run_id, 1).await;
     tick_service::tick_once(&db, &docker, JWT_SECRET)

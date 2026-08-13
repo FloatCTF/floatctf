@@ -274,7 +274,7 @@ export function AwdpWorkbench({
 	const [patchFiles, setPatchFiles] = useState<Record<string, File | null>>({});
 	const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 	const [lastPatch, setLastPatch] = useState<
-		Record<string, "applying" | "applied" | "failed">
+		Record<string, { status: "applying" | "applied" | "failed"; error?: string }>
 	>({});
 	const [checkResults, setCheckResults] = useState<
 		Record<string, ManualCheckDto | undefined>
@@ -322,21 +322,27 @@ export function AwdpWorkbench({
 		}
 		const key = `patch:${gb.id}`;
 		setBusyKey(key, true);
-		setLastPatch((prev) => ({ ...prev, [gb.id]: "applying" }));
+		setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "applying" } }));
 		try {
 			const res = await onUploadPatch(gb.id, file);
-			const status = res?.status === "applied" ? "applied" : "failed";
-			setLastPatch((prev) => ({ ...prev, [gb.id]: status }));
-			banner.showBanner(
-				status === "applied" ? "success" : "critical",
-				status === "applied" ? "Patch applied" : "Patch failed",
-			);
+			if (res?.status === "applied") {
+				setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "applied" } }));
+				banner.showBanner("success", "Patch applied");
+			} else {
+				const reason = res?.error_message ?? "Patch failed（未知原因）";
+				setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "failed", error: reason } }));
+				banner.showBanner("critical", reason);
+			}
 			setPatchFiles((prev) => ({ ...prev, [gb.id]: null }));
 			if (fileInputRefs.current[gb.id]) {
 				fileInputRefs.current[gb.id]!.value = "";
 			}
 		} catch (e) {
-			setLastPatch((prev) => ({ ...prev, [gb.id]: "failed" }));
+			const reason =
+				(e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+				(e as Error).message ||
+				"Patch failed（未知原因）";
+			setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "failed", error: reason } }));
 			banner.showErrorBanner(e);
 		} finally {
 			setBusyKey(key, false);
@@ -657,19 +663,24 @@ export function AwdpWorkbench({
 							{patchStatus ? (
 								<Label
 									variant={
-										patchStatus === "applied"
+										patchStatus.status === "applied"
 											? "success"
-											: patchStatus === "failed"
+											: patchStatus.status === "failed"
 												? "danger"
 												: "attention"
 									}
 								>
-									{patchStatus}
+									{patchStatus.status}
 								</Label>
 							) : (
 								<span className="opacity-50">-</span>
 							)}
 						</div>
+						{patchStatus?.status === "failed" && patchStatus.error && (
+							<div className="text-xs text-red-600 break-all mt-0.5">
+								原因：{patchStatus.error}
+							</div>
+						)}
 						{check && (
 							<div className="text-sm">
 								{check.healthcheck_ok == null ? (

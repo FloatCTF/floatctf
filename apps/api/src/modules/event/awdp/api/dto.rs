@@ -396,6 +396,8 @@ pub struct AwdpScoreEventDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct PatchSubmitResponse {
     pub status: String,
+    /// 失败原因（status = failed 时给出；applied 时为 None）。
+    pub error_message: Option<String>,
 }
 
 /// 手动 Test Check 结果。

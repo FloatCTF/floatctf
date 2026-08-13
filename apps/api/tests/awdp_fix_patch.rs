@@ -346,7 +346,11 @@ exit 0
     )
     .await
     .expect("apply bad patch");
-    assert_eq!(r, patch_service::PatchResult::Failed);
+    assert!(
+        matches!(r, patch_service::PatchResult::Failed(_)),
+        "{:?}",
+        r
+    );
     let sub = patch_repo::latest_for_instance(&db, view.instance_id)
         .await
         .unwrap()

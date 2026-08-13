@@ -132,6 +132,9 @@ impl From<crate::modules::event::awdp::AwdpError> for AppError {
             crate::modules::event::awdp::AwdpError::Docker(m) => {
                 AppError::Internal(format!("Docker: {m}"))
             }
+            crate::modules::event::awdp::AwdpError::Network(m) => {
+                AppError::Internal(format!("Network: {m}"))
+            }
             crate::modules::event::awdp::AwdpError::Internal(m) => AppError::Internal(m),
         }
     }

@@ -17,6 +17,9 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
 
     // ── AWD internal routes (FlagServer / JudgeServer) ──
     cfg.configure(crate::modules::event::awd::api::internal_routes);
+
+    // ── AWDP internal routes (practice JudgeServer callback) ──
+    cfg.configure(crate::modules::event::awdp::api::internal_routes);
 }
 
 /// 集成测试用别名。
@@ -88,6 +91,10 @@ fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .configure(crate::modules::event::awd::api::admin_events_routes)
             // AWDP 赛事级路由同组注册。
             .configure(crate::modules::event::awdp::api::admin_events_routes)
+            // AWDP 练习 Judge 配置/部署/结果（AWDPlusPractice 虚拟赛事页）。
+            .configure(
+                crate::modules::event::awdp::api::practice_judge::practice_judge_admin_routes,
+            )
             // 归一化实例：admin 赛事 Instance Tab（family 无关，服务于任意赛制赛事）。
             .service(crate::modules::platform::operations::runtime_instances::get_event_instances),
     );

@@ -43,6 +43,10 @@ pub enum Relation {
     AwdpEventGameboxes,
     #[sea_orm(has_one = "super::awdp_events::Entity")]
     AwdpEvents,
+    #[sea_orm(has_many = "super::awdp_judge_results::Entity")]
+    AwdpJudgeResults,
+    #[sea_orm(has_one = "super::awdp_practice_judge_settings::Entity")]
+    AwdpPracticeJudgeSettings,
     #[sea_orm(has_many = "super::awdp_runs::Entity")]
     AwdpRuns,
     #[sea_orm(has_many = "super::event_announcements::Entity")]
@@ -88,6 +92,18 @@ impl Related<super::awdp_event_gameboxes::Entity> for Entity {
 impl Related<super::awdp_events::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpEvents.def()
+    }
+}
+
+impl Related<super::awdp_judge_results::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpJudgeResults.def()
+    }
+}
+
+impl Related<super::awdp_practice_judge_settings::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpPracticeJudgeSettings.def()
     }
 }
 

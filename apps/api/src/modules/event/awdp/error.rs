@@ -14,6 +14,8 @@ pub enum AwdpError {
     Validation(String),
     #[error("Docker error: {0}")]
     Docker(String),
+    #[error("Network error: {0}")]
+    Network(String),
     #[error("Forbidden: {0}")]
     Forbidden(String),
     #[error("Conflict: {0}")]

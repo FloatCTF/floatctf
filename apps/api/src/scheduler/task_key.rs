@@ -15,6 +15,7 @@ pub enum TaskKey {
     AwdTeamUnban,
     AwdpTick,
     AwdpEvalWorker,
+    AwdpPracticeJudge,
 }
 
 impl TaskKey {
@@ -32,6 +33,7 @@ impl TaskKey {
             Self::AwdTeamUnban => "awd.team.unban",
             Self::AwdpTick => "awdp.tick",
             Self::AwdpEvalWorker => "awdp.eval.worker",
+            Self::AwdpPracticeJudge => "awdp.practice.judge",
         }
     }
 }
@@ -59,6 +61,7 @@ impl FromStr for TaskKey {
             "awd.team.unban" => Ok(Self::AwdTeamUnban),
             "awdp.tick" => Ok(Self::AwdpTick),
             "awdp.eval.worker" => Ok(Self::AwdpEvalWorker),
+            "awdp.practice.judge" => Ok(Self::AwdpPracticeJudge),
             _ => Err(format!("unknown scheduled task key: {value}")),
         }
     }
@@ -83,6 +86,7 @@ mod tests {
             TaskKey::AwdTeamUnban,
             TaskKey::AwdpTick,
             TaskKey::AwdpEvalWorker,
+            TaskKey::AwdpPracticeJudge,
         ];
 
         for key in keys {

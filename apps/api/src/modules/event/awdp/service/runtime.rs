@@ -24,7 +24,7 @@ use crate::entity::{
 use crate::infrastructure::settings::get_setting;
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    domain::flag::awdp_flag,
+    domain::{flag::awdp_flag, judge::PRACTICE_NETWORK_NAME},
     repo::{break_repo, event_gamebox_repo, instance_repo, run_repo},
 };
 use crate::modules::gamebox::{effective_image_ref_from_gamebox, healthcheck::parse_healthchecks};
@@ -95,10 +95,14 @@ pub async fn resolve_run_gamebox_spec(
 }
 
 /// 启动/复用实例（幂等：已 running 直接返回）。
+///
+/// `awdp_config` 提供练习子网配置（practice 实例启动前 ensure 练习 docker 子网）。
+#[allow(clippy::too_many_arguments)]
 pub async fn start_instance(
     db: &DatabaseConnection,
     docker: &Docker,
     jwt_secret: &[u8],
+    awdp_config: &crate::core::config::AwdpStaticConfig,
     run_id: Uuid,
     gamebox_id: Uuid,
     subject: Subject,
@@ -119,6 +123,11 @@ pub async fn start_instance(
     let node_ip = get_setting(db, "NODE_IP")
         .await
         .map_err(|e| AwdpError::Internal(format!("get NODE_IP: {e}")))?;
+
+    // 2.5 练习实例：ensure 统一练习 docker 子网（幂等；所有练习 GameBox 同一子网）。
+    if eg.is_none() {
+        super::practice_judge::ensure_practice_network(docker, awdp_config).await?;
+    }
 
     // 3. 查找/创建逻辑实例。
     let (instance, ext) = match instance_repo::find_instance_for_subject(
@@ -287,7 +296,13 @@ async fn launch_container(
         image: image_ref.to_string(),
         env,
         labels,
-        network_name: None,
+        // 练习实例（eg=None）加入统一练习子网（JudgeServer 与实例互访）；
+        // 竞赛实例保持默认 bridge（host 端口发布不变）。
+        network_name: if eg.is_none() {
+            Some(PRACTICE_NETWORK_NAME.to_string())
+        } else {
+            None
+        },
         fixed_ip: None,
         port_bindings,
         auto_remove: true,

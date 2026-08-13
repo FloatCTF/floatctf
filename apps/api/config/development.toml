@@ -36,6 +36,14 @@ network_runtime = "noop"
 flagserver_image = "floatctf/awd-flagserver:latest"
 judgeserver_image = "floatctf/awd-judgeserver:latest"
 
+[awdp]
+# AWDP 练习 JudgeServer：部署到练习专用 docker 子网（fctf-awdp-practice）。
+# platform_internal_url 是 JudgeServer 容器回推平台使用的基址（容器视角）。
+practice_judgeserver_image = "floatctf/awdp-judgeserver:latest"
+practice_network_subnet = "10.42.2.0/24"
+practice_judge_ip = "10.42.2.2"
+platform_internal_url = "http://host.docker.internal:9090"
+
 # GameBox package import / image pipeline.
 # push = false → LocalOnly：本地 build+inspect 后以 image_id 为 pin，不要求 registry。
 [registry]

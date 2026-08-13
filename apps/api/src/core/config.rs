@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub cors: CorsConfig,
     pub paths: PathConfig,
     pub awd: AwdStaticConfig,
+    pub awdp: AwdpStaticConfig,
     /// Container image registry settings for GameBox package builds.
     pub registry: RegistryConfig,
     pub features: FeatureFlags,
@@ -103,6 +104,19 @@ pub struct AwdStaticConfig {
     pub judgeserver_image: String,
 }
 
+/// AWDP（含练习）进程静态配置。
+#[derive(Debug, Clone)]
+pub struct AwdpStaticConfig {
+    /// 练习 JudgeServer 镜像（部署到练习 docker 子网）。
+    pub practice_judgeserver_image: String,
+    /// 练习专用 docker 子网 CIDR（全部练习实例 + JudgeServer 所在）。
+    pub practice_network_subnet: String,
+    /// 练习子网内 JudgeServer 固定 IP。
+    pub practice_judge_ip: String,
+    /// JudgeServer 回调平台使用的基址（容器视角；默认 host.docker.internal）。
+    pub platform_internal_url: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct FeatureFlags {
     pub enable_unsafe_sql_admin: bool,
@@ -140,6 +154,8 @@ struct TomlConfig {
     features: FeaturesToml,
     #[serde(default)]
     awd: AwdToml,
+    #[serde(default)]
+    awdp: AwdpToml,
     #[serde(default)]
     registry: RegistryToml,
     #[serde(default)]
@@ -254,6 +270,45 @@ impl Default for AwdToml {
             judgeserver_image: default_judgeserver_image(),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct AwdpToml {
+    #[serde(default = "default_practice_judgeserver_image")]
+    practice_judgeserver_image: String,
+    #[serde(default = "default_practice_network_subnet")]
+    practice_network_subnet: String,
+    #[serde(default = "default_practice_judge_ip")]
+    practice_judge_ip: String,
+    #[serde(default = "default_platform_internal_url")]
+    platform_internal_url: String,
+}
+
+impl Default for AwdpToml {
+    fn default() -> Self {
+        Self {
+            practice_judgeserver_image: default_practice_judgeserver_image(),
+            practice_network_subnet: default_practice_network_subnet(),
+            practice_judge_ip: default_practice_judge_ip(),
+            platform_internal_url: default_platform_internal_url(),
+        }
+    }
+}
+
+fn default_practice_judgeserver_image() -> String {
+    "floatctf/awdp-judgeserver:latest".to_string()
+}
+
+fn default_practice_network_subnet() -> String {
+    "10.42.2.0/24".to_string()
+}
+
+fn default_practice_judge_ip() -> String {
+    "10.42.2.2".to_string()
+}
+
+fn default_platform_internal_url() -> String {
+    "http://host.docker.internal:9090".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -372,6 +427,12 @@ impl AppConfig {
                 network_runtime: file.awd.network_runtime,
                 flagserver_image: file.awd.flagserver_image,
                 judgeserver_image: file.awd.judgeserver_image,
+            },
+            awdp: AwdpStaticConfig {
+                practice_judgeserver_image: file.awdp.practice_judgeserver_image,
+                practice_network_subnet: file.awdp.practice_network_subnet,
+                practice_judge_ip: file.awdp.practice_judge_ip,
+                platform_internal_url: file.awdp.platform_internal_url,
             },
             registry: RegistryConfig {
                 image_prefix: file.registry.image_prefix,

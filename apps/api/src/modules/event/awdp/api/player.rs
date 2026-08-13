@@ -213,6 +213,7 @@ pub async fn start_my_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         ctx.config.auth.jwt_secret.expose().as_bytes(),
+        &ctx.config.awdp,
         run.id,
         eg.gamebox_id,
         subject,

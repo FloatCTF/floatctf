@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod flag;
+pub mod judge;
 pub mod phase;
 pub mod score;
 pub mod timing;

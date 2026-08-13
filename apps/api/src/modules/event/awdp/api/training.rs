@@ -343,9 +343,9 @@ pub async fn reset_run(
     UniResponse::ok(dto.into()).into()
 }
 
-/// POST /api/service/awdp/runs/{run_id}/start —— 练习「开始」：
-/// 冻结 run（创建后/End 后 next_action_at=None）→ 回卷全新 Break 并解除冻结（重新计时）；
-/// 已开始过的 run（next_action_at 非空，如手动停实例后恢复）→ 仅启动实例继续会话。
+/// POST /api/service/awdp/runs/{run_id}/start —— 练习「开始」（Launch）：
+/// §55 Pending 语义：Pending = 已建 run 未 Launch → Launch（Pending→Break，启动时钟）；
+/// 已 Break/Fix（会话中途，如手动停实例后恢复）→ 仅启动实例继续会话；Ended 终态拒绝。
 /// 返回 AwdpRunDto（实例已 running → 前端显现面板与内容，与 Challenge 练习 Launch 同效）。
 #[post("awdp/runs/{run_id}/start")]
 pub async fn start_run(
@@ -356,7 +356,7 @@ pub async fn start_run(
     let run_id = path.into_inner();
     let user = user.into_inner();
     let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
-    if matches!(run.phase, AwdpPhase::Pending | AwdpPhase::Ended) {
+    if run.phase == AwdpPhase::Ended {
         return Err(AppError::from(AwdpError::InvalidState(format!(
             "只有 Break/Fix 阶段的练习 run 可以开始（当前 {:?}）",
             run.phase

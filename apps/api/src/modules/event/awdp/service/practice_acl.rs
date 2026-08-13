@@ -4,7 +4,7 @@
 //!
 //! | 方向 | 策略 |
 //! |------|------|
-//! | GameBox → JudgeServer DATA port (8080) | ACCEPT（Break flag / proof） |
+//! | GameBox → JudgeServer DATA port (80) | ACCEPT（Break flag / proof） |
 //! | JudgeServer → GameBox declared ports | ACCEPT（healthcheck / judge / exploit） |
 //! | GameBox A → GameBox B | DROP（横向隔离） |
 //! | GameBox → JudgeServer CONTROL（不存在监听） | 路由不可达（control 网络 GameBox 无权加入） |

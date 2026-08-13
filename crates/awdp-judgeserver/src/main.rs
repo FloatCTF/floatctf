@@ -31,7 +31,7 @@
 //! - `PLATFORM_INTERNAL_URL` — FloatCTF 平台基址（control network 可达）
 //! - `INTERNAL_TOKEN` — 平台鉴权 Bearer 令牌（HKDF 派生，与平台侧一致）
 //! - `WORKER_ID` — worker 标识（默认 `practice-judge-01`）
-//! - `DATA_LISTEN_ADDR` — data plane 监听（默认 `0.0.0.0:8080`）
+//! - `DATA_LISTEN_ADDR` — data plane 监听（默认 `0.0.0.0:80`）
 //! - `CLAIM_BATCH` — 单次领取上限（默认 16）
 //! - `MAX_CONCURRENCY` — 最大并发 job 数（默认 8）
 //! - `POLL_INTERVAL_SECS` — 空转轮询间隔（默认 5）
@@ -869,7 +869,7 @@ async fn main() -> std::io::Result<()> {
         env::var("PLATFORM_INTERNAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9090".to_string());
     let internal_token = env::var("INTERNAL_TOKEN").expect("INTERNAL_TOKEN must be set");
     let worker_id = env::var("WORKER_ID").unwrap_or_else(|_| "practice-judge-01".to_string());
-    let data_listen = env::var("DATA_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let data_listen = env::var("DATA_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:80".to_string());
     let claim_batch: u64 = env::var("CLAIM_BATCH")
         .unwrap_or_else(|_| "16".to_string())
         .parse()

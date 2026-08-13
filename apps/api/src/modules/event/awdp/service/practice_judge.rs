@@ -217,8 +217,9 @@ pub async fn deploy_judge(
             cpu_millis: Some(500),
             memory_bytes: Some(256 * 1024 * 1024),
             pids_limit: Some(128),
-            // 收敛：cap_drop ALL（不再依赖容器内网络管理能力；Pull worker 无特权需求）。
-            cap_drop: vec!["ALL".to_string()],
+            // 用户决策：与 nginx 一致使用 Docker 默认能力集（含 NET_BIND_SERVICE，data plane
+            // 监听 80 无需特殊处理）；不再做 cap_drop ALL 收敛（plan §37 hardening 有意放松）。
+            cap_drop: vec![],
             privileged: false,
             // 不再使用 host.docker.internal（Phase C 收敛到 control network）。
             extra_hosts: vec![],

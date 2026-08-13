@@ -1192,16 +1192,8 @@ async fn build_run_dto(
         },
         instances: instances.iter().map(RunInstanceDto::from).collect(),
         judge_endpoint: Some(JudgeEndpointDto {
-            base_url: format!(
-                "http://{}:{}",
-                awdp_config.practice_judge_data_host,
-                crate::modules::event::awdp::domain::judge::PRACTICE_JUDGE_PORT
-            ),
-            flag_url: format!(
-                "http://{}:{}/flag",
-                awdp_config.practice_judge_data_host,
-                crate::modules::event::awdp::domain::judge::PRACTICE_JUDGE_PORT
-            ),
+            base_url: format!("http://{}", awdp_config.practice_judge_data_host),
+            flag_url: format!("http://{}/flag", awdp_config.practice_judge_data_host),
             scope: "gamebox_internal".to_string(),
         }),
     })

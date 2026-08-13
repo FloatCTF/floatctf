@@ -994,3 +994,241 @@ async fn failed_recovery_filter_skips_disabled_and_unprotected() {
 
     cleanup(&db).await;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// §43 Patch stale applying 回收 + §45 APPLIED-AT cutoff 资格
+// ────────────────────────────────────────────────────────────────────────────
+
+/// recover_stale_applying：apply_started_at 早于阈值 → failed + reason；近期的不动。
+#[tokio::test]
+async fn stale_applying_recovered_not_silently_applied() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+    let (run, inst, round, user, _gb) = seed_env(&db, "stale").await;
+
+    let now = chrono::Utc::now();
+    let fresh = floatctf::entity::awdp_patch_submissions::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        run_id: Set(run),
+        instance_id: Set(inst),
+        fix_round_id: Set(Some(round)),
+        user_id: Set(Some(user)),
+        team_id: Set(None),
+        script_sha256: Set("sha".into()),
+        script_content: Set("#!/bin/sh\nexit 0\n".into()),
+        status: Set("applying".to_string()),
+        submitted_at: Set(now.into()),
+        apply_started_at: Set(Some(now.into())),
+        ..Default::default()
+    };
+    fresh.insert(&db).await.unwrap();
+    let mut stale = floatctf::entity::awdp_patch_submissions::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        run_id: Set(run),
+        instance_id: Set(inst),
+        fix_round_id: Set(Some(round)),
+        user_id: Set(Some(user)),
+        team_id: Set(None),
+        script_sha256: Set("sha2".into()),
+        script_content: Set("#!/bin/sh\nexit 1\n".into()),
+        status: Set("applying".to_string()),
+        submitted_at: Set((now - chrono::Duration::minutes(10)).into()),
+        apply_started_at: Set(Some((now - chrono::Duration::minutes(10)).into())),
+        ..Default::default()
+    };
+    let stale_id = stale.id.clone().unwrap();
+    stale.insert(&db).await.unwrap();
+
+    let n = floatctf::modules::event::awdp::repo::patch_repo::recover_stale_applying(
+        &db,
+        inst,
+        now - chrono::Duration::seconds(90),
+    )
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "只有超时的一条被回收");
+    let row = floatctf::entity::awdp_patch_submissions::Entity::find_by_id(stale_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, "failed");
+    assert!(
+        row.error_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("stale applying recovered"),
+        "stale 回收必须带 reason"
+    );
+    // 近期 applying 不受影响（不被静默视为 APPLIED）。
+    let applying_count = floatctf::entity::awdp_patch_submissions::Entity::find()
+        .filter(floatctf::entity::awdp_patch_submissions::Column::InstanceId.eq(inst))
+        .filter(floatctf::entity::awdp_patch_submissions::Column::Status.eq("applying"))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(applying_count, 1);
+    cleanup(&db).await;
+}
+
+/// APPLIED-AT 资格（§45）：applied_at <= cutoff 才属于该 Turn。
+#[tokio::test]
+async fn patch_eligibility_uses_applied_at_cutoff() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+    let (run, inst, round, user, _gb) = seed_env(&db, "cutoff").await;
+    let now = chrono::Utc::now();
+
+    let mk = |id: Uuid, applied: chrono::DateTime<chrono::Utc>| {
+        floatctf::entity::awdp_patch_submissions::ActiveModel {
+            id: Set(id),
+            run_id: Set(run),
+            instance_id: Set(inst),
+            fix_round_id: Set(Some(round)),
+            user_id: Set(Some(user)),
+            team_id: Set(None),
+            script_sha256: Set("sha".into()),
+            script_content: Set("#!/bin/sh\nexit 0\n".into()),
+            status: Set("applied".to_string()),
+            submitted_at: Set(now.into()),
+            apply_started_at: Set(Some(now.into())),
+            applied_at: Set(Some(applied.into())),
+            ..Default::default()
+        }
+    };
+
+    // cutoff 在 5 分钟前；一个 patch applied 在 cutoff 前（eligible），一个在 cutoff 后（不 eligible）。
+    // 先调整 round cutoff 到过去。
+    let cutoff_before = now - chrono::Duration::minutes(5);
+    let r = awdp_fix_rounds::Entity::find_by_id(round)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: awdp_fix_rounds::ActiveModel = r.into();
+    am.cutoff_at = Set(cutoff_before.into());
+    am.update(&db).await.unwrap();
+
+    mk(Uuid::new_v4(), cutoff_before - chrono::Duration::minutes(1))
+        .insert(&db)
+        .await
+        .unwrap();
+    mk(Uuid::new_v4(), cutoff_before + chrono::Duration::minutes(1))
+        .insert(&db)
+        .await
+        .unwrap();
+
+    let eligible =
+        floatctf::modules::event::awdp::repo::patch_repo::has_applied_patch(&db, inst, round)
+            .await
+            .unwrap();
+    assert!(eligible, "cutoff 前 APPLIED 的 patch 属于该 Turn");
+
+    // 只留 cutoff 后的 patch → 不 eligible。
+    floatctf::entity::awdp_patch_submissions::Entity::delete_many()
+        .filter(floatctf::entity::awdp_patch_submissions::Column::FixRoundId.eq(round))
+        .exec(&db)
+        .await
+        .unwrap();
+    mk(Uuid::new_v4(), cutoff_before + chrono::Duration::minutes(1))
+        .insert(&db)
+        .await
+        .unwrap();
+    let eligible2 =
+        floatctf::modules::event::awdp::repo::patch_repo::has_applied_patch(&db, inst, round)
+            .await
+            .unwrap();
+    assert!(
+        !eligible2,
+        "cutoff 后才 APPLIED（即使提交早于 cutoff）不属该 Turn"
+    );
+    cleanup(&db).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §41/§69 PreparingFix：阶段门禁 + reconcile → Fix
+// ────────────────────────────────────────────────────────────────────────────
+
+/// PreparingFix：flag 不可用 / patch 禁止；reconcile（无实例）→ 物化回合 + Fix。
+#[tokio::test]
+async fn preparing_fix_gates_and_reconcile() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+    use floatctf::modules::event::awdp::service::event_service;
+
+    // practice run（Pending → Launch → Break）。
+    let user = seed_user(&db, "pfix").await;
+    let gb = seed_gamebox(&db, "pfix").await;
+    let run = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db,
+        &dummy_docker(),
+        b"x",
+        user,
+        gb.id,
+        "flag",
+    )
+    .await
+    .unwrap();
+    let _ = &run;
+    // 不需要 docker：只验证阶段门禁 + reconcile 的 DB 语义。
+    let run_row = floatctf::modules::event::awdp::repo::run_repo::require_by_id(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        run_row.phase,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending
+    );
+    floatctf::modules::event::awdp::repo::run_repo::launch_practice_run(&db, run.id)
+        .await
+        .unwrap();
+
+    // Break → PreparingFix。
+    event_service::transition_break_to_preparing_fix(&db, run.id)
+        .await
+        .unwrap();
+    let row = floatctf::modules::event::awdp::repo::run_repo::require_by_id(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.phase,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix
+    );
+
+    // reconcile（无实例，0 reset 即全部 pristine）→ Fix + 物化回合。
+    let ok = event_service::reconcile_preparing_fix(&db, &dummy_docker(), b"x", run.id)
+        .await
+        .unwrap();
+    assert!(ok, "无实例 reconcile 立即完成");
+    let row = floatctf::modules::event::awdp::repo::run_repo::require_by_id(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.phase,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix
+    );
+    assert!(row.fix_started_at.is_some() && row.fix_ends_at.is_some());
+    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
+        .await
+        .unwrap();
+    assert_eq!(rounds.len(), 6, "reconcile 完成时物化回合");
+
+    // 清理。
+    let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run.id)
+        .exec(&db)
+        .await;
+    cleanup(&db).await;
+}
+
+fn dummy_docker() -> bollard::Docker {
+    // 未真正连接：reconcile 无实例时不触碰 docker。
+    bollard::Docker::connect_with_local_defaults().expect("docker")
+}

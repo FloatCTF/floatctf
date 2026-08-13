@@ -36,8 +36,11 @@ pub async fn start_training(
         return Ok(run);
     }
 
-    // 3. 创建 run（phase=Break，默认配置快照：started_at/break_ends_at/next_action_at 内部计算）。
-    let config = AwdpConfig::default();
+    // 3. 创建 run（phase=Pending）。配置快照来自 AWDPlusPractice 虚拟赛事的 awdp_events
+    //    （管理端可调 Break/Fix/Turn/Score，只影响未来 Runs；plan §56），非硬编码默认。
+    let event_id = run_repo::ensure_practice_event(db).await?;
+    let config =
+        crate::modules::event::awdp::repo::event_repo::config_snapshot(db, event_id).await?;
     let run = run_repo::create_practice_run(db, gamebox_id, user_id, &config).await?;
 
     // 3.5 幂等挂载：练习 gamebox 统一挂到 AWDPlusPractice 虚拟赛事（失败不阻断训练）。

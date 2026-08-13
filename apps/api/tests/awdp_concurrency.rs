@@ -72,6 +72,29 @@ async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker)
         .expect("tick: preparing_fix reconcile → fix");
 }
 
+/// 把该实例最近一次成功 patch 的 applied_at 回拨 seconds 秒（APPLIED-AT：applied_at <= cutoff）。
+async fn backdate_patch_applied(
+    db: &sea_orm::DatabaseConnection,
+    instance_id: Uuid,
+    seconds_ago: i64,
+) {
+    use sea_orm::ActiveModelTrait;
+    use sea_orm::QueryOrder;
+    let row = floatctf::entity::awdp_patch_submissions::Entity::find()
+        .filter(floatctf::entity::awdp_patch_submissions::Column::InstanceId.eq(instance_id))
+        .filter(floatctf::entity::awdp_patch_submissions::Column::Status.eq("applied"))
+        .order_by_desc(floatctf::entity::awdp_patch_submissions::Column::AppliedAt)
+        .one(db)
+        .await
+        .unwrap()
+        .expect("applied patch row");
+    let mut am: floatctf::entity::awdp_patch_submissions::ActiveModel = row.into();
+    am.applied_at = Set(Some(
+        (chrono::Utc::now() - chrono::Duration::seconds(seconds_ago)).into(),
+    ));
+    am.update(db).await.unwrap();
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -541,6 +564,8 @@ async fn reset_and_evaluation_concurrent() {
     )
     .await
     .expect("patch");
+    // APPLIED-AT：回拨 applied_at 到 cutoff 前（expire_round 会把 cutoff 拨到过去）。
+    backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 1).await;
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
@@ -658,6 +683,8 @@ async fn manual_check_and_evaluation_concurrent() {
     )
     .await
     .expect("patch");
+    // APPLIED-AT：回拨 applied_at 到 cutoff 前（expire_round 会把 cutoff 拨到过去）。
+    backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 1).await;
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await

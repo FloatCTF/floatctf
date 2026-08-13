@@ -256,6 +256,30 @@ async fn open_round(db: &sea_orm::DatabaseConnection, run_id: Uuid, sequence: i3
     am.update(db).await.unwrap();
 }
 
+/// 把该实例最近一次成功 patch 的 applied_at 回拨 seconds 秒（模拟「patch 在 cutoff 前已生效」，
+/// APPLIED-AT 语义：eligible 要求 applied_at <= cutoff_at）。
+async fn backdate_patch_applied(
+    db: &sea_orm::DatabaseConnection,
+    instance_id: Uuid,
+    seconds_ago: i64,
+) {
+    use sea_orm::ActiveModelTrait;
+    use sea_orm::QueryOrder;
+    let row = floatctf::entity::awdp_patch_submissions::Entity::find()
+        .filter(floatctf::entity::awdp_patch_submissions::Column::InstanceId.eq(instance_id))
+        .filter(floatctf::entity::awdp_patch_submissions::Column::Status.eq("applied"))
+        .order_by_desc(floatctf::entity::awdp_patch_submissions::Column::AppliedAt)
+        .one(db)
+        .await
+        .unwrap()
+        .expect("applied patch row");
+    let mut am: floatctf::entity::awdp_patch_submissions::ActiveModel = row.into();
+    am.applied_at = Set(Some(
+        (chrono::Utc::now() - chrono::Duration::seconds(seconds_ago)).into(),
+    ));
+    am.update(db).await.unwrap();
+}
+
 /// 把指定 sequence 的 round 拨到过去（其余 round 拨到未来），并让 run due。
 /// 保证任意时刻只有一个 open round（patch 需要 open round）。
 async fn expire_round(db: &sea_orm::DatabaseConnection, run_id: Uuid, sequence: i32) {
@@ -407,6 +431,7 @@ async fn tick_driven_rounds_and_scoring() {
         r,
         floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
     );
+    backdate_patch_applied(&db, inst_b.instance_id, 30).await;
     // 事件 A：apply patch（虽然 exploit 会成功，但需要 APPLIED 才评估）
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
@@ -422,6 +447,7 @@ async fn tick_driven_rounds_and_scoring() {
         r,
         floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
     );
+    backdate_patch_applied(&db, inst_a.instance_id, 30).await;
 
     // Round 2 cutoff 到期 → 物化（幂等：重复 tick 不重复创建）。
     expire_round(&db, run_a, 2).await;
@@ -677,6 +703,7 @@ async fn patch_eligibility_requires_current_round_patch() {
         r,
         floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
     );
+    backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 2).await;
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
@@ -819,6 +846,8 @@ async fn official_eval_service_down_and_functional_broken() {
     )
     .await
     .expect("patch B");
+    backdate_patch_applied(&db, inst_a.instance_id, 30).await;
+    backdate_patch_applied(&db, inst_b.instance_id, 30).await;
 
     // 事件 B：停止容器（宿主端口映射消失 → 探针失败）。
     runtime::stop_instance(&db, &docker, inst_b.instance_id, sub_b)

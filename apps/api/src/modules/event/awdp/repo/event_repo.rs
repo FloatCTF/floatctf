@@ -207,3 +207,23 @@ pub async fn find_unstarted_awdp_events(
         .take(limit as usize)
         .collect())
 }
+
+/// 事件配置快照源：ensure 默认后读取 awdp_events（practice run snapshot 也用；plan §56）。
+pub async fn config_snapshot(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> AwdpResult<crate::modules::event::awdp::domain::AwdpConfig> {
+    let row = ensure_by_event_id(
+        db,
+        event_id,
+        &crate::modules::event::awdp::domain::AwdpConfig::default(),
+    )
+    .await?;
+    Ok(crate::modules::event::awdp::domain::AwdpConfig {
+        break_duration_secs: row.break_duration_secs,
+        fix_duration_secs: row.fix_duration_secs,
+        fix_round_interval_secs: row.fix_round_interval_secs,
+        break_score: row.break_score,
+        fix_round_score: row.fix_round_score,
+    })
+}

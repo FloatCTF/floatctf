@@ -79,6 +79,18 @@ async fn apply_patch_locked(
 ) -> AwdpResult<PatchResult> {
     let now = Utc::now();
 
+    // 0. 回收 stale applying（plan §43）：平台崩溃残留的 applying（apply_started_at 超过
+    //    exec 超时 + 裕量）→ failed + reason；绝不静默视为 APPLIED，允许重新上传。
+    let stale_before = now - chrono::Duration::seconds((PATCH_EXEC_TIMEOUT_SECS + 30) as i64);
+    let recovered = patch_repo::recover_stale_applying(db, instance_id, stale_before).await?;
+    if recovered > 0 {
+        tracing::warn!(
+            instance_id = %instance_id,
+            recovered,
+            "[Patch] stale applying recovered"
+        );
+    }
+
     // 1. 当前 open round。
     let Some(round) = round_repo::current_open_round(db, run_id, now).await? else {
         return Err(AwdpError::InvalidState(

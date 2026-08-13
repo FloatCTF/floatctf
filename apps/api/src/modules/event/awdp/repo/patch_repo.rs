@@ -36,6 +36,8 @@ pub async fn create_submission(
         script_content: Set(script_content.to_string()),
         status: Set("applying".to_string()),
         submitted_at: Set(now),
+        // apply 开始时间（stale 回收判定）。
+        apply_started_at: Set(Some(now)),
         ..Default::default()
     }
     .insert(db)
@@ -74,20 +76,61 @@ pub async fn finish_apply(
         .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
-/// 本轮是否已有 APPLIED patch（评估资格）。
+/// 本轮是否已有 APPLIED patch（评估资格，APPLIED-AT 语义 plan §45）：
+/// 只有 applied_at <= round.cutoff_at 的 patch 属于该 Turn。
 pub async fn has_applied_patch(
     db: &DatabaseConnection,
     instance_id: Uuid,
     fix_round_id: Uuid,
 ) -> AwdpResult<bool> {
+    use crate::entity::awdp_fix_rounds;
+    use chrono::Utc;
+    let round = awdp_fix_rounds::Entity::find_by_id(fix_round_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("fix round not found".into()))?;
+    let cutoff: chrono::DateTime<Utc> = round.cutoff_at.with_timezone(&Utc);
     let count = awdp_patch_submissions::Entity::find()
         .filter(awdp_patch_submissions::Column::InstanceId.eq(instance_id))
         .filter(awdp_patch_submissions::Column::FixRoundId.eq(fix_round_id))
         .filter(awdp_patch_submissions::Column::Status.eq("applied"))
+        .filter(awdp_patch_submissions::Column::AppliedAt.lte(cutoff))
         .count(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?;
     Ok(count > 0)
+}
+
+/// 回收 stale applying（plan §43）：apply_started_at 早于阈值（exec 超时 + 裕量）且仍
+/// applying → failed + reason。绝不静默视为 APPLIED（无法证明 Docker mutation 完整）。
+pub async fn recover_stale_applying(
+    db: &DatabaseConnection,
+    instance_id: Uuid,
+    stale_before: chrono::DateTime<Utc>,
+) -> AwdpResult<usize> {
+    use sea_orm::ActiveModelTrait;
+    let stale = awdp_patch_submissions::Entity::find()
+        .filter(awdp_patch_submissions::Column::InstanceId.eq(instance_id))
+        .filter(awdp_patch_submissions::Column::Status.eq("applying"))
+        .filter(awdp_patch_submissions::Column::ApplyStartedAt.lt(stale_before))
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let mut n = 0usize;
+    for row in stale {
+        let mut am: awdp_patch_submissions::ActiveModel = row.into();
+        am.status = Set("failed".to_string());
+        am.error_message = Set(Some(
+            "stale applying recovered（平台崩溃/重启；不能证明容器修改完整，需重新上传）"
+                .to_string(),
+        ));
+        am.update(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// 实例最近的 patch 提交（按时间倒序）。

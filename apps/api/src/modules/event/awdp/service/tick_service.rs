@@ -126,16 +126,9 @@ pub async fn tick_once(
     Ok(summary)
 }
 
-/// 事件配置（ensure 默认后读取，作为 run snapshot 源）。
+/// 事件配置（ensure 默认后读取，作为 run snapshot 源；plan §56）。
 async fn config_for_event(db: &DatabaseConnection, event_id: uuid::Uuid) -> AwdpResult<AwdpConfig> {
-    let row = event_repo::ensure_by_event_id(db, event_id, &AwdpConfig::default()).await?;
-    Ok(AwdpConfig {
-        break_duration_secs: row.break_duration_secs,
-        fix_duration_secs: row.fix_duration_secs,
-        fix_round_interval_secs: row.fix_round_interval_secs,
-        break_score: row.break_score,
-        fix_round_score: row.fix_round_score,
-    })
+    event_repo::config_snapshot(db, event_id).await
 }
 
 /// 处理 Fix 阶段到达 cutoff 的回合：物化评估 + 推进 next_action_at。

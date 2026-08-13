@@ -276,6 +276,16 @@ async fn expire_round(db: &sea_orm::DatabaseConnection, run_id: Uuid, sequence: 
     am.update(db).await.unwrap();
 }
 
+/// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
+fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
+    floatctf::core::config::AwdpStaticConfig {
+        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judge_ip: "10.42.2.2".to_string(),
+        platform_internal_url: "http://host.docker.internal:9090".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn tick_driven_rounds_and_scoring() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -304,12 +314,30 @@ async fn tick_driven_rounds_and_scoring() {
     let user_b = seed_user(&db, "fb").await;
     let sub_a = Subject::user(user_a);
     let sub_b = Subject::user(user_b);
-    let inst_a = runtime::start_instance(&db, &docker, JWT_SECRET, run_a, gb_a, sub_a, "flag")
-        .await
-        .expect("start A");
-    let inst_b = runtime::start_instance(&db, &docker, JWT_SECRET, run_b, gb_b, sub_b, "flag")
-        .await
-        .expect("start B");
+    let inst_a = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_a,
+        gb_a,
+        sub_a,
+        "flag",
+    )
+    .await
+    .expect("start A");
+    let inst_b = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_b,
+        gb_b,
+        sub_b,
+        "flag",
+    )
+    .await
+    .expect("start B");
 
     // 1. tick：Break 到期 → Fix + rounds 物化（run 维度）。
     tick_service::tick_once(&db, &docker, JWT_SECRET)
@@ -561,9 +589,18 @@ async fn patch_eligibility_requires_current_round_patch() {
     let (event_id, run_id, gb_id) = seed_event_and_gamebox(&db, "elig", EXPLOIT_ALWAYS_FAIL).await;
     let user_id = seed_user(&db, "elig").await;
     let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, sub, "flag")
-        .await
-        .expect("start");
+    let inst = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        sub,
+        "flag",
+    )
+    .await
+    .expect("start");
 
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
@@ -715,17 +752,35 @@ async fn official_eval_service_down_and_functional_broken() {
         seed_event_and_gamebox_with_judge(&db, "fbk", EXPLOIT_ALWAYS_FAIL, JUDGE_ALWAYS_FAIL).await;
     let user_a = seed_user(&db, "fbk").await;
     let sub_a = Subject::user(user_a);
-    let inst_a = runtime::start_instance(&db, &docker, JWT_SECRET, run_a, gb_a, sub_a, "flag")
-        .await
-        .expect("start A");
+    let inst_a = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_a,
+        gb_a,
+        sub_a,
+        "flag",
+    )
+    .await
+    .expect("start A");
 
     // 事件 B：容器停止 → health FAIL → SERVICE_DOWN。
     let (ev_b, run_b, gb_b) = seed_event_and_gamebox(&db, "svd", EXPLOIT_ALWAYS_FAIL).await;
     let user_b = seed_user(&db, "svd").await;
     let sub_b = Subject::user(user_b);
-    let inst_b = runtime::start_instance(&db, &docker, JWT_SECRET, run_b, gb_b, sub_b, "flag")
-        .await
-        .expect("start B");
+    let inst_b = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_b,
+        gb_b,
+        sub_b,
+        "flag",
+    )
+    .await
+    .expect("start B");
 
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
@@ -907,9 +962,18 @@ async fn practice_early_check_sweeps_future_rounds() {
         .await
         .expect("practice run");
     let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run.id, gb_id, sub, "flag")
-        .await
-        .expect("start instance");
+    let inst = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb_id,
+        sub,
+        "flag",
+    )
+    .await
+    .expect("start instance");
 
     // 直接进入 Fix（练习 break 未到期，跳过 tick 时间等待）。
     floatctf::modules::event::awdp::service::event_service::transition_break_to_fix(

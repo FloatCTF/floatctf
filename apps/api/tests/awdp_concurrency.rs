@@ -296,6 +296,16 @@ async fn expire_round(db: &sea_orm::DatabaseConnection, run_id: Uuid, sequence: 
 // §89：advisory lock 串行化语义（DB 层，无 Docker）
 // ────────────────────────────────────────────────────────────────────────────
 
+/// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
+fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
+    floatctf::core::config::AwdpStaticConfig {
+        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judge_ip: "10.42.2.2".to_string(),
+        platform_internal_url: "http://host.docker.internal:9090".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn advisory_lock_mutual_exclusion() {
     let Some(db) = connect_or_skip().await else {
@@ -372,9 +382,18 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
     let (event_id, run_id, gb_id) = seed_run_in_break(&db, "pe").await;
     let user_id = seed_user(&db, "pe").await;
     let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, sub, "flag")
-        .await
-        .expect("start");
+    let inst = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        sub,
+        "flag",
+    )
+    .await
+    .expect("start");
 
     // Break → Fix（rounds 物化）。
     tick_service::tick_once(&db, &docker, JWT_SECRET)
@@ -484,9 +503,18 @@ async fn reset_and_evaluation_concurrent() {
     let (event_id, run_id, gb_id) = seed_run_in_break(&db, "re").await;
     let user_id = seed_user(&db, "re").await;
     let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, sub, "flag")
-        .await
-        .expect("start");
+    let inst = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        sub,
+        "flag",
+    )
+    .await
+    .expect("start");
     let original_port = inst.endpoints[0].public_port;
 
     tick_service::tick_once(&db, &docker, JWT_SECRET)
@@ -588,9 +616,18 @@ async fn manual_check_and_evaluation_concurrent() {
     let (event_id, run_id, gb_id) = seed_run_in_break(&db, "mc").await;
     let user_id = seed_user(&db, "mc").await;
     let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, sub, "flag")
-        .await
-        .expect("start");
+    let inst = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        sub,
+        "flag",
+    )
+    .await
+    .expect("start");
 
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await

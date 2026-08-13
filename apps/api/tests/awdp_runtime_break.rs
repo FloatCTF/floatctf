@@ -213,6 +213,16 @@ async fn seed_awdp_gamebox(
     gb.id
 }
 
+/// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
+fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
+    floatctf::core::config::AwdpStaticConfig {
+        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judge_ip: "10.42.2.2".to_string(),
+        platform_internal_url: "http://host.docker.internal:9090".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn multi_endpoints_and_duplicate_port_dedup() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -248,6 +258,7 @@ async fn multi_endpoints_and_duplicate_port_dedup() {
         &db,
         &docker,
         JWT_SECRET,
+        &awdp_config(),
         run_a,
         gb_a,
         Subject::user(user_a),
@@ -283,6 +294,7 @@ async fn multi_endpoints_and_duplicate_port_dedup() {
         &db,
         &docker,
         JWT_SECRET,
+        &awdp_config(),
         run_b,
         gb_b,
         Subject::user(user_b),
@@ -368,12 +380,30 @@ async fn different_gameboxes_score_independently() {
 
     // start_training 只建 run（冻结）；实例由玩家点「开始」（start_instance）启动。
     let subject = Subject::user(user_id);
-    runtime::start_instance(&db, &docker, JWT_SECRET, run_a.id, gb_a, subject, "flag")
-        .await
-        .expect("begin A");
-    runtime::start_instance(&db, &docker, JWT_SECRET, run_b.id, gb_b, subject, "flag")
-        .await
-        .expect("begin B");
+    runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_a.id,
+        gb_a,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("begin A");
+    runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_b.id,
+        gb_b,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("begin B");
     let va = runtime::get_my_instance_view(&db, run_a.id, gb_a, subject)
         .await
         .unwrap()
@@ -515,9 +545,18 @@ async fn individual_start_flag_break_and_idempotency() {
     let subject = Subject::user(user_id);
 
     // 启动实例 → 端点发布（run-scoped）。
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
-        .await
-        .expect("start instance");
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start instance");
     assert_eq!(view.runtime_state, "running");
     assert_eq!(view.endpoints.len(), 1);
     let ep = &view.endpoints[0];
@@ -526,9 +565,18 @@ async fn individual_start_flag_break_and_idempotency() {
     assert!(ep.public_port > 0);
 
     // 幂等：再次 start 返回同一实例与同一端点。
-    let view2 = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
-        .await
-        .expect("restart idempotent");
+    let view2 = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("restart idempotent");
     assert_eq!(view2.instance_id, view.instance_id);
     assert_eq!(
         view2.endpoints[0].public_port, ep.public_port,
@@ -740,9 +788,18 @@ async fn team_shares_instance_and_score() {
         .expect("attach");
 
     let subject = Subject::team(team_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run.id, gb.id, subject, "flag")
-        .await
-        .expect("team instance");
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb.id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("team instance");
 
     // 第二个成员看到的实例与第一个一致。
     let view2 = runtime::get_my_instance_view(&db, run.id, gb.id, Subject::team(team_id))

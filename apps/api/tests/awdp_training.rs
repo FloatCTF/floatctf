@@ -127,6 +127,16 @@ async fn cleanup(db: &sea_orm::DatabaseConnection) {
     }
 }
 
+/// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
+fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
+    floatctf::core::config::AwdpStaticConfig {
+        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judge_ip: "10.42.2.2".to_string(),
+        platform_internal_url: "http://host.docker.internal:9090".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn start_training_idempotent_and_train_again() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -178,6 +188,7 @@ async fn start_training_idempotent_and_train_again() {
         &db,
         &docker,
         JWT_SECRET,
+        &awdp_config(),
         run.id,
         gb_id,
         floatctf::modules::event::awdp::service::runtime::Subject::user(user_id),
@@ -391,7 +402,14 @@ async fn train_again_preserves_old_run_history() {
     let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
     // start_training 只建 run（冻结）；玩家点「开始」启动实例。
     floatctf::modules::event::awdp::service::runtime::start_instance(
-        &db, &docker, JWT_SECRET, run.id, gb_id, subject, "flag",
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb_id,
+        subject,
+        "flag",
     )
     .await
     .expect("begin instance");

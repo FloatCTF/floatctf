@@ -218,6 +218,16 @@ sys.exit(0 if all(check(ip)["success"] for ip in ips) else 1)
     gb.id
 }
 
+/// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
+fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
+    floatctf::core::config::AwdpStaticConfig {
+        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judge_ip: "10.42.2.2".to_string(),
+        platform_internal_url: "http://host.docker.internal:9090".to_string(),
+    }
+}
+
 #[tokio::test]
 async fn patch_and_reset_lifecycle() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -242,9 +252,18 @@ async fn patch_and_reset_lifecycle() {
 
     let user_id = seed_user(&db, "fix").await;
     let subject = Subject::user(user_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
-        .await
-        .expect("start");
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start");
     let original_port = view.endpoints[0].public_port;
 
     // 1. Fix 阶段上传成功 patch → applied + restart。
@@ -407,9 +426,18 @@ exit 0
     let (ev2, run2) = seed_event_and_run(&db, "breakgate", ParticipantMode::Individual).await;
     let gb2 = seed_gamebox_and_attach(&db, ev2, "breakgate").await;
     transition(&db, run2, AwdpPhase::Break).await;
-    let v2 = runtime::start_instance(&db, &docker, JWT_SECRET, run2, gb2, subject, "flag")
-        .await
-        .expect("start in break");
+    let v2 = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run2,
+        gb2,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start in break");
     let err = patch_service::apply_patch(&db, &docker, run2, v2.instance_id, ok_patch, subject)
         .await
         .unwrap_err();
@@ -447,9 +475,18 @@ async fn break_to_fix_resets_all_instances() {
     transition(&db, run_id, AwdpPhase::Break).await;
     let user_id = seed_user(&db, "btf").await;
     let subject = Subject::user(user_id);
-    let view = runtime::start_instance(&db, &docker, JWT_SECRET, run_id, gb_id, subject, "flag")
-        .await
-        .expect("start");
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start");
     let port = view.endpoints[0].public_port;
     assert_eq!(view.runtime_generation, 1);
 

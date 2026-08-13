@@ -50,6 +50,18 @@ async fn cleanup(db: &sea_orm::DatabaseConnection) {
     {
         let _ = events::Entity::delete_by_id(row.id).exec(db).await;
     }
+    // cron 恢复测试插入的 scheduled_tasks 行（task_name 以 it- 开头）：无论测试
+    // 成败都要清掉，否则残留 enabled 行会累积并干扰真实 API 启动。
+    for row in floatctf::entity::scheduled_tasks::Entity::find()
+        .filter(floatctf::entity::scheduled_tasks::Column::TaskName.like("it-%"))
+        .all(db)
+        .await
+        .unwrap()
+    {
+        let _ = floatctf::entity::scheduled_tasks::Entity::delete_by_id(row.id)
+            .exec(db)
+            .await;
+    }
 }
 
 async fn seed_user(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {

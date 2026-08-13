@@ -422,8 +422,12 @@ impl TaskScheduler {
     }
 
     pub async fn validate_enabled_task_keys(&self) -> Result<()> {
+        // 只校验引擎实际会执行的行：fetch 只取 status='pending'，init_and_recover 把
+        // running 恢复为 pending。failed/completed 是终态，永不执行——残留的
+        // 已删除任务行（如旧 push sweep 的 awdp.practice.judge 测试残留）不能阻断启动。
         let tasks = scheduled_tasks::Entity::find()
             .filter(scheduled_tasks::Column::Enabled.eq(true))
+            .filter(scheduled_tasks::Column::Status.is_in(["pending", "running"]))
             .all(self.db.get_ref())
             .await?;
 

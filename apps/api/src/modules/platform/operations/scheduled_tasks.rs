@@ -3,6 +3,7 @@ use crate::api::dto::map_dto_vec;
 use super::scheduled_tasks_dto::ScheduledTasksDto;
 use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
+    core::system_ids::scheduled_task_system_ids,
     entity::scheduled_tasks,
 };
 use sea_orm::Condition;
@@ -208,6 +209,22 @@ pub async fn get_scheduled_tasks(
             column: Box::new(|v| {
                 Condition::all()
                     .add(scheduled_tasks::Column::Protected.eq(v.parse::<bool>().unwrap_or(false)))
+            }),
+        },
+        // 视图分类：kind=system（内置/引擎任务）| kind=service（管理员自建任务）。
+        // SystemTask = protected=true（引擎重复/回环任务，如 awdp.tick）
+        //          或 id ∈ startup_scheduled_task_seeds（启动维护任务，如 CLEAN_INSTANCES）；
+        // ServiceTask 为其补集。
+        FilterMapping {
+            key: "kind",
+            column: Box::new(|v| match v {
+                "system" => Condition::any()
+                    .add(scheduled_tasks::Column::Protected.eq(true))
+                    .add(scheduled_tasks::Column::Id.is_in(scheduled_task_system_ids())),
+                "service" => Condition::all()
+                    .add(scheduled_tasks::Column::Protected.eq(false))
+                    .add(scheduled_tasks::Column::Id.is_not_in(scheduled_task_system_ids())),
+                _ => Condition::all(),
             }),
         },
     ];

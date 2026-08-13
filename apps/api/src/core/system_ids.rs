@@ -62,6 +62,17 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
     ]
 }
 
+/// 平台系统任务（SystemTask）固定主键集合：即 [`startup_scheduled_task_seeds`] 的 id。
+///
+/// 管理端 `/api/admin/scheduled_tasks` 的 `kind=system` 过滤 = `protected OR 属于本集合`；
+/// 引擎重复任务（awd/awdp）以 `protected=true` 标记，无需在此枚举。
+pub fn scheduled_task_system_ids() -> Vec<Uuid> {
+    startup_scheduled_task_seeds()
+        .iter()
+        .map(|(id, _, _, _)| *id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +106,19 @@ mod tests {
         assert_eq!(seeds[0].0, SCHED_CHECK_PRACTICE_EVENT);
         assert_eq!(seeds[1].0, SCHED_CLEAN_INSTANCES);
         assert_eq!(seeds[2].0, SCHED_CLEAN_RUSTFS);
+    }
+
+    #[test]
+    fn scheduled_task_system_ids_matches_seed_list() {
+        let ids = scheduled_task_system_ids();
+        let expected: Vec<Uuid> = startup_scheduled_task_seeds()
+            .iter()
+            .map(|(id, _, _, _)| *id)
+            .collect();
+        assert_eq!(ids, expected);
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&SCHED_CHECK_PRACTICE_EVENT));
+        assert!(ids.contains(&SCHED_CLEAN_INSTANCES));
+        assert!(ids.contains(&SCHED_CLEAN_RUSTFS));
     }
 }

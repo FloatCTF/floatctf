@@ -52,6 +52,7 @@ export enum AwdpPhase {
   Break = 'break',
   Fix = 'fix',
   Ended = 'ended',
+  PreparingFix = 'preparing_fix',
 }
 
 export enum BanStatus {

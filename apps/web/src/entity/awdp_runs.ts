@@ -22,5 +22,4 @@ export type AwdpRuns = {
   next_action_at?: string;
   created_at: string;
   updated_at: string;
-  early_patched_seq?: string;
 };

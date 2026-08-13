@@ -162,20 +162,20 @@ async fn start_training_idempotent_and_train_again() {
     let user_id = seed_user(&db, "train").await;
     let gb_id = seed_trainable_gamebox(&db, "train").await;
 
-    // 1. start_training：创建 run（phase=Break，**冻结**：不启动实例，等待玩家点「开始」）。
+    // 1. start_training：创建 run（phase=Pending = 未 Launch，§55；等待玩家 Launch）。
     let run = practice_service::start_training(&db, &docker, JWT_SECRET, user_id, gb_id, "flag")
         .await
         .expect("start training");
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(
         row.phase,
-        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
-        "practice run 创建即 Break"
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending,
+        "practice run 创建即 Pending"
     );
     assert_eq!(row.break_duration_secs, 3600, "默认配置快照");
     assert_eq!(row.fix_round_interval_secs, 600);
     assert_eq!(row.total_rounds, 6);
-    assert!(row.started_at.is_some() && row.break_ends_at.is_some());
+    assert!(row.started_at.is_none() && row.break_ends_at.is_none());
     assert!(
         row.next_action_at.is_none(),
         "未点「开始」前 tick 不推进（冻结）"
@@ -186,7 +186,10 @@ async fn start_training_idempotent_and_train_again() {
         .unwrap();
     assert_eq!(instances.len(), 0, "start_training 只建 run 不启动实例");
 
-    // 1.5 玩家点「开始」（start_instance）→ 建实例并启动。
+    // 1.5 玩家 Launch：Pending→Break + 启动实例。
+    run_repo::launch_practice_run(&db, run.id)
+        .await
+        .expect("launch");
     floatctf::modules::event::awdp::service::runtime::start_instance(
         &db,
         &docker,
@@ -221,6 +224,15 @@ async fn start_training_idempotent_and_train_again() {
         &db,
         run.id,
         floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
         floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
         Default::default(),
     )
@@ -254,7 +266,8 @@ async fn start_training_idempotent_and_train_again() {
     let new_row = run_repo::require_by_id(&db, new_run.id).await.unwrap();
     assert_eq!(
         new_row.phase,
-        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending,
+        "Train Again 新 run 从 Pending 开始（§55）"
     );
     assert_eq!(new_row.gamebox_id, Some(gb_id), "复用 gamebox");
 
@@ -403,7 +416,10 @@ async fn train_again_preserves_old_run_history() {
         .await
         .expect("start training");
     let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
-    // start_training 只建 run（冻结）；玩家点「开始」启动实例。
+    // start_training 只建 run（Pending）；玩家 Launch → Break 后启动实例。
+    run_repo::launch_practice_run(&db, run.id)
+        .await
+        .expect("launch");
     floatctf::modules::event::awdp::service::runtime::start_instance(
         &db,
         &docker,
@@ -555,25 +571,29 @@ async fn practice_phase_control_jump_fix_and_back() {
 
     let user_id = seed_user(&db, "phase").await;
     let gb_id = seed_trainable_gamebox(&db, "phase").await;
-    // 直接建 run（不启动实例）→ phase=Break。
+    // 直接建 run（不启动实例）→ phase=Pending（§55：Pending = 未 Launch）。
     let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
         .await
         .expect("create practice run");
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert_eq!(
-        row.phase,
-        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break
-    );
+    assert_eq!(row.phase, AwdpPhase::Pending);
     assert_eq!(
         floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
             .await
             .unwrap()
             .len(),
         0,
-        "Break 阶段无回合"
+        "Pending 阶段无回合"
     );
 
-    // 1. 直接进入 Fix（无需等待 break_duration）。
+    // 0. Launch → Break（时钟启动）。
+    run_repo::launch_practice_run(&db, run.id)
+        .await
+        .expect("launch");
+    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
+    assert_eq!(row.phase, AwdpPhase::Break);
+
+    // 1. 直接进入 Fix（无需等待 break_duration；经 PreparingFix reconcile）。
     event_service::transition_break_to_fix(&db, &docker, JWT_SECRET, run.id)
         .await
         .expect("jump to fix");
@@ -586,14 +606,7 @@ async fn practice_phase_control_jump_fix_and_back() {
     assert_eq!(rounds.len(), 6, "fix 会话物化 6 个回合");
     assert_eq!(rounds[0].sequence, 1);
 
-    // 2. 提前 Check 标记（service 层写入）。
-    run_repo::set_early_patched(&db, run.id, 1)
-        .await
-        .expect("set early patched");
-    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert_eq!(row.early_patched_seq, Some(1));
-
-    // 3. 回到 Break：fix 会话整体撤销（started_at 同步重置为当前时刻，时间线/倒计时重新计时）。
+    // 2. 回到 Break：fix 会话整体撤销（started_at 同步重置为当前时刻，时间线/倒计时重新计时）。
     //    先把 started_at 伪造成 1 小时前，验证回退会重置时间线起点。
     {
         let am = floatctf::entity::awdp_runs::ActiveModel {
@@ -612,10 +625,6 @@ async fn practice_phase_control_jump_fix_and_back() {
     assert_eq!(row.phase, AwdpPhase::Break, "手动回到 Break");
     assert!(row.fix_started_at.is_none() && row.fix_ends_at.is_none());
     assert_eq!(row.current_round, 0);
-    assert_eq!(
-        row.early_patched_seq, None,
-        "提前 Check 标记随 fix 会话清零"
-    );
     assert!(
         floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
             .await
@@ -701,6 +710,18 @@ async fn practice_phase_control_jump_fix_and_back() {
             &db,
             run.id,
             AwdpPhase::Break,
+            AwdpPhase::PreparingFix,
+            run_repo::PhaseTransitionPatch {
+                next_action_at: Some(now + chrono::Duration::minutes(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        run_repo::transition_phase(
+            &db,
+            run.id,
+            AwdpPhase::PreparingFix,
             AwdpPhase::Fix,
             run_repo::PhaseTransitionPatch {
                 fix_started_at: Some(now),
@@ -757,20 +778,24 @@ async fn practice_start_end_cycle() {
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(
         row.phase,
-        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Pending
     );
-    assert!(row.next_action_at.is_none(), "创建即冻结");
+    assert!(
+        row.next_action_at.is_none(),
+        "Pending = 未 Launch（无时钟）"
+    );
+    assert!(row.started_at.is_none(), "Pending 未启动时钟");
 
-    // 2. 「开始」：回卷全新 Break 并解除冻结（next_action_at=break_ends）。
-    run_repo::start_practice_break(&db, run.id)
+    // 2. Launch：Pending→Break（next_action_at=break_ends，时钟启动）。
+    run_repo::launch_practice_run(&db, run.id)
         .await
-        .expect("start");
+        .expect("launch");
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(
         row.phase,
         floatctf::entity::sea_orm_active_enums::AwdpPhase::Break
     );
-    assert!(row.next_action_at.is_some(), "开始后解除冻结");
+    assert!(row.next_action_at.is_some(), "Launch 后解除冻结");
     assert_eq!(
         row.next_action_at.unwrap(),
         row.break_ends_at.unwrap(),
@@ -826,36 +851,26 @@ async fn practice_start_end_cycle() {
         row.break_score
     );
 
-    // 5. 「End」：回卷全新 Break + 重新冻结 + 清空回合/计分/破解账本。
+    // 5. 「End」：run → Ended（§54：**保留** Score/Break 历史）。
     run_repo::end_practice_session(&db, run.id)
         .await
         .expect("end");
-    score_repo::delete_for_run(&db, run.id).await.unwrap();
-    floatctf::modules::event::awdp::repo::break_repo::delete_for_run(&db, run.id)
-        .await
-        .unwrap();
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(
         row.phase,
-        floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
-        "End 后回到 Break"
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::Ended,
+        "End 后 run 终态 Ended"
     );
-    assert!(row.next_action_at.is_none(), "End 后重新冻结");
-    assert_eq!(row.current_round, 0);
-    assert!(row.fix_started_at.is_none() && row.fix_ends_at.is_none());
+    assert!(row.next_action_at.is_none(), "End 后无时钟");
     assert_eq!(
         score_repo::my_total(&db, run.id, Some(user_id), None)
             .await
             .unwrap(),
-        0,
-        "End 后计分清零（恢复如初）"
+        row.break_score,
+        "End 保留计分历史（不清零）"
     );
-    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
-        .await
-        .unwrap();
-    assert!(rounds.is_empty(), "End 清空 fix 回合");
     assert!(
-        !floatctf::modules::event::awdp::repo::break_repo::already_broken(
+        floatctf::modules::event::awdp::repo::break_repo::already_broken(
             &db,
             run.id,
             gb_id,
@@ -864,19 +879,10 @@ async fn practice_start_end_cycle() {
         )
         .await
         .unwrap(),
-        "End 后重新破解可行"
+        "End 后 Break 记录仍保留（§54 历史事实）"
     );
 
-    // 6. 再次「开始」：全新 Break 时间线（started_at/break_ends_at 刷新）。
-    run_repo::start_practice_break(&db, run.id)
-        .await
-        .expect("restart");
-    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert!(row.next_action_at.is_some() && row.break_ends_at.is_some());
-    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
-        .await
-        .unwrap();
-    assert!(rounds.is_empty(), "再次开始未物化回合（等 Break→Fix）");
+    // 6. End 后 run 为 Ended 终态：Train Again 应创建新 run（train_again 覆盖）。
 
     // 清理。
     let _ = floatctf::entity::awdp_runs::Entity::delete_by_id(run.id)

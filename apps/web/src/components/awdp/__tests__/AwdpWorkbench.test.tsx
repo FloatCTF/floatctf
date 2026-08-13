@@ -152,7 +152,6 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				{...noopProps}
 				onResetInstance={onResetInstance}
 				onDownloadSource={vi.fn(async () => "https://example.com")}
-				onEarlyCheck={vi.fn()}
 			/>,
 		);
 

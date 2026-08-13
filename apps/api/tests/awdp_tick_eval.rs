@@ -23,6 +23,16 @@ use floatctf::modules::event::awdp::{
     },
 };
 
+/// Break 到期 → PreparingFix（tick 1）→ reconcile → Fix（tick 2，游标 now 立即 due）。
+async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker) {
+    tick_service::tick_once(db, docker, JWT_SECRET)
+        .await
+        .expect("tick: break → preparing_fix");
+    tick_service::tick_once(db, docker, JWT_SECRET)
+        .await
+        .expect("tick: preparing_fix reconcile → fix");
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -342,10 +352,8 @@ async fn tick_driven_rounds_and_scoring() {
     .await
     .expect("start B");
 
-    // 1. tick：Break 到期 → Fix + rounds 物化（run 维度）。
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick");
+    // 1. tick：Break 到期 → PreparingFix → reconcile → Fix + rounds 物化（run 维度）。
+    tick_to_fix(&db, &docker).await;
     let row_a = run_repo::require_by_id(&db, run_a).await.unwrap();
     assert_eq!(row_a.phase, AwdpPhase::Fix);
     let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_a)
@@ -605,9 +613,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     .await
     .expect("start");
 
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick to fix");
+    tick_to_fix(&db, &docker).await;
     let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_id)
         .await
         .unwrap();
@@ -785,9 +791,7 @@ async fn official_eval_service_down_and_functional_broken() {
     .await
     .expect("start B");
 
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick to fix");
+    tick_to_fix(&db, &docker).await;
     let rounds_a = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run_a)
         .await
         .unwrap();
@@ -873,210 +877,4 @@ async fn official_eval_service_down_and_functional_broken() {
     let _ = events::Entity::delete_by_id(ev_b).exec(&db).await;
     let _ = runtime::stop_instance(&db, &docker, inst_a.instance_id, sub_a).await;
     let _ = runtime::stop_instance(&db, &docker, inst_b.instance_id, sub_b).await;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// §练习模式：提前 Check —— 一次 check 成功 → 从该轮起全部回合自动计分
-// ────────────────────────────────────────────────────────────────────────────
-
-/// 建练习 gamebox（不挂事件；practice run 经 create_practice_run 落 AWDPlusPractice）。
-async fn seed_practice_gamebox(
-    db: &sea_orm::DatabaseConnection,
-    tag: &str,
-    exploit_content: &str,
-) -> Uuid {
-    let now = chrono::Utc::now().into();
-    let gb_id = Uuid::new_v4();
-    gameboxes::ActiveModel {
-        id: Set(gb_id),
-        name: Set(format!("awdp-gb-{tag}")),
-        safe_name: Set(format!(
-            "awdp-it-gb-{tag}-{}",
-            &Uuid::new_v4().to_string()[..8]
-        )),
-        category: Set("web".into()),
-        description: Set(String::new()),
-        hidden: Set(false),
-        created_at: Set(now),
-        updated_at: Set(now),
-        version: Set(Some("1.0.3".into())),
-        source_toml: Set(None),
-        spec_json: Set(Some(serde_json::json!({}))),
-        spec_digest: Set(Some("spec".into())),
-        package_digest: Set(Some("pkg".into())),
-        image_ref: Set(Some(IMAGE_REF.into())),
-        image_id: Set(Some(IMAGE_ID.into())),
-        image_repo_digest: Set(None),
-        username: Set(Some("floatctf".into())),
-        recommended_cpu_millis: Set(1000),
-        recommended_memory_bytes: Set(512 * 1024 * 1024),
-        recommended_pids_limit: Set(100),
-        healthchecks_json: Set(Some(serde_json::json!([
-            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
-        ]))),
-        judge_script_name: Set(Some("check.py".into())),
-        judge_script_content: Set(Some(
-            r#"import json, sys
-print(json.dumps([{"gamebox_ip": ip, "success": True} for ip in sys.argv[1:]], ensure_ascii=False))
-sys.exit(0)
-"#
-            .to_string(),
-        )),
-        judge_args_json: Set(None),
-        judge_timeout_secs: Set(None),
-        judge_retry_interval_secs: Set(None),
-        build_status: Set(Some("ready".into())),
-        build_error: Set(None),
-        awdp_source_code_dir: Set(Some("/var/www/html".into())),
-        awdp_exploit_script_name: Set(Some("exploit.py".into())),
-        awdp_exploit_script_content: Set(Some(exploit_content.to_string())),
-        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.zip"))),
-        awdp_source_artifact_digest: Set(Some("deadbeef".into())),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    gb_id
-}
-
-#[tokio::test]
-async fn practice_early_check_sweeps_future_rounds() {
-    let _serial = TEST_SERIAL.lock().unwrap();
-    let Some(db) = connect_or_skip().await else {
-        return;
-    };
-    let Some(docker) = docker_or_skip() else {
-        return;
-    };
-    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
-    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
-        .await
-        .is_err()
-    {
-        eprintln!("skip: image {IMAGE_REF} not present");
-        return;
-    }
-    cleanup_leftovers(&db).await;
-
-    // 练习 run：exploit 恒失败（patch 有效 → PATCHED）。
-    let user_id = seed_user(&db, "echeck").await;
-    let gb_id = seed_practice_gamebox(&db, "echeck", EXPLOIT_ALWAYS_FAIL).await;
-    let run = run_repo::create_practice_run(&db, gb_id, user_id, &AwdpConfig::default())
-        .await
-        .expect("practice run");
-    let sub = Subject::user(user_id);
-    let inst = runtime::start_instance(
-        &db,
-        &docker,
-        JWT_SECRET,
-        &awdp_config(),
-        run.id,
-        gb_id,
-        sub,
-        "flag",
-    )
-    .await
-    .expect("start instance");
-
-    // 直接进入 Fix（练习 break 未到期，跳过 tick 时间等待）。
-    floatctf::modules::event::awdp::service::event_service::transition_break_to_fix(
-        &db, &docker, JWT_SECRET, run.id,
-    )
-    .await
-    .expect("jump to fix");
-    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert_eq!(row.phase, AwdpPhase::Fix);
-    let rounds = floatctf::modules::event::awdp::repo::round_repo::list_for_run(&db, run.id)
-        .await
-        .unwrap();
-    assert_eq!(rounds.len(), 6);
-
-    // 打开 Round 1 窗口 + 应用 patch（本轮 eligible）。
-    open_round(&db, run.id, 1).await;
-    let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
-        &db,
-        &docker,
-        run.id,
-        inst.instance_id,
-        "#!/bin/sh\nexit 0\n",
-        sub,
-    )
-    .await
-    .expect("apply patch");
-    assert_eq!(
-        r,
-        floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
-    );
-
-    // 提前 Check：PATCHED → 从 Round 1 起全部 6 轮自动计分。
-    let res = evaluation::early_check(&db, &docker, run.id, inst.instance_id, sub)
-        .await
-        .expect("early check");
-    assert_eq!(
-        res.status,
-        AwdpEvaluationStatus::Patched,
-        "修复有效 → PATCHED"
-    );
-    assert!(res.swept, "触发自动计分");
-    assert_eq!(res.target_round, 1);
-    assert_eq!(res.swept_rounds, 6, "Round 1..=6 全部计分");
-
-    let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert_eq!(row.early_patched_seq, Some(1), "run 标记提前确认");
-    let score = score_repo::my_total(&db, run.id, Some(user_id), None)
-        .await
-        .unwrap();
-    assert_eq!(score, row.fix_round_score * 6, "break 未计分；fix 6 轮全得");
-
-    // 每轮都有 Patched official 评估（UI Official History 直接可见）。
-    let evals = evaluation_repo::list_for_run(&db, run.id).await.unwrap();
-    let officials: Vec<_> = evals
-        .iter()
-        .filter(|e| e.kind == floatctf::entity::sea_orm_active_enums::AwdpEvaluationKind::Official)
-        .collect();
-    assert_eq!(officials.len(), 6, "6 轮各有官方评估");
-    assert!(
-        officials
-            .iter()
-            .all(|e| e.status == AwdpEvaluationStatus::Patched),
-        "全部 PATCHED"
-    );
-
-    // 幂等：后续 tick（cutoff 到期）不重复加分、不新增评估。
-    // 注：不调全局 worker_round 断言 n==0——共享 dev DB 下并行测试二进制可能同时
-    // 产生 pending 评估（全局 claim 计数天然竞态），只断言本 run 的回合/评估/分数不变。
-    expire_round(&db, run.id, 2).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick r2 cutoff");
-    let score2 = score_repo::my_total(&db, run.id, Some(user_id), None)
-        .await
-        .unwrap();
-    assert_eq!(score2, score, "不重复加分");
-    let evals2 = evaluation_repo::list_for_run(&db, run.id).await.unwrap();
-    assert_eq!(evals2.len(), 6, "不新增评估");
-    assert!(
-        evals2.iter().all(|e| {
-            !matches!(
-                e.status,
-                AwdpEvaluationStatus::Pending | AwdpEvaluationStatus::Running
-            )
-        }),
-        "sweep 后本 run 不应残留 pending/running 评估"
-    );
-
-    // 再跑一次提前 Check：幂等（同轮复用 PATCHED，sweep 空转）。
-    let res2 = evaluation::early_check(&db, &docker, run.id, inst.instance_id, sub)
-        .await
-        .expect("re-early check");
-    assert_eq!(res2.status, AwdpEvaluationStatus::Patched);
-    assert_eq!(res2.swept_rounds, 6);
-    let score3 = score_repo::my_total(&db, run.id, Some(user_id), None)
-        .await
-        .unwrap();
-    assert_eq!(score3, score, "重复提前 Check 不加分");
-
-    // 清理。
-    let _ = runtime::stop_instance(&db, &docker, inst.instance_id, sub).await;
-    cleanup_leftovers(&db).await;
 }

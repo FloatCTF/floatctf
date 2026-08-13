@@ -136,24 +136,24 @@ pub async fn create_practice_run(
     config.validate()?;
     let event_id = ensure_practice_event(db).await?;
     let now = Utc::now();
-    let break_ends = now + chrono::Duration::seconds(config.break_duration_secs as i64);
     let model = awdp_runs::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
         gamebox_id: Set(Some(gamebox_id)),
         owner_user_id: Set(Some(owner_user_id)),
         owner_team_id: Set(None),
-        phase: Set(AwdpPhase::Break),
+        // §55 Pending 语义：创建 = 未 Launch（无运行时钟；tick 不推进）。
+        phase: Set(AwdpPhase::Pending),
         break_duration_secs: Set(config.break_duration_secs),
         fix_duration_secs: Set(config.fix_duration_secs),
         fix_round_interval_secs: Set(config.fix_round_interval_secs),
         break_score: Set(config.break_score),
         fix_round_score: Set(config.fix_round_score),
-        started_at: Set(Some(now.into())),
-        break_ends_at: Set(Some(break_ends.into())),
+        started_at: Set(None),
+        break_ends_at: Set(None),
         current_round: Set(0),
         total_rounds: Set(config.total_rounds()),
-        // 冻结：未点「开始」前 tick 不推进（find_due_runs 按 next_action_at <= now 过滤，NULL 不命中）。
+        // Pending 未 Launch：next_action_at=None，find_due_runs 不命中。
         next_action_at: Set(None),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -381,7 +381,7 @@ pub async fn transition_phase(
 
 /// 练习模式 Fix→Break 回退（用户手动控制阶段；不走 can_transition_to 的线性状态机）。
 ///
-/// 语义：撤销整个 fix 会话——时间戳/current_round/early_patched_seq 清零，
+/// 语义：撤销整个 fix 会话——时间戳/current_round 清零，
 /// 删除该 run 的全部 fix_rounds（级联删除 evaluations 与 fix 计分账本，
 /// patch_submissions 的 fix_round_id 置 NULL 保留审计）。之后再次 Break→Fix
 /// 会重新物化全新回合时间线。仅练习 run（gamebox_id 非空）允许。
@@ -427,7 +427,6 @@ pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> A
     am.finished_at = Set(None);
     am.current_round = Set(0);
     am.next_action_at = Set(Some(break_ends.into()));
-    am.early_patched_seq = Set(None);
     am.updated_at = Set(now.into());
     am.update(&txn)
         .await
@@ -444,18 +443,87 @@ pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> A
     Ok(())
 }
 
-/// 练习模式：点击「开始」→ 回卷到全新 Break 并解除冻结（next_action_at=break_ends，tick 恢复推进）。
-/// 与 End 共享回卷核心；仅练习 run（gamebox_id 非空）且 phase=Break|Fix 允许。
-/// 再次 Break→Fix 会重新物化全新回合时间线。
-pub async fn start_practice_break(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
-    rewind_practice_to_break(db, run_id, false).await
+/// 练习模式 Launch：Pending → Break（§55：Pending = 未 Launch；Launch 才启动时钟）。
+/// CAS Pending→Break，设置 started_at/break_ends_at/next_action_at=break_ends。
+pub async fn launch_practice_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let current = awdp_runs::Entity::find_by_id(run_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+    if current.gamebox_id.is_none() {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::InvalidState("只有练习 run 支持 Launch".into()));
+    }
+    if current.phase != AwdpPhase::Pending {
+        // 已 Launch（Break/Fix 中）→ 幂等成功。
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(());
+    }
+    let now = Utc::now();
+    let break_ends = now + chrono::Duration::seconds(current.break_duration_secs as i64);
+    let mut am: awdp_runs::ActiveModel = current.into();
+    am.phase = Set(AwdpPhase::Break);
+    am.started_at = Set(Some(now.into()));
+    am.break_ends_at = Set(Some(break_ends.into()));
+    am.next_action_at = Set(Some(break_ends.into()));
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(())
 }
 
-/// 练习模式：点击「End」→ 停止一切并恢复到初始状态：
-/// 回卷到全新 Break 并**重新冻结**（next_action_at=None，tick 不推进），
-/// 计分/破解账本的清理由 service 层负责（score/break delete_for_run）。
+/// 练习模式「End」：run → Ended（终态）。§54：**保留**历史——不删除
+/// awdp_score_events / awdp_breaks（Score ledger 是历史事实）；Train Again 另建新 run。
 pub async fn end_practice_session(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<()> {
-    rewind_practice_to_break(db, run_id, true).await
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let current = awdp_runs::Entity::find_by_id(run_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+    if current.gamebox_id.is_none() {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::InvalidState("只有练习 run 支持 End".into()));
+    }
+    if current.phase == AwdpPhase::Ended {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(());
+    }
+    let now = Utc::now();
+    let mut am: awdp_runs::ActiveModel = current.into();
+    am.phase = Set(AwdpPhase::Ended);
+    am.finished_at = Set(Some(now.into()));
+    am.next_action_at = Set(None);
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(())
 }
 
 /// 练习模式回卷核心：锁行 → 校验（practice-only、phase=Break|Fix）→ 全新 Break 快照。
@@ -510,7 +578,6 @@ async fn rewind_practice_to_break(
     } else {
         Some(break_ends.into())
     });
-    am.early_patched_seq = Set(None);
     am.updated_at = Set(now.into());
     am.update(&txn)
         .await
@@ -522,23 +589,6 @@ async fn rewind_practice_to_break(
         .map_err(|e| AwdpError::Database(e.to_string()))?;
 
     txn.commit()
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?;
-    Ok(())
-}
-
-/// 练习模式：记录提前 Check 确认修复的起始回合序号（该轮起自动计分）。
-pub async fn set_early_patched(db: &DatabaseConnection, run_id: Uuid, seq: i32) -> AwdpResult<()> {
-    let now = Utc::now();
-    let mut am: awdp_runs::ActiveModel = awdp_runs::Entity::find_by_id(run_id)
-        .one(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?
-        .into();
-    am.early_patched_seq = Set(Some(seq));
-    am.updated_at = Set(now.into());
-    am.update(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?;
     Ok(())

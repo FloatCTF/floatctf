@@ -366,9 +366,10 @@ pub async fn start_run(
         AppError::from(AwdpError::InvalidState("只有练习 run 支持手动开始".into()))
     })?;
 
-    // 冻结（创建后或 End 后）→ 回卷全新 Break 并解除冻结；会话中途恢复则仅启动实例。
-    if run.next_action_at.is_none() {
-        run_repo::start_practice_break(ctx.db.get_ref(), run.id).await?;
+    // §55 Pending 语义：Pending = 未 Launch → Launch（Pending→Break，启动时钟）；
+    // 已 Break/Fix（会话中途）→ 仅启动实例。
+    if run.phase == AwdpPhase::Pending {
+        run_repo::launch_practice_run(ctx.db.get_ref(), run.id).await?;
     }
 
     runtime::start_instance(
@@ -397,9 +398,8 @@ pub async fn start_run(
     UniResponse::ok(dto.into()).into()
 }
 
-/// POST /api/service/awdp/runs/{run_id}/end —— 练习「End」：停止全部实例并恢复如初。
-/// 停止所有实例 → 回卷全新 Break 并重新冻结（next_action_at=None，tick 不推进）→
-/// 清空计分与破解账本（score/break delete_for_run），下次「开始」从全新 Break 开始。
+/// POST /api/service/awdp/runs/{run_id}/end —— 练习「End」：停止实例并结束 run。
+/// §54：**保留** Score/Break 历史（End 不删除账本）；Train Again 另建新 run 从 0 计分。
 #[post("awdp/runs/{run_id}/end")]
 pub async fn end_run(
     user: UserJwtGuard,
@@ -433,10 +433,8 @@ pub async fn end_run(
         .await?;
     }
 
-    // 2. 回卷全新 Break 并重新冻结 + 清空计分/破解账本（恢复如初）。
+    // 2. run → Ended（§54：保留历史；Train Again 另建新 run）。
     run_repo::end_practice_session(ctx.db.get_ref(), run.id).await?;
-    score_repo::delete_for_run(ctx.db.get_ref(), run.id).await?;
-    break_repo::delete_for_run(ctx.db.get_ref(), run.id).await?;
 
     log_practice_action(
         &ctx,
@@ -766,69 +764,6 @@ pub async fn manual_test_check(
             healthcheck_detail: None,
             judge_ok: None,
             judge_detail: None,
-        }
-        .into(),
-    )
-    .into()
-}
-
-/// POST .../early-check —— 练习提前 Check（官方评估管线；PATCHED → 从该轮起自动计分）。
-#[post("awdp/runs/{run_id}/gameboxes/{gamebox_id}/early-check")]
-pub async fn early_check_run(
-    user: UserJwtGuard,
-    ctx: ReqCtx,
-    state: web::Data<crate::bootstrap::AppState>,
-    path: web::Path<(Uuid, Uuid)>,
-) -> UniResult<EarlyCheckDto> {
-    let (run_id, gamebox_id) = path.into_inner();
-    let user = user.into_inner();
-    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
-    let Some(view) =
-        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, gamebox_id, Subject::user(user.id))
-            .await?
-    else {
-        return Err(AppError::NotFound("instance not started".into()));
-    };
-    let result = evaluation::early_check(
-        ctx.db.get_ref(),
-        ctx.docker.get_ref(),
-        run.id,
-        view.instance_id,
-        Subject::user(user.id),
-    )
-    .await
-    .map_err(AppError::from)?;
-    if result.swept {
-        crate::modules::event::awdp::realtime::run_score_changed(
-            &state,
-            run.id,
-            "fix",
-            run.fix_round_score * result.swept_rounds as i64,
-        );
-    }
-    log_practice_action(
-        &ctx,
-        run.event_id,
-        user.id,
-        "awdp.train.early_check",
-        json!({
-            "run_id": run.id,
-            "gamebox_id": gamebox_id,
-            "status": result.status,
-            "swept": result.swept,
-            "swept_rounds": result.swept_rounds,
-        }),
-    )
-    .await;
-    UniResponse::ok(
-        EarlyCheckDto {
-            status: result.status,
-            swept: result.swept,
-            swept_rounds: result.swept_rounds,
-            target_round: result.target_round,
-            healthcheck_result: result.healthcheck_result,
-            judge_result: result.judge_result,
-            exploit_result: result.exploit_result,
         }
         .into(),
     )
@@ -1255,7 +1190,6 @@ async fn build_run_dto(
         } else {
             None
         },
-        early_patched_seq: run.early_patched_seq,
         instances: instances.iter().map(RunInstanceDto::from).collect(),
         judge_endpoint: Some(JudgeEndpointDto {
             base_url: format!(
@@ -1288,7 +1222,6 @@ pub fn configure_training_routes(cfg: &mut web::ServiceConfig) {
         .service(download_source)
         .service(upload_patch)
         .service(manual_test_check)
-        .service(early_check_run)
         .service(start_my_instance)
         .service(get_my_instance)
         .service(stop_my_instance)

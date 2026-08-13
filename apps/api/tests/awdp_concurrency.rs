@@ -62,6 +62,16 @@ async fn wait_container_running(
     panic!("container for instance {instance_id} not running within timeout");
 }
 
+/// Break 到期 → PreparingFix（tick 1）→ reconcile → Fix（tick 2，游标 now 立即 due）。
+async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker) {
+    tick_service::tick_once(db, docker, JWT_SECRET)
+        .await
+        .expect("tick: break → preparing_fix");
+    tick_service::tick_once(db, docker, JWT_SECRET)
+        .await
+        .expect("tick: preparing_fix reconcile → fix");
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -399,9 +409,7 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
     .expect("start");
 
     // Break → Fix（rounds 物化）。
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick to fix");
+    tick_to_fix(&db, &docker).await;
     wait_container_running(&docker, &db, inst.instance_id).await;
 
     // Round 1：apply patch（eligible）→ 到期 → tick 物化 pending 评估（worker 未消费）。
@@ -520,9 +528,7 @@ async fn reset_and_evaluation_concurrent() {
     .expect("start");
     let original_port = inst.endpoints[0].public_port;
 
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick to fix");
+    tick_to_fix(&db, &docker).await;
     wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
@@ -639,9 +645,7 @@ async fn manual_check_and_evaluation_concurrent() {
     .await
     .expect("start");
 
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
-        .await
-        .expect("tick to fix");
+    tick_to_fix(&db, &docker).await;
     wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(

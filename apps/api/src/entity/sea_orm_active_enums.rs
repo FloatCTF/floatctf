@@ -123,6 +123,8 @@ pub enum AwdpPhase {
     Fix,
     #[sea_orm(string_value = "ended")]
     Ended,
+    #[sea_orm(string_value = "preparing_fix")]
+    PreparingFix,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "ban_status")]

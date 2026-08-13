@@ -445,6 +445,9 @@ async fn judge_on_both_networks_gamebox_data_only() {
     )
     .await
     .unwrap();
+    floatctf::modules::event::awdp::repo::run_repo::launch_practice_run(&db, run.id)
+        .await
+        .unwrap();
     let view = floatctf::modules::event::awdp::service::runtime::start_instance(
         &db,
         &docker,

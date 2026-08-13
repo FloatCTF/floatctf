@@ -69,12 +69,13 @@ function RouteComponent() {
 	});
 	const run = runQuery.data?.data;
 	const phase = run?.phase;
-	// 与 Challenge 练习一致：实例未运行（未点 Launch / End 后）→ 只显示 Launch 按钮；
+	// 与 Challenge 练习一致：实例未运行（Pending 未 Launch / End 后）→ 只显示 Launch 按钮；
 	// 实例运行中才显现时间面板与内容。
 	const running = (run?.instances ?? []).some(
 		(inst) => inst.runtime_state === "running",
 	);
-	const idle = (phase === "break" || phase === "fix") && !running;
+	const idle =
+		(phase === "pending" || phase === "break" || phase === "fix") && !running;
 	const needTimeline = phase === "fix" || phase === "ended";
 
 	const roundsQuery = useQuery({
@@ -145,7 +146,6 @@ function RouteComponent() {
 			scoreHistory: scoresQuery.data?.data?.history ?? [],
 			isPractice: true,
 			canControlPhase: true,
-			earlyPatchedSeq: run.early_patched_seq ?? null,
 			judgeEndpoint: run.judge_endpoint
 				? {
 					baseUrl: run.judge_endpoint.base_url,
@@ -204,11 +204,6 @@ function RouteComponent() {
 						return res.data;
 					}
 				}
-			},
-			onEarlyCheck: async (gameboxId: string) => {
-				const res = await awdpRunApi.earlyCheck(runId, gameboxId);
-				invalidate();
-				return res.data;
 			},
 			onSetPhase: async (target: "break" | "fix") => {
 				const res = await awdpRunApi.setPhase(runId, target);

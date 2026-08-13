@@ -79,16 +79,39 @@ pub async fn tick_once(
                 }
             }
             AwdpPhase::Break => {
-                // Break 到期 → Fix（CAS；重复 tick 幂等）。
-                match event_service::transition_break_to_fix(db, docker, jwt_secret, run.id).await {
+                // Break 到期 → PreparingFix（crash-safe 过渡态；reset 在 reconcile 阶段完成）。
+                match event_service::transition_break_to_preparing_fix(db, run.id).await {
                     Ok(()) => {
-                        info!(run_id = %run.id, "AWDP break expired → Fix");
+                        info!(run_id = %run.id, "AWDP break expired → preparing_fix");
                         summary.to_fix += 1;
                     }
-                    Err(e) => warn!(run_id = %run.id, error = %e, "AWDP break→fix skipped"),
+                    Err(e) => {
+                        warn!(run_id = %run.id, error = %e, "AWDP break→preparing_fix skipped")
+                    }
+                }
+            }
+            AwdpPhase::PreparingFix => {
+                // pristine reconcile：全部实例 reset 成功 → 物化回合 + 转 Fix；
+                // 任一失败 → 保持 PreparingFix（下次 tick 重试，reset 幂等）。
+                match event_service::reconcile_preparing_fix(db, docker, jwt_secret, run.id).await {
+                    Ok(true) => {
+                        info!(run_id = %run.id, "AWDP preparing_fix reconciled → Fix");
+                        summary.to_fix += 1;
+                    }
+                    Ok(false) => {
+                        warn!(run_id = %run.id, "AWDP preparing_fix reconcile pending");
+                    }
+                    Err(e) => {
+                        warn!(run_id = %run.id, error = %e, "AWDP preparing_fix reconcile error")
+                    }
                 }
             }
             AwdpPhase::Fix => {
+                // 兜底：Fix 已提交但回合时间线未物化（crash 窗口）→ 幂等补齐。
+                let rounds = round_repo::list_for_run(db, run.id).await?;
+                if rounds.is_empty() {
+                    round_repo::materialize_rounds(db, run.id).await?;
+                }
                 // round cutoff due → 物化 official evaluations + 推进 current_round。
                 let processed = process_fix_round_cutoffs(db, run.id, now).await?;
                 summary.round_cutoffs += processed;

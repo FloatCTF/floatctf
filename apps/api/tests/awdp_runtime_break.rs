@@ -382,8 +382,10 @@ async fn different_gameboxes_score_independently() {
     .await
     .expect("start B");
     assert_ne!(run_a.id, run_b.id, "不同 gamebox = 不同 run");
+    run_repo::launch_practice_run(&db, run_a.id).await.unwrap();
+    run_repo::launch_practice_run(&db, run_b.id).await.unwrap();
 
-    // start_training 只建 run（冻结）；实例由玩家点「开始」（start_instance）启动。
+    // start_training 只建 run（Pending）；实例由玩家 Launch 后启动。
     let subject = Subject::user(user_id);
     runtime::start_instance(
         &db,
@@ -445,6 +447,7 @@ async fn different_gameboxes_score_independently() {
     assert!(!rb_misuse.accepted, "跨 gamebox flag 必须拒绝");
 
     let row_a = run_repo::require_by_id(&db, run_a.id).await.unwrap();
+    run_repo::launch_practice_run(&db, run_a.id).await.unwrap();
     let row_b = run_repo::require_by_id(&db, run_b.id).await.unwrap();
     assert_eq!(
         score_repo::my_total(&db, run_a.id, Some(user_id), None)
@@ -875,6 +878,7 @@ async fn break_flag_resolve_by_source_ip() {
     )
     .await
     .unwrap();
+    run_repo::launch_practice_run(&db, run.id).await.unwrap();
     let view = floatctf::modules::event::awdp::service::runtime::start_instance(
         &db,
         &docker,
@@ -1011,12 +1015,13 @@ async fn proof_consume_lifecycle() {
     )
     .await;
     let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
-    // 练习 run + 实例（Break；实例在 data 网络）。
+    // 练习 run + Launch + 实例（Break；实例在 data 网络）。
     let run = floatctf::modules::event::awdp::service::practice_service::start_training(
         &db, &docker, JWT_SECRET, user_id, gb_id, "flag",
     )
     .await
     .unwrap();
+    run_repo::launch_practice_run(&db, run.id).await.unwrap();
     let view = floatctf::modules::event::awdp::service::runtime::start_instance(
         &db,
         &docker,

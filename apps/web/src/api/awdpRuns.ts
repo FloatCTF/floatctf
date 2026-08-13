@@ -98,8 +98,6 @@ export type AwdpRunDto = {
 	/** Fix 阶段才非空。 */
 	source_code_dir: string | null;
 	instances: RunInstanceDto[];
-	/** 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；null=未确认）。 */
-	early_patched_seq: number | null;
 	/** 练习 data plane Flag Server endpoint（仅 GameBox 内部网络可达）。 */
 	judge_endpoint: {
 		base_url: string;
@@ -145,15 +143,7 @@ export type AwdpRunWriteupDto = {
 };
 
 /** 练习提前 Check 结果（status=patched → 从 target_round 起自动计分）。 */
-export type EarlyCheckDto = {
-	status: string;
-	swept: boolean;
-	swept_rounds: number;
-	target_round: number;
-	healthcheck_result: string | null;
-	judge_result: string | null;
-	exploit_result: string | null;
-};
+
 
 /** source presigned URL 响应（后端实现：直接返回 URL 字符串，非对象）。 */
 
@@ -217,12 +207,7 @@ export const awdpRunApi = {
 		);
 		return res.data;
 	},
-	earlyCheck: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<EarlyCheckDto>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/early-check`,
-		);
-		return res.data;
-	},
+
 	restartTraining: async (runId: string) => {
 		const res = await service_api.post<UniResponse<AwdpRunDto>>(
 			`/service/awdp/runs/${runId}/restart-training`,

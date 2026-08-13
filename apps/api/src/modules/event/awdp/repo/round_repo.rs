@@ -239,7 +239,7 @@ async fn materialize_round_atomic_inner(
         if instance.runtime_state == "pending" {
             continue;
         }
-        // 先查后插：round 行锁串行化同一 round 的并发物化；与 early_check 的
+        // 先查后插：round 行锁串行化同一 round 的并发物化；与其它写者
         // 并发窗口通过「唯一冲突 → 整体重试一次」收敛（第二次必看到既有行）。
         let exists = awdp_evaluations::Entity::find()
             .filter(awdp_evaluations::Column::FixRoundId.eq(round_id))

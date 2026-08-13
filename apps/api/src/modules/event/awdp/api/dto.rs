@@ -328,7 +328,6 @@ pub struct AwdpRunDto {
     pub source_code_dir: Option<String>,
     pub instances: Vec<RunInstanceDto>,
     /// 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；NULL=未确认）。
-    pub early_patched_seq: Option<i32>,
     /// 练习 data plane Flag Server endpoint（仅 GameBox 内部网络可达；Fix 阶段弱化）。
     pub judge_endpoint: Option<JudgeEndpointDto>,
 }
@@ -411,20 +410,6 @@ pub struct ManualCheckDto {
     pub healthcheck_detail: Option<Vec<String>>,
     pub judge_ok: Option<bool>,
     pub judge_detail: Option<String>,
-}
-
-/// 练习提前 Check 结果 DTO（status=patched 时从 target_round 起自动计分）。
-#[derive(Debug, Clone, Serialize)]
-pub struct EarlyCheckDto {
-    pub status: crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
-    /// status == patched（本轮起自动计分）。
-    pub swept: bool,
-    /// 自动计分的回合数（当前轮起含）。
-    pub swept_rounds: i32,
-    pub target_round: i32,
-    pub healthcheck_result: Option<String>,
-    pub judge_result: Option<String>,
-    pub exploit_result: Option<String>,
 }
 
 /// 回合时间线 DTO。

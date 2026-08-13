@@ -388,19 +388,13 @@ pub async fn upload_patch(
     };
     let bytes = std::fs::read(form.patch_file.file.path())
         .map_err(|e| AppError::BadRequest(format!("read patch_file: {e}")))?;
-    let script = patch_service::extract_patch_script(&bytes).map_err(AppError::Validation)?;
-    if script.len() > patch_service::MAX_PATCH_BYTES {
-        return Err(AppError::Validation(format!(
-            "patch.sh 超过 {} KiB 上限",
-            patch_service::MAX_PATCH_BYTES / 1024
-        )));
-    }
+    let payload = patch_service::extract_patch_payload(&bytes).map_err(AppError::Validation)?;
     let result = patch_service::apply_patch(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         run.id,
         view.instance_id,
-        &script,
+        &payload,
         subject,
     )
     .await

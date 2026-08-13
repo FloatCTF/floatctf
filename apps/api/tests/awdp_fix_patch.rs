@@ -24,6 +24,21 @@ use floatctf::modules::event::awdp::{
     },
 };
 
+/// 构造 PatchPayload：patch.sh（入口脚本）+ 辅助文件（路径由调用方自定）。
+fn patch_payload(script: &str, files: &[(&str, &str)]) -> patch_service::PatchPayload {
+    patch_service::PatchPayload {
+        script: script.to_string(),
+        archive_sha256: "a".repeat(64),
+        files: files
+            .iter()
+            .map(|(p, c)| patch_service::PatchFile {
+                relative_path: p.to_string(),
+                content: c.as_bytes().to_vec(),
+            })
+            .collect(),
+    }
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -285,15 +300,19 @@ async fn patch_and_reset_lifecycle() {
     .expect("start");
     let original_port = view.endpoints[0].public_port;
 
-    // 1. Fix 阶段上传成功 patch → applied + restart。
-    let ok_patch = r#"#!/bin/sh
-echo "hello from patch"
-ls "$FLOATCTF_SOURCE_DIR" >/dev/null && echo "source-ok"
+    // 1. Fix 阶段上传 patch.tar.gz（patch.sh 把 src/index.php 覆盖进源码目录）→ applied + restart。
+    let ok_payload = patch_payload(
+        r#"#!/bin/sh
+cp "/tmp/patch/index.php" "$FLOATCTF_SOURCE_DIR/index.php"
+echo "patched-ok"
 exit 0
-"#;
-    let r = patch_service::apply_patch(&db, &docker, run_id, view.instance_id, ok_patch, subject)
-        .await
-        .expect("apply ok patch");
+"#,
+        &[("index.php", "<?php echo 'patched-by-awdp'; ?>")],
+    );
+    let r =
+        patch_service::apply_patch(&db, &docker, run_id, view.instance_id, &ok_payload, subject)
+            .await
+            .expect("apply patch");
     assert_eq!(r, patch_service::PatchResult::Applied);
     let sub = patch_repo::latest_for_instance(&db, view.instance_id)
         .await
@@ -305,14 +324,28 @@ exit 0
         sub.stdout_limited
             .as_deref()
             .unwrap_or("")
-            .contains("source-ok")
+            .contains("patched-ok"),
+        "stdout: {:?}",
+        sub.stdout_limited
+    );
+    assert!(
+        sub.script_content.contains("index.php"),
+        "manifest: {:?}",
+        sub.script_content
     );
 
-    // 2. 失败 patch → failed（exit 1）。
-    let bad_patch = "#!/bin/sh\necho boom >&2\nexit 1\n";
-    let r = patch_service::apply_patch(&db, &docker, run_id, view.instance_id, bad_patch, subject)
-        .await
-        .expect("apply bad patch");
+    // 2. 失败 patch（exit 1）→ failed（脚本在容器内执行后非零退出）。
+    let bad_payload = patch_payload("#!/bin/sh\necho boom >&2\nexit 1\n", &[]);
+    let r = patch_service::apply_patch(
+        &db,
+        &docker,
+        run_id,
+        view.instance_id,
+        &bad_payload,
+        subject,
+    )
+    .await
+    .expect("apply bad patch");
     assert_eq!(r, patch_service::PatchResult::Failed);
     let sub = patch_repo::latest_for_instance(&db, view.instance_id)
         .await
@@ -320,15 +353,26 @@ exit 0
         .unwrap();
     assert_eq!(sub.status, "failed");
     assert_eq!(sub.exit_code, Some(1));
+    assert!(
+        sub.stderr_limited.as_deref().unwrap_or("").contains("boom"),
+        "stderr: {:?}",
+        sub.stderr_limited
+    );
 
-    // 3. 写入标记的 patch → restart 保留 → reset → pristine 容器中标记消失 + 端点不变 + generation+1。
-    let marker_patch = "#!/bin/sh\necho marker > /tmp/awdp-marker\nexit 0\n";
+    // 3. 覆盖 src/index.php（marker 内容）→ restart 保留 → reset → pristine 恢复 + generation+1。
+    let marker_payload = patch_payload(
+        r#"#!/bin/sh
+cp "/tmp/patch/index.php" "$FLOATCTF_SOURCE_DIR/index.php"
+exit 0
+"#,
+        &[("index.php", "<?php echo 'marker'; ?>")],
+    );
     let r = patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         view.instance_id,
-        marker_patch,
+        &marker_payload,
         subject,
     )
     .await
@@ -350,7 +394,7 @@ exit 0
                 cmd: vec![
                     "/bin/sh".into(),
                     "-c".into(),
-                    "test -f /tmp/awdp-marker".into(),
+                    "cat /var/www/html/index.php".into(),
                 ],
                 env: vec![],
                 workdir: None,
@@ -362,10 +406,11 @@ exit 0
         )
         .await
         .expect("exec marker check");
-    assert_eq!(
-        kept.exit_code,
-        Some(0),
-        "restart 后 patch 写入的文件必须仍在（writable layer 保留）"
+    assert_eq!(kept.exit_code, Some(0), "cat index.php");
+    assert!(
+        kept.stdout.contains("marker"),
+        "restart 后 patch 写入的源码必须仍在（writable layer 保留）: {}",
+        kept.stdout
     );
 
     let view = runtime::reset_instance(&db, &docker, JWT_SECRET, view.instance_id, subject, "flag")
@@ -390,7 +435,7 @@ exit 0
                 cmd: vec![
                     "/bin/sh".into(),
                     "-c".into(),
-                    "test ! -f /tmp/awdp-marker".into(),
+                    "cat /var/www/html/index.php".into(),
                 ],
                 env: vec![],
                 workdir: None,
@@ -402,7 +447,12 @@ exit 0
         )
         .await
         .expect("exec marker check");
-    assert_eq!(gone.exit_code, Some(0), "reset 后 patch 标记应消失");
+    assert_eq!(gone.exit_code, Some(0), "cat index.php after reset");
+    assert!(
+        !gone.stdout.contains("marker"),
+        "reset 后 patch 修改应消失（恢复镜像原版）: {}",
+        gone.stdout
+    );
 
     // 4. Manual check：health + judge 通过且不计分（§84）。
     let before = score_repo::my_total(&db, run_id, Some(user_id), None)
@@ -474,7 +524,7 @@ exit 0
     )
     .await
     .expect("start in break");
-    let err = patch_service::apply_patch(&db, &docker, run2, v2.instance_id, ok_patch, subject)
+    let err = patch_service::apply_patch(&db, &docker, run2, v2.instance_id, &ok_payload, subject)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("Fix"), "{err}");

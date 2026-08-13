@@ -95,6 +95,26 @@ async fn backdate_patch_applied(
     am.update(db).await.unwrap();
 }
 
+/// 构造 PatchPayload（patch.sh + 辅助文件）。
+fn patch_payload(
+    script: &str,
+    files: &[(&str, &str)],
+) -> floatctf::modules::event::awdp::service::patch_service::PatchPayload {
+    floatctf::modules::event::awdp::service::patch_service::PatchPayload {
+        script: script.to_string(),
+        archive_sha256: "a".repeat(64),
+        files: files
+            .iter()
+            .map(
+                |(pp, c)| floatctf::modules::event::awdp::service::patch_service::PatchFile {
+                    relative_path: pp.to_string(),
+                    content: c.as_bytes().to_vec(),
+                },
+            )
+            .collect(),
+    }
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -453,12 +473,13 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
 
     // Round 1：apply patch（eligible）→ 到期 → tick 物化 pending 评估（worker 未消费）。
     open_round(&db, run_id, 1).await;
+    let round1_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &round1_payload,
         sub,
     )
     .await
@@ -480,12 +501,13 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
 
     // Round 2：prior-round（round1）评估未完成（pending）→ patch 被拒（§89 串行化）。
     open_round(&db, run_id, 2).await;
+    let round2_payload = patch_payload("#!/bin/sh\necho r2 > /tmp/r2\nexit 0\n", &[]);
     let err = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\necho r2 > /tmp/r2\nexit 0\n",
+        &round2_payload,
         sub,
     )
     .await
@@ -513,7 +535,7 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\necho r2 > /tmp/r2\nexit 0\n",
+        &round2_payload,
         sub,
     )
     .await
@@ -570,12 +592,13 @@ async fn reset_and_evaluation_concurrent() {
     tick_to_fix(&db, &docker).await;
     wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
+    let round1_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &round1_payload,
         sub,
     )
     .await
@@ -689,12 +712,13 @@ async fn manual_check_and_evaluation_concurrent() {
     tick_to_fix(&db, &docker).await;
     wait_container_running(&docker, &db, inst.instance_id).await;
     open_round(&db, run_id, 1).await;
+    let round1_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &round1_payload,
         sub,
     )
     .await

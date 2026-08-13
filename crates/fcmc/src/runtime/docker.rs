@@ -59,6 +59,16 @@ pub trait ContainerRuntime: Send + Sync {
     /// only (never started) container.
     async fn copy_from_container(&self, id_or_name: &str, path: &str) -> anyhow::Result<Vec<u8>>;
 
+    /// Write a tar archive into a container at `dest_dir` (docker PUT /containers/{id}/archive).
+    /// Paths in the archive are relative to `dest_dir`; parent dirs are created automatically.
+    /// The container may be running or stopped; the writable layer is modified in place.
+    async fn copy_into_container(
+        &self,
+        id_or_name: &str,
+        dest_dir: &str,
+        tar_bytes: Vec<u8>,
+    ) -> anyhow::Result<()>;
+
     /// Run a command inside a **running** container, capturing stdout/stderr with caps.
     ///
     /// Exit code is read via `inspect_exec` after the output stream closes. On timeout
@@ -426,6 +436,25 @@ impl ContainerRuntime for DockerContainerRuntime {
             ));
         }
         Ok(buf)
+    }
+
+    async fn copy_into_container(
+        &self,
+        id_or_name: &str,
+        dest_dir: &str,
+        tar_bytes: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        use bollard::body_full;
+        use bollard::container::UploadToContainerOptions;
+
+        let options = Some(UploadToContainerOptions {
+            path: dest_dir.to_string(),
+            no_overwrite_dir_non_dir: "false".to_string(),
+        });
+        self.docker
+            .upload_to_container(id_or_name, options, body_full(tar_bytes.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("copy_into_container({id_or_name}:{dest_dir}): {e}"))
     }
 
     async fn exec(&self, id_or_name: &str, options: ExecOptions) -> anyhow::Result<ExecOutcome> {

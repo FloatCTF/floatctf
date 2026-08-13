@@ -33,6 +33,26 @@ async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker)
         .expect("tick: preparing_fix reconcile → fix");
 }
 
+/// 构造 PatchPayload（patch.sh + 辅助文件）。
+fn patch_payload(
+    script: &str,
+    files: &[(&str, &str)],
+) -> floatctf::modules::event::awdp::service::patch_service::PatchPayload {
+    floatctf::modules::event::awdp::service::patch_service::PatchPayload {
+        script: script.to_string(),
+        archive_sha256: "a".repeat(64),
+        files: files
+            .iter()
+            .map(
+                |(pp, c)| floatctf::modules::event::awdp::service::patch_service::PatchFile {
+                    relative_path: pp.to_string(),
+                    content: c.as_bytes().to_vec(),
+                },
+            )
+            .collect(),
+    }
+}
+
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
@@ -431,14 +451,14 @@ async fn tick_driven_rounds_and_scoring() {
     // 3. Round 2：先打开 round 2 窗口，再应用 patch（事件 A 需要真实 APPLIED 才 eligible）。
     open_round(&db, run_a, 2).await;
     open_round(&db, run_b, 2).await;
-    let patch_script = "#!/bin/sh\nexit 0\n";
+    let patch_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     // 事件 B：apply patch
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_b,
         inst_b.instance_id,
-        patch_script,
+        &patch_payload,
         sub_b,
     )
     .await
@@ -454,7 +474,7 @@ async fn tick_driven_rounds_and_scoring() {
         &docker,
         run_a,
         inst_a.instance_id,
-        patch_script,
+        &patch_payload,
         sub_a,
     )
     .await
@@ -663,12 +683,13 @@ async fn patch_eligibility_requires_current_round_patch() {
 
     // Round 1：apply 一个失败 patch → 不算 APPLIED → NO_PATCH（§86 failed patch）。
     open_round(&db, run_id, 1).await;
+    let failing_payload = patch_payload("#!/bin/sh\necho boom >&2\nexit 1\n", &[]);
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\necho boom >&2\nexit 1\n",
+        &failing_payload,
         sub,
     )
     .await
@@ -705,12 +726,13 @@ async fn patch_eligibility_requires_current_round_patch() {
 
     // Round 2：成功 patch → APPLIED → eligible → PATCHED +score（§86 applied）。
     open_round(&db, run_id, 2).await;
+    let good_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_id,
         inst.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &good_payload,
         sub,
     )
     .await
@@ -842,12 +864,13 @@ async fn official_eval_service_down_and_functional_broken() {
     // 两个 run 都在 Round 1 先 apply patch（避免 NO_PATCH 短路，直达 health/judge 分支）。
     open_round(&db, run_a, 1).await;
     open_round(&db, run_b, 1).await;
+    let round1_payload = patch_payload("#!/bin/sh\nexit 0\n", &[]);
     let _ = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
         &docker,
         run_a,
         inst_a.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &round1_payload,
         sub_a,
     )
     .await
@@ -857,7 +880,7 @@ async fn official_eval_service_down_and_functional_broken() {
         &docker,
         run_b,
         inst_b.instance_id,
-        "#!/bin/sh\nexit 0\n",
+        &round1_payload,
         sub_b,
     )
     .await

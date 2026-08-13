@@ -484,11 +484,26 @@ export function AwdpWorkbench({
 					<dt className="font-bold">Endpoints</dt>
 					<dd className="font-medium font-mono text-xs break-all">
 						{inst?.endpoints && inst.endpoints.length > 0
-							? inst.endpoints
-									.map(
-										(e) => `${e.protocol}://${e.public_host}:${e.public_port}`,
-									)
-									.join("  ")
+							? inst.endpoints.map((e) => {
+									const url = `${e.protocol}://${e.public_host}:${e.public_port}`;
+									return (
+										<span key={url}>
+											{gb.category.toLowerCase() === "web" ? (
+												<a
+													href={url}
+													target="_blank"
+													rel="noreferrer"
+													className="text-blue-600 underline"
+												>
+													{url}
+												</a>
+											) : (
+												url
+											)}
+											{"  "}
+										</span>
+									);
+								})
 							: (gb.exposed ?? [])
 									.map(([proto, port]) => `${proto}:${port} (未启动)`)
 									.join("  ") || "-"}
@@ -543,20 +558,9 @@ export function AwdpWorkbench({
 					<div className="flex flex-col gap-2 border-t pt-2">
 						{viewModel.judgeEndpoint && (
 							<div className="flex flex-col gap-1 rounded border border-dashed border-gray-300 p-2">
-								{gb.category.toLowerCase() === "web" ? (
-									<a
-										href={viewModel.judgeEndpoint.flagUrl}
-										target="_blank"
-										rel="noreferrer"
-										className="font-mono text-xs text-blue-600 underline"
-									>
-										Flag Endpoint: {viewModel.judgeEndpoint.flagUrl}
-									</a>
-								) : (
-									<p className="font-mono text-xs">
-										Flag Endpoint: {viewModel.judgeEndpoint.flagUrl}
-									</p>
-								)}
+								<p className="font-mono text-xs">
+									Flag Endpoint: {viewModel.judgeEndpoint.flagUrl}
+								</p>
 								<p className="text-xs text-gray-500">
 									Available from your GameBox only
 								</p>
@@ -613,7 +617,7 @@ export function AwdpWorkbench({
 								}}
 								type="file"
 								accept=".sh,text/x-shellscript"
-								className="text-sm"
+								className="hidden"
 								onChange={(e) =>
 									setPatchFiles((prev) => ({
 										...prev,
@@ -621,6 +625,12 @@ export function AwdpWorkbench({
 									}))
 								}
 							/>
+							<Button
+								aria-label="选择 patch 脚本文件"
+								onClick={() => fileInputRefs.current[gb.id]?.click()}
+							>
+								{patchFiles[gb.id] ? patchFiles[gb.id]!.name : "选择 patch 文件"}
+							</Button>
 							<Button
 								variant="primary"
 								disabled={

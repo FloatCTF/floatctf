@@ -177,7 +177,33 @@ function RouteComponent() {
 			onTestCheck: async (gameboxId: string) => {
 				const res = await awdpRunApi.testCheck(runId, gameboxId);
 				invalidate();
-				return res.data;
+				// 异步 manual：轮询 evaluations 直到该评估终态（默认 ≤60s）。
+				const evalId = res.data?.evaluation_id;
+				if (!evalId) {
+					return res.data;
+				}
+				const deadline = Date.now() + 60_000;
+				for (;;) {
+					await new Promise((r) => setTimeout(r, 2500));
+					const res2 = await awdpRunApi.evaluations(runId);
+					const evals = res2?.data ?? [];
+					const ev = evals.find((e) => e.id === evalId);
+					if (ev && ev.status !== "pending" && ev.status !== "running") {
+						return {
+							evaluation_id: evalId,
+							status: ev.status,
+							healthcheck_ok: ev.status !== "service_down",
+							healthcheck_detail: ev.healthcheck_result
+								? [ev.healthcheck_result]
+								: [],
+							judge_ok: ev.status !== "functional_broken",
+							judge_detail: ev.judge_result ?? null,
+						};
+					}
+					if (Date.now() > deadline) {
+						return res.data;
+					}
+				}
 			},
 			onEarlyCheck: async (gameboxId: string) => {
 				const res = await awdpRunApi.earlyCheck(runId, gameboxId);

@@ -401,11 +401,16 @@ pub struct PatchSubmitResponse {
 
 /// 手动 Test Check 结果。
 #[derive(Debug, Clone, Serialize)]
+/// 手动 Test Check 结果 DTO（异步：POST 后立即返回 pending，前端轮询 evaluations 终态）。
 pub struct ManualCheckDto {
-    pub healthcheck_ok: bool,
-    pub healthcheck_detail: Vec<String>,
-    pub judge_ok: bool,
-    pub judge_detail: String,
+    /// 创建的 manual 评估 id（前端据 id 从 evaluations 列表取终态详情）。
+    pub evaluation_id: Uuid,
+    /// 初始状态（"pending"）；终态时前端用 evaluations 行的 healthcheck/judge 结果。
+    pub status: String,
+    pub healthcheck_ok: Option<bool>,
+    pub healthcheck_detail: Option<Vec<String>>,
+    pub judge_ok: Option<bool>,
+    pub judge_detail: Option<String>,
 }
 
 /// 练习提前 Check 结果 DTO（status=patched 时从 target_round 起自动计分）。

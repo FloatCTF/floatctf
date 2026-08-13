@@ -76,6 +76,7 @@ struct ClaimedJob {
     healthchecks: Vec<serde_json::Value>,
     judge_script: Option<String>,
     exploit_script: Option<String>,
+    proof_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,12 +224,14 @@ fn build_script_env(host_env: impl Iterator<Item = (String, String)>) -> Vec<(St
 // ── 脚本执行 ──
 
 /// 运行 check.py / exploit.py：`python3 <script> <target_ip>`，env 白名单，超时限制。
+/// `extra_env`：proof URL 等 job 级注入（仅对本次脚本可见）。
 async fn run_target_script(
     state: &AppState,
     script_content: &str,
     target_ip: &str,
     timeout_secs: u64,
     _max_stdout: usize,
+    extra_env: Vec<(String, String)>,
 ) -> Result<ExecResult, String> {
     let script_path = format!(
         "{}/script_{}_{}.py",
@@ -244,13 +247,15 @@ async fn run_target_script(
         .output()
         .await;
 
+    let mut envs = build_script_env(env::vars());
+    envs.extend(extra_env);
     let output = tokio::time::timeout(
         Duration::from_secs(timeout_secs),
         Command::new("python3")
             .arg(&script_path)
             .arg(target_ip)
             .env_clear()
-            .envs(build_script_env(env::vars()))
+            .envs(envs)
             .output(),
     )
     .await
@@ -463,7 +468,8 @@ async fn run_job(state: &AppState, job: &ClaimedJob) -> JobOutcome {
     let Some(judge_script) = job.judge_script.as_deref() else {
         return JobOutcome::Infrastructure("GameBox 未配置 judge 脚本".into());
     };
-    let judge = match run_target_script(state, judge_script, target_ip, 30, 16 * 1024).await {
+    let judge = match run_target_script(state, judge_script, target_ip, 30, 16 * 1024, vec![]).await
+    {
         Ok(r) => r,
         Err(e) => return JobOutcome::Infrastructure(e),
     };
@@ -501,11 +507,19 @@ async fn run_job(state: &AppState, job: &ClaimedJob) -> JobOutcome {
         let Some(exploit_script) = job.exploit_script.as_deref() else {
             return JobOutcome::Infrastructure("official 评估缺少 exploit 脚本".into());
         };
-        let exploit = match run_target_script(state, exploit_script, target_ip, 60, 32 * 1024).await
-        {
-            Ok(r) => r,
-            Err(e) => return JobOutcome::Infrastructure(e),
-        };
+        // exploit 注入 FLOATCTF_PROOF_URL（official proof；目标 GameBox 执行后一次有效）。
+        let proof_env = job
+            .proof_url
+            .as_deref()
+            .map(|u| vec![("FLOATCTF_PROOF_URL".to_string(), u.to_string())])
+            .unwrap_or_default();
+        let exploit =
+            match run_target_script(state, exploit_script, target_ip, 60, 32 * 1024, proof_env)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return JobOutcome::Infrastructure(e),
+            };
         let (exploit_out, exploit_err) = exploit.truncated();
         if let Some(err) = &exploit.parse_error {
             return JobOutcome::Infrastructure(format!(
@@ -783,6 +797,48 @@ async fn handle_flag(state: web::Data<AppState>, req: HttpRequest) -> HttpRespon
     }
 }
 
+/// GET /proof/{token} —— official 一次性 proof（plan §28）。
+/// 身份 = 真实 TCP peer IP；JudgeServer 转发 FloatCTF internal API 原子消费。
+async fn handle_proof(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let token = path.into_inner();
+    let Some(peer) = req.peer_addr() else {
+        return HttpResponse::BadRequest().finish();
+    };
+    let source_ip = peer.ip().to_string();
+    if token.is_empty() || source_ip.is_empty() || source_ip == "::1" {
+        return HttpResponse::Forbidden().finish();
+    }
+
+    let url = format!("{}/internal/awdp/proof/consume", state.platform_url);
+    let body = serde_json::json!({ "token": token, "source_ip": source_ip });
+    match state
+        .client
+        .post(&url)
+        .bearer_auth(&state.internal_token)
+        .json(&body)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            HttpResponse::Ok().json(serde_json::json!({ "proof": "consumed" }))
+        }
+        Ok(resp) => {
+            tracing::warn!(source_ip, status = %resp.status(), "proof consume rejected");
+            let _ = resp;
+            HttpResponse::Forbidden().finish()
+        }
+        Err(e) => {
+            tracing::warn!(source_ip, error = %e, "proof consume network error");
+            HttpResponse::BadGateway().finish()
+        }
+    }
+}
+
 // ── main ──
 
 #[actix_web::main]
@@ -864,6 +920,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(state.clone()))
             .route("/healthz", web::get().to(healthz))
             .route("/flag", web::get().to(handle_flag))
+            .route("/proof/{token}", web::get().to(handle_proof))
     })
     .bind(&data_listen)?
     .run()

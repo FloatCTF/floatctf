@@ -726,12 +726,11 @@ pub async fn upload_patch(
     .into()
 }
 
-/// POST .../test-check —— 手动 Test Check（healthcheck + judge，不计分）。
+/// POST .../test-check —— 手动 Test Check 入队（异步；worker 执行 healthcheck + judge，不计分）。
 #[post("awdp/runs/{run_id}/gameboxes/{gamebox_id}/test-check")]
 pub async fn manual_test_check(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<ManualCheckDto> {
     let (run_id, gamebox_id) = path.into_inner();
@@ -743,39 +742,30 @@ pub async fn manual_test_check(
     else {
         return Err(AppError::NotFound("instance not started".into()));
     };
-    let result = evaluation::manual_check(
+    let evaluation = evaluation::manual_check_enqueue(
         ctx.db.get_ref(),
-        ctx.docker.get_ref(),
         run.id,
         view.instance_id,
         Subject::user(user.id),
     )
     .await
     .map_err(AppError::from)?;
-    crate::modules::event::awdp::realtime::run_manual_check_completed(
-        &state,
-        run.id,
-        view.instance_id,
-        result.healthcheck_ok && result.judge_ok,
-    );
     log_practice_action(
         &ctx,
         run.event_id,
         user.id,
         "awdp.train.test_check",
-        json!({
-            "run_id": run.id,
-            "gamebox_id": gamebox_id,
-            "ok": result.healthcheck_ok && result.judge_ok,
-        }),
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id, "evaluation_id": evaluation.id }),
     )
     .await;
     UniResponse::ok(
         ManualCheckDto {
-            healthcheck_ok: result.healthcheck_ok,
-            healthcheck_detail: result.healthcheck_detail,
-            judge_ok: result.judge_ok,
-            judge_detail: result.judge_detail,
+            evaluation_id: evaluation.id,
+            status: "pending".to_string(),
+            healthcheck_ok: None,
+            healthcheck_detail: None,
+            judge_ok: None,
+            judge_detail: None,
         }
         .into(),
     )

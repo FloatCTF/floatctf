@@ -392,17 +392,34 @@ exit 0
     let before = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
-    let mc = floatctf::modules::event::awdp::service::evaluation::manual_check(
+    // 异步 manual：入队 → 进程内 worker 消费（health+judge；exploit 恒不执行）。
+    let enqueued = floatctf::modules::event::awdp::service::evaluation::manual_check_enqueue(
         &db,
-        &docker,
         run_id,
         view.instance_id,
         subject,
     )
     .await
-    .expect("manual check");
-    assert!(mc.healthcheck_ok, "{:?}", mc.healthcheck_detail);
-    assert!(mc.judge_ok, "{:?}", mc.judge_detail);
+    .expect("enqueue manual check");
+    let n = floatctf::modules::event::awdp::service::evaluation::worker_round(
+        &db,
+        &docker,
+        "floatctf-api-worker",
+        4,
+        120,
+        3,
+    )
+    .await
+    .expect("worker");
+    assert!(n >= 1, "worker 应消费 manual 评估");
+    let mc = evaluation_repo::find_by_id(&db, enqueued.id)
+        .await
+        .expect("eval");
+    assert_eq!(
+        mc.status,
+        AwdpEvaluationStatus::Patched,
+        "health+judge 全过 → patched"
+    );
     let after = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();

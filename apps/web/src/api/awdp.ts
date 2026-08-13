@@ -74,10 +74,14 @@ export type PatchSubmitResponse = {
 };
 
 export type ManualCheckDto = {
-	healthcheck_ok: boolean;
-	healthcheck_detail: string[];
-	judge_ok: boolean;
-	judge_detail: string;
+	/** 创建的 manual 评估 id（前端据 id 从 evaluations 列表取终态详情）。 */
+	evaluation_id: string;
+	/** 初始状态（"pending"）；终态用 evaluations 行的 healthcheck/judge 结果。 */
+	status: string;
+	healthcheck_ok: boolean | null;
+	healthcheck_detail: string[] | null;
+	judge_ok: boolean | null;
+	judge_detail: string | null;
 };
 
 export type AwdpEventConfigDto = {

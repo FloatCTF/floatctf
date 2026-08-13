@@ -978,3 +978,181 @@ async fn view_instance_container_name(
         .unwrap()
         .container_name
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// §27-§30 Official proof protocol（一次性 target-bound）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// proof 生命周期：claim 时生成 → 本实例 IP 消费 OK → 重复消费 Conflict →
+/// 未知 source IP Forbidden → 过期 Conflict。
+#[tokio::test]
+async fn proof_consume_lifecycle() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+    let user_id = seed_user(&db, "proof").await;
+    let gb_id = seed_awdp_gamebox(
+        &db,
+        "proof",
+        serde_json::json!([{"type": "http", "port": 80, "path": "/", "expected_status": 200}]),
+        None,
+    )
+    .await;
+    let subject = floatctf::modules::event::awdp::service::runtime::Subject::user(user_id);
+    // 练习 run + 实例（Break；实例在 data 网络）。
+    let run = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db, &docker, JWT_SECRET, user_id, gb_id, "flag",
+    )
+    .await
+    .unwrap();
+    let view = floatctf::modules::event::awdp::service::runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start");
+    let container_name = view_instance_container_name(&db, view.instance_id).await;
+    let container_ip = rt
+        .inspect_container(&container_name)
+        .await
+        .expect("inspect")
+        .ip_address
+        .expect("container ip");
+
+    // 建 official 评估 + claim（status=running；proof 要求评估执行中）。
+    use floatctf::entity::awdp_fix_rounds;
+    let round = awdp_fix_rounds::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        run_id: Set(run.id),
+        sequence: Set(1),
+        starts_at: Set((chrono::Utc::now() - chrono::Duration::minutes(5)).into()),
+        cutoff_at: Set((chrono::Utc::now() - chrono::Duration::seconds(1)).into()),
+        status: Set("evaluating".to_string()),
+        created_at: Set(chrono::Utc::now().into()),
+        updated_at: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let ev = floatctf::modules::event::awdp::repo::evaluation_repo::create_official(
+        &db,
+        run.id,
+        view.instance_id,
+        round.id,
+    )
+    .await
+    .unwrap();
+    let jobs = floatctf::modules::event::awdp::repo::evaluation_repo::claim_jobs(
+        &db,
+        "proof-worker",
+        10,
+        120,
+        3,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(
+        jobs.iter().any(|j| j.evaluation.id == ev.id),
+        "claim 到我们的评估"
+    );
+
+    // 1. 生成 proof（lease 窗口内）→ 本实例 IP 消费 OK。
+    let token = floatctf::modules::event::awdp::service::judge_worker::create_proof_for_job(
+        &db,
+        ev.id,
+        view.instance_id,
+        1,
+        120,
+    )
+    .await
+    .expect("create proof");
+    floatctf::modules::event::awdp::service::judge_worker::consume_proof(
+        &db,
+        &docker,
+        &token,
+        &container_ip,
+    )
+    .await
+    .expect("consume by source ip");
+
+    // 2. 重复消费 → Conflict（一次性）。
+    let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
+        &db,
+        &docker,
+        &token,
+        &container_ip,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Conflict(_)),
+        "重复消费必须拒绝: {err}"
+    );
+
+    // 3. 未知 source IP → Forbidden。
+    let token2 = floatctf::modules::event::awdp::service::judge_worker::create_proof_for_job(
+        &db,
+        ev.id,
+        view.instance_id,
+        1,
+        120,
+    )
+    .await
+    .expect("proof 2");
+    let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
+        &db,
+        &docker,
+        &token2,
+        "10.99.99.99",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Forbidden(_)),
+        "未知 source IP 必须拒绝: {err}"
+    );
+
+    // 4. 错误 token → Forbidden。
+    let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
+        &db,
+        &docker,
+        "bogus-token",
+        &container_ip,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Forbidden(_)),
+        "无效 token 必须拒绝: {err}"
+    );
+
+    let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
+        &db,
+        &docker,
+        view.instance_id,
+        subject,
+    )
+    .await;
+    let _ = awdp_runs::Entity::delete_by_id(run.id).exec(&db).await;
+    let _ = gameboxes::Entity::delete_by_id(gb_id).exec(&db).await;
+}

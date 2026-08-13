@@ -46,6 +46,8 @@ pub struct ClaimJobDto {
     pub judge_script: Option<String>,
     /// 仅 official 包含（manual 恒 None）。
     pub exploit_script: Option<String>,
+    /// official 一次性 target-bound proof URL（exploit 可通过环境变量 FLOATCTF_PROOF_URL 使用）。
+    pub proof_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +67,126 @@ pub struct HeartbeatRequest {
 #[derive(Debug, Deserialize)]
 pub struct ResolveFlagRequest {
     pub source_ip: String,
+}
+
+/// proof 消费请求（JudgeServer `/proof/{token}` 转发）。
+#[derive(Debug, Deserialize)]
+pub struct ConsumeProofRequest {
+    pub token: String,
+    pub source_ip: String,
+}
+
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}
+
+fn new_proof_token() -> String {
+    use rand::RngCore;
+    let mut buf = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    hex::encode(buf)
+}
+
+/// 为 official 评估创建一次性 target-bound proof（plan §27）。
+/// 返回明文 token（仅出现在 job payload；DB 只存 sha256）。
+pub async fn create_proof_for_job(
+    db: &DatabaseConnection,
+    evaluation_id: Uuid,
+    instance_id: Uuid,
+    runtime_generation: i64,
+    lease_seconds: i64,
+) -> AwdpResult<String> {
+    use crate::entity::awdp_evaluation_proofs;
+    use sea_orm::ActiveModelTrait;
+    use sea_orm::ActiveValue::Set;
+    let token = new_proof_token();
+    let now = chrono::Utc::now();
+    awdp_evaluation_proofs::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        evaluation_id: Set(evaluation_id),
+        token_hash: Set(sha256_hex(&token)),
+        target_instance_id: Set(instance_id),
+        runtime_generation: Set(runtime_generation),
+        expires_at: Set((now + chrono::Duration::seconds(lease_seconds.max(60) * 3)).into()),
+        consumed_at: Set(None),
+        created_at: Set(now.into()),
+    }
+    .insert(db)
+    .await
+    .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(token)
+}
+
+/// 消费 proof（plan §28）：验证 token 有效 / 未过期 / 未消费 / source IP == 目标实例当前
+/// 容器 IP / runtime_generation 匹配 / 评估 running → 原子置 consumed_at（一次性）。
+pub async fn consume_proof(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    token: &str,
+    source_ip: &str,
+) -> AwdpResult<()> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus;
+    use crate::entity::{awdp_evaluation_proofs, awdp_evaluations};
+    use crate::modules::event::awdp::service::network_resolve;
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+
+    let now = chrono::Utc::now();
+    let proof = awdp_evaluation_proofs::Entity::find()
+        .filter(awdp_evaluation_proofs::Column::TokenHash.eq(sha256_hex(token)))
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::Forbidden("invalid proof token".into()))?;
+
+    if proof.consumed_at.is_some() {
+        return Err(AwdpError::Conflict("proof already consumed".into()));
+    }
+    if proof.expires_at.with_timezone(&chrono::Utc) <= now {
+        return Err(AwdpError::Conflict("proof expired".into()));
+    }
+
+    // source IP 必须等于目标实例当前容器 IP（真实网络附着）。
+    let (instance, _ext) = network_resolve::resolve_instance_by_network_ip(db, docker, source_ip)
+        .await
+        .map_err(|_| AwdpError::Forbidden("source ip mismatch".into()))?;
+    if instance.id != proof.target_instance_id {
+        return Err(AwdpError::Forbidden("source ip mismatch".into()));
+    }
+    if instance.runtime_generation != proof.runtime_generation {
+        return Err(AwdpError::Conflict("runtime generation mismatch".into()));
+    }
+
+    // 评估必须仍在执行（running）。
+    let ev = awdp_evaluations::Entity::find_by_id(proof.evaluation_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::Conflict("evaluation not found".into()))?;
+    if ev.status != AwdpEvaluationStatus::Running {
+        return Err(AwdpError::Conflict(format!(
+            "evaluation not running (status={:?})",
+            ev.status
+        )));
+    }
+
+    // 原子消费（条件 UPDATE 防双消费）。
+    let res = awdp_evaluation_proofs::Entity::update_many()
+        .col_expr(
+            awdp_evaluation_proofs::Column::ConsumedAt,
+            sea_orm::prelude::Expr::value(now),
+        )
+        .filter(awdp_evaluation_proofs::Column::Id.eq(proof.id))
+        .filter(awdp_evaluation_proofs::Column::ConsumedAt.is_null())
+        .exec(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    if res.rows_affected == 0 {
+        return Err(AwdpError::Conflict("proof already consumed".into()));
+    }
+    Ok(())
 }
 
 /// result 请求（JudgeServer → FloatCTF）。
@@ -168,6 +290,24 @@ pub async fn claim_jobs(
             .unwrap_or_default();
 
         let kind = ev.kind.clone();
+        // official：生成一次性 target-bound proof（token 只出现在 job payload）。
+        let proof_url = match &kind {
+            AwdpEvaluationKind::Official => {
+                let token = create_proof_for_job(
+                    db,
+                    ev.id,
+                    ev.instance_id,
+                    instance.runtime_generation,
+                    lease_seconds,
+                )
+                .await?;
+                Some(format!(
+                    "http://{}/proof/{token}",
+                    crate::modules::event::awdp::domain::judge::JUDGE_DATA_ALIAS
+                ))
+            }
+            AwdpEvaluationKind::Manual => None,
+        };
         jobs.push(ClaimJobDto {
             evaluation_id: ev.id,
             attempt: job.attempt,
@@ -185,6 +325,7 @@ pub async fn claim_jobs(
                 AwdpEvaluationKind::Official => gamebox.awdp_exploit_script_content.clone(),
                 AwdpEvaluationKind::Manual => None,
             },
+            proof_url,
         });
     }
 

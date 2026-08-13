@@ -27,14 +27,15 @@ pub struct ManualCheckResult {
     pub judge_detail: String,
 }
 
-/// 手动 Test Check：healthcheck（public endpoints）+ judge（容器内 IP，check.py 批量契约）。
-pub async fn manual_check(
+/// 手动 Test Check 入队（plan §20）：创建 manual 评估（pending），由 worker
+/// （JudgeServer / 进程内）异步执行 healthcheck + judge。返回评估 id + 初始状态；
+/// 前端轮询 evaluations 直到终态。不再让 HTTP 请求阻塞等待执行。
+pub async fn manual_check_enqueue(
     db: &DatabaseConnection,
-    docker: &Docker,
     run_id: Uuid,
     instance_id: Uuid,
     subject: Subject,
-) -> AwdpResult<ManualCheckResult> {
+) -> AwdpResult<crate::entity::awdp_evaluations::Model> {
     let run = run_repo::require_by_id(db, run_id).await?;
     if run.phase != crate::entity::sea_orm_active_enums::AwdpPhase::Fix {
         return Err(AwdpError::InvalidState(
@@ -60,52 +61,80 @@ pub async fn manual_check(
             ));
         }
     }
-
-    let lock = InstanceAdvisoryLock::acquire(db, instance_id).await?;
-    let result = manual_check_locked(db, docker, run_id, instance_id, &instance).await;
-    lock.release().await;
-    result
+    let evaluation = evaluation_repo::create_manual(db, run_id, instance_id).await?;
+    Ok(evaluation)
 }
 
-async fn manual_check_locked(
+/// 进程内 worker 执行 manual 评估（lease 版）：internal healthcheck + judge，绝不 exploit/计分。
+async fn process_manual_leased(
     db: &DatabaseConnection,
     docker: &Docker,
-    run_id: Uuid,
-    instance_id: Uuid,
-    instance: &crate::entity::event_instances::Model,
-) -> AwdpResult<ManualCheckResult> {
-    let evaluation = evaluation_repo::create_manual(db, run_id, instance_id).await?;
+    worker_id: &str,
+    ev: &crate::entity::awdp_evaluations::Model,
+    lease_token: &str,
+    attempt: i32,
+) -> AwdpResult<()> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
+    let lock = InstanceAdvisoryLock::acquire(db, ev.instance_id).await?;
+    let result = manual_leased_locked(db, docker, ev).await;
+    lock.release().await;
 
-    if instance.runtime_state != "running" {
-        evaluation_repo::finish(
-            db,
-            evaluation.id,
-            crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::ServiceDown,
-            Some("instance not running"),
-            None,
-            None,
-            None,
-            None,
-        )
-        .await?;
-        return Err(AwdpError::InvalidState("instance is not running".into()));
+    match result {
+        Ok((status, health_detail, judge_detail)) => {
+            let _ = evaluation_repo::finish_with_lease(
+                db,
+                ev.id,
+                worker_id,
+                lease_token,
+                attempt,
+                status,
+                Some(&health_detail),
+                Some(&judge_detail),
+                None,
+                None,
+                None,
+            )
+            .await;
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
+}
 
-    let runtime = DockerContainerRuntime::new(docker.clone());
-    let state = runtime
-        .inspect_container(&instance.container_name)
-        .await
-        .map_err(|e| AwdpError::Docker(format!("inspect for manual check: {e}")))?;
-    let container_ip = state
-        .ip_address
-        .clone()
-        .ok_or_else(|| AwdpError::Docker("container has no ip_address".into()))?;
-
-    let (_instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+async fn manual_leased_locked(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    ev: &crate::entity::awdp_evaluations::Model,
+) -> AwdpResult<(
+    crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
+    String,
+    String,
+)> {
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
+    let (instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
 
-    // 1. Healthcheck（public endpoints，带重试）。
-    let endpoints = super::runtime::instance_endpoints_for(db, instance_id).await?;
+    // 容器内网 IP（internal healthcheck 目标；public NAT 失败不算 SERVICE_DOWN）。
+    let container_ip = if instance.runtime_state == "running" {
+        let runtime = DockerContainerRuntime::new(docker.clone());
+        match runtime.inspect_container(&instance.container_name).await {
+            Ok(state) => state.ip_address,
+            Err(e) => {
+                return Err(AwdpError::Docker(format!("inspect for manual check: {e}")));
+            }
+        }
+    } else {
+        None
+    };
+    let Some(container_ip) = container_ip else {
+        return Ok((
+            S::ServiceDown,
+            "instance not running".into(),
+            "manual check skipped".into(),
+        ));
+    };
+
+    // 1. internal healthcheck（target_ip:container_port，带重试；plan §23/§24）。
     let healthchecks = crate::modules::gamebox::healthcheck::parse_healthchecks(
         &gamebox
             .healthchecks_json
@@ -115,40 +144,25 @@ async fn manual_check_locked(
     let mut health_detail = Vec::new();
     let mut health_ok = true;
     for hc in &healthchecks {
-        let (port, protocol) = match hc {
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Http { port, .. } => {
-                (*port, "http")
-            }
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => (*port, "tcp"),
-        };
-        let Some(ep) = endpoints
-            .iter()
-            .find(|e| e.protocol == protocol && e.container_port == port as i32)
-        else {
-            health_detail.push(format!("{protocol}:{port} 未发布端点"));
-            health_ok = false;
-            continue;
-        };
-        // 探针必须打 public 端口（容器端口映射到宿主随机 high port）。
-        let public_check = match hc {
+        // 打容器内网 IP + container_port（不依赖 public NAT）。
+        let internal = match hc {
             crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
+                port,
                 path,
                 expected_status,
                 ..
             } => crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port: ep.public_port as u16,
+                port: *port,
                 path: path.clone(),
                 expected_status: *expected_status,
             },
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { .. } => {
-                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp {
-                    port: ep.public_port as u16,
-                }
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => {
+                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port: *port }
             }
         };
         let result = crate::modules::gamebox::healthcheck::probe_one_with_retries(
-            &ep.public_host,
-            &public_check,
+            &container_ip,
+            &internal,
             Duration::from_secs(5),
             3,
             Duration::from_secs(2),
@@ -161,76 +175,53 @@ async fn manual_check_locked(
     }
 
     // 2. Judge（check.py，批量契约单目标）。
-    let judge_content = gamebox.judge_script_content.clone();
-    let judge_ok;
-    let judge_detail;
-    if let Some(script) = judge_content {
-        let outcome = run_script(
-            &script,
-            "python3",
-            &[container_ip.clone()],
-            &[],
-            Duration::from_secs(30),
-            16 * 1024,
-            16 * 1024,
-        )
-        .await
-        .map_err(|e| AwdpError::Internal(format!("judge runner: {e}")))?;
-        match parse_batch_results(&outcome.stdout) {
-            Ok(rows) => {
-                let hit = rows
-                    .iter()
-                    .find(|r| r.ip == container_ip || r.ip.is_empty())
-                    .or_else(|| rows.first());
-                match hit {
-                    Some(r) => {
-                        judge_ok = r.success;
-                        judge_detail = r.error.clone().unwrap_or_else(|| {
-                            format!("{}: {}", r.ip, if r.success { "PASS" } else { "FAIL" })
-                        });
-                    }
-                    None => {
-                        judge_ok = false;
-                        judge_detail = "judge 脚本未返回该目标结果".into();
+    let (judge_ok, judge_detail) = match gamebox.judge_script_content.clone() {
+        Some(script) => {
+            let outcome = run_script(
+                &script,
+                "python3",
+                &[container_ip.clone()],
+                &[],
+                Duration::from_secs(30),
+                16 * 1024,
+                16 * 1024,
+            )
+            .await
+            .map_err(|e| AwdpError::Internal(format!("judge runner: {e}")))?;
+            match parse_batch_results(&outcome.stdout) {
+                Ok(rows) => {
+                    let hit = rows
+                        .iter()
+                        .find(|r| r.ip == container_ip || r.ip.is_empty())
+                        .or_else(|| rows.first());
+                    match hit {
+                        Some(r) => (
+                            r.success,
+                            r.error.clone().unwrap_or_else(|| {
+                                format!("{}: {}", r.ip, if r.success { "PASS" } else { "FAIL" })
+                            }),
+                        ),
+                        None => (false, "judge 脚本未返回该目标结果".into()),
                     }
                 }
-            }
-            Err(e) => {
-                judge_ok = false;
-                judge_detail = format!("judge 输出解析失败: {e}; exit={:?}", outcome.exit_code);
+                Err(e) => (
+                    false,
+                    format!("judge 输出解析失败: {e}; exit={:?}", outcome.exit_code),
+                ),
             }
         }
-    } else {
-        judge_ok = false;
-        judge_detail = "GameBox 未配置 judge 脚本".into();
-    }
-
-    // 3. 落库（manual 不计分；health+judge 全过 → patched 语义，exploit 恒 NULL）。
-    let status = if !health_ok {
-        crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::ServiceDown
-    } else if !judge_ok {
-        crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::FunctionalBroken
-    } else {
-        crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::Patched
+        None => (false, "GameBox 未配置 judge 脚本".into()),
     };
-    evaluation_repo::finish(
-        db,
-        evaluation.id,
-        status,
-        Some(&health_detail.join("; ")),
-        Some(&judge_detail),
-        None,
-        None,
-        None,
-    )
-    .await?;
 
-    Ok(ManualCheckResult {
-        healthcheck_ok: health_ok,
-        healthcheck_detail: health_detail,
-        judge_ok,
-        judge_detail,
-    })
+    // 3. 终态（manual 不计分；exploit 恒 NULL）。
+    let status = if !health_ok {
+        S::ServiceDown
+    } else if !judge_ok {
+        S::FunctionalBroken
+    } else {
+        S::Patched
+    };
+    Ok((status, health_detail.join("; "), judge_detail))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -263,21 +254,33 @@ pub async fn worker_round(
     max_attempts: i32,
 ) -> AwdpResult<usize> {
     use crate::entity::sea_orm_active_enums::AwdpEvaluationKind;
+    // 进程内 worker 消费全部 kind（manual + official）：
+    // manual = Test Check（internal healthcheck + judge，不计分）；
+    // official = 官方评估管线。JudgeServer 与进程内 worker 经 lease 互斥竞争。
     let claimed = evaluation_repo::claim_jobs(
         db,
         worker_id,
         concurrency,
         lease_duration_secs,
         max_attempts,
-        &[AwdpEvaluationKind::Official],
+        &[],
     )
     .await?;
     let mut n = 0usize;
     for job in claimed {
         let ev = job.evaluation;
-        match process_official_leased(db, docker, worker_id, &ev, &job.lease_token, job.attempt)
-            .await
-        {
+        let kind = ev.kind.clone();
+        let processed = match kind {
+            AwdpEvaluationKind::Manual => {
+                process_manual_leased(db, docker, worker_id, &ev, &job.lease_token, job.attempt)
+                    .await
+            }
+            AwdpEvaluationKind::Official => {
+                process_official_leased(db, docker, worker_id, &ev, &job.lease_token, job.attempt)
+                    .await
+            }
+        };
+        match processed {
             Ok(()) => n += 1,
             Err(e) => {
                 // 平台/基础设施失败：不能判玩家失败；未达 max_attempts 释放回 pending 重试，
@@ -447,8 +450,8 @@ async fn run_official_pipeline(
         None
     };
 
-    // 2. Healthcheck（public endpoints，重试）。
-    let endpoints = super::runtime::instance_endpoints_for(db, ev.instance_id).await?;
+    // 2. Healthcheck（internal network：容器内网 IP + container_port；plan §23/§24）。
+    //    public NAT/host 端口出问题不误判 SERVICE_DOWN（只服务玩家）。
     let healthchecks = crate::modules::gamebox::healthcheck::parse_healthchecks(
         &gamebox
             .healthchecks_json
@@ -458,39 +461,29 @@ async fn run_official_pipeline(
     let mut health_ok = true;
     let mut health_detail = Vec::new();
     for hc in &healthchecks {
-        let (port, protocol) = match hc {
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Http { port, .. } => {
-                (*port, "http")
-            }
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => (*port, "tcp"),
-        };
-        let Some(ep) = endpoints
-            .iter()
-            .find(|e| e.protocol == protocol && e.container_port == port as i32)
-        else {
+        let Some(ip) = &container_ip else {
             health_ok = false;
-            health_detail.push(format!("{protocol}:{port} 未发布"));
+            health_detail.push("容器未运行，无法 healthcheck".into());
             continue;
         };
-        let public_check = match hc {
+        let internal_check = match hc {
             crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
+                port,
                 path,
                 expected_status,
                 ..
             } => crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port: ep.public_port as u16,
+                port: *port,
                 path: path.clone(),
                 expected_status: *expected_status,
             },
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { .. } => {
-                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp {
-                    port: ep.public_port as u16,
-                }
+            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => {
+                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port: *port }
             }
         };
         let r = crate::modules::gamebox::healthcheck::probe_one_with_retries(
-            &ep.public_host,
-            &public_check,
+            ip,
+            &internal_check,
             Duration::from_secs(5),
             3,
             Duration::from_secs(2),

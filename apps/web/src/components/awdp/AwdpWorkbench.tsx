@@ -725,20 +725,28 @@ export function AwdpWorkbench({
 						</div>
 						{check && (
 							<div className="text-sm">
-								<span
-									className={
-										check.healthcheck_ok ? "text-green-600" : "text-red-600"
-									}
-								>
-									健康检查：{check.healthcheck_ok ? "OK" : "DOWN"}
-								</span>
-								<span className="mx-2">·</span>
-								<span
-									className={check.judge_ok ? "text-green-600" : "text-red-600"}
-								>
-									Judge：{check.judge_ok ? "PASS" : "FAIL"}
-								</span>
-								<span className="ml-2 text-xs opacity-60">（不计分）</span>
+								{check.healthcheck_ok == null ? (
+									<span className="text-gray-500">Test Check 排队中…</span>
+								) : (
+									<>
+										<span
+											className={
+												check.healthcheck_ok
+													? "text-green-600"
+													: "text-red-600"
+											}
+										>
+											健康检查：{check.healthcheck_ok ? "OK" : "DOWN"}
+										</span>
+										<span className="mx-2">·</span>
+										<span
+											className={check.judge_ok ? "text-green-600" : "text-red-600"}
+										>
+											Judge：{check.judge_ok ? "PASS" : "FAIL"}
+										</span>
+										<span className="ml-2 text-xs opacity-60">（不计分）</span>
+									</>
+								)}
 							</div>
 						)}
 						{earlyCheckResults[gb.id] && (

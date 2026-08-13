@@ -659,7 +659,15 @@ async fn manual_check_and_evaluation_concurrent() {
         .await
         .expect("tick r1");
 
-    // 并发：worker 消费 official eval + manual check（同一把 instance 锁）。
+    // 并发：manual check 入队 + worker 消费（同一把 instance 锁；official + manual 互不踩踏）。
+    let enqueued = floatctf::modules::event::awdp::service::evaluation::manual_check_enqueue(
+        &db,
+        run_id,
+        inst.instance_id,
+        sub,
+    )
+    .await
+    .expect("enqueue manual check");
     let db_w = db.clone();
     let docker_w = docker.clone();
     let worker = tokio::spawn(async move {
@@ -675,18 +683,12 @@ async fn manual_check_and_evaluation_concurrent() {
         .expect("worker")
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let mc = floatctf::modules::event::awdp::service::evaluation::manual_check(
-        &db,
-        &docker,
-        run_id,
-        inst.instance_id,
-        sub,
-    )
-    .await
-    .expect("manual check");
     let n = worker.await.expect("worker joined");
     assert!(n >= 1, "worker processed at least our eval");
-    assert!(mc.healthcheck_ok && mc.judge_ok, "{mc:?}");
+    let mc = floatctf::modules::event::awdp::repo::evaluation_repo::find_by_id(&db, enqueued.id)
+        .await
+        .expect("manual eval");
+    assert_eq!(mc.status, AwdpEvaluationStatus::Patched, "{mc:?}");
 
     // manual 评估：只跑 health+judge，不运行 exploit（exploit_result NULL）。
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();

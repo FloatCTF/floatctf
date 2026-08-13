@@ -41,6 +41,8 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::awdp_evaluation_proofs::Entity")]
+    AwdpEvaluationProofs,
     #[sea_orm(
         belongs_to = "super::awdp_fix_rounds::Entity",
         from = "Column::FixRoundId",
@@ -65,6 +67,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     EventInstances,
+}
+
+impl Related<super::awdp_evaluation_proofs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpEvaluationProofs.def()
+    }
 }
 
 impl Related<super::awdp_fix_rounds::Entity> for Entity {

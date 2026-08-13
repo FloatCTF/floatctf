@@ -21,6 +21,7 @@ pub use super::awd_team_bans::Entity as AwdTeamBans;
 pub use super::awd_team_networks::Entity as AwdTeamNetworks;
 pub use super::awd_wireguard_peers::Entity as AwdWireguardPeers;
 pub use super::awdp_breaks::Entity as AwdpBreaks;
+pub use super::awdp_evaluation_proofs::Entity as AwdpEvaluationProofs;
 pub use super::awdp_evaluations::Entity as AwdpEvaluations;
 pub use super::awdp_event_gameboxes::Entity as AwdpEventGameboxes;
 pub use super::awdp_events::Entity as AwdpEvents;

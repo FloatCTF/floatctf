@@ -201,10 +201,37 @@ pub async fn resolve_break_flag(
     UniResponse::ok(Some(flag)).into()
 }
 
+/// POST /internal/awdp/proof/consume
+/// JudgeServer `/proof/{token}` 转发的一次性 proof 消费（target-bound 验证 + 原子置位）。
+#[post("/internal/awdp/proof/consume")]
+pub async fn consume_eval_proof(
+    _auth: PracticeJudgeInternalAuth,
+    ctx: ReqCtx,
+    body: Json<crate::modules::event::awdp::service::judge_worker::ConsumeProofRequest>,
+) -> UniResult<()> {
+    use crate::modules::event::awdp::service::judge_worker;
+    let req = body.into_inner();
+    if req.token.trim().is_empty() || req.source_ip.trim().is_empty() {
+        return Err(AppError::Validation(
+            "token and source_ip are required".into(),
+        ));
+    }
+    judge_worker::consume_proof(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        req.token.trim(),
+        req.source_ip.trim(),
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok_none().into()
+}
+
 /// 注册内部路由（bootstrap 顶层，与 AWD internal 同风格）。
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(judge_jobs_claim);
     cfg.service(judge_jobs_heartbeat);
     cfg.service(judge_jobs_result);
     cfg.service(resolve_break_flag);
+    cfg.service(consume_eval_proof);
 }

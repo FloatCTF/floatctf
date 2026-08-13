@@ -23,6 +23,7 @@ pub mod awd_team_bans;
 pub mod awd_team_networks;
 pub mod awd_wireguard_peers;
 pub mod awdp_breaks;
+pub mod awdp_evaluation_proofs;
 pub mod awdp_evaluations;
 pub mod awdp_event_gameboxes;
 pub mod awdp_events;

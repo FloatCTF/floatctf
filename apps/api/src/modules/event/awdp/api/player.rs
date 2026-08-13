@@ -416,12 +416,11 @@ pub async fn upload_patch(
     .into()
 }
 
-/// POST .../test-check —— 手动 Test Check（healthcheck + judge，不计分）。
+/// POST .../test-check —— 手动 Test Check 入队（异步；worker 执行 healthcheck + judge，不计分）。
 #[post("{event_id}/awdp/gameboxes/{eg_id}/test-check")]
 pub async fn manual_test_check(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<ManualCheckDto> {
     let (event_id, eg_id) = path.into_inner();
@@ -436,27 +435,18 @@ pub async fn manual_test_check(
     else {
         return Err(AppError::NotFound("instance not started".into()));
     };
-    let result = evaluation::manual_check(
-        ctx.db.get_ref(),
-        ctx.docker.get_ref(),
-        run.id,
-        view.instance_id,
-        subject,
-    )
-    .await
-    .map_err(AppError::from)?;
-    crate::modules::event::awdp::realtime::manual_check_completed(
-        &state,
-        event_id,
-        view.instance_id,
-        result.healthcheck_ok && result.judge_ok,
-    );
+    let evaluation =
+        evaluation::manual_check_enqueue(ctx.db.get_ref(), run.id, view.instance_id, subject)
+            .await
+            .map_err(AppError::from)?;
     UniResponse::ok(
         ManualCheckDto {
-            healthcheck_ok: result.healthcheck_ok,
-            healthcheck_detail: result.healthcheck_detail,
-            judge_ok: result.judge_ok,
-            judge_detail: result.judge_detail,
+            evaluation_id: evaluation.id,
+            status: "pending".to_string(),
+            healthcheck_ok: None,
+            healthcheck_detail: None,
+            judge_ok: None,
+            judge_detail: None,
         }
         .into(),
     )

@@ -20,6 +20,7 @@ export * from "./awd_team_bans";
 export * from "./awd_team_networks";
 export * from "./awd_wireguard_peers";
 export * from "./awdp_breaks";
+export * from "./awdp_evaluation_proofs";
 export * from "./awdp_evaluations";
 export * from "./awdp_event_gameboxes";
 export * from "./awdp_events";

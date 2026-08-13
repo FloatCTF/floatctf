@@ -43,48 +43,13 @@ pub async fn resolve_break_flag(
     jwt_secret: &[u8],
     source_ip: &str,
 ) -> AwdpResult<String> {
-    use crate::entity::{awdp_instances, event_instances};
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use crate::modules::event::awdp::service::network_resolve;
 
-    // 1. 当前 data 网络附着（真实 IP 是事实来源，不信任任何客户端声明）。
-    let network = docker
-        .inspect_network(
-            PRACTICE_NETWORK_NAME,
-            None::<bollard::network::InspectNetworkOptions<String>>,
-        )
-        .await
-        .map_err(|e| AwdpError::Docker(format!("inspect practice network: {e}")))?;
-    let containers = network.containers.unwrap_or_default();
-    let hit = containers
-        .iter()
-        .find(|(_, c)| {
-            // docker 返回 "10.42.2.138/24"（带 CIDR 前缀），剥离后再比较。
-            c.ipv4_address
-                .as_deref()
-                .map(|v| v.split('/').next().unwrap_or(v))
-                == Some(source_ip)
-        })
-        .map(|(id, c)| (id.clone(), c.name.clone().unwrap_or_default()))
-        .ok_or_else(|| AwdpError::Forbidden("unknown source ip".into()))?;
-    let container_name = hit.1.trim_start_matches('/').to_string();
-
-    // 2. 容器 → 实例（运行中）。
-    let instance = event_instances::Entity::find()
-        .filter(event_instances::Column::ContainerName.eq(&container_name))
-        .one(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::Forbidden("unknown container".into()))?;
-    if instance.runtime_state != "running" {
-        return Err(AwdpError::Conflict("instance is not running".into()));
-    }
+    // 1-2. 当前 data 网络附着 → 容器 → 运行中实例（真实 IP 是事实来源）。
+    let (instance, ext) =
+        network_resolve::resolve_instance_by_network_ip(db, docker, source_ip).await?;
 
     // 3. 实例 → run（instance 属于该 run 由 awdp_instances 1:1 保证）。
-    let ext = awdp_instances::Entity::find_by_id(instance.id)
-        .one(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::Forbidden("awdp instance not found".into()))?;
     let run = run_repo::require_by_id(db, ext.run_id).await?;
     if run.phase != AwdpPhase::Break {
         // Break 以外（Fix/PreparingFix/Ended）：flag 不可用。

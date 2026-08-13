@@ -24,7 +24,9 @@ use uuid::Uuid;
 
 use crate::modules::gamebox::{GameboxError, GameboxResult};
 
-/// 通用 patch.sh 模板（全注释空操作；打包进 source.tar.gz，玩家可原样传回）。
+/// 通用 patch.sh 模板（打包进 source.tar.gz，玩家可原样传回）。
+/// 默认行为：清空 FLOATCTF_SOURCE_DIR 后把包内 `src/` 原样恢复（练习闭环；
+/// 如需真实修复，改脚本并在包内放对应文件）。
 pub const PATCH_TEMPLATE: &str = r##"#!/bin/sh
 # ============================================================
 # FloatCTF AWDP 练习 —— 通用 Patch 模板
@@ -38,6 +40,8 @@ pub const PATCH_TEMPLATE: &str = r##"#!/bin/sh
 # 如需真实修复：把修改逻辑写在本文件下方（或引用本包内其它文件），
 # 再重新打成 tar.gz 上传。练习模式可直接原样传回本包。
 # ============================================================
+find "$FLOATCTF_SOURCE_DIR" -mindepth 1 -delete
+cp -af src/. "$FLOATCTF_SOURCE_DIR"/
 "##;
 
 /// private RustFS 桶（source.tar.gz 私有，仅授权下载）。
@@ -206,7 +210,7 @@ fn tar_bytes_to_targz_with_src(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
             .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: tar write: {e}")))?;
     }
 
-    // 根目录 patch.sh 通用模板（全注释空操作；玩家可直接原样传回）。
+    // 根目录 patch.sh 通用模板（默认清空并恢复 src/；玩家可直接原样传回）。
     {
         let mut header = tar::Header::new_gnu();
         header.set_size(PATCH_TEMPLATE.len() as u64);
@@ -334,10 +338,9 @@ mod tests {
         let patch = patch.expect("patch.sh present");
         assert!(patch.contains("通用 Patch 模板"), "template content");
         assert!(
-            patch.lines().all(|l| l.trim().is_empty()
-                || l.trim_start().starts_with('#')
-                || l.trim_start().starts_with("#!/")),
-            "patch.sh must be comment-only"
+            patch.contains("find \"$FLOATCTF_SOURCE_DIR\" -mindepth 1 -delete")
+                && patch.contains("cp -af src/. \"$FLOATCTF_SOURCE_DIR\"/"),
+            "patch.sh must carry the restore logic: {patch}"
         );
     }
 

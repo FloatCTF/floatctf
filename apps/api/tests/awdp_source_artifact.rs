@@ -198,10 +198,9 @@ async fn extract_targz_via_service_helper() {
     let patch = patch_content.expect("patch.sh content");
     assert!(
         patch.contains("通用 Patch 模板")
-            && patch.lines().all(|l| l.trim().is_empty()
-                || l.trim_start().starts_with('#')
-                || l.trim_start().starts_with("#!/")),
-        "patch.sh must be a comment-only generic template: {patch}"
+            && patch.contains("find \"$FLOATCTF_SOURCE_DIR\" -mindepth 1 -delete")
+            && patch.contains("cp -af src/. \"$FLOATCTF_SOURCE_DIR\"/"),
+        "patch.sh must be the generic template with restore logic: {patch}"
     );
 }
 

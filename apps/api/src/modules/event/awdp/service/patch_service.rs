@@ -319,14 +319,16 @@ async fn apply_patch_locked(
         return Err(AwdpError::Docker(format!("patch copy: {e}")));
     }
 
-    // 8. 容器内执行 patch.sh（注入源码目录；解压目录固定 /tmp/patch/）。
+    // 8. 容器内执行 patch.sh：workdir 设为解压目录 /tmp/patch/，
+    //    脚本内相对路径（如 `cp src/...`）以解压目录为基准。
+    //    注入 FLOATCTF_SOURCE_DIR（源码目录）。
     let outcome = runtime
         .exec(
             &instance.container_name,
             ExecOptions {
                 cmd: vec!["/bin/sh".into(), "/tmp/patch/patch.sh".into()],
                 env: vec![format!("FLOATCTF_SOURCE_DIR={source_dir}")],
-                workdir: None,
+                workdir: Some(PATCH_DIR.into()),
                 timeout: Duration::from_secs(PATCH_EXEC_TIMEOUT_SECS),
                 stdout_limit: PATCH_OUTPUT_LIMIT,
                 stderr_limit: PATCH_OUTPUT_LIMIT,

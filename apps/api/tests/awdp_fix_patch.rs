@@ -301,13 +301,14 @@ async fn patch_and_reset_lifecycle() {
     let original_port = view.endpoints[0].public_port;
 
     // 1. Fix 阶段上传 patch.tar.gz（patch.sh 把 src/index.php 覆盖进源码目录）→ applied + restart。
+    // workdir = 解压目录 /tmp/patch/，脚本内相对路径 `src/index.php` 即可引用包内文件。
     let ok_payload = patch_payload(
         r#"#!/bin/sh
-cp "/tmp/patch/index.php" "$FLOATCTF_SOURCE_DIR/index.php"
+cp src/index.php "$FLOATCTF_SOURCE_DIR/index.php"
 echo "patched-ok"
 exit 0
 "#,
-        &[("index.php", "<?php echo 'patched-by-awdp'; ?>")],
+        &[("src/index.php", "<?php echo 'patched-by-awdp'; ?>")],
     );
     let r =
         patch_service::apply_patch(&db, &docker, run_id, view.instance_id, &ok_payload, subject)
@@ -366,10 +367,10 @@ exit 0
     // 3. 覆盖 src/index.php（marker 内容）→ restart 保留 → reset → pristine 恢复 + generation+1。
     let marker_payload = patch_payload(
         r#"#!/bin/sh
-cp "/tmp/patch/index.php" "$FLOATCTF_SOURCE_DIR/index.php"
+cp src/index.php "$FLOATCTF_SOURCE_DIR/index.php"
 exit 0
 "#,
-        &[("index.php", "<?php echo 'marker'; ?>")],
+        &[("src/index.php", "<?php echo 'marker'; ?>")],
     );
     let r = patch_service::apply_patch(
         &db,

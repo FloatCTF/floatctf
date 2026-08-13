@@ -124,9 +124,15 @@ pub async fn start_instance(
         .await
         .map_err(|e| AwdpError::Internal(format!("get NODE_IP: {e}")))?;
 
-    // 2.5 练习实例：ensure 统一练习 docker 子网（幂等；所有练习 GameBox 同一子网）。
+    // 2.5 练习实例：ensure 统一练习 docker 子网 + **默认启用 JudgeServer**（幂等；
+    //     所有练习 GameBox 同一子网，Judge 作为 data plane /flag /proof 网关）。
     if eg.is_none() {
         super::practice_judge::ensure_practice_network(docker, awdp_config).await?;
+        super::practice_judge::deploy_judge(docker, awdp_config, jwt_secret, run.event_id)
+            .await
+            .map_err(|e| {
+                AwdpError::Docker(format!("默认启用练习 JudgeServer（自动部署）失败: {e}"))
+            })?;
     }
 
     // 3. 查找/创建逻辑实例。

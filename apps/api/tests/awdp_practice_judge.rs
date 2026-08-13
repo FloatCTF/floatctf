@@ -1,12 +1,13 @@
 //! AWDP 练习 Judge（Pull + Lease worker）测试。
 //!
 //! 覆盖：
-//! - settings CRUD + 幂等 ensure（DB）
-//! - deploy_judge / stop_judge 幂等（真 Docker，judge 镜像存在时）
-//! - 真 Docker e2e：deploy pull worker → 容器 running + data plane /healthz 可达
-//!   （judge 镜像存在时）
+//! - deploy_judge 幂等（真 Docker，judge 镜像存在时）→ 容器 running + data plane /healthz 可达
+//! - **默认启用**：练习实例启动自动部署 JudgeServer（无需管理端 deploy）
+//! - 双网络拓扑：JudgeServer 在 data + control，GameBox 只在 data
+//! - 旧 push 流程（sweep / callback / admin judge 配置页）不得存在
 //!
-//! 旧的 sweep push / record_callback 流程已移除（plan §61），无对应测试。
+//! 旧的 sweep push / record_callback / admin 配置（awdp_practice_judge_settings /
+//! awdp_judge_results）已随迁移删除，无对应测试。
 
 use fcmc::{ContainerRuntime, DockerContainerRuntime, ImageRuntime};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
@@ -15,8 +16,8 @@ use uuid::Uuid;
 use floatctf::entity::{awdp_runs, events, gameboxes};
 use floatctf::modules::event::awdp::{
     domain::judge::PRACTICE_JUDGE_CONTAINER_NAME,
-    repo::{practice_judge_repo, run_repo},
-    service::practice_judge,
+    repo::run_repo,
+    service::{practice_judge, runtime},
 };
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -133,31 +134,6 @@ async fn seed_trainable_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> 
     gb_id
 }
 
-async fn seed_event(db: &sea_orm::DatabaseConnection) -> Uuid {
-    let base = chrono::Utc::now();
-    let event = events::ActiveModel {
-        is_virtual: Set(false),
-        id: Set(Uuid::new_v4()),
-        family: Set(floatctf::entity::sea_orm_active_enums::EventFamily::Awdp),
-        purpose: Set(floatctf::entity::sea_orm_active_enums::EventPurpose::Competition),
-        participant_mode: Set(floatctf::entity::sea_orm_active_enums::ParticipantMode::Individual),
-        system_key: Set(None),
-        title: Set("awdp-it-judge-seed".to_string()),
-        description: Set(None),
-        start_time: Set((base - chrono::Duration::hours(1)).into()),
-        hidden: Set(true),
-        allow_join: Set(false),
-        rules: Set(String::new()),
-        flag_prefix: Set(None),
-        end_time: Set(Some((base + chrono::Duration::hours(2)).into())),
-        ..Default::default()
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    event.id
-}
-
 /// 测试用 AWDP 静态配置。
 fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
     floatctf::core::config::AwdpStaticConfig {
@@ -171,88 +147,10 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
     }
 }
 
-/// settings CRUD：ensure 默认 / 更新 / 容器状态记录。
-#[tokio::test]
-async fn practice_judge_settings_crud() {
-    let _serial = TEST_SERIAL.lock().unwrap();
-    let Some(db) = connect_or_skip().await else {
-        return;
-    };
-    cleanup(&db).await;
-    let event_id = seed_event(&db).await;
-
-    let s0 = practice_judge_repo::ensure_settings(&db, event_id)
-        .await
-        .unwrap();
-    assert!(!s0.enabled);
-    assert_eq!(s0.container_status, "stopped");
-    // 幂等 ensure。
-    let s1 = practice_judge_repo::ensure_settings(&db, event_id)
-        .await
-        .unwrap();
-    assert_eq!(s1.event_id, event_id);
-
-    let s2 = practice_judge_repo::update_settings(
-        &db,
-        event_id,
-        &practice_judge_repo::PracticeJudgeSettingsPatch {
-            enabled: Some(true),
-            interval_secs: Some(30),
-            flag_path: Some("/flag.php".into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    assert!(s2.enabled);
-    assert_eq!(s2.interval_secs, 30);
-
-    practice_judge_repo::update_container_state(&db, event_id, "running", None)
-        .await
-        .unwrap();
-    let s3 = practice_judge_repo::get_settings(&db, event_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(s3.container_status, "running");
-
-    let _ = events::Entity::delete_by_id(event_id).exec(&db).await;
-    cleanup(&db).await;
-}
-
-/// resolve_judge_server_url：显式 URL 优先；留空按 config IP 推导。
-#[tokio::test]
-async fn resolve_judge_server_url_prefers_explicit() {
-    let _serial = TEST_SERIAL.lock().unwrap();
-    let Some(db) = connect_or_skip().await else {
-        return;
-    };
-    cleanup(&db).await;
-    let event_id = seed_event(&db).await;
-    let cfg = awdp_config();
-
-    let s = practice_judge_repo::ensure_settings(&db, event_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        practice_judge::resolve_judge_server_url(&s, &cfg),
-        "http://10.42.2.2:8080"
-    );
-    let s2 = practice_judge_repo::update_settings(
-        &db,
-        event_id,
-        &practice_judge_repo::PracticeJudgeSettingsPatch {
-            judge_server_url: Some("http://judge.awdp.internal:8080".into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        practice_judge::resolve_judge_server_url(&s2, &cfg),
-        "http://judge.awdp.internal:8080"
-    );
-    cleanup(&db).await;
+async fn remove_judge_container(rt: &DockerContainerRuntime) {
+    let _ = rt
+        .stop_and_remove(PRACTICE_JUDGE_CONTAINER_NAME, fcmc::IMMEDIATE_STOP_TIMEOUT)
+        .await;
 }
 
 /// 真 Docker e2e：deploy pull worker（幂等 ×2）→ 容器 running → data plane /healthz 可达。
@@ -276,21 +174,15 @@ async fn practice_judge_deploy_pull_worker_e2e() {
     }
     cleanup(&db).await;
     let event_id = floatctf::core::system_ids::EVENT_PRACTICE_AWDP;
-    // 停掉可能残留的 live judge（保证用测试 token 部署，幂等）。
-    let _ = practice_judge::stop_judge(&db, &docker, event_id).await;
+    remove_judge_container(&rt).await;
 
     // 1. deploy（幂等 ×2）。
-    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
-    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
-    let settings = practice_judge_repo::get_settings(&db, event_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(settings.container_status, "running");
 
     // 2. 容器真实 running + data plane /healthz 可达（固定 IP 直连）。
     let state = rt
@@ -323,14 +215,73 @@ async fn practice_judge_deploy_pull_worker_e2e() {
     assert!(healthy, "judge data plane /healthz must be reachable");
 
     // 3. 清理：停 judge。
-    practice_judge::stop_judge(&db, &docker, event_id)
+    remove_judge_container(&rt).await;
+    cleanup(&db).await;
+}
+
+/// 默认启用：练习实例启动自动部署 JudgeServer（无需管理端手动 deploy）。
+#[tokio::test]
+async fn practice_instance_start_auto_deploys_judge() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = DockerContainerRuntime::new(docker.clone());
+    if ImageRuntime::inspect_image(&rt, JUDGE_IMAGE_REF)
         .await
-        .unwrap();
-    let settings = practice_judge_repo::get_settings(&db, event_id)
+        .is_err()
+    {
+        eprintln!("skip: judge image {JUDGE_IMAGE_REF} not present");
+        return;
+    }
+    cleanup(&db).await;
+    // 模拟全新环境：judge 容器不存在。
+    remove_judge_container(&rt).await;
+
+    let user_id = seed_user(&db, "autodep").await;
+    let gb_id = seed_trainable_gamebox(&db, "autodep").await;
+    let run = floatctf::modules::event::awdp::service::practice_service::start_training(
+        &db, &docker, JWT_SECRET, user_id, gb_id, "flag",
+    )
+    .await
+    .unwrap();
+    run_repo::launch_practice_run(&db, run.id).await.unwrap();
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run.id,
+        gb_id,
+        runtime::Subject::user(user_id),
+        "flag",
+    )
+    .await
+    .unwrap();
+
+    // 断言：仅启动实例（未手动 deploy）→ judge 容器已被自动部署且 running。
+    let state = rt
+        .inspect_container(PRACTICE_JUDGE_CONTAINER_NAME)
         .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(settings.container_status, "stopped");
+        .expect("judge container must be auto-deployed by instance start");
+    assert!(
+        state.running,
+        "practice 实例启动必须自动部署并运行 JudgeServer"
+    );
+
+    // 清理。
+    let _ = runtime::stop_instance(
+        &db,
+        &docker,
+        view.instance_id,
+        runtime::Subject::user(user_id),
+    )
+    .await;
+    let _ = awdp_runs::Entity::delete_by_id(run.id).exec(&db).await;
+    remove_judge_container(&rt).await;
     cleanup(&db).await;
 }
 
@@ -341,16 +292,15 @@ async fn ensure_practice_event_resolves_virtual_event() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
-    let event_id = practice_judge::ensure_practice_event(&db).await.unwrap();
+    let event_id = run_repo::ensure_practice_event(&db).await.unwrap();
     assert_eq!(
         event_id,
         floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         "AWDPlusPractice 虚拟赛事必须存在且稳定"
     );
-    let _ = run_repo::ensure_practice_event(&db).await;
 }
 
-/// 旧 push 流程（sweep / callback）代码不得存在（plan §61）。
+/// 旧 push 流程（sweep / callback）与管理端 judge 配置页代码不得存在（plan §61 + 用户要求）。
 #[test]
 fn push_flow_removed_from_source() {
     let root = env!("CARGO_MANIFEST_DIR");
@@ -362,6 +312,8 @@ fn push_flow_removed_from_source() {
                 "record_callback",
                 "dispatch_batch",
                 "JudgeCallbackRequest",
+                "resolve_judge_server_url",
+                "stop_judge",
             ][..],
         ),
         (
@@ -374,6 +326,28 @@ fn push_flow_removed_from_source() {
             assert!(!src.contains(needle), "push 流程残留 {needle:?} 在 {path}");
         }
     }
+    // admin judge 配置 API 文件与前端页面已删除。
+    assert!(
+        !std::path::Path::new(&format!(
+            "{root}/src/modules/event/awdp/api/practice_judge.rs"
+        ))
+        .exists(),
+        "admin practice judge API 文件必须删除"
+    );
+    let web_root = format!("{root}/../../apps/web/src");
+    assert!(
+        !std::path::Path::new(&format!(
+            "{web_root}/routes/admin/events/awdp.$id/judge.tsx"
+        ))
+        .exists(),
+        "admin practice judge 前端页面必须删除"
+    );
+    let api_ts = std::fs::read_to_string(format!("{web_root}/api/awdp.ts"))
+        .unwrap_or_else(|e| panic!("read awdp.ts: {e}"));
+    assert!(
+        !api_ts.contains("PracticeJudge") && !api_ts.contains("practice-judge"),
+        "awdp.ts 不得残留 practice judge 类型/方法"
+    );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -400,7 +374,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
     }
     cleanup(&db).await;
     let event_id = floatctf::core::system_ids::EVENT_PRACTICE_AWDP;
-    let _ = practice_judge::stop_judge(&db, &docker, event_id).await;
+    remove_judge_container(&rt).await;
 
     // 1. 两个网络 ensure。
     let _ = practice_judge::ensure_practice_network(&docker, &awdp_config())
@@ -411,7 +385,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
         .unwrap();
 
     // 2. 部署 judge（data + control）。
-    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
 
@@ -448,14 +422,14 @@ async fn judge_on_both_networks_gamebox_data_only() {
     floatctf::modules::event::awdp::repo::run_repo::launch_practice_run(&db, run.id)
         .await
         .unwrap();
-    let view = floatctf::modules::event::awdp::service::runtime::start_instance(
+    let view = runtime::start_instance(
         &db,
         &docker,
         JWT_SECRET,
         &awdp_config(),
         run.id,
         gb_id,
-        floatctf::modules::event::awdp::service::runtime::Subject::user(user_id),
+        runtime::Subject::user(user_id),
         "flag",
     )
     .await
@@ -493,15 +467,15 @@ async fn judge_on_both_networks_gamebox_data_only() {
     );
 
     // 4. 清理。
-    let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
+    let _ = runtime::stop_instance(
         &db,
         &docker,
         view.instance_id,
-        floatctf::modules::event::awdp::service::runtime::Subject::user(user_id),
+        runtime::Subject::user(user_id),
     )
     .await;
     let _ = awdp_runs::Entity::delete_by_id(run.id).exec(&db).await;
-    let _ = practice_judge::stop_judge(&db, &docker, event_id).await;
+    remove_judge_container(&rt).await;
     cleanup(&db).await;
 }
 

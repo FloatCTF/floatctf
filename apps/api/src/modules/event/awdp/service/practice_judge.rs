@@ -1,28 +1,26 @@
-//! AWDP 练习 Judge 服务：练习 docker 子网 + JudgeServer 部署/停止。
+//! AWDP 练习 JudgeServer 服务：练习 data 子网 + JudgeServer 部署。
 //!
 //! 架构（Pull + Lease 模型，plan §12-§19）：
 //!   - 全部练习实例加入 data network `fctf-awdp-practice`；
 //!   - JudgeServer 是**主动拉取**的 worker（claim/heartbeat/result），平台不再 push /batch；
-//!   - 本模块只负责：子网 ensure、容器部署/停止、配置/状态查询。
-//!   - 旧的「例行检查 sweep + /batch 派发 + callback 落库」push 流程已移除（plan §61）。
-
-use std::time::Duration;
+//!   - 本模块只负责：子网 ensure、容器部署（**默认启用**：练习 run Launch / 实例启动时
+//!     自动部署，无管理端配置页）；
+//!   - 旧的「例行检查 sweep + /batch 派发 + callback 落库」push 流程已移除（plan §61），
+//!     管理端配置表（awdp_practice_judge_settings）与历史结果表（awdp_judge_results）
+//!     已随迁移删除。
 
 use bollard::Docker;
 use fcmc::{ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, ResourceLimits};
-use sea_orm::DatabaseConnection;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::core::config::AwdpStaticConfig;
-use crate::entity::awdp_practice_judge_settings;
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::judge::{
         PRACTICE_JUDGE_CONTAINER_NAME, PRACTICE_JUDGE_PORT, PRACTICE_NETWORK_NAME,
         practice_judge_token,
     },
-    repo::{practice_judge_repo, run_repo},
 };
 
 /// 幂等 ensure 练习专用 docker 子网（不存在则创建；已存在复用）。
@@ -124,29 +122,14 @@ fn network_already_exists(e: &bollard::errors::Error) -> bool {
     }
 }
 
-/// 解析 JudgeServer 基址（data plane，供玩家/管理端展示）：配置显式 URL 优先，
-/// 留空自动推导 `http://{judge_ip}:{port}`。注意：此地址不再用于平台→Judge 派发
-/// （Pull 模型下 Judge 主动拉取，平台只提供 internal API）。
-pub fn resolve_judge_server_url(
-    settings: &awdp_practice_judge_settings::Model,
-    config: &AwdpStaticConfig,
-) -> String {
-    let explicit = settings.judge_server_url.trim().trim_end_matches('/');
-    if !explicit.is_empty() {
-        return explicit.to_string();
-    }
-    format!(
-        "http://{}:{}",
-        config.practice_judge_ip, PRACTICE_JUDGE_PORT
-    )
-}
-
-/// 部署练习 JudgeServer 容器（Pull worker，幂等：已 running 跳过；DB 记录与容器双核验）。
+/// 部署练习 JudgeServer 容器（Pull worker，幂等：已 running 跳过）。
 ///
+/// **默认启用**：练习 run Launch / 练习实例启动时自动调用（无管理端配置页）。
 /// 容器进入练习 data 子网固定 IP；env 注入平台 internal API 基址 / worker 配置 /
 /// 内部令牌（令牌由平台 Secret HKDF 派生，不落库不落日志）。
+///
+/// 并发安全：多实例并发部署时容器名冲突视为「对方已创建成功」，重查后按成功返回。
 pub async fn deploy_judge(
-    db: &DatabaseConnection,
     docker: &Docker,
     config: &AwdpStaticConfig,
     jwt_secret: &[u8],
@@ -187,13 +170,6 @@ pub async fn deploy_judge(
         .await
     {
         Ok(state) if state.running => {
-            practice_judge_repo::update_container_state(
-                db,
-                event_id,
-                "running",
-                Some(&state.container_id),
-            )
-            .await?;
             info!("[PracticeJudge] judge container already running — skip");
             return Ok(());
         }
@@ -248,10 +224,35 @@ pub async fn deploy_judge(
         network_mode: None,
         healthcheck: None,
     };
-    let handle = runtime
-        .create_and_start(spec)
-        .await
-        .map_err(|e| AwdpError::Docker(format!("deploy practice judge: {e}")))?;
+    let handle = match runtime.create_and_start(spec).await {
+        Ok(handle) => handle,
+        Err(e) if container_conflict(&e) => {
+            // 并发部署：另一侧刚创建成功 → 重查后幂等视为成功。
+            info!(
+                "[PracticeJudge] judge container name conflict during concurrent deploy — re-inspect"
+            );
+            match runtime
+                .inspect_container(PRACTICE_JUDGE_CONTAINER_NAME)
+                .await
+            {
+                Ok(state) if state.running => {
+                    info!("[PracticeJudge] concurrent deploy won — judge running");
+                    return Ok(());
+                }
+                Ok(_) => {
+                    return Err(AwdpError::Docker(format!(
+                        "concurrent judge deploy left non-running container: {e}"
+                    )));
+                }
+                Err(inspect_err) => {
+                    return Err(AwdpError::Docker(format!(
+                        "judge deploy name conflict and re-inspect failed: {e} / {inspect_err}"
+                    )));
+                }
+            }
+        }
+        Err(e) => return Err(AwdpError::Docker(format!("deploy practice judge: {e}"))),
+    };
 
     // 4. 加入 control 网络（internal=true；GameBox 无权加入）。
     //    注意：control 网络无出站 → JudgeServer 到宿主 API 走 data 网络网关
@@ -273,13 +274,6 @@ pub async fn deploy_judge(
         );
     }
 
-    practice_judge_repo::update_container_state(
-        db,
-        event_id,
-        "running",
-        Some(&handle.container_id),
-    )
-    .await?;
     info!(
         container = %PRACTICE_JUDGE_CONTAINER_NAME,
         id = %handle.container_id,
@@ -289,80 +283,17 @@ pub async fn deploy_judge(
     Ok(())
 }
 
-/// 停止练习 JudgeServer 容器（幂等：容器不存在视为成功）。
-pub async fn stop_judge(
-    db: &DatabaseConnection,
-    docker: &Docker,
-    event_id: Uuid,
-) -> AwdpResult<()> {
-    let runtime = DockerContainerRuntime::new(docker.clone());
-    runtime
-        .stop_and_remove(PRACTICE_JUDGE_CONTAINER_NAME, fcmc::IMMEDIATE_STOP_TIMEOUT)
-        .await
-        .map_err(|e| AwdpError::Docker(format!("stop practice judge: {e}")))?;
-    practice_judge_repo::update_container_state(db, event_id, "stopped", None).await?;
-    info!("AWDP practice judge stopped");
-    Ok(())
-}
-
-/// 供管理端状态展示：JudgeServer 容器真实运行状态（DB 记录 + 真实容器双核验）。
-/// 记录与实际不一致时回写 stopped（下次 deploy 幂等重建）。
-pub async fn container_status(
-    db: &DatabaseConnection,
-    docker: &Docker,
-    settings: &awdp_practice_judge_settings::Model,
-) -> String {
-    if settings.container_status != "running" {
-        return settings.container_status.clone();
+fn container_conflict(e: &anyhow::Error) -> bool {
+    // fcmc create_and_start 返回 anyhow::Error，沿 cause 链找 bollard 409（容器名冲突）。
+    let mut cause: Option<&dyn std::error::Error> = Some(e.as_ref());
+    while let Some(err) = cause {
+        if let Some(bollard::errors::Error::DockerResponseServerError {
+            status_code: 409, ..
+        }) = err.downcast_ref::<bollard::errors::Error>()
+        {
+            return true;
+        }
+        cause = err.source();
     }
-    let running = match DockerContainerRuntime::new(docker.clone())
-        .inspect_container(PRACTICE_JUDGE_CONTAINER_NAME)
-        .await
-    {
-        Ok(state) => state.running,
-        Err(_) => false,
-    };
-    if running {
-        "running".to_string()
-    } else {
-        let _ = practice_judge_repo::update_container_state(db, settings.event_id, "stopped", None)
-            .await;
-        "stopped".to_string()
-    }
-}
-
-/// 解析练习 run（供 deploy 侧校验 AWDPlusPractice 存在）。
-pub async fn ensure_practice_event(db: &DatabaseConnection) -> AwdpResult<Uuid> {
-    run_repo::ensure_practice_event(db)
-        .await
-        .map_err(|e| AwdpError::Internal(format!("ensure AWDPlusPractice event: {e}")))
-}
-
-/// 供管理端展示 JudgeServer 容器最近心跳/状态（Pull worker 存活证据）。
-pub async fn judge_worker_health(docker: &Docker, config: &AwdpStaticConfig) -> AwdpResult<String> {
-    let runtime = DockerContainerRuntime::new(docker.clone());
-    let running = match runtime
-        .inspect_container(PRACTICE_JUDGE_CONTAINER_NAME)
-        .await
-    {
-        Ok(state) => state.running,
-        Err(_) => false,
-    };
-    if !running {
-        return Ok("stopped".to_string());
-    }
-    // 数据面 /healthz（容器内网 IP 直连；平台与容器同宿主时可直接探测）。
-    let url = format!(
-        "http://{}:{}",
-        config.practice_judge_ip, PRACTICE_JUDGE_PORT
-    );
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|e| AwdpError::Network(format!("build health client: {e}")))?;
-    match client.get(format!("{url}/healthz")).send().await {
-        Ok(resp) if resp.status().is_success() => Ok("healthy".to_string()),
-        Ok(_) => Ok("unhealthy".to_string()),
-        Err(_) => Ok("unreachable".to_string()),
-    }
+    false
 }

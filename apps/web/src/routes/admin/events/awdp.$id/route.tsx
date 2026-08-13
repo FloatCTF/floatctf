@@ -50,9 +50,6 @@ function RouteComponent() {
 						<RouterNavItem to="/admin/events/awdp/$id/logs" params={{ id }}>
 							Logs
 						</RouterNavItem>
-						<RouterNavItem to="/admin/events/awdp/$id/judge" params={{ id }}>
-							Judge
-						</RouterNavItem>
 					</>
 				) : (
 					<>

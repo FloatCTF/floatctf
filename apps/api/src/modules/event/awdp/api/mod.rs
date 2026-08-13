@@ -4,7 +4,6 @@ pub mod admin;
 pub mod dto;
 pub mod internal;
 pub mod player;
-pub mod practice_judge;
 pub mod training;
 
 pub use admin::admin_events_routes;

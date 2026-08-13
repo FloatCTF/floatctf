@@ -98,7 +98,9 @@ pub async fn apply_ruleset(ruleset: &str) -> AwdpResult<bool> {
     // 先写临时规则文件，再 `nft -c -f` 校验、`nft -f` 应用（与 AWD 防火墙同流程）。
     let tmp = std::env::temp_dir().join(format!("fctf-awdp-acl-{}.nft", uuid::Uuid::new_v4()));
     if let Err(e) = tokio::fs::write(&tmp, ruleset).await {
-        return Err(AwdpError::Internal(format!("write acl ruleset: {e}")));
+        // best-effort：临时目录/写盘异常（如 TMPDIR 指向不存在目录）不阻断练习沙箱启动。
+        warn!(error = %e, tmp = %tmp.display(), "[PracticeACL] 写临时规则文件失败，跳过 data plane ACL");
+        return Ok(false);
     }
 
     let check = tokio::process::Command::new(&nft)

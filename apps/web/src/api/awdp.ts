@@ -143,50 +143,6 @@ export type AwdpAdminInstanceDto = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-// Practice Judge (AWDPlusPractice 虚拟赛事配置页)
-// ────────────────────────────────────────────────────────────────────────────
-
-export type PracticeJudgeConfigDto = {
-	event_id: string;
-	enabled: boolean;
-	judge_server_url: string;
-	interval_secs: number;
-	flag_path: string;
-	container_status: "stopped" | "running" | "failed";
-	container_id: string | null;
-	last_sweep_at: string | null;
-	updated_at: string;
-	resolved_judge_server_url: string;
-	network_name: string;
-	worker_health: string;
-	data_endpoint: string;
-	pending_evaluations: number;
-	running_evaluations: number;
-	last_heartbeat: string | null;
-};
-
-export type PracticeJudgePatchInput = {
-	enabled?: boolean;
-	judge_server_url?: string;
-	interval_secs?: number;
-	flag_path?: string;
-};
-
-export type PracticeJudgeResultDto = {
-	id: string;
-	run_id: string;
-	instance_id: string;
-	gamebox_id: string;
-	gamebox_name: string;
-	owner_user_id: string | null;
-	owner_team_id: string | null;
-	check_kind: "exploit" | "flag";
-	status: "success" | "failure" | "error";
-	detail: string | null;
-	created_at: string;
-};
-
-// ────────────────────────────────────────────────────────────────────────────
 // Admin client
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -252,45 +208,6 @@ export const awdpAdminApi = {
 	listInstances: async (eventId: string) => {
 		const res = await admin_api.get<UniResponse<AwdpAdminInstanceDto[]>>(
 			`/events/${eventId}/awdp/instances`,
-		);
-		return res.data;
-	},
-	// 练习 Judge（AWDPlusPractice 配置页）
-	getPracticeJudge: async (eventId: string) => {
-		const res = await admin_api.get<UniResponse<PracticeJudgeConfigDto>>(
-			`/events/${eventId}/awdp/practice-judge`,
-		);
-		return res.data;
-	},
-	updatePracticeJudge: async (
-		eventId: string,
-		body: PracticeJudgePatchInput,
-	) => {
-		const res = await admin_api.patch<UniResponse<PracticeJudgeConfigDto>>(
-			`/events/${eventId}/awdp/practice-judge`,
-			body,
-		);
-		return res.data;
-	},
-	deployPracticeJudge: async (eventId: string) => {
-		const res = await admin_api.post<UniResponse<PracticeJudgeConfigDto>>(
-			`/events/${eventId}/awdp/practice-judge/deploy`,
-		);
-		return res.data;
-	},
-	stopPracticeJudge: async (eventId: string) => {
-		const res = await admin_api.post<UniResponse<PracticeJudgeConfigDto>>(
-			`/events/${eventId}/awdp/practice-judge/stop`,
-		);
-		return res.data;
-	},
-	listPracticeJudgeResults: async (
-		eventId: string,
-		params?: { limit?: number },
-	) => {
-		const res = await admin_api.get<UniResponse<PracticeJudgeResultDto[]>>(
-			`/events/${eventId}/awdp/practice-judge/results`,
-			{ params },
 		);
 		return res.data;
 	},

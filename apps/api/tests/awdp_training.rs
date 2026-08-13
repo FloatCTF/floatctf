@@ -134,6 +134,8 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
+        eval_lease_duration_secs: 120,
+        eval_max_attempts: 3,
     }
 }
 

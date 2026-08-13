@@ -116,7 +116,86 @@ pub async fn practice_judge_callback(
     UniResponse::ok_none().into()
 }
 
+/// POST /internal/awdp/judge/jobs/claim
+/// JudgeServer 主动领取评估作业（Pull + Lease）。
+#[post("/internal/awdp/judge/jobs/claim")]
+pub async fn judge_jobs_claim(
+    _auth: PracticeJudgeInternalAuth,
+    ctx: ReqCtx,
+    body: Json<crate::modules::event::awdp::service::judge_worker::ClaimRequest>,
+) -> UniResult<crate::modules::event::awdp::service::judge_worker::ClaimResponse> {
+    use crate::modules::event::awdp::service::judge_worker;
+    let req = body.into_inner();
+    if req.worker_id.trim().is_empty() {
+        return Err(AppError::Validation("worker_id is required".into()));
+    }
+    if req.capacity == 0 || req.capacity > 64 {
+        return Err(AppError::Validation("capacity must be in [1, 64]".into()));
+    }
+    let resp = judge_worker::claim_jobs(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        &req.worker_id,
+        req.capacity,
+        ctx.config.awdp.eval_lease_duration_secs,
+        ctx.config.awdp.eval_max_attempts,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(Some(resp)).into()
+}
+
+/// POST /internal/awdp/judge/jobs/{id}/heartbeat
+/// JudgeServer 延长 lease。
+#[post("/internal/awdp/judge/jobs/{id}/heartbeat")]
+pub async fn judge_jobs_heartbeat(
+    _auth: PracticeJudgeInternalAuth,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+    body: Json<crate::modules::event::awdp::service::judge_worker::HeartbeatRequest>,
+) -> UniResult<()> {
+    use crate::modules::event::awdp::service::judge_worker;
+    let evaluation_id = path.into_inner();
+    let req = body.into_inner();
+    let outcome = judge_worker::heartbeat_job(
+        ctx.db.get_ref(),
+        evaluation_id,
+        &req,
+        ctx.config.awdp.eval_lease_duration_secs,
+    )
+    .await
+    .map_err(AppError::from)?;
+    match outcome {
+        crate::modules::event::awdp::repo::evaluation_repo::HeartbeatOutcome::Ok => {
+            UniResponse::ok_none().into()
+        }
+        crate::modules::event::awdp::repo::evaluation_repo::HeartbeatOutcome::NoLease => {
+            Err(AppError::Conflict("no valid lease for evaluation".into()))
+        }
+    }
+}
+
+/// POST /internal/awdp/judge/jobs/{id}/result
+/// JudgeServer 提交评估结果（stale 结果 409 拒绝）。
+#[post("/internal/awdp/judge/jobs/{id}/result")]
+pub async fn judge_jobs_result(
+    _auth: PracticeJudgeInternalAuth,
+    ctx: ReqCtx,
+    _path: web::Path<Uuid>,
+    body: Json<crate::modules::event::awdp::service::judge_worker::ResultRequest>,
+) -> UniResult<()> {
+    use crate::modules::event::awdp::service::judge_worker;
+    let req = body.into_inner();
+    judge_worker::record_result(ctx.db.get_ref(), &req)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok_none().into()
+}
+
 /// 注册内部路由（bootstrap 顶层，与 AWD internal 同风格）。
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(practice_judge_callback);
+    cfg.service(judge_jobs_claim);
+    cfg.service(judge_jobs_heartbeat);
+    cfg.service(judge_jobs_result);
 }

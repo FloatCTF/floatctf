@@ -248,35 +248,70 @@ pub async fn materialize_official_evaluations(
     Ok(true)
 }
 
-/// worker 单轮：领取 pending 评估（SKIP LOCKED）并逐一执行。
+/// worker 单轮：领取 pending 评估（Pull + Lease，SKIP LOCKED）并逐一执行。
+///
+/// `worker_id`：进程内 worker 固定标识；`lease_duration_secs` / `max_attempts` 来自
+/// config（awdp.eval_lease_duration_secs / awdp.eval_max_attempts）。
+/// 仅领取 official（manual 由 Test Check 同步流程独占）。
+#[allow(clippy::too_many_arguments)]
 pub async fn worker_round(
     db: &DatabaseConnection,
     docker: &Docker,
+    worker_id: &str,
     concurrency: u64,
+    lease_duration_secs: i64,
+    max_attempts: i32,
 ) -> AwdpResult<usize> {
-    let claimed = evaluation_repo::claim_pending(db, concurrency).await?;
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationKind;
+    let claimed = evaluation_repo::claim_jobs(
+        db,
+        worker_id,
+        concurrency,
+        lease_duration_secs,
+        max_attempts,
+        &[AwdpEvaluationKind::Official],
+    )
+    .await?;
     let mut n = 0usize;
-    for ev in claimed {
-        match process_official(db, docker, &ev).await {
+    for job in claimed {
+        let ev = job.evaluation;
+        match process_official_leased(db, docker, worker_id, &ev, &job.lease_token, job.attempt)
+            .await
+        {
             Ok(()) => n += 1,
             Err(e) => {
-                // 平台内部失败：PLATFORM_ERROR，可 retry（与 VULNERABLE/BROKEN 区分）。
-                let _ = evaluation_repo::finish(
+                // 平台/基础设施失败：不能判玩家失败；未达 max_attempts 释放回 pending 重试，
+                // 达到则终态 PLATFORM_ERROR（允许区分 VULNERABLE/BROKEN 等业务终态）。
+                let _ = evaluation_repo::release_or_fail(
                     db,
                     ev.id,
-                    crate::entity::sea_orm_active_enums::AwdpEvaluationStatus::PlatformError,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(&format!("{e}")),
+                    worker_id,
+                    &job.lease_token,
+                    job.attempt,
+                    max_attempts,
+                    &format!("{e}"),
                 )
                 .await;
-                tracing::warn!(evaluation_id = %ev.id, error = %e, "AWDP evaluation failed");
+                tracing::warn!(evaluation_id = %ev.id, attempt = job.attempt, error = %e, "AWDP evaluation failed (release or fail)");
             }
         }
     }
     Ok(n)
+}
+
+/// 执行单条 official 评估（lease 版）：NO_PATCH → Healthcheck → Judge → Exploit → Score。
+async fn process_official_leased(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    worker_id: &str,
+    ev: &crate::entity::awdp_evaluations::Model,
+    lease_token: &str,
+    attempt: i32,
+) -> AwdpResult<()> {
+    let lock = InstanceAdvisoryLock::acquire(db, ev.instance_id).await?;
+    let result = process_official_locked(db, docker, worker_id, ev, lease_token, attempt).await;
+    lock.release().await;
+    result
 }
 
 /// 执行单条 official 评估：NO_PATCH → Healthcheck → Judge → Exploit → Score。
@@ -286,7 +321,7 @@ async fn process_official(
     ev: &crate::entity::awdp_evaluations::Model,
 ) -> AwdpResult<()> {
     let lock = InstanceAdvisoryLock::acquire(db, ev.instance_id).await?;
-    let result = process_official_locked(db, docker, ev).await;
+    let result = process_official_locked(db, docker, "", ev, "", 0).await;
     lock.release().await;
     result
 }
@@ -294,7 +329,10 @@ async fn process_official(
 async fn process_official_locked(
     db: &DatabaseConnection,
     docker: &Docker,
+    worker_id: &str,
     ev: &crate::entity::awdp_evaluations::Model,
+    lease_token: &str,
+    attempt: i32,
 ) -> AwdpResult<()> {
     let (_instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
     let run = run_repo::require_by_id(db, ext.run_id).await?;
@@ -303,12 +341,26 @@ async fn process_official_locked(
         .fix_round_id
         .ok_or_else(|| AwdpError::Internal("official evaluation missing fix_round_id".into()))?;
     let round = round_repo::find_by_id(db, round_id).await?;
-    run_official_pipeline(db, docker, &run, &gamebox, ev, &round).await?;
+    run_official_pipeline(
+        db,
+        docker,
+        &run,
+        &gamebox,
+        ev,
+        &round,
+        worker_id,
+        lease_token,
+        attempt,
+    )
+    .await?;
     Ok(())
 }
 
 /// 共享官方评估管线：NO_PATCH 短路 → Healthcheck → Judge → Exploit → 计分。
 /// 返回终态（worker 与练习提前 Check 共用，保证语义一致）。
+///
+/// 有 lease 时（lease_token 非空）用 `finish_with_lease` 写终态（stale 拒绝）；
+/// 无 lease（练习提前 Check 进程内同步路径）用 `finish`。
 #[allow(clippy::too_many_arguments)]
 async fn run_official_pipeline(
     db: &DatabaseConnection,
@@ -317,14 +369,70 @@ async fn run_official_pipeline(
     gamebox: &crate::entity::gameboxes::Model,
     ev: &crate::entity::awdp_evaluations::Model,
     round: &crate::entity::awdp_fix_rounds::Model,
+    worker_id: &str,
+    lease_token: &str,
+    attempt: i32,
 ) -> AwdpResult<crate::entity::sea_orm_active_enums::AwdpEvaluationStatus> {
     use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
 
+    // 终态写入助手：有 lease → lease 校验版；否则直接写。
+    async fn finish_eval(
+        db: &DatabaseConnection,
+        ev: &crate::entity::awdp_evaluations::Model,
+        worker_id: &str,
+        lease_token: &str,
+        attempt: i32,
+        status: S,
+        healthcheck_result: Option<&str>,
+        judge_result: Option<&str>,
+        exploit_result: Option<&str>,
+        stdout_limited: Option<&str>,
+        stderr_limited: Option<&str>,
+    ) -> AwdpResult<()> {
+        if lease_token.is_empty() {
+            evaluation_repo::finish(
+                db,
+                ev.id,
+                status,
+                healthcheck_result,
+                judge_result,
+                exploit_result,
+                stdout_limited,
+                stderr_limited,
+            )
+            .await?;
+        } else {
+            let outcome = evaluation_repo::finish_with_lease(
+                db,
+                ev.id,
+                worker_id,
+                lease_token,
+                attempt,
+                status,
+                healthcheck_result,
+                judge_result,
+                exploit_result,
+                stdout_limited,
+                stderr_limited,
+            )
+            .await?;
+            if outcome
+                == crate::modules::event::awdp::repo::evaluation_repo::FinishOutcome::StaleRejected
+            {
+                tracing::warn!(evaluation_id = %ev.id, attempt, "AWDP stale worker result rejected");
+            }
+        }
+        Ok(())
+    }
+
     // 1. NO_PATCH 短路（plan §21/§33：本轮无 APPLIED patch → +0，不浪费资源）。
     if !patch_repo::has_applied_patch(db, ev.instance_id, round.id).await? {
-        evaluation_repo::finish(
+        finish_eval(
             db,
-            ev.id,
+            ev,
+            worker_id,
+            lease_token,
+            attempt,
             S::NoPatch,
             Some("no applied patch this round"),
             None,
@@ -405,9 +513,12 @@ async fn run_official_pipeline(
         }
     }
     if !health_ok {
-        evaluation_repo::finish(
+        finish_eval(
             db,
-            ev.id,
+            ev,
+            worker_id,
+            lease_token,
+            attempt,
             S::ServiceDown,
             Some(&health_detail.join("; ")),
             None,
@@ -457,9 +568,12 @@ async fn run_official_pipeline(
         (_, None) => (false, "容器未运行，无法 judge".into()),
     };
     if !judge_ok {
-        evaluation_repo::finish(
+        finish_eval(
             db,
-            ev.id,
+            ev,
+            worker_id,
+            lease_token,
+            attempt,
             S::FunctionalBroken,
             Some(&health_detail.join("; ")),
             Some(&judge_detail),
@@ -509,9 +623,12 @@ async fn run_official_pipeline(
 
     if exploit_ok {
         // VULNERABLE → +0（记录即可）。
-        evaluation_repo::finish(
+        finish_eval(
             db,
-            ev.id,
+            ev,
+            worker_id,
+            lease_token,
+            attempt,
             S::Vulnerable,
             Some(&health_detail.join("; ")),
             Some(&judge_detail),
@@ -536,9 +653,12 @@ async fn run_official_pipeline(
             &key,
         )
         .await?;
-        evaluation_repo::finish(
+        finish_eval(
             db,
-            ev.id,
+            ev,
+            worker_id,
+            lease_token,
+            attempt,
             S::Patched,
             Some(&health_detail.join("; ")),
             Some(&judge_detail),
@@ -645,7 +765,7 @@ async fn early_check_locked(
         s => Some(s.clone()),
     };
     if terminal.is_none() || terminal != Some(S::Patched) {
-        run_official_pipeline(db, docker, run, &gamebox, &ev, &round).await?;
+        run_official_pipeline(db, docker, run, &gamebox, &ev, &round, "", "", 0).await?;
     }
     // 重取终态（finish 之后 ev 内存态过期）。
     let fresh = evaluation_repo::find_by_id(db, ev.id).await?;

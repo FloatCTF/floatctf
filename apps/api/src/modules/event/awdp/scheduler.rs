@@ -46,10 +46,11 @@ impl TaskHandler for AwdpTickHandler {
     }
 }
 
-/// `awdp.eval.worker`：每 3s 领取 pending 评估（SKIP LOCKED）并执行（health→judge→exploit→score）。
+/// `awdp.eval.worker`：每 3s 领取 pending 评估（Pull + Lease，SKIP LOCKED）并执行（health→judge→exploit→score）。
 pub struct AwdpEvalWorkerHandler {
     pub db: WebDb,
     pub docker: WebDocker,
+    pub config: Arc<AppConfig>,
 }
 #[async_trait]
 impl TaskHandler for AwdpEvalWorkerHandler {
@@ -65,7 +66,10 @@ impl TaskHandler for AwdpEvalWorkerHandler {
         crate::modules::event::awdp::service::evaluation::worker_round(
             self.db.get_ref(),
             self.docker.get_ref(),
+            "floatctf-api-worker",
             4,
+            self.config.awdp.eval_lease_duration_secs,
+            self.config.awdp.eval_max_attempts,
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;

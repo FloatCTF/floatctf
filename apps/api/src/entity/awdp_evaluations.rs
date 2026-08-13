@@ -29,6 +29,14 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub run_id: Uuid,
+    pub attempt_count: i32,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<DateTimeWithTimeZone>,
+    pub heartbeat_at: Option<DateTimeWithTimeZone>,
+    pub lease_expires_at: Option<DateTimeWithTimeZone>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub lease_token_hash: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

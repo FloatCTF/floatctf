@@ -116,7 +116,7 @@ async fn config_for_event(db: &DatabaseConnection, event_id: uuid::Uuid) -> Awdp
 }
 
 /// 处理 Fix 阶段到达 cutoff 的回合：物化评估 + 推进 next_action_at。
-/// 幂等：round 状态 pending→evaluating 只发生一次。
+/// 幂等：round 状态 pending→evaluating 只在原子物化事务内发生一次。
 async fn process_fix_round_cutoffs(
     db: &DatabaseConnection,
     run_id: uuid::Uuid,
@@ -128,26 +128,17 @@ async fn process_fix_round_cutoffs(
         return Ok(processed);
     };
 
-    // 标记 evaluating（CAS 由 next_pending_due_round 的状态过滤保证单次）。
-    round_repo::set_status(db, round.id, "evaluating").await?;
-
-    // 物化该 round 的全部 official evaluation（run 内已启动实例）。
-    let instances = instance_repo::list_for_run(db, run_id).await?;
-    let mut created = 0usize;
-    for (instance, _ext) in &instances {
-        if instance.runtime_state == "pending" {
-            continue; // 未启动 = 未参赛
-        }
-        if materialize_official_evaluations(db, run_id, instance.id, round.id).await? {
-            created += 1;
-        }
+    // 原子物化：lock round → CAS status=pending → 物化全部已启动实例的 official 评估
+    // → 记录 expected_eval_count → status=evaluating。单事务，crash 安全。
+    let created = round_repo::materialize_round_atomic(db, run_id, round.id, now).await?;
+    if created > 0 {
+        info!(
+            run_id = %run_id,
+            round = round.sequence,
+            evaluations = created,
+            "AWDP round cutoff materialized"
+        );
     }
-    info!(
-        run_id = %run_id,
-        round = round.sequence,
-        evaluations = created,
-        "AWDP round cutoff materialized"
-    );
     processed += 1;
 
     // 推进：next_action_at = 下一个回合 cutoff 或 Fix 结束。

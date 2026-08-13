@@ -16,4 +16,10 @@ export type AwdpEvaluations = {
   created_at: string;
   updated_at: string;
   run_id: string;
+  attempt_count: number;
+  claimed_by?: string;
+  claimed_at?: string;
+  heartbeat_at?: string;
+  lease_expires_at?: string;
+  lease_token_hash?: string;
 };

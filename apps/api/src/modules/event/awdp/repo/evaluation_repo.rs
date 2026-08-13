@@ -1,9 +1,17 @@
-//! awdp_evaluations 仓储（run 作用域）。
+//! awdp_evaluations 仓储（run 作用域）+ Pull/Lease worker 元数据。
+//!
+//! Lease 模型（plan §12-§18）：
+//! - `claim_jobs`：事务内先回收 stale running（lease 到期 → pending，超 max_attempts → PLATFORM_ERROR），
+//!   再 SKIP LOCKED 领取 pending，写入 lease 元数据并返回明文 token（仅 worker 内存）。
+//! - `heartbeat`：验证 token/worker/状态后延长 lease。
+//! - `finish_with_lease`：验证 lease token + attempt + worker 后写终态；stale 结果拒绝。
+//! - token 明文不落库（只存 sha256），不落日志。
 
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    TransactionTrait, sea_query::LockType,
 };
 use uuid::Uuid;
 
@@ -12,6 +20,49 @@ use crate::entity::{
     sea_orm_active_enums::{AwdpEvaluationKind, AwdpEvaluationStatus},
 };
 use crate::modules::event::awdp::{AwdpError, AwdpResult};
+
+/// 领取的作业（含明文 lease token，仅在 worker 内存；不落库不落日志）。
+#[derive(Debug, Clone)]
+pub struct ClaimedJob {
+    pub evaluation: awdp_evaluations::Model,
+    pub lease_token: String,
+    /// 本次领取对应的 attempt 序号（= attempt_count 递增后的值）。
+    pub attempt: i32,
+}
+
+/// 心跳结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeartbeatOutcome {
+    /// lease 有效并已延长。
+    Ok,
+    /// 无有效 lease（token/worker/状态不匹配，或评估已终态）。
+    NoLease,
+}
+
+/// 写终态结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinishOutcome {
+    /// 结果已写入。
+    Ok,
+    /// stale worker 的晚结果（lease 无效 / attempt 不匹配）——拒绝，不覆盖新 attempt。
+    StaleRejected,
+}
+
+/// 生成 32 字节随机 lease token（hex 编码）。
+fn new_lease_token() -> String {
+    use rand::RngCore;
+    let mut buf = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    hex::encode(buf)
+}
+
+/// lease token 的 sha256 哈希（落库用）。
+fn lease_token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(token.as_bytes());
+    hex::encode(h.finalize())
+}
 
 /// 创建 official 评估（每 round × instance 唯一；冲突视为已存在）。
 pub async fn create_official(
@@ -73,38 +124,351 @@ pub async fn create_manual(
     .map_err(|e| AwdpError::Database(e.to_string()))
 }
 
-/// worker 领取 pending 评估（SKIP LOCKED）。
-pub async fn claim_pending(
-    db: &DatabaseConnection,
-    limit: u64,
-) -> AwdpResult<Vec<awdp_evaluations::Model>> {
-    use sea_orm::{QuerySelect, sea_query::LockBehavior};
+// ────────────────────────────────────────────────────────────────────────────
+// Pull + Lease
+// ────────────────────────────────────────────────────────────────────────────
 
-    let rows = awdp_evaluations::Entity::find()
-        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Pending))
-        .order_by_asc(awdp_evaluations::Column::CreatedAt)
-        .limit(limit)
-        .lock_with_behavior(
-            sea_orm::sea_query::LockType::Update,
-            LockBehavior::SkipLocked,
+/// 回收 stale running：lease 已到期（或旧数据 lease 为 NULL）的 running 行。
+///
+/// - `attempt_count < max_attempts` → 重置 pending（清 lease 元数据）等待重领；
+/// - `attempt_count >= max_attempts` → 终态 PLATFORM_ERROR（不允许永久 running）。
+///
+/// 返回 (reclaimed_to_pending, terminal_platform_error)。
+async fn recover_stale_running<C>(
+    db: &C,
+    max_attempts: i32,
+    now: DateTime<Utc>,
+) -> AwdpResult<(usize, usize)>
+where
+    C: ConnectionTrait,
+{
+    use sea_orm::sea_query::Condition;
+    let stale = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Running))
+        .filter(
+            Condition::any()
+                .add(awdp_evaluations::Column::LeaseExpiresAt.lt(now))
+                // 旧模型置 running 的行 lease 为 NULL（无心跳）→ 一律视为 stale。
+                .add(awdp_evaluations::Column::LeaseExpiresAt.is_null()),
         )
+        .lock(LockType::Update)
         .all(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?;
-    for row in &rows {
+
+    let mut reclaimed = 0usize;
+    let mut terminal = 0usize;
+    for row in stale {
         let mut am: awdp_evaluations::ActiveModel = row.clone().into();
-        am.status = Set(AwdpEvaluationStatus::Running);
-        am.started_at = Set(Some(Utc::now().into()));
-        am.updated_at = Set(Utc::now().into());
+        if row.attempt_count >= max_attempts {
+            am.status = Set(AwdpEvaluationStatus::PlatformError);
+            am.finished_at = Set(Some(now.into()));
+            terminal += 1;
+        } else {
+            am.status = Set(AwdpEvaluationStatus::Pending);
+            reclaimed += 1;
+        }
+        am.claimed_by = Set(None);
+        am.claimed_at = Set(None);
+        am.heartbeat_at = Set(None);
+        am.lease_expires_at = Set(None);
+        am.lease_token_hash = Set(None);
+        am.updated_at = Set(now.into());
         am.update(db)
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?;
     }
-    Ok(rows)
+    Ok((reclaimed, terminal))
 }
 
-/// 写入终态（结果摘要 + status）。
+/// claim pending 评估（Pull + Lease）：
+///
+/// 单事务内：
+///   1. 先回收 stale running（见 `recover_stale_running`）；
+///   2. `SELECT ... WHERE status='pending' [AND kind IN kinds] FOR UPDATE SKIP LOCKED LIMIT capacity`；
+///   3. 每条：status=running、attempt_count+=1、写入 lease 元数据、返回明文 token。
+///
+/// `kinds` 为空 = 不限制（JudgeServer 同时消费 manual + official）；
+/// 平台侧进程内 worker 只传 official（manual 由 Test Check 同步流程独占）。
 #[allow(clippy::too_many_arguments)]
+pub async fn claim_jobs(
+    db: &DatabaseConnection,
+    worker_id: &str,
+    capacity: u64,
+    lease_duration_secs: i64,
+    max_attempts: i32,
+    kinds: &[AwdpEvaluationKind],
+) -> AwdpResult<Vec<ClaimedJob>> {
+    let txn: DatabaseTransaction = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let now = Utc::now();
+
+    recover_stale_running(&txn, max_attempts, now).await?;
+
+    let mut query = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Pending))
+        .order_by_asc(awdp_evaluations::Column::CreatedAt)
+        .limit(capacity)
+        .lock_with_behavior(
+            sea_orm::sea_query::LockType::Update,
+            sea_orm::sea_query::LockBehavior::SkipLocked,
+        );
+    if !kinds.is_empty() {
+        query = query.filter(awdp_evaluations::Column::Kind.is_in(kinds.iter().cloned()));
+    }
+    let rows = query
+        .all(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    let mut jobs = Vec::with_capacity(rows.len());
+    for row in rows {
+        let token = new_lease_token();
+        let attempt = row.attempt_count + 1;
+        let mut am: awdp_evaluations::ActiveModel = row.clone().into();
+        am.status = Set(AwdpEvaluationStatus::Running);
+        am.started_at = Set(Some(now.into()));
+        am.attempt_count = Set(attempt);
+        am.claimed_by = Set(Some(worker_id.to_string()));
+        am.claimed_at = Set(Some(now.into()));
+        am.heartbeat_at = Set(Some(now.into()));
+        am.lease_expires_at = Set(Some((now + Duration::seconds(lease_duration_secs)).into()));
+        am.lease_token_hash = Set(Some(lease_token_hash(&token)));
+        am.updated_at = Set(now.into());
+        am.update(&txn)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        jobs.push(ClaimedJob {
+            evaluation: row,
+            lease_token: token,
+            attempt,
+        });
+    }
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(jobs)
+}
+
+/// 心跳：验证 lease 后延长（heartbeat_at = now，lease_expires_at = now + duration）。
+pub async fn heartbeat(
+    db: &DatabaseConnection,
+    evaluation_id: Uuid,
+    worker_id: &str,
+    lease_token: &str,
+    lease_duration_secs: i64,
+) -> AwdpResult<HeartbeatOutcome> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let row = awdp_evaluations::Entity::find_by_id(evaluation_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let Some(row) = row else {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(HeartbeatOutcome::NoLease);
+    };
+
+    let now = Utc::now();
+    let valid = row.status == AwdpEvaluationStatus::Running
+        && row.claimed_by.as_deref() == Some(worker_id)
+        && row.lease_token_hash.as_deref() == Some(lease_token_hash(lease_token).as_str())
+        && row
+            .lease_expires_at
+            .map(|t| t.with_timezone(&Utc) > now)
+            .unwrap_or(false);
+    if !valid {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(HeartbeatOutcome::NoLease);
+    }
+
+    let mut am: awdp_evaluations::ActiveModel = row.into();
+    am.heartbeat_at = Set(Some(now.into()));
+    am.lease_expires_at = Set(Some((now + Duration::seconds(lease_duration_secs)).into()));
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(HeartbeatOutcome::Ok)
+}
+
+/// 写终态（lease 校验版）：验证 worker/token/attempt 后原子写入。
+///
+/// stale worker 的晚结果（attempt 不匹配 / token 无效 / 非 running / lease 已失效）
+/// 返回 `FinishOutcome::StaleRejected`——绝不覆盖新 attempt 的评估结果。
+#[allow(clippy::too_many_arguments)]
+pub async fn finish_with_lease(
+    db: &DatabaseConnection,
+    evaluation_id: Uuid,
+    worker_id: &str,
+    lease_token: &str,
+    attempt: i32,
+    status: AwdpEvaluationStatus,
+    healthcheck_result: Option<&str>,
+    judge_result: Option<&str>,
+    exploit_result: Option<&str>,
+    stdout_limited: Option<&str>,
+    stderr_limited: Option<&str>,
+) -> AwdpResult<FinishOutcome> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let row = awdp_evaluations::Entity::find_by_id(evaluation_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let Some(row) = row else {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::NotFound("evaluation not found".into()));
+    };
+
+    let now = Utc::now();
+    let valid = row.status == AwdpEvaluationStatus::Running
+        && row.claimed_by.as_deref() == Some(worker_id)
+        && row.lease_token_hash.as_deref() == Some(lease_token_hash(lease_token).as_str())
+        && row.attempt_count == attempt
+        && row
+            .lease_expires_at
+            .map(|t| t.with_timezone(&Utc) >= now)
+            .unwrap_or(false);
+    if !valid {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(FinishOutcome::StaleRejected);
+    }
+
+    let mut am: awdp_evaluations::ActiveModel = row.into();
+    am.status = Set(status);
+    if let Some(v) = healthcheck_result {
+        am.healthcheck_result = Set(Some(v.to_string()));
+    }
+    if let Some(v) = judge_result {
+        am.judge_result = Set(Some(v.to_string()));
+    }
+    if let Some(v) = exploit_result {
+        am.exploit_result = Set(Some(v.to_string()));
+    }
+    if let Some(v) = stdout_limited {
+        am.stdout_limited = Set(Some(v.to_string()));
+    }
+    if let Some(v) = stderr_limited {
+        am.stderr_limited = Set(Some(v.to_string()));
+    }
+    am.finished_at = Set(Some(now.into()));
+    // 终态释放 lease。
+    am.claimed_by = Set(None);
+    am.claimed_at = Set(None);
+    am.heartbeat_at = Set(None);
+    am.lease_expires_at = Set(None);
+    am.lease_token_hash = Set(None);
+    am.updated_at = Set(now.into());
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(FinishOutcome::Ok)
+}
+
+/// 基础设施失败（脚本 spawn 失败/超时/输出畸形/runner 错误）的处理：
+/// 不能判玩家失败。`attempt < max_attempts` → 释放回 pending 允许重领重试
+/// （attempt_count 保留，下次 claim +1）；`attempt >= max_attempts` → 终态
+/// PLATFORM_ERROR（不允许永久 running / 无限重试）。
+///
+/// 返回 `FinishOutcome::Ok` 表示已处理（重试或终态）；`StaleRejected` 表示
+/// lease 已失效（另一个 worker 已接管），本 worker 的结果被忽略。
+pub async fn release_or_fail(
+    db: &DatabaseConnection,
+    evaluation_id: Uuid,
+    worker_id: &str,
+    lease_token: &str,
+    attempt: i32,
+    max_attempts: i32,
+    detail: &str,
+) -> AwdpResult<FinishOutcome> {
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let row = awdp_evaluations::Entity::find_by_id(evaluation_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    let Some(row) = row else {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Err(AwdpError::NotFound("evaluation not found".into()));
+    };
+
+    let now = Utc::now();
+    let valid = row.status == AwdpEvaluationStatus::Running
+        && row.claimed_by.as_deref() == Some(worker_id)
+        && row.lease_token_hash.as_deref() == Some(lease_token_hash(lease_token).as_str())
+        && row.attempt_count == attempt;
+    if !valid {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?;
+        return Ok(FinishOutcome::StaleRejected);
+    }
+
+    let mut am: awdp_evaluations::ActiveModel = row.into();
+    am.claimed_by = Set(None);
+    am.claimed_at = Set(None);
+    am.heartbeat_at = Set(None);
+    am.lease_expires_at = Set(None);
+    am.lease_token_hash = Set(None);
+    am.updated_at = Set(now.into());
+    if attempt >= max_attempts {
+        am.status = Set(AwdpEvaluationStatus::PlatformError);
+        am.finished_at = Set(Some(now.into()));
+    } else {
+        // 释放回 pending 重试（attempt_count 保留；下次 claim 再 +1）。
+        am.status = Set(AwdpEvaluationStatus::Pending);
+        am.stdout_limited = Set(Some(truncate_str(detail, 64 * 1024)));
+    }
+    am.update(&txn)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(FinishOutcome::Ok)
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…({} bytes)", &s[..max], s.len())
+    }
+}
+
+/// 写入终态（无 lease 校验版）——仅用于非 claim 的同步流程（manual Test Check）。
 pub async fn finish(
     db: &DatabaseConnection,
     evaluation_id: Uuid,

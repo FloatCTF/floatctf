@@ -115,6 +115,10 @@ pub struct AwdpStaticConfig {
     pub practice_judge_ip: String,
     /// JudgeServer 回调平台使用的基址（容器视角；默认 host.docker.internal）。
     pub platform_internal_url: String,
+    /// 评估 lease 时长（秒）：worker claim 后持有；到期未心跳可被回收重领。
+    pub eval_lease_duration_secs: i64,
+    /// 评估最大领取次数：超过则终态 PLATFORM_ERROR，不再重领。
+    pub eval_max_attempts: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -282,6 +286,10 @@ struct AwdpToml {
     practice_judge_ip: String,
     #[serde(default = "default_platform_internal_url")]
     platform_internal_url: String,
+    #[serde(default = "default_eval_lease_duration_secs")]
+    eval_lease_duration_secs: i64,
+    #[serde(default = "default_eval_max_attempts")]
+    eval_max_attempts: i32,
 }
 
 impl Default for AwdpToml {
@@ -291,8 +299,18 @@ impl Default for AwdpToml {
             practice_network_subnet: default_practice_network_subnet(),
             practice_judge_ip: default_practice_judge_ip(),
             platform_internal_url: default_platform_internal_url(),
+            eval_lease_duration_secs: default_eval_lease_duration_secs(),
+            eval_max_attempts: default_eval_max_attempts(),
         }
     }
+}
+
+fn default_eval_lease_duration_secs() -> i64 {
+    120
+}
+
+fn default_eval_max_attempts() -> i32 {
+    3
 }
 
 fn default_practice_judgeserver_image() -> String {
@@ -433,6 +451,8 @@ impl AppConfig {
                 practice_network_subnet: file.awdp.practice_network_subnet,
                 practice_judge_ip: file.awdp.practice_judge_ip,
                 platform_internal_url: file.awdp.platform_internal_url,
+                eval_lease_duration_secs: file.awdp.eval_lease_duration_secs,
+                eval_max_attempts: file.awdp.eval_max_attempts,
             },
             registry: RegistryConfig {
                 image_prefix: file.registry.image_prefix,

@@ -303,6 +303,8 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
+        eval_lease_duration_secs: 120,
+        eval_max_attempts: 3,
     }
 }
 
@@ -548,9 +550,16 @@ async fn reset_and_evaluation_concurrent() {
     let db_w = db.clone();
     let docker_w = docker.clone();
     let worker = tokio::spawn(async move {
-        floatctf::modules::event::awdp::service::evaluation::worker_round(&db_w, &docker_w, 16)
-            .await
-            .expect("worker")
+        floatctf::modules::event::awdp::service::evaluation::worker_round(
+            &db_w,
+            &docker_w,
+            "floatctf-api-worker",
+            16,
+            120,
+            3,
+        )
+        .await
+        .expect("worker")
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
     let view_after =
@@ -653,9 +662,16 @@ async fn manual_check_and_evaluation_concurrent() {
     let db_w = db.clone();
     let docker_w = docker.clone();
     let worker = tokio::spawn(async move {
-        floatctf::modules::event::awdp::service::evaluation::worker_round(&db_w, &docker_w, 16)
-            .await
-            .expect("worker")
+        floatctf::modules::event::awdp::service::evaluation::worker_round(
+            &db_w,
+            &docker_w,
+            "floatctf-api-worker",
+            16,
+            120,
+            3,
+        )
+        .await
+        .expect("worker")
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mc = floatctf::modules::event::awdp::service::evaluation::manual_check(

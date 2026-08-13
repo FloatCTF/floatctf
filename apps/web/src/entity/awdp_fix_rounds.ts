@@ -9,4 +9,5 @@ export type AwdpFixRounds = {
   created_at: string;
   updated_at: string;
   run_id: string;
+  expected_eval_count?: string;
 };

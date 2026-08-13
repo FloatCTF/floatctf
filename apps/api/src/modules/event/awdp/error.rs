@@ -22,6 +22,9 @@ pub enum AwdpError {
     Conflict(String),
     #[error("Internal error: {0}")]
     Internal(String),
+    /// 内部重试信号（不面向 HTTP 返回）。
+    #[error("Retry")]
+    Retry,
 }
 
 pub type AwdpResult<T> = Result<T, AwdpError>;

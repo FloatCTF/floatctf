@@ -3,6 +3,7 @@
 pub mod break_service;
 pub mod evaluation;
 pub mod event_service;
+pub mod judge_worker;
 pub mod lock;
 pub mod patch_service;
 pub mod practice_judge;

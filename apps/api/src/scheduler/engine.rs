@@ -334,6 +334,35 @@ impl TaskScheduler {
             .await?;
         info!("[Scheduler] 恢复完成");
 
+        // 恢复平台种子 recurring cron 任务（plan §47）：连续失败置 status='failed'
+        // 的 cron 任务在重启后自动复活——但只复活「仍是 expected seeded recurring task」
+        // 的：trigger_type='cron' + protected + enabled。被禁用（enabled=false）或已删除
+        // 的任务不复活；用户自建 cron（protected=false）也不复活。
+        let failed_cron = scheduled_tasks::Entity::find()
+            .filter(scheduled_tasks::Column::Status.eq("failed"))
+            .filter(scheduled_tasks::Column::TriggerType.eq("cron"))
+            .filter(scheduled_tasks::Column::Protected.eq(true))
+            .filter(scheduled_tasks::Column::Enabled.eq(true))
+            .all(self.db.get_ref())
+            .await?;
+        let mut recovered = 0usize;
+        for task in failed_cron {
+            let task_key = task.task_key.clone();
+            match recover_recurring_task(self.db.get_ref(), task).await {
+                Ok(true) => recovered += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    error!(
+                        "[Scheduler] 恢复 recurring cron 任务 {} 失败: {}",
+                        task_key, e
+                    );
+                }
+            }
+        }
+        if recovered > 0 {
+            info!("[Scheduler] 已恢复 {} 个 recurring cron 任务", recovered);
+        }
+
         info!("[Scheduler] 正在执行Startup任务");
         let startup_tasks = scheduled_tasks::Entity::find()
             .filter(scheduled_tasks::Column::TriggerType.eq("startup"))
@@ -425,6 +454,58 @@ fn is_expired(
     expires_at
         .map(|deadline| deadline.with_timezone(&Utc) < now)
         .unwrap_or(false)
+}
+
+/// 复活一条 recurring cron 任务：status=failed → pending，重算 next execute_at，
+/// 重置 transient attempt 状态（attempt_count/last_error/error_msg/lock）。
+///
+/// 返回 `Ok(true)` = 已恢复；`Ok(false)` = 无 cron_expr / cron 解析失败（不恢复，
+/// 避免死循环或复活坏任务——解析失败仅告警，保持 failed 供人工排查）。
+pub async fn recover_recurring_task(
+    db: &sea_orm::DatabaseConnection,
+    task: scheduled_tasks::Model,
+) -> Result<bool> {
+    let Some(cron_expr) = &task.cron_expr else {
+        warn!(
+            "[Scheduler] failed cron task {} has no cron_expr — 不自动恢复",
+            task.task_key
+        );
+        return Ok(false);
+    };
+    let schedule = match cron::Schedule::from_str(cron_expr) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(
+                "[Scheduler] failed cron task {} cron 解析失败: {} — 不自动恢复",
+                task.task_key, e
+            );
+            return Ok(false);
+        }
+    };
+    let Some(next) = schedule.upcoming(Utc).next() else {
+        warn!(
+            "[Scheduler] failed cron task {} 无后续执行时间 — 不自动恢复",
+            task.task_key
+        );
+        return Ok(false);
+    };
+
+    let now = Utc::now();
+    let mut am = task.clone().into_active_model();
+    am.status = ActiveValue::Set("pending".to_string());
+    am.execute_at = ActiveValue::Set(Some(next.into()));
+    am.attempt_count = ActiveValue::Set(0);
+    am.last_error = ActiveValue::Set(None);
+    am.error_msg = ActiveValue::Set(None);
+    am.locked_at = ActiveValue::Set(None);
+    am.heartbeat_at = ActiveValue::Set(Some(now.into()));
+    am.updated_at = ActiveValue::Set(now.into());
+    am.update(db).await?;
+    info!(
+        "[Scheduler] recurring cron 任务 {} 已恢复，下次执行 {:?}",
+        task.task_key, next
+    );
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -283,6 +283,8 @@ fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
+        eval_lease_duration_secs: 120,
+        eval_max_attempts: 3,
     }
 }
 
@@ -357,7 +359,7 @@ async fn tick_driven_rounds_and_scoring() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r1");
-    let n1 = evaluation::worker_round(&db, &docker, 4)
+    let n1 = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker r1");
     assert!(n1 >= 2, "processed {n1}");
@@ -421,7 +423,7 @@ async fn tick_driven_rounds_and_scoring() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r2b (idempotent)");
-    let n2 = evaluation::worker_round(&db, &docker, 4)
+    let n2 = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker r2");
     assert!(n2 >= 2, "processed {n2}");
@@ -468,7 +470,7 @@ async fn tick_driven_rounds_and_scoring() {
     assert_eq!(score_b, row_b.fix_round_score, "PATCHED +fix_round_score");
 
     // 4. 幂等：重复 worker 不重复加分（同一评估已终态，无 pending 可领）。
-    let n3 = evaluation::worker_round(&db, &docker, 4)
+    let n3 = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker idempotent");
     assert_eq!(n3, 0, "no pending evaluations left");
@@ -485,7 +487,7 @@ async fn tick_driven_rounds_and_scoring() {
             .await
             .expect("tick seq");
         loop {
-            let n = evaluation::worker_round(&db, &docker, 8)
+            let n = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 8, 120, 3)
                 .await
                 .expect("worker drain");
             if n == 0 {
@@ -630,7 +632,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r1");
-    let n = evaluation::worker_round(&db, &docker, 4)
+    let n = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker");
     assert_eq!(n, 1, "processed 1 eval");
@@ -672,7 +674,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r2");
-    evaluation::worker_round(&db, &docker, 4)
+    evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker r2");
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
@@ -697,7 +699,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r3");
-    evaluation::worker_round(&db, &docker, 4)
+    evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker r3");
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
@@ -823,7 +825,7 @@ async fn official_eval_service_down_and_functional_broken() {
     tick_service::tick_once(&db, &docker, JWT_SECRET)
         .await
         .expect("tick r1");
-    let n = evaluation::worker_round(&db, &docker, 4)
+    let n = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
         .await
         .expect("worker");
     assert_eq!(n, 2, "processed 2 evals");

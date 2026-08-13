@@ -37,6 +37,8 @@ fn awdp_config() -> AwdpStaticConfig {
         practice_network_subnet: "10.42.2.0/24".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
         platform_internal_url: "http://127.0.0.1:9090".to_string(),
+        eval_lease_duration_secs: 120,
+        eval_max_attempts: 3,
     }
 }
 

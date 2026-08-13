@@ -136,6 +136,7 @@ impl From<crate::modules::event::awdp::AwdpError> for AppError {
                 AppError::Internal(format!("Network: {m}"))
             }
             crate::modules::event::awdp::AwdpError::Internal(m) => AppError::Internal(m),
+            crate::modules::event::awdp::AwdpError::Retry => AppError::Internal("retry".into()),
         }
     }
 }

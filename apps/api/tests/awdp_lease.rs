@@ -1232,3 +1232,73 @@ fn dummy_docker() -> bollard::Docker {
     // 未真正连接：reconcile 无实例时不触碰 docker。
     bollard::Docker::connect_with_local_defaults().expect("docker")
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// §58 Competition Individual membership 授权
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 未加入赛事的用户访问 competition 端点必须 Forbidden；加入后放行。
+#[tokio::test]
+async fn individual_membership_required_for_competition() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+    use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
+    let base = chrono::Utc::now();
+    let event = events::ActiveModel {
+        is_virtual: Set(false),
+        id: Set(Uuid::new_v4()),
+        family: Set(EventFamily::Awdp),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Individual),
+        system_key: Set(None),
+        title: Set("awdp-it-membership".to_string()),
+        description: Set(None),
+        start_time: Set((base - chrono::Duration::hours(1)).into()),
+        hidden: Set(true),
+        allow_join: Set(false),
+        rules: Set(String::new()),
+        flag_prefix: Set(None),
+        end_time: Set(Some((base + chrono::Duration::hours(2)).into())),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let user_a = seed_user(&db, "member-a").await;
+    let user_b = seed_user(&db, "member-b").await;
+
+    // 未加入 → Forbidden。
+    let err = floatctf::modules::event::awdp::service::authorization::require_event_participant(
+        &db, event.id, user_a,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Forbidden(_)),
+        "未加入赛事必须 Forbidden: {err}"
+    );
+
+    // user_b 注册（模拟 join_event 写入 event_users）。
+    floatctf::entity::event_users::ActiveModel {
+        event_id: Set(event.id),
+        user_id: Set(user_b),
+        points: Set(0.0),
+        banned: Set(false),
+        joined_at: Set(chrono::Utc::now().into()),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    floatctf::modules::event::awdp::service::authorization::require_event_participant(
+        &db, event.id, user_b,
+    )
+    .await
+    .expect("已加入放行");
+    let _ = user_a;
+
+    let _ = events::Entity::delete_by_id(event.id).exec(&db).await;
+    cleanup(&db).await;
+}

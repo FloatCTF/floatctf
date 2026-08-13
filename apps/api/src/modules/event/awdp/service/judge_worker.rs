@@ -489,3 +489,33 @@ mod tests {
         assert_eq!(kind_string(&AwdpEvaluationKind::Official), "official");
     }
 }
+
+/// 队列统计（admin worker UI，plan §49）：pending / running（含 lease）评估数 + 最近心跳。
+pub async fn queue_stats(
+    db: &DatabaseConnection,
+) -> (i64, i64, Option<chrono::DateTime<chrono::Utc>>) {
+    use crate::entity::awdp_evaluations;
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus;
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+    let pending = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Pending))
+        .count(db)
+        .await
+        .unwrap_or(0) as i64;
+    let running = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Running))
+        .count(db)
+        .await
+        .unwrap_or(0) as i64;
+    let last_hb = awdp_evaluations::Entity::find()
+        .filter(awdp_evaluations::Column::Status.eq(AwdpEvaluationStatus::Running))
+        .filter(awdp_evaluations::Column::HeartbeatAt.is_not_null())
+        .order_by_desc(awdp_evaluations::Column::HeartbeatAt)
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|m| m.heartbeat_at)
+        .map(|t| t.with_timezone(&chrono::Utc));
+    (pending, running, last_hb)
+}

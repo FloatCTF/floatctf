@@ -424,6 +424,15 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
         &db,
         run.id,
         floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
         floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
         Default::default(),
     )
@@ -561,14 +570,14 @@ async fn phase_transitions_are_cas_guarded() {
         .await
         .expect("create practice run");
 
-    // practice run 创建即 Break，但**冻结**（next_action_at=None，未点「开始」前 tick 不推进）。
+    // §55：practice run 创建即 Pending（未 Launch 无时钟；Launch 才转 Break）。
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
-    assert_eq!(row.phase, AwdpPhase::Break, "practice run 创建即 Break");
-    assert!(row.started_at.is_some());
-    assert!(row.break_ends_at.is_some());
+    assert_eq!(row.phase, AwdpPhase::Pending, "practice run 创建即 Pending");
+    assert!(row.started_at.is_none());
+    assert!(row.break_ends_at.is_none());
     assert!(
         row.next_action_at.is_none(),
-        "练习 run 创建即冻结（等玩家点开始）"
+        "Pending 未 Launch 无时钟（等玩家 Launch）"
     );
 
     // 非法迁移：pending → fix 直接拒绝（虽然当前是 break，但非法链仍被拒绝）。
@@ -598,11 +607,21 @@ async fn phase_transitions_are_cas_guarded() {
     .unwrap_err();
     assert!(err.to_string().contains("concurrent"), "{err}");
 
-    // 合法链 break→fix→ended。
+    // Launch（Pending→Break）后走合法链 break→preparing_fix→fix→ended。
+    run_repo::launch_practice_run(&db, run.id).await.unwrap();
     run_repo::transition_phase(
         &db,
         run.id,
         AwdpPhase::Break,
+        AwdpPhase::PreparingFix,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    run_repo::transition_phase(
+        &db,
+        run.id,
+        AwdpPhase::PreparingFix,
         AwdpPhase::Fix,
         Default::default(),
     )
@@ -641,7 +660,11 @@ async fn phase_transitions_are_cas_guarded() {
         .await
         .expect("ended 后可再训练（新 run）");
     let row2 = run_repo::require_by_id(&db, run2.id).await.unwrap();
-    assert_eq!(row2.phase, AwdpPhase::Break);
+    assert_eq!(
+        row2.phase,
+        AwdpPhase::Pending,
+        "新 run 从 Pending 开始（§55）"
+    );
     assert_ne!(run2.id, run.id, "train again 创建新 run");
 
     // 同 user+gamebox 已有 active run → Conflict。

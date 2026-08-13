@@ -152,6 +152,11 @@ pub async fn deploy_judge(
     jwt_secret: &[u8],
     event_id: Uuid,
 ) -> AwdpResult<()> {
+    if config.platform_internal_url.trim().is_empty() {
+        return Err(AwdpError::InvalidState(
+            "awdp.platform_internal_url 必须显式配置（control/data 网络可达的 FloatCTF API 基址；不再默认 host.docker.internal）".into(),
+        ));
+    }
     let runtime = DockerContainerRuntime::new(docker.clone());
 
     // 1. 子网 ensure（练习实例启动路径也会 ensure，这里部署侧再保证一次）+

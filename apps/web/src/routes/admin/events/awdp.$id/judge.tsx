@@ -185,11 +185,25 @@ function RouteComponent() {
 					<div>
 						<h3 className="m-0">AWDP Practice Judge</h3>
 						<p className="color-fg-muted mb-0 mt-1">
-							练习 GameBox 统一加入 docker 子网{" "}
-							<code>{config?.network_name ?? "-"}</code>；部署 JudgeServer 后，
-							平台按配置间隔对全部运行中的练习实例执行 exploit 检查与 flag curl
-							验证。
+							练习 GameBox 统一加入 data 子网{" "}
+							<code>{config?.network_name ?? "-"}</code>；JudgeServer 是
+							Pull + Lease worker：主动领取评估（manual Test Check / official
+							Turn），执行 internal healthcheck → judge →（official）exploit。
 						</p>
+						<div className="mt-2 d-flex flex-items-center flex-wrap gap-2">
+							<Label variant={config?.worker_health === "healthy" ? "success" : "attention"}>
+								worker: {config?.worker_health ?? "-"}
+							</Label>
+							<Label variant="default">pending: {config?.pending_evaluations ?? 0}</Label>
+							<Label variant="default">running: {config?.running_evaluations ?? 0}</Label>
+							<Label variant="default">
+								last heartbeat: {fmt(config?.last_heartbeat)}
+							</Label>
+							<span className="color-fg-muted text-small">
+								data endpoint: <code>{config?.data_endpoint ?? "-"}</code>
+								（仅 GameBox 内部网络可达）
+							</span>
+						</div>
 					</div>
 					<Label variant={STATUS_VARIANT[status] ?? "default"}>
 						{STATUS_LABEL[status] ?? status}

@@ -1,5 +1,6 @@
 //! AWDP 应用服务。
 
+pub mod authorization;
 pub mod break_service;
 pub mod evaluation;
 pub mod event_service;

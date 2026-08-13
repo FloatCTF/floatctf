@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-/// 练习 Judge 配置 DTO。
+/// 练习 Judge 配置 DTO（Pull worker 状态，plan §49）。
 #[derive(Debug, Clone, Serialize)]
 pub struct PracticeJudgeConfigDto {
     pub event_id: Uuid,
@@ -34,6 +34,16 @@ pub struct PracticeJudgeConfigDto {
     pub resolved_judge_server_url: String,
     /// 练习子网名（展示）。
     pub network_name: String,
+    /// worker 存活探测（容器 running + data /healthz 可达 → healthy）。
+    pub worker_health: String,
+    /// data plane 端点（玩家 contract：awdp-judge:8080，仅 GameBox 内部可达）。
+    pub data_endpoint: String,
+    /// pending 评估数。
+    pub pending_evaluations: i64,
+    /// running（含 lease）评估数。
+    pub running_evaluations: i64,
+    /// 最近心跳（running 评估的最大 heartbeat_at）。
+    pub last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// 配置更新请求。
@@ -84,11 +94,14 @@ async fn ensure_awdp_practice_event(ctx: &ReqCtx, event_id: Uuid) -> Result<(), 
     Ok(())
 }
 
-fn build_config_dto(
+async fn build_config_dto(
+    db: &sea_orm::DatabaseConnection,
     settings: &crate::entity::awdp_practice_judge_settings::Model,
     config: &crate::core::config::AwdpStaticConfig,
     container_status: &str,
 ) -> PracticeJudgeConfigDto {
+    let (pending, running, last_heartbeat) =
+        crate::modules::event::awdp::service::judge_worker::queue_stats(db).await;
     PracticeJudgeConfigDto {
         event_id: settings.event_id,
         enabled: settings.enabled,
@@ -103,7 +116,33 @@ fn build_config_dto(
         updated_at: settings.updated_at.with_timezone(&chrono::Utc),
         resolved_judge_server_url: practice_judge::resolve_judge_server_url(settings, config),
         network_name: crate::modules::event::awdp::domain::judge::PRACTICE_NETWORK_NAME.to_string(),
+        worker_health: "unknown".to_string(),
+        data_endpoint: format!(
+            "http://{}:{}",
+            config.practice_judge_data_host,
+            crate::modules::event::awdp::domain::judge::PRACTICE_JUDGE_PORT
+        ),
+        pending_evaluations: pending,
+        running_evaluations: running,
+        last_heartbeat,
     }
+}
+
+/// 组装 DTO + worker 存活探测（容器 running 时打 data /healthz）。
+async fn build_dto_with_health(
+    ctx: &ReqCtx,
+    settings: &crate::entity::awdp_practice_judge_settings::Model,
+    config: &crate::core::config::AwdpStaticConfig,
+    status: &str,
+) -> Result<PracticeJudgeConfigDto, AppError> {
+    let mut dto = build_config_dto(ctx.db.get_ref(), settings, config, status).await;
+    if status == "running" {
+        dto.worker_health =
+            practice_judge::judge_worker_health(ctx.docker.get_ref(), config).await?;
+    } else {
+        dto.worker_health = status.to_string();
+    }
+    Ok(dto)
 }
 
 /// GET /api/admin/events/{event_id}/awdp/practice-judge —— 配置 + 容器状态。
@@ -118,7 +157,8 @@ pub async fn get_practice_judge(
     let settings = practice_judge_repo::ensure_settings(ctx.db.get_ref(), event_id).await?;
     let status =
         practice_judge::container_status(ctx.db.get_ref(), ctx.docker.get_ref(), &settings).await;
-    UniResponse::ok(build_config_dto(&settings, &ctx.config.awdp, &status).into()).into()
+    let dto = build_dto_with_health(&ctx, &settings, &ctx.config.awdp, &status).await?;
+    UniResponse::ok(dto.into()).into()
 }
 
 /// PATCH /api/admin/events/{event_id}/awdp/practice-judge —— 更新配置。
@@ -185,7 +225,8 @@ pub async fn patch_practice_judge(
     .await;
     let status =
         practice_judge::container_status(ctx.db.get_ref(), ctx.docker.get_ref(), &settings).await;
-    UniResponse::ok(build_config_dto(&settings, &ctx.config.awdp, &status).into()).into()
+    let dto = build_dto_with_health(&ctx, &settings, &ctx.config.awdp, &status).await?;
+    UniResponse::ok(dto.into()).into()
 }
 
 /// POST /api/admin/events/{event_id}/awdp/practice-judge/deploy —— 部署 JudgeServer 容器。
@@ -221,7 +262,8 @@ pub async fn deploy_practice_judge(
     let settings = practice_judge_repo::ensure_settings(ctx.db.get_ref(), event_id).await?;
     let status =
         practice_judge::container_status(ctx.db.get_ref(), ctx.docker.get_ref(), &settings).await;
-    UniResponse::ok(build_config_dto(&settings, &ctx.config.awdp, &status).into()).into()
+    let dto = build_dto_with_health(&ctx, &settings, &ctx.config.awdp, &status).await?;
+    UniResponse::ok(dto.into()).into()
 }
 
 /// POST /api/admin/events/{event_id}/awdp/practice-judge/stop —— 停止 JudgeServer 容器。
@@ -249,7 +291,8 @@ pub async fn stop_practice_judge(
     let settings = practice_judge_repo::ensure_settings(ctx.db.get_ref(), event_id).await?;
     let status =
         practice_judge::container_status(ctx.db.get_ref(), ctx.docker.get_ref(), &settings).await;
-    UniResponse::ok(build_config_dto(&settings, &ctx.config.awdp, &status).into()).into()
+    let dto = build_dto_with_health(&ctx, &settings, &ctx.config.awdp, &status).await?;
+    UniResponse::ok(dto.into()).into()
 }
 
 /// GET /api/admin/events/{event_id}/awdp/practice-judge/results —— 最近检查结果。

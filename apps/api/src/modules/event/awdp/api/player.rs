@@ -25,6 +25,7 @@ use crate::{
 };
 
 /// 解析 subject（Individual → user；Team → 事件内战队）。
+/// §58 授权修复：Individual 模式必须已加入赛事（event_users 注册行），未加入 → 403。
 async fn resolve_subject(ctx: &ReqCtx, event_id: Uuid, user_id: Uuid) -> Result<Subject, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
@@ -39,6 +40,14 @@ async fn resolve_subject(ctx: &ReqCtx, event_id: Uuid, user_id: Uuid) -> Result<
             .ok_or_else(|| AppError::Forbidden("you are not in any team for this event".into()))?;
         Ok(Subject::team(membership.team_id))
     } else {
+        // Individual：必须已注册（event_users 行；join_event 或管理员预注册）。
+        crate::modules::event::awdp::service::authorization::require_event_participant(
+            ctx.db.get_ref(),
+            event_id,
+            user_id,
+        )
+        .await
+        .map_err(AppError::from)?;
         Ok(Subject::user(user_id))
     }
 }

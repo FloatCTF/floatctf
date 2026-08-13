@@ -158,6 +158,11 @@ export type PracticeJudgeConfigDto = {
 	updated_at: string;
 	resolved_judge_server_url: string;
 	network_name: string;
+	worker_health: string;
+	data_endpoint: string;
+	pending_evaluations: number;
+	running_evaluations: number;
+	last_heartbeat: string | null;
 };
 
 export type PracticeJudgePatchInput = {

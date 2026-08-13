@@ -115,7 +115,9 @@ pub struct AwdpStaticConfig {
     pub practice_judge_ip: String,
     /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 awdp-judge）。
     pub practice_judge_data_host: String,
-    /// JudgeServer 回调平台使用的基址（容器视角；默认 host.docker.internal）。
+    /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达；
+    /// 宿主部署时用 data 网络网关直连宿主 API，host firewall 限制 GameBox 访问；
+    /// 必须显式配置——不再默认 host.docker.internal（§36/§37）。
     pub platform_internal_url: String,
     /// 评估 lease 时长（秒）：worker claim 后持有；到期未心跳可被回收重领。
     pub eval_lease_duration_secs: i64,
@@ -335,7 +337,7 @@ fn default_practice_judge_ip() -> String {
 }
 
 fn default_platform_internal_url() -> String {
-    "http://host.docker.internal:9090".to_string()
+    String::new()
 }
 
 #[derive(Debug, Deserialize)]

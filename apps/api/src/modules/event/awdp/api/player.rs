@@ -388,8 +388,7 @@ pub async fn upload_patch(
     };
     let bytes = std::fs::read(form.patch_file.file.path())
         .map_err(|e| AppError::BadRequest(format!("read patch_file: {e}")))?;
-    let script = String::from_utf8(bytes)
-        .map_err(|_| AppError::Validation("patch.sh 必须是 UTF-8 文本脚本".into()))?;
+    let script = patch_service::extract_patch_script(&bytes).map_err(AppError::Validation)?;
     if script.len() > patch_service::MAX_PATCH_BYTES {
         return Err(AppError::Validation(format!(
             "patch.sh 超过 {} KiB 上限",
@@ -462,7 +461,7 @@ pub async fn manual_test_check(
     .into()
 }
 
-/// GET .../source —— source.zip 私有下载（Fix only；presigned /private/ 代理路径）。
+/// GET .../source —— source.tar.gz 私有下载（Fix only；presigned /private/ 代理路径）。
 #[get("{event_id}/awdp/gameboxes/{eg_id}/source")]
 pub async fn download_source(
     user: UserJwtGuard,
@@ -479,13 +478,13 @@ pub async fn download_source(
         .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
     if run.phase != AwdpPhase::Fix {
         return Err(AppError::InvalidState(
-            "source.zip 仅在 Fix 阶段可下载".into(),
+            "source.tar.gz 仅在 Fix 阶段可下载".into(),
         ));
     }
     let (eg, gamebox) = event_gamebox_repo::effective_gamebox_spec(db, eg_id).await?;
     let _ = eg;
     let key = gamebox.awdp_source_artifact_key.ok_or_else(|| {
-        AppError::NotFound("该 GameBox 没有 source.zip 产物（无 [awdp] capability）".into())
+        AppError::NotFound("该 GameBox 没有 source.tar.gz 产物（无 [awdp] capability）".into())
     })?;
     let url = crate::modules::platform::files::download::presign_private_download_url(
         ctx.rustfs.clone(),

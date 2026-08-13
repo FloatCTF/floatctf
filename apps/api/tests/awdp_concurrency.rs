@@ -271,7 +271,7 @@ sys.exit(1)
 "#
             .to_string(),
         )),
-        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.zip"))),
+        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.tar.gz"))),
         awdp_source_artifact_digest: Set(Some("deadbeef".into())),
     }
     .insert(db)

@@ -213,7 +213,7 @@ pub async fn import_gamebox_package(
     // ── 5. ready or failed ─────────────────────────────────────────────────
     match build_outcome {
         Ok((image_id, image_repo_digest)) => {
-            // [awdp] capability：从最终镜像导出 source.zip 并上传 private RustFS。
+            // [awdp] capability：从最终镜像导出 source.tar.gz 并上传 private RustFS。
             // 任一环节失败 → 整个 import 失败（source_code_dir 不存在必须给明确错误）。
             let awdp_result: GameboxResult<Option<AwdpCapability>> = async {
                 let Some(awdp) = meta.awdp.as_ref() else {
@@ -226,7 +226,7 @@ pub async fn import_gamebox_package(
                     .unwrap_or(&awdp.exploit_script)
                     .to_string();
                 let temp_container = format!("awdp-src-{short_id}");
-                let zip_bytes = source_artifact::extract_awdp_source_zip(
+                let zip_bytes = source_artifact::extract_awdp_source_targz(
                     &runtime,
                     &image_ref,
                     &temp_container,
@@ -560,7 +560,7 @@ pub async fn scan_gameboxes_dir(
                 ),
             };
 
-        // [awdp] capability：镜像本地可用时从镜像重新导出 source.zip（幂等，按 package_digest 键）。
+        // [awdp] capability：镜像本地可用时从镜像重新导出 source.tar.gz（幂等，按 package_digest 键）。
         // 先分配 gamebox id（对象键需要真实 id），插入成功后修正对象键路径。
         let new_gamebox_id = uuid::Uuid::new_v4();
         let awdp_cap: Option<AwdpCapability> = if build_status == BUILD_STATUS_READY {
@@ -574,7 +574,7 @@ pub async fn scan_gameboxes_dir(
                             .to_string();
                         let short_id = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8];
                         let temp_container = format!("awdp-src-{short_id}");
-                        match source_artifact::extract_awdp_source_zip(
+                        match source_artifact::extract_awdp_source_targz(
                             &runtime,
                             &image_ref,
                             &temp_container,

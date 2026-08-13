@@ -201,7 +201,7 @@ pub struct AwdpAdminEventGameBoxDto {
     pub cpu_millis: i64,
     pub memory_bytes: i64,
     pub pids_limit: i64,
-    /// 完整 [awdp] capability（source.zip 产物存在）。
+    /// 完整 [awdp] capability（source.tar.gz 产物存在）。
     pub awdp_capable: bool,
     pub awdp_source_code_dir: Option<String>,
     pub build_status: Option<String>,

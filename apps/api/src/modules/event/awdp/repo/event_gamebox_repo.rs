@@ -61,7 +61,7 @@ pub async fn attach_gamebox(
     // AWDP picker 只允许完整 [awdp] capability 的 GameBox。
     if gamebox.awdp_source_artifact_key.is_none() {
         return Err(AwdpError::Validation(format!(
-            "GameBox {} 没有 [awdp] capability（缺少 source.zip 产物），不能用于 AWDP",
+            "GameBox {} 没有 [awdp] capability（缺少 source.tar.gz 产物），不能用于 AWDP",
             gamebox.safe_name
         )));
     }

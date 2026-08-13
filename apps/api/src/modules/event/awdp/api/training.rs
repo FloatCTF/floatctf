@@ -141,7 +141,7 @@ pub async fn list_catalog(
     // 一次批量查询取当前用户训练过的 gamebox 集合（solved 列 + solved 筛选共用）。
     let solved_gamebox_ids = solved_gamebox_ids_for(db, user.id).await?;
 
-    // AWDP capability = 完整五列（source.zip 产物存在，DB CHECK 保证全有/全无），
+    // AWDP capability = 完整五列（source.tar.gz 产物存在，DB CHECK 保证全有/全无），
     // 直接下沉到 WHERE，保证分页计数只统计 AWDP-capable 行。
     let stmt = gameboxes::Entity::find()
         .filter(gameboxes::Column::Hidden.eq(false))
@@ -613,7 +613,7 @@ pub async fn submit_break_flag(
     .into()
 }
 
-/// GET /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/source —— source.zip（Fix only）。
+/// GET /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/source —— source.tar.gz（Fix only）。
 #[get("awdp/runs/{run_id}/gameboxes/{gamebox_id}/source")]
 pub async fn download_source(
     user: UserJwtGuard,
@@ -625,7 +625,7 @@ pub async fn download_source(
     let run = require_owned_run(ctx.db.get_ref(), run_id, _user.id).await?;
     if run.phase != AwdpPhase::Fix {
         return Err(AppError::InvalidState(
-            "source.zip 仅在 Fix 阶段可下载".into(),
+            "source.tar.gz 仅在 Fix 阶段可下载".into(),
         ));
     }
     if run.gamebox_id != Some(gamebox_id) {
@@ -633,7 +633,7 @@ pub async fn download_source(
     }
     let gamebox = event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), gamebox_id).await?;
     let key = gamebox.awdp_source_artifact_key.ok_or_else(|| {
-        AppError::NotFound("该 GameBox 没有 source.zip 产物（无 [awdp] capability）".into())
+        AppError::NotFound("该 GameBox 没有 source.tar.gz 产物（无 [awdp] capability）".into())
     })?;
     let url = crate::modules::platform::files::download::presign_private_download_url(
         ctx.rustfs.clone(),

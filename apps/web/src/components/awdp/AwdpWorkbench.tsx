@@ -616,7 +616,7 @@ export function AwdpWorkbench({
 									fileInputRefs.current[gb.id] = el;
 								}}
 								type="file"
-								accept=".sh,text/x-shellscript"
+								accept=".tar.gz,.tgz,application/gzip"
 								className="hidden"
 								onChange={(e) =>
 									setPatchFiles((prev) => ({
@@ -629,7 +629,7 @@ export function AwdpWorkbench({
 								aria-label="选择 patch 脚本文件"
 								onClick={() => fileInputRefs.current[gb.id]?.click()}
 							>
-								{patchFiles[gb.id] ? patchFiles[gb.id]!.name : "选择 patch 文件"}
+								{patchFiles[gb.id] ? patchFiles[gb.id]!.name : "选择 patch.tar.gz"}
 							</Button>
 							<Button
 								variant="primary"

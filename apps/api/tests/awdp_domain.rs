@@ -547,7 +547,7 @@ async fn seed_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid {
         awdp_source_code_dir: Set(Some("/var/www/html".into())),
         awdp_exploit_script_name: Set(Some("exploit.py".into())),
         awdp_exploit_script_content: Set(Some("x".into())),
-        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.zip"))),
+        awdp_source_artifact_key: Set(Some(format!("gameboxes/{gb_id}/awdp/pkg/source.tar.gz"))),
         awdp_source_artifact_digest: Set(Some("deadbeef".into())),
     }
     .insert(db)

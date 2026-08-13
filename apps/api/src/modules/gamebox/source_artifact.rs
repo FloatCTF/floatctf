@@ -1,16 +1,19 @@
-//! AWDP source artifact（source.zip）生成与发布。
+//! AWDP source artifact（source.tar.gz）生成与发布。
 //!
 //! 生命周期（GameBox 维度，与 Event 无关）：
 //!   import/build 成功后：
 //!     final image
 //!       → docker create 临时容器（不 start）
 //!       → copy_from_container(source_code_dir)  → tar bytes
-//!       → tar → zip（去掉顶层目录前缀，zip 根 = source_code_dir 内容）
+//!       → 重打包为 tar.gz（结构：`src/` = SourcePath 源码 + 根 `patch.sh` 通用模板）
 //!       → upload private RustFS
 //!       → persist object key + digest
 //!       → remove 临时容器（无论成败）
 //!
 //! source_code_dir 不存在 → 整个 import/build 失败（明确错误）。
+//!
+//! 玩家 Fix 阶段下载该包后，可原样重新打成 patch.tar.gz 上传（平台解压后执行根
+//! `patch.sh`；模板为全注释空操作 → exit 0 → APPLIED），实现「不真正写 patch」的练习闭环。
 
 use std::io::{Cursor, Write};
 
@@ -18,24 +21,38 @@ use aws_sdk_s3::primitives::ByteStream;
 use fcmc::{ContainerRuntime, DockerContainerRuntime};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
 
 use crate::modules::gamebox::{GameboxError, GameboxResult};
 
-/// private RustFS 桶（source.zip 私有，仅授权下载）。
+/// 通用 patch.sh 模板（全注释空操作；打包进 source.tar.gz，玩家可原样传回）。
+pub const PATCH_TEMPLATE: &str = r##"#!/bin/sh
+# ============================================================
+# FloatCTF AWDP 练习 —— 通用 Patch 模板
+# ------------------------------------------------------------
+# 本文件是练习场景的默认 patch：全部为注释，不执行任何真实修改。
+#
+# 上传后平台会把 patch.sh 在你的 GameBox 容器内以 /bin/sh 执行，
+# 并注入 FLOATCTF_SOURCE_DIR（源码在容器内的绝对路径）；
+# 执行退出码为 0 且无超时即视为 APPLIED（本轮正式评分资格）。
+#
+# 如需真实修复：把修改逻辑写在本文件下方（或引用本包内其它文件），
+# 再重新打成 tar.gz 上传。练习模式可直接原样传回本包。
+# ============================================================
+"##;
+
+/// private RustFS 桶（source.tar.gz 私有，仅授权下载）。
 pub const AWDP_SOURCE_BUCKET: &str = "floatctf-private";
 
-/// source.zip 对象键（GameBox/digest scope，绝不使用 events/{event}/…）。
+/// source.tar.gz 对象键（GameBox/digest scope，绝不使用 events/{event}/…）。
 pub fn awdp_source_object_key(gamebox_id: Uuid, package_digest: &str) -> String {
-    format!("gameboxes/{gamebox_id}/awdp/{package_digest}/source.zip")
+    format!("gameboxes/{gamebox_id}/awdp/{package_digest}/source.tar.gz")
 }
 
-/// 从最终镜像导出 `source_code_dir` 并打包为 zip 字节。
+/// 从最终镜像导出 `source_code_dir` 并重打包为 tar.gz（`src/` + `patch.sh`）。
 ///
-/// 流程：create-only 临时容器 → `copy_from_container`（tar）→ tar→zip → remove。
+/// 流程：create-only 临时容器 → `copy_from_container`（tar）→ 重打包 tar.gz → remove。
 /// 临时容器无论成败都会移除。
-pub async fn extract_awdp_source_zip(
+pub async fn extract_awdp_source_targz(
     runtime: &DockerContainerRuntime,
     image_ref: &str,
     temp_container_name: &str,
@@ -69,7 +86,7 @@ pub async fn extract_awdp_source_zip(
                     "SOURCE_EXTRACT: copy_from_container({source_code_dir}) 失败（镜像内目录可能不存在）: {e}"
                 ))
             })?;
-        tar_bytes_to_zip(&tar_bytes)
+        tar_bytes_to_targz_with_src(&tar_bytes)
     }
     .await;
 
@@ -84,17 +101,22 @@ pub async fn extract_awdp_source_zip(
     result
 }
 
-/// 将 docker copy tar 归档转为 zip（去掉顶层目录前缀，zip 根 = 目录内容）。
-fn tar_bytes_to_zip(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
+/// 将 docker copy tar 归档重打包为 tar.gz。
+///
+/// 包结构：
+/// ```text
+/// source.tar.gz
+/// ├── src/                     # SourcePath 源码（去 docker cp 顶层目录前缀后放入）
+/// │   ├── index.php
+/// │   └── ...
+/// └── patch.sh                 # 通用 patch 模板（全注释；玩家可原样传回）
+/// ```
+fn tar_bytes_to_targz_with_src(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
     let mut archive = tar::Archive::new(tar_bytes);
-    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Docker cp 目录时归档根为目录 basename（如 html/、html/index.php）。
-    // 先遍历第一遍确定根前缀；第二遍写 zip（tar 支持反复遍历？——不，需要先读进内存）。
-    // 做法：先全部读入内存（有 MAX_COPY_BYTES 硬上限保护），再统一去前缀。
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new(); // (zip_path, content) content 空=目录
-    let mut dirs: Vec<String> = Vec::new();
+    // 全部读入内存（有 MAX_COPY_BYTES 硬上限保护），再统一去前缀后放入 src/。
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new(); // (src 内相对路径, content)
     let mut root_prefix: Option<String> = None;
 
     {
@@ -118,7 +140,6 @@ fn tar_bytes_to_zip(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
             }
             let entry_type = entry.header().entry_type();
             if entry_type.is_dir() {
-                dirs.push(trimmed.to_string());
                 continue;
             }
             let mut content = Vec::new();
@@ -146,12 +167,11 @@ fn tar_bytes_to_zip(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
         }
     }
 
-    // 去根前缀：zip 根 = source_code_dir 内容本身。
+    // 去根前缀 → src/ 下相对路径。
     let prefix_len = root_prefix
         .as_ref()
         .map(|p| p.len() + 1) // "html" + '/'
         .unwrap_or(0);
-
     let strip = |name: &str| -> String {
         if prefix_len > 0 && name.len() > prefix_len && name.as_bytes()[prefix_len - 1] == b'/' {
             name[prefix_len..].to_string()
@@ -162,58 +182,85 @@ fn tar_bytes_to_zip(tar_bytes: &[u8]) -> GameboxResult<Vec<u8>> {
         }
     };
 
-    for d in &dirs {
-        let rel = strip(d);
-        if rel.is_empty() {
-            continue;
-        }
-        zip.start_file(format!("{rel}/"), options)
-            .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: zip dir: {e}")))?;
-    }
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut builder = tar::Builder::new(gz);
+
+    let mut wrote_src = false;
     for (name, content) in &entries {
         let rel = strip(name);
         if rel.is_empty() {
             continue;
         }
-        zip.start_file(rel, options)
-            .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: zip file: {e}")))?;
-        zip.write_all(content)
-            .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: zip write: {e}")))?;
+        if !wrote_src {
+            // src/ 目录条目（保持源码层级）。
+            append_tar_dir(&mut builder, "src/")
+                .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: tar dir: {e}")))?;
+            wrote_src = true;
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, format!("src/{rel}"), &content[..])
+            .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: tar write: {e}")))?;
     }
 
-    let cursor = zip
+    // 根目录 patch.sh 通用模板（全注释空操作；玩家可直接原样传回）。
+    {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(PATCH_TEMPLATE.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "patch.sh", PATCH_TEMPLATE.as_bytes())
+            .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: tar patch.sh: {e}")))?;
+    }
+
+    let gz = builder
+        .into_inner()
+        .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: tar finish: {e}")))?;
+    let bytes = gz
         .finish()
-        .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: zip finish: {e}")))?;
-    let bytes = cursor.into_inner();
+        .map_err(|e| GameboxError::Internal(format!("SOURCE_EXTRACT: gz finish: {e}")))?;
     if bytes.is_empty() {
         return Err(GameboxError::Docker(
-            "SOURCE_EXTRACT: source.zip 为空（source_code_dir 目录为空？）".into(),
+            "SOURCE_EXTRACT: source.tar.gz 为空（source_code_dir 目录为空？）".into(),
         ));
     }
     Ok(bytes)
 }
 
-/// 上传 source.zip 到 private RustFS，返回 (object_key, sha256_hex)。
+/// tar Builder 写目录条目（tar 目录名以 '/' 结尾）。
+fn append_tar_dir<W: std::io::Write>(
+    builder: &mut tar::Builder<W>,
+    dir: &str,
+) -> std::io::Result<()> {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Directory);
+    header.set_mode(0o755);
+    header.set_size(0);
+    header.set_cksum();
+    builder.append_data(&mut header, dir, std::io::empty())
+}
+
+/// 上传 source.tar.gz 到 private RustFS，返回 (object_key, sha256_hex)。
 pub async fn publish_awdp_source_artifact(
     rustfs: &aws_sdk_s3::Client,
     gamebox_id: Uuid,
     package_digest: &str,
-    zip_bytes: &[u8],
+    payload: &[u8],
 ) -> GameboxResult<(String, String)> {
     let key = awdp_source_object_key(gamebox_id, package_digest);
-    let digest = {
-        let mut hasher = Sha256::new();
-        hasher.update(zip_bytes);
-        hex::encode(hasher.finalize())
-    };
+    let digest = hex::encode(Sha256::digest(payload));
     rustfs
         .put_object()
         .bucket(AWDP_SOURCE_BUCKET)
         .key(&key)
-        .body(ByteStream::from(zip_bytes.to_vec()))
+        .body(ByteStream::from(payload.to_vec()))
         .send()
         .await
-        .map_err(|e| GameboxError::Internal(format!("SOURCE_UPLOAD: {e}")))?;
+        .map_err(|e| GameboxError::Internal(format!("SOURCE_UPLOAD: upload source.tar.gz: {e}")))?;
     Ok((key, digest))
 }
 
@@ -253,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn tar_to_zip_strips_root_prefix() {
+    fn targz_contains_src_and_patch_template() {
         let tar = build_tar(
             &[
                 ("index.php", b"<?php echo 1;"),
@@ -262,16 +309,36 @@ mod tests {
             ],
             "html",
         );
-        let zip_bytes = tar_bytes_to_zip(&tar).unwrap();
-        assert!(!zip_bytes.is_empty());
+        let bytes = tar_bytes_to_targz_with_src(&tar).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b], "gzip magic");
 
-        let mut reader = zip::ZipArchive::new(Cursor::new(zip_bytes)).unwrap();
-        let names: Vec<String> = (0..reader.len())
-            .map(|i| reader.by_index(i).unwrap().name().to_string())
-            .collect();
-        assert!(names.contains(&"index.php".to_string()), "{names:?}");
-        assert!(names.contains(&"sub/dir.txt".to_string()), "{names:?}");
+        let gz = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut archive = tar::Archive::new(gz);
+        let mut names: Vec<String> = Vec::new();
+        let mut patch: Option<String> = None;
+        for entry in archive.entries().unwrap() {
+            let mut e = entry.unwrap();
+            let name = e.path().unwrap().to_string_lossy().into_owned();
+            names.push(name.clone());
+            if name == "patch.sh" {
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut e, &mut s).unwrap();
+                patch = Some(s);
+            }
+        }
+        assert!(names.contains(&"src/index.php".to_string()), "{names:?}");
+        assert!(names.contains(&"src/sub/dir.txt".to_string()), "{names:?}");
         assert!(!names.iter().any(|n| n.starts_with("html")), "{names:?}");
+        assert!(names.contains(&"patch.sh".to_string()), "{names:?}");
+        let patch = patch.expect("patch.sh present");
+        assert!(patch.contains("通用 Patch 模板"), "template content");
+        assert!(
+            patch.lines().all(|l| l.trim().is_empty()
+                || l.trim_start().starts_with('#')
+                || l.trim_start().starts_with("#!/")),
+            "patch.sh must be comment-only"
+        );
     }
 
     #[test]
@@ -282,14 +349,13 @@ mod tests {
         );
         assert_eq!(
             key,
-            "gameboxes/00000000-0000-0000-0000-000000000001/awdp/abc123/source.zip"
+            "gameboxes/00000000-0000-0000-0000-000000000001/awdp/abc123/source.tar.gz"
         );
         assert!(!key.contains("events/"));
     }
 
     #[test]
     fn digest_is_sha256_hex() {
-        // 通过空字节压缩验证长度（不依赖真实 S3）。
         let digest = {
             let mut hasher = Sha256::new();
             hasher.update(b"hello");

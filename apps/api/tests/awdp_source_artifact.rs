@@ -1,8 +1,8 @@
 //! AWDP source artifact 集成测试（Docker-gated）。
 //!
-//! 覆盖：从真实 GameBox 镜像导出 source_code_dir → tar → zip 的端到端链路；
-//! 临时容器只 create 不 start、内容正确、zip 根前缀剥除、临时容器移除；
-//! RustFS 上传 + digest 存储。
+//! 覆盖：从真实 GameBox 镜像导出 source_code_dir → 重打包 source.tar.gz 的端到端链路；
+//! 包结构 = `src/`（源码）+ 根 `patch.sh` 通用模板；临时容器只 create 不 start、
+//! 内容正确、根前缀剥除、临时容器移除；RustFS 上传 + digest 存储。
 //! 依赖本地镜像 `floatctf/gameboxes/test-gg:1.0.2`（test_g 示例包构建产物，
 //! source_code_dir=/var/www/html）。无该镜像时跳过。
 
@@ -44,7 +44,7 @@ async fn rustfs_or_skip() -> Option<aws_sdk_s3::Client> {
 }
 
 #[tokio::test]
-async fn extract_source_zip_from_real_gamebox_image() {
+async fn extract_source_tar_from_real_gamebox_image() {
     let Some(rt) = docker_or_skip().await else {
         return;
     };
@@ -100,38 +100,38 @@ async fn publish_artifact_stores_key_and_digest() {
     let Some(rustfs) = rustfs_or_skip().await else {
         return;
     };
-    // 复用模块级 helper（create/copy/zip/remove 全链路）。
-    let zip = floatctf::modules::gamebox::source_artifact::extract_awdp_source_zip(
+    // 复用模块级 helper（create/copy/targz/remove 全链路）。
+    let targz = floatctf::modules::gamebox::source_artifact::extract_awdp_source_targz(
         &rt,
         gamebox_image(),
         "awdp-src-itest-pub",
         "/var/www/html",
     )
     .await
-    .expect("extract source zip");
-    assert!(!zip.is_empty());
+    .expect("extract source tar.gz");
+    assert!(!targz.is_empty());
 
     // §78：上传 private RustFS → 返回 (object_key, sha256 digest)，digest 与内容一致。
     let gb_id = uuid::Uuid::new_v4();
     let pkg_digest = "pkg-abc123";
     let (key, digest) = floatctf::modules::gamebox::source_artifact::publish_awdp_source_artifact(
-        &rustfs, gb_id, pkg_digest, &zip,
+        &rustfs, gb_id, pkg_digest, &targz,
     )
     .await
     .expect("publish source artifact");
     assert_eq!(
         key,
-        format!("gameboxes/{gb_id}/awdp/{pkg_digest}/source.zip"),
+        format!("gameboxes/{gb_id}/awdp/{pkg_digest}/source.tar.gz"),
         "object key scoped by gamebox + package digest"
     );
     assert_eq!(digest.len(), 64, "digest must be sha256 hex");
     let expected = {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(&zip);
+        h.update(&targz);
         hex::encode(h.finalize())
     };
-    assert_eq!(digest, expected, "digest = sha256(source.zip bytes)");
+    assert_eq!(digest, expected, "digest = sha256(source.tar.gz bytes)");
 
     // 对象确实落盘（head 成功），然后清理。
     let head = rustfs
@@ -152,32 +152,56 @@ async fn publish_artifact_stores_key_and_digest() {
 }
 
 #[tokio::test]
-async fn extract_zip_via_service_helper() {
+async fn extract_targz_via_service_helper() {
     let Some(rt) = docker_or_skip().await else {
         return;
     };
-    // 复用模块级 helper（内部 create/copy/zip/remove 全链路）。
-    let zip = floatctf::modules::gamebox::source_artifact::extract_awdp_source_zip(
+    // 复用模块级 helper（内部 create/copy/targz/remove 全链路）。
+    let targz = floatctf::modules::gamebox::source_artifact::extract_awdp_source_targz(
         &rt,
         gamebox_image(),
         "awdp-src-itest2",
         "/var/www/html",
     )
     .await
-    .expect("extract source zip");
-    assert!(!zip.is_empty());
+    .expect("extract source tar.gz");
+    assert!(!targz.is_empty());
+    assert_eq!(&targz[..2], &[0x1f, 0x8b], "must be gzip");
 
-    let mut reader = zip::ZipArchive::new(std::io::Cursor::new(zip)).expect("valid zip");
-    let names: Vec<String> = (0..reader.len())
-        .map(|i| reader.by_index(i).unwrap().name().to_string())
-        .collect();
+    // §78：包结构 = src/（源码，根前缀剥除）+ 根 patch.sh 通用模板。
+    let gz = flate2::read::GzDecoder::new(&targz[..]);
+    let mut archive = tar::Archive::new(gz);
+    let mut names: Vec<String> = Vec::new();
+    let mut patch_content: Option<String> = None;
+    for entry in archive.entries().expect("valid tar") {
+        let mut e = entry.expect("tar entry");
+        let name = e.path().unwrap().to_string_lossy().into_owned();
+        names.push(name.clone());
+        if name == "patch.sh" {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut e, &mut s).unwrap();
+            patch_content = Some(s);
+        }
+    }
     assert!(
-        names.contains(&"index.php".to_string()),
-        "expected index.php in {names:?}"
+        names.iter().any(|n| n == "src/index.php"),
+        "expected src/index.php in {names:?}"
     );
     assert!(
         !names.iter().any(|n| n.starts_with("html")),
-        "root prefix must be stripped: {names:?}"
+        "root prefix must be stripped into src/: {names:?}"
+    );
+    assert!(
+        names.contains(&"patch.sh".to_string()),
+        "expected root patch.sh template in {names:?}"
+    );
+    let patch = patch_content.expect("patch.sh content");
+    assert!(
+        patch.contains("通用 Patch 模板")
+            && patch.lines().all(|l| l.trim().is_empty()
+                || l.trim_start().starts_with('#')
+                || l.trim_start().starts_with("#!/")),
+        "patch.sh must be a comment-only generic template: {patch}"
     );
 }
 
@@ -186,7 +210,7 @@ async fn missing_source_dir_fails_with_clear_error() {
     let Some(rt) = docker_or_skip().await else {
         return;
     };
-    let err = floatctf::modules::gamebox::source_artifact::extract_awdp_source_zip(
+    let err = floatctf::modules::gamebox::source_artifact::extract_awdp_source_targz(
         &rt,
         gamebox_image(),
         "awdp-src-itest3",

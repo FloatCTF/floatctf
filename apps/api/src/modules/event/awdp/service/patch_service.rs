@@ -34,6 +34,47 @@ pub const PATCH_EXEC_TIMEOUT_SECS: u64 = 60;
 /// stdout/stderr 截断上限。
 pub const PATCH_OUTPUT_LIMIT: usize = 64 * 1024;
 
+/// 从上传文件字节中提取 patch.sh 脚本内容。
+///
+/// - gzip（`patch.tar.gz`）：解压 tar 归档，取根目录/任意层级的 `patch.sh`；
+/// - 其它字节：按旧格式兼容（裸 .sh 文本，UTF-8）。
+///
+/// 返回错误消息面向玩家（Upload 层转 Validation/BadRequest）。
+pub fn extract_patch_script(bytes: &[u8]) -> Result<String, String> {
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        // gzip tar：patch.tar.gz
+        let gz = flate2::read::GzDecoder::new(bytes);
+        let mut archive = tar::Archive::new(gz);
+        let entries = archive
+            .entries()
+            .map_err(|e| format!("patch.tar.gz 解压失败: {e}"))?;
+        let mut found: Option<String> = None;
+        for entry in entries {
+            let mut entry = entry.map_err(|e| format!("patch.tar.gz 读取失败: {e}"))?;
+            let path = entry
+                .path()
+                .map_err(|e| format!("patch.tar.gz 路径解析失败: {e}"))?
+                .to_string_lossy()
+                .into_owned();
+            if path.ends_with("/pax_global_header") || path.starts_with("pax_global_header") {
+                continue;
+            }
+            let fname = path.rsplit('/').next().unwrap_or("");
+            if fname == "patch.sh" && entry.header().entry_type().is_file() {
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut entry, &mut s)
+                    .map_err(|_| "patch.sh 必须是 UTF-8 文本脚本".to_string())?;
+                found = Some(s);
+                break;
+            }
+        }
+        found.ok_or_else(|| "patch.tar.gz 内缺少 patch.sh 文件".to_string())
+    } else {
+        // 旧格式：裸 .sh 文本
+        String::from_utf8(bytes.to_vec()).map_err(|_| "patch.sh 必须是 UTF-8 文本脚本".to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatchResult {
     Applied,
@@ -228,4 +269,68 @@ pub async fn latest_for_subject_instance(
         return Ok(None);
     }
     Ok(Some(row))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_targz(patch: &str, extra: &[(&str, &[u8])]) -> Vec<u8> {
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(gz);
+        let mut h = tar::Header::new_gnu();
+        h.set_size(patch.len() as u64);
+        h.set_mode(0o755);
+        h.set_cksum();
+        builder
+            .append_data(&mut h, "patch.sh", patch.as_bytes())
+            .unwrap();
+        for (name, content) in extra {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(content.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            builder.append_data(&mut h, name, &content[..]).unwrap();
+        }
+        let gz = builder.into_inner().unwrap();
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn extracts_patch_sh_from_targz() {
+        let script = "#!/bin/sh\necho patch\n";
+        let bytes = build_targz(script, &[("src/index.php", &b"<?php"[..])]);
+        assert_eq!(extract_patch_script(&bytes).unwrap(), script);
+    }
+
+    #[test]
+    fn missing_patch_sh_reports_clear_error() {
+        // 构造不含 patch.sh 的 tar.gz
+        let no_patch = {
+            let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut builder = tar::Builder::new(gz);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_cksum();
+            builder
+                .append_data(&mut h, "src/x.txt", &b"data"[..])
+                .unwrap();
+            let gz = builder.into_inner().unwrap();
+            gz.finish().unwrap()
+        };
+        let err = extract_patch_script(&no_patch).unwrap_err();
+        assert!(err.contains("缺少 patch.sh"), "{err}");
+    }
+
+    #[test]
+    fn plain_sh_text_passthrough() {
+        let script = "#!/bin/sh\nexit 0\n";
+        assert_eq!(extract_patch_script(script.as_bytes()).unwrap(), script);
+    }
+
+    #[test]
+    fn non_utf8_sh_rejected() {
+        let err = extract_patch_script(&[0xff, 0xfe, 0x00, 0x01]).unwrap_err();
+        assert!(err.contains("UTF-8"), "{err}");
+    }
 }

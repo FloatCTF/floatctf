@@ -77,46 +77,8 @@ impl TaskHandler for AwdpEvalWorkerHandler {
     }
 }
 
-/// `awdp.practice.judge`：练习 Judge 例行检查 worker（间隔门由配置 interval_secs 控制）。
-pub struct AwdpPracticeJudgeHandler {
-    pub db: WebDb,
-    pub docker: WebDocker,
-    pub config: Arc<AppConfig>,
-}
-
-#[async_trait]
-impl TaskHandler for AwdpPracticeJudgeHandler {
-    fn task_key(&self) -> TaskKey {
-        TaskKey::AwdpPracticeJudge
-    }
-
-    fn trigger_type(&self) -> &'static str {
-        "cron"
-    }
-
-    async fn run(&self, _task: crate::entity::scheduled_tasks::Model) -> anyhow::Result<()> {
-        use crate::core::system_ids::EVENT_PRACTICE_AWDP;
-        let summary = crate::modules::event::awdp::service::practice_judge::sweep(
-            self.db.get_ref(),
-            self.docker.get_ref(),
-            &self.config.awdp,
-            self.config.auth.jwt_secret.expose().as_bytes(),
-            EVENT_PRACTICE_AWDP,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        if summary.dispatched > 0 {
-            info!(
-                dispatched = summary.dispatched,
-                skipped = summary.skipped,
-                "awdp.practice.judge sweep dispatched"
-            );
-        }
-        Ok(())
-    }
-}
-
-/// 幂等 seed：插入 awdp 的 3 个 recurring cron 任务（若不存在）。
+/// 幂等 seed：插入 awdp 的 2 个 recurring cron 任务（若不存在）。
+/// 注意：旧 `awdp.practice.judge`（sweep push 派发）已随 pull 模型移除（plan §61）。
 pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyhow::Result<()> {
     use crate::entity::scheduled_tasks;
 
@@ -132,12 +94,6 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
             "AWDP Practice 评估 worker",
             "*/3 * * * * *",
             3i64,
-        ),
-        (
-            TaskKey::AwdpPracticeJudge,
-            "AWDP Practice 练习 Judge 例行检查",
-            "*/30 * * * * *",
-            30i64,
         ),
     ];
     for (key, name, cron_expr, every_secs) in specs {

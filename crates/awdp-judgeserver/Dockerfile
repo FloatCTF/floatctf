@@ -15,6 +15,6 @@ FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /workspace/target/release/awdp_judgeserver /usr/local/bin/awdp_judgeserver
-ENV LISTEN_ADDR=0.0.0.0:8082
-EXPOSE 8082
+ENV DATA_LISTEN_ADDR=0.0.0.0:8080
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/awdp_judgeserver"]

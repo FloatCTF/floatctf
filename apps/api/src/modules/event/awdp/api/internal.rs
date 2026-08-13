@@ -1,8 +1,14 @@
-//! AWDP 内部路由（练习 JudgeServer 回调）。
+//! AWDP 内部路由（练习 JudgeServer 评估 Pull/Lease + 数据面回调）。
 //!
-//! 路径：`POST /internal/awdp/practice/judge/callback`（bootstrap 顶层注册，无 /api 前缀）。
+//! 路径（bootstrap 顶层注册，无 /api 前缀）：
+//! - `POST /internal/awdp/judge/jobs/claim` —— 领取评估作业
+//! - `POST /internal/awdp/judge/jobs/{id}/heartbeat` —— 延长 lease
+//! - `POST /internal/awdp/judge/jobs/{id}/result` —— 提交结果
+//!
 //! 鉴权：Bearer 令牌 = 平台 Secret HKDF 派生的练习 Judge 令牌（与部署容器注入的
 //! INTERNAL_TOKEN 一致，两侧各自派生/比较，不落库不落日志）。
+//!
+//! 旧的 practice judge callback 路由（push /batch 回调）已随 push 流程移除（plan §61）。
 
 use actix_web::{
     FromRequest, HttpRequest,
@@ -14,10 +20,7 @@ use std::pin::Pin;
 
 use crate::{
     api::{AppError, UniResponse, UniResult, prelude::*},
-    modules::event::awdp::{
-        domain::judge::practice_judge_token,
-        service::practice_judge::{self, JudgeCallbackRequest},
-    },
+    modules::event::awdp::domain::judge::practice_judge_token,
 };
 
 /// 练习 Judge 内部调用鉴权提取器。
@@ -97,25 +100,6 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-/// POST /internal/awdp/practice/judge/callback
-/// 由练习 JudgeServer 在每个任务完成后调用（带内部令牌）。
-#[post("/internal/awdp/practice/judge/callback")]
-pub async fn practice_judge_callback(
-    _auth: PracticeJudgeInternalAuth,
-    ctx: ReqCtx,
-    body: Json<JudgeCallbackRequest>,
-) -> UniResult<()> {
-    let cb = body.into_inner();
-    practice_judge::record_callback(ctx.db.get_ref(), &cb)
-        .await
-        .map_err(|e: crate::modules::event::awdp::AwdpError| match e {
-            crate::modules::event::awdp::AwdpError::Validation(m) => AppError::Validation(m),
-            crate::modules::event::awdp::AwdpError::NotFound(m) => AppError::NotFound(m),
-            other => AppError::Internal(other.to_string()),
-        })?;
-    UniResponse::ok_none().into()
-}
-
 /// POST /internal/awdp/judge/jobs/claim
 /// JudgeServer 主动领取评估作业（Pull + Lease）。
 #[post("/internal/awdp/judge/jobs/claim")]
@@ -186,7 +170,7 @@ pub async fn judge_jobs_result(
 ) -> UniResult<()> {
     use crate::modules::event::awdp::service::judge_worker;
     let req = body.into_inner();
-    judge_worker::record_result(ctx.db.get_ref(), &req)
+    judge_worker::record_result(ctx.db.get_ref(), &req, ctx.config.awdp.eval_max_attempts)
         .await
         .map_err(AppError::from)?;
     UniResponse::ok_none().into()
@@ -194,7 +178,6 @@ pub async fn judge_jobs_result(
 
 /// 注册内部路由（bootstrap 顶层，与 AWD internal 同风格）。
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(practice_judge_callback);
     cfg.service(judge_jobs_claim);
     cfg.service(judge_jobs_heartbeat);
     cfg.service(judge_jobs_result);

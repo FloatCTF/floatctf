@@ -7,10 +7,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::entity::{
-    awdp_instances, awdp_judge_results, awdp_practice_judge_settings, awdp_runs, event_instances,
-    gameboxes,
-};
+use crate::entity::{awdp_judge_results, awdp_practice_judge_settings};
 use crate::modules::event::awdp::{AwdpError, AwdpResult};
 
 /// 读取练习 Judge 配置（无行返回 None）。
@@ -114,65 +111,9 @@ pub async fn update_container_state(
     Ok(())
 }
 
-/// 刷新最近一次例行检查派发时间（sweep 成功派发后）。
-pub async fn touch_last_sweep(db: &DatabaseConnection, event_id: Uuid) -> AwdpResult<()> {
-    let row = ensure_settings(db, event_id).await?;
-    let mut am: awdp_practice_judge_settings::ActiveModel = row.into();
-    am.last_sweep_at = Set(Some(Utc::now().into()));
-    am.updated_at = Set(Utc::now().into());
-    am.update(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?;
-    Ok(())
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // 结果
 // ────────────────────────────────────────────────────────────────────────────
-
-/// 插入一条练习 Judge 检查结果（按 callback_id 幂等：重复回调跳过）。
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_result(
-    db: &DatabaseConnection,
-    event_id: Uuid,
-    run_id: Uuid,
-    instance_id: Uuid,
-    gamebox_id: Uuid,
-    owner_user_id: Option<Uuid>,
-    owner_team_id: Option<Uuid>,
-    check_kind: &str,
-    status: &str,
-    detail: Option<&str>,
-    callback_id: &str,
-) -> AwdpResult<()> {
-    let insert = awdp_judge_results::Entity::insert(awdp_judge_results::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
-        run_id: Set(run_id),
-        instance_id: Set(instance_id),
-        gamebox_id: Set(gamebox_id),
-        owner_user_id: Set(owner_user_id),
-        owner_team_id: Set(owner_team_id),
-        check_kind: Set(check_kind.to_string()),
-        status: Set(status.to_string()),
-        detail: Set(detail.map(str::to_string)),
-        callback_id: Set(Some(callback_id.to_string())),
-        created_at: Set(Utc::now().into()),
-    })
-    .on_conflict(
-        sea_orm::sea_query::OnConflict::column(awdp_judge_results::Column::CallbackId)
-            .do_nothing()
-            .to_owned(),
-    )
-    .exec(db)
-    .await;
-    match insert {
-        // 幂等：冲突（重复回调）视为成功跳过。
-        Ok(_) => Ok(()),
-        Err(sea_orm::DbErr::RecordNotInserted) => Ok(()),
-        Err(e) => Err(AwdpError::Database(e.to_string())),
-    }
-}
 
 /// 最近检查结果（按 created_at 倒序，limit 条）。
 pub async fn list_results(
@@ -188,73 +129,4 @@ pub async fn list_results(
         .all(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// 练习实例扫描（sweep 目标）
-// ────────────────────────────────────────────────────────────────────────────
-
-/// 当前全部**练习**运行中实例（practice = awdp_runs.gamebox_id 非空）。
-/// 返回 (根实例, awdp 扩展, run, gamebox)。
-pub async fn list_running_practice_instances(
-    db: &DatabaseConnection,
-) -> AwdpResult<
-    Vec<(
-        event_instances::Model,
-        awdp_instances::Model,
-        awdp_runs::Model,
-        gameboxes::Model,
-    )>,
-> {
-    use sea_orm::QueryOrder;
-
-    // 1. 全部 running 根实例。
-    let running = event_instances::Entity::find()
-        .filter(event_instances::Column::RuntimeState.eq("running"))
-        .order_by_desc(event_instances::Column::UpdatedAt)
-        .all(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?;
-    if running.is_empty() {
-        return Ok(vec![]);
-    }
-    let running_ids: Vec<Uuid> = running.iter().map(|r| r.id).collect();
-
-    // 2. awdp 扩展 + run（仅 practice：run.gamebox_id 非空）。
-    let awdp_pairs = awdp_instances::Entity::find()
-        .filter(awdp_instances::Column::InstanceId.is_in(running_ids.iter().copied()))
-        .find_also_related(awdp_runs::Entity)
-        .filter(awdp_runs::Column::GameboxId.is_not_null())
-        .all(db)
-        .await
-        .map_err(|e| AwdpError::Database(e.to_string()))?;
-
-    // 3. 批量拉 gamebox 身份。
-    let gamebox_ids: Vec<Uuid> = awdp_pairs.iter().map(|(m, _)| m.gamebox_id).collect();
-    let gameboxes = if gamebox_ids.is_empty() {
-        vec![]
-    } else {
-        gameboxes::Entity::find()
-            .filter(gameboxes::Column::Id.is_in(gamebox_ids))
-            .all(db)
-            .await
-            .map_err(|e| AwdpError::Database(e.to_string()))?
-    };
-    let gamebox_map: std::collections::HashMap<Uuid, gameboxes::Model> =
-        gameboxes.into_iter().map(|g| (g.id, g.clone())).collect();
-    let instance_map: std::collections::HashMap<Uuid, event_instances::Model> =
-        running.into_iter().map(|i| (i.id, i)).collect();
-
-    let mut out = Vec::with_capacity(awdp_pairs.len());
-    for (ext, run) in awdp_pairs {
-        let Some(run) = run else { continue };
-        let Some(instance) = instance_map.get(&ext.instance_id).cloned() else {
-            continue;
-        };
-        let Some(gamebox) = gamebox_map.get(&ext.gamebox_id).cloned() else {
-            continue;
-        };
-        out.push((instance, ext, run, gamebox));
-    }
-    Ok(out)
 }

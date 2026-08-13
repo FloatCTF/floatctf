@@ -314,18 +314,7 @@ async fn process_official_leased(
     result
 }
 
-/// 执行单条 official 评估：NO_PATCH → Healthcheck → Judge → Exploit → Score。
-async fn process_official(
-    db: &DatabaseConnection,
-    docker: &Docker,
-    ev: &crate::entity::awdp_evaluations::Model,
-) -> AwdpResult<()> {
-    let lock = InstanceAdvisoryLock::acquire(db, ev.instance_id).await?;
-    let result = process_official_locked(db, docker, "", ev, "", 0).await;
-    lock.release().await;
-    result
-}
-
+/// 执行单条 official 评估（持有 instance lock）：NO_PATCH → Healthcheck → Judge → Exploit → Score。
 async fn process_official_locked(
     db: &DatabaseConnection,
     docker: &Docker,

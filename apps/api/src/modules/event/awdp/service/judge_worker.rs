@@ -85,6 +85,9 @@ pub struct ResultRequest {
 }
 
 /// claim：领取 + 构建负载（事务领取在 evaluation_repo 内完成）。
+///
+/// 额外处理：official 评估若本轮无 APPLIED patch（NO_PATCH 短路，plan §22）
+/// ——直接以 no_patch 终态结算，不占 worker 资源、不进入 job 负载。
 pub async fn claim_jobs(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -93,6 +96,7 @@ pub async fn claim_jobs(
     lease_seconds: i64,
     max_attempts: i32,
 ) -> AwdpResult<ClaimResponse> {
+    use crate::modules::event::awdp::repo::patch_repo;
     // JudgeServer 同时消费 manual + official。
     let claimed =
         evaluation_repo::claim_jobs(db, worker_id, capacity, lease_seconds, max_attempts, &[])
@@ -105,6 +109,32 @@ pub async fn claim_jobs(
         let (instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
         let run = run_repo::require_by_id(db, ext.run_id).await?;
         let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
+
+        // NO_PATCH 短路：official 且本轮无 APPLIED patch → 直接终态（用本次 lease 结算）。
+        if ev.kind == AwdpEvaluationKind::Official {
+            if let Some(round_id) = ev.fix_round_id {
+                if !patch_repo::has_applied_patch(db, ev.instance_id, round_id).await? {
+                    let outcome = evaluation_repo::finish_with_lease(
+                        db,
+                        ev.id,
+                        worker_id,
+                        &job.lease_token,
+                        job.attempt,
+                        AwdpEvaluationStatus::NoPatch,
+                        Some("no applied patch this round"),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                    if outcome == evaluation_repo::FinishOutcome::StaleRejected {
+                        tracing::warn!(evaluation_id = %ev.id, "NO_PATCH short-circuit stale");
+                    }
+                    continue; // 不进入 job 负载
+                }
+            }
+        }
 
         // 容器内网 IP（data plane 目标；JudgeServer 在该网络上直连）。
         let target_ip = if instance.runtime_state == "running" {
@@ -183,7 +213,12 @@ pub async fn heartbeat_job(
 }
 
 /// result：验证 lease + attempt + runtime_generation 后写终态；official+patched 平台侧幂等计分。
-pub async fn record_result(db: &DatabaseConnection, req: &ResultRequest) -> AwdpResult<()> {
+/// `max_attempts`：platform_error 基础设施失败的可重试上限。
+pub async fn record_result(
+    db: &DatabaseConnection,
+    req: &ResultRequest,
+    max_attempts: i32,
+) -> AwdpResult<()> {
     let ev = evaluation_repo::find_by_id(db, req.evaluation_id).await?;
 
     // runtime_generation 必须匹配当前 Instance（容器 reset 后旧 worker 结果作废）。
@@ -196,6 +231,31 @@ pub async fn record_result(db: &DatabaseConnection, req: &ResultRequest) -> Awdp
     }
 
     let status = parse_terminal_status(&req.status)?;
+
+    // platform_error = 基础设施失败（spawn/超时/畸形输出/协议违规）：不能判玩家失败，
+    // 未达 max_attempts 释放回 pending 重试，达到则终态 PLATFORM_ERROR（plan §18/§25/§26）。
+    if status == AwdpEvaluationStatus::PlatformError {
+        let outcome = evaluation_repo::release_or_fail(
+            db,
+            req.evaluation_id,
+            &req.worker_id,
+            &req.lease_token,
+            req.attempt,
+            max_attempts,
+            req.stderr_limited
+                .as_deref()
+                .or(req.judge_result.as_deref())
+                .unwrap_or("platform error"),
+        )
+        .await?;
+        return match outcome {
+            evaluation_repo::FinishOutcome::Ok => Ok(()),
+            evaluation_repo::FinishOutcome::StaleRejected => Err(AwdpError::Conflict(
+                "stale worker result rejected (lease/token/attempt mismatch)".into(),
+            )),
+        };
+    }
+
     let status_clone = status.clone();
     let outcome = evaluation_repo::finish_with_lease(
         db,

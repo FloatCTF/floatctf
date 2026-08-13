@@ -663,8 +663,8 @@ fn every_awdp_internal_route_requires_internal_auth() {
     }
 
     assert!(
-        checked >= 4,
-        "expected at least 4 awdp internal routes (callback / claim / heartbeat / result), found {checked}"
+        checked >= 3,
+        "expected at least 3 awdp internal routes (claim / heartbeat / result), found {checked}"
     );
 }
 

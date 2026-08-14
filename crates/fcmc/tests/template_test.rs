@@ -25,7 +25,7 @@ fn challenge_template_generates_files() {
     assert!(dir.join("attachment").exists());
     assert!(
         dir.join("attachment/note.txt").exists(),
-        "template must scaffold a sample attachment file (mirrors examples/test_c)"
+        "template must scaffold a sample attachment file (mirrors examples/test-c)"
     );
 }
 
@@ -48,7 +48,7 @@ fn challenge_template_meta_is_v1_and_roundtrips() {
     // attachment is enabled by default and points to the scaffolded sample file
     assert!(
         content.contains("attachment = \"attachment/note.txt\""),
-        "template meta.toml must enable attachment (mirrors examples/test_c)"
+        "template meta.toml must enable attachment (mirrors examples/test-c)"
     );
     // no legacy fields
     assert!(!content.contains("image_tag"));

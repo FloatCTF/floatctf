@@ -339,8 +339,8 @@ fcmc check && fcmc build --proxy 7890 && fcmc check --runtime
 
 参考示例包（真实可用）：
 
-- [`examples/test_c`](../../examples/test_c) — Challenge 包（动态 flag + docker）
-- [`examples/test_g`](../../examples/test_g) — GameBox 包（SSH + healthchecks + judge）
+- [`examples/test-c`](../../examples/test-c) — Challenge 包（动态 flag + docker）
+- [`examples/test-g`](../../examples/test-g) — GameBox 包（SSH + healthchecks + judge）
 
 ---
 

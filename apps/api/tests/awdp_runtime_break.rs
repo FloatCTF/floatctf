@@ -3,7 +3,7 @@
 //! 覆盖（plan §47，run 中心化）：on-demand 启动 / healthcheck 端点发布 / 端点跨重启稳定 /
 //! flag 正确得分一次 / 重复 flag 不再得分 / 错误 flag 拒绝 / Team 共享实例。
 //!
-//! 前置：本地镜像 `floatctf/gameboxes/test-g:1.0.3`（examples/test_g v1.0.3，
+//! 前置：本地镜像 `floatctf/gameboxes/test-g:1.0.3`（examples/test-g v1.0.3，
 //! flag.php 提供 FLAG env）。无镜像或 DB 时跳过。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};

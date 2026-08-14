@@ -141,7 +141,7 @@ fcmc 是 FloatCTF 平台的 Challenge / GameBox 容器镜像构建与配置校�
       <name>/judge/check.py      # judge 脚本：HTTP 健康检查（多 IP 批量，不进镜像）
       <name>/awdp/exploit.py     # AWD-P 攻击脚本：SSRF 打 flag（多 IP 批量，不进镜像）
 
-    脚本接口（judge/awdp 一致，对齐 examples/test_g）:
+    脚本接口（judge/awdp 一致，对齐 examples/test-g）:
       python <脚本> ip1 ip2 ... ipN        # 支持多 IP 批量，并发执行
       stdout 输出 JSON 数组: [{"success": bool, "gamebox_ip": "<ip>", ...}]
       退出码: 0 = 全部成功；1 = 任一失败；2 = 用法错误（未传 IP）

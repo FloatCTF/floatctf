@@ -16,7 +16,7 @@ pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     let attachment_dir = challenge_dir.join("attachment");
     fs::create_dir_all(&attachment_dir).context("Failed to create attachment directory")?;
 
-    // attachment/note.txt — 附件示例（与 examples/test_c 同形态）
+    // attachment/note.txt — 附件示例（与 examples/test-c 同形态）
     fs::write(attachment_dir.join("note.txt"), "just test attachment")
         .context("Failed to write attachment/note.txt")?;
 
@@ -329,7 +329,7 @@ pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
     write_awdp_exploit_py(&gamebox_dir.join("awdp"))?;
 
     // Dockerfile — 自包含：php:8.2-apache + openssh-server，SSH 凭据来自 env 契约
-    // (GAMEBOX_USERNAME / GAMEBOX_USERPASS，对齐 examples/test_g)。
+    // (GAMEBOX_USERNAME / GAMEBOX_USERPASS，对齐 examples/test-g)。
     fs::write(
         src_dir.join("Dockerfile"),
         r#"FROM php:8.2-apache-bookworm

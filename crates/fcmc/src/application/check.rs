@@ -498,7 +498,7 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
 ///
 /// 镜像引用由 `build_artifact_image_ref(GameBox, "floatctf", …)` 派生；
 /// SSH 凭据经 `GAMEBOX_USERNAME` / `GAMEBOX_USERPASS` 环境变量传入
-/// （与 examples/test_g 的 entrypoint 契约一致）。
+/// （与 examples/test-g 的 entrypoint 契约一致）。
 pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,

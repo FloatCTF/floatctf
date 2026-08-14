@@ -1,9 +1,9 @@
-name = "test_g"
+name = "test-g"
 version = "1.0.3"
 author = "your_email"
 category = "web"
 description = "hello floatctf"
-# optional: safe_name = "test_g"
+# optional: safe_name = "test-g"
 
 [gamebox]
 username = "floatctf"

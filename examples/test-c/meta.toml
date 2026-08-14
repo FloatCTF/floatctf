@@ -1,4 +1,4 @@
-name = "test_c"
+name = "test-c"
 version = "1.0.0"
 author = "your_email@example.com" # modify
 category = "web" # modify

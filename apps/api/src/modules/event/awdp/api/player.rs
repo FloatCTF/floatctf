@@ -493,6 +493,29 @@ pub async fn download_source(
     UniResponse::ok(url.into()).into()
 }
 
+/// GET {event_id}/awdp/scores —— 赛事官方积分榜（按 participant_mode 聚合 user/team）。
+#[get("{event_id}/awdp/scores")]
+pub async fn get_scoreboard(
+    _user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<crate::modules::event::awdp::service::scoreboard::AwdpScoreRow>> {
+    let event_id = path.into_inner();
+    let event = events::Entity::find_by_id(event_id)
+        .filter(events::Column::Hidden.eq(false))
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+    if event.family != EventFamily::Awdp {
+        return Err(AppError::Validation("not an AWDP event".into()));
+    }
+    let rows =
+        crate::modules::event::awdp::service::scoreboard::get_scoreboard(ctx.db.get_ref(), &event)
+            .await
+            .map_err(AppError::from)?;
+    UniResponse::ok(rows.into()).into()
+}
+
 /// GET {event_id}/awdp/stream —— AWDP 实时事件流（competition 按 event_id 过滤）。
 #[get("{event_id}/awdp/stream")]
 pub async fn event_stream(
@@ -658,5 +681,6 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(download_source)
         .service(get_rounds)
         .service(get_my_evaluations)
+        .service(get_scoreboard)
         .service(event_stream);
 }

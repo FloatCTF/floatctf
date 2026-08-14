@@ -175,6 +175,62 @@ pub async fn total_for_event(
         .map(|r| (r.user_id, r.team_id, r.total.unwrap_or(0)))
         .collect())
 }
+/// 事件积分榜聚合（按主体 × score_type 分项合计；经 run 聚合）。
+/// 返回 (user_id, team_id, break_total, fix_total)——主体二选一（individual→user，team→team）。
+pub async fn scoreboard_aggregate(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> AwdpResult<Vec<(Option<Uuid>, Option<Uuid>, i64, i64)>> {
+    use sea_orm::{QuerySelect, sea_query::Expr};
+    let runs = run_repo::list_for_event(db, event_id).await?;
+    if runs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let run_ids: Vec<Uuid> = runs.iter().map(|r| r.id).collect();
+    #[derive(Debug, serde::Deserialize, sea_orm::FromQueryResult)]
+    struct Row {
+        user_id: Option<Uuid>,
+        team_id: Option<Uuid>,
+        score_type: String,
+        total: Option<i64>,
+    }
+    let rows = awdp_score_events::Entity::find()
+        .filter(awdp_score_events::Column::RunId.is_in(run_ids))
+        .select_only()
+        .column_as(awdp_score_events::Column::UserId, "user_id")
+        .column_as(awdp_score_events::Column::TeamId, "team_id")
+        .column_as(awdp_score_events::Column::ScoreType, "score_type")
+        .column_as(
+            Expr::col(awdp_score_events::Column::Delta)
+                .sum()
+                .cast_as(sea_orm::sea_query::Alias::new("bigint")),
+            "total",
+        )
+        .group_by(awdp_score_events::Column::UserId)
+        .group_by(awdp_score_events::Column::TeamId)
+        .group_by(awdp_score_events::Column::ScoreType)
+        .into_model::<Row>()
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+
+    use std::collections::HashMap;
+    let mut acc: HashMap<(Option<Uuid>, Option<Uuid>), (i64, i64)> = HashMap::new();
+    for r in rows {
+        let e = acc.entry((r.user_id, r.team_id)).or_default();
+        let total = r.total.unwrap_or(0);
+        if r.score_type == "break" {
+            e.0 += total;
+        } else {
+            e.1 += total;
+        }
+    }
+    Ok(acc
+        .into_iter()
+        .map(|((u, t), (b, f))| (u, t, b, f))
+        .collect())
+}
+
 /// 删除 run 的全部计分记录（练习 End「恢复如初」用；幂等键随之失效，重新破解可再计分）。
 pub async fn delete_for_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<u64> {
     let res = awdp_score_events::Entity::delete_many()

@@ -289,6 +289,26 @@ pub async fn list_instances(
     UniResponse::ok(out.into()).into()
 }
 
+/// GET /api/admin/events/{event_id}/awdp/scores —— 管理端积分榜（同 player 服务）。
+#[get("{event_id}/awdp/scores")]
+pub async fn get_scores(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<crate::modules::event::awdp::service::scoreboard::AwdpScoreRow>> {
+    let event_id = path.into_inner();
+    ensure_awdp_event(&ctx, event_id).await?;
+    let event = crate::entity::events::Entity::find_by_id(event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+    let rows =
+        crate::modules::event::awdp::service::scoreboard::get_scoreboard(ctx.db.get_ref(), &event)
+            .await
+            .map_err(AppError::from)?;
+    UniResponse::ok(rows.into()).into()
+}
+
 /// 路由注册（挂进 /api/admin/events scope，与 common 同组）。
 pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(get_awdp_config)
@@ -300,5 +320,6 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(detach_gamebox)
         .service(list_event_gameboxes)
         .service(list_instances)
+        .service(get_scores)
         .service(break_to_fix);
 }

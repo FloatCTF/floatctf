@@ -12,4 +12,5 @@ pub mod practice_acl;
 pub mod practice_judge;
 pub mod practice_service;
 pub mod runtime;
+pub mod scoreboard;
 pub mod tick_service;

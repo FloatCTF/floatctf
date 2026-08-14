@@ -961,61 +961,69 @@ export function AwdpWorkbench({
 				{/* Ended（§68） */}
 				{phase === "ended" ? (
 					<section className="p-3 rounded border flex flex-col gap-3">
-						<div className="flex items-center gap-2">
-							<h4 className="font-bold flex-1">Final Score</h4>
-							<strong className="text-lg tabular-nums">
-								{viewModel.score}
-							</strong>
-						</div>
-						<div>
-							<h5 className="font-bold text-sm mb-2">Break Results</h5>
-							<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-								{viewModel.gameboxes.map((gb) => (
-									<Fragment key={gb.id}>
-										<dt className="font-bold">{gb.name}</dt>
-										<dd className="font-medium">
-											{gb.broken ? (
-												<span className="text-green-600">
-													Broken +{viewModel.breakScore}
-												</span>
-											) : (
-												<span className="opacity-60">Unbroken</span>
-											)}
-										</dd>
-									</Fragment>
-								))}
-								{viewModel.gameboxes.length === 0 && (
-									<dd className="font-medium opacity-60">暂无 GameBox。</dd>
-								)}
-							</dl>
-						</div>
-						{viewModel.scoreHistory && viewModel.scoreHistory.length > 0 ? (
-							<div>
-								<h5 className="font-bold text-sm mb-2">Score Ledger</h5>
-								<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-									{viewModel.scoreHistory.map((s) => (
-										<Fragment key={s.id}>
-											<dt className="font-bold">
-												{s.score_type === "break" ? "Break" : "Fix"}
-											</dt>
-											<dd className="font-medium tabular-nums">
-												{s.delta > 0 ? "+" : ""}
-												{s.delta} · {fmtTime(s.created_at)}
-											</dd>
-										</Fragment>
-									))}
-								</dl>
-							</div>
-						) : null}
-						{viewModel.isPractice && onTrainAgain && (
-							<Button
-								variant="primary"
-								className="w-40"
-								disabled={busy["train-again"]}
-								onClick={handleTrainAgain}
-							>
-								{busy["train-again"] ? "Restarting…" : "Train Again"}
-							</Button>
+						{viewModel.isPractice ? (
+							// 练习：结束视图只保留 Train Again（练习不展示结算，只关心重训）。
+							onTrainAgain ? (
+								<div className="flex items-center justify-center py-2">
+									<Button
+										variant="primary"
+										className="w-40"
+										disabled={busy["train-again"]}
+										onClick={handleTrainAgain}
+									>
+										{busy["train-again"] ? "Restarting…" : "Train Again"}
+									</Button>
+								</div>
+							) : null
+						) : (
+							<>
+								<div className="flex items-center gap-2">
+									<h4 className="font-bold flex-1">Final Score</h4>
+									<strong className="text-lg tabular-nums">
+										{viewModel.score}
+									</strong>
+								</div>
+								<div>
+									<h5 className="font-bold text-sm mb-2">Break Results</h5>
+									<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
+										{viewModel.gameboxes.map((gb) => (
+											<Fragment key={gb.id}>
+												<dt className="font-bold">{gb.name}</dt>
+												<dd className="font-medium">
+													{gb.broken ? (
+														<span className="text-green-600">
+															Broken +{viewModel.breakScore}
+														</span>
+													) : (
+														<span className="opacity-60">Unbroken</span>
+													)}
+												</dd>
+											</Fragment>
+										))}
+										{viewModel.gameboxes.length === 0 && (
+											<dd className="font-medium opacity-60">暂无 GameBox。</dd>
+										)}
+									</dl>
+								</div>
+								{viewModel.scoreHistory && viewModel.scoreHistory.length > 0 ? (
+									<div>
+										<h5 className="font-bold text-sm mb-2">Score Ledger</h5>
+										<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
+											{viewModel.scoreHistory.map((s) => (
+												<Fragment key={s.id}>
+													<dt className="font-bold">
+														{s.score_type === "break" ? "Break" : "Fix"}
+													</dt>
+													<dd className="font-medium tabular-nums">
+														{s.delta > 0 ? "+" : ""}
+														{s.delta} · {fmtTime(s.created_at)}
+													</dd>
+												</Fragment>
+											))}
+										</dl>
+									</div>
+								) : null}
+							</>
 						)}
 					</section>
 				) : null}

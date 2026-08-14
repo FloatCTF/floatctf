@@ -69,8 +69,14 @@ function RouteComponent() {
 			<AwdpEventProgress id={id} />
 			<AwdpEventContext.Provider value={{ id }}>
 				<UnderlineNav aria-label="AWD Plus event">
-					{/* 比赛：所有 gamebox 共享同一个顶部进度条，不再单列 Overview / GameBoxes
-					   tab（参赛入口与工作台保留在默认落地页）。 */}
+					{/* 顶部进度条为事件级共享（AwdpEventProgress）；Overview / GameBoxes
+					   tab 保留，工作台仍可按需查看各 gamebox。 */}
+					<RouterNavItem to="/service/events/awdp/$id" id={id}>
+						Overview
+					</RouterNavItem>
+					<RouterNavItem to="/service/events/awdp/$id/gameboxes" id={id}>
+						GameBoxes
+					</RouterNavItem>
 					<RouterNavItem to="/service/events/awdp/$id/rounds" id={id}>
 						Rounds
 					</RouterNavItem>

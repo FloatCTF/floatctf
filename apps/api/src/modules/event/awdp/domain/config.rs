@@ -12,6 +12,9 @@ pub const DEFAULT_FIX_DURATION_SECS: i32 = 3600;
 pub const DEFAULT_FIX_ROUND_INTERVAL_SECS: i32 = 600;
 pub const DEFAULT_BREAK_SCORE: i64 = 1000;
 pub const DEFAULT_FIX_ROUND_SCORE: i64 = 150;
+/// 练习模式每轮 check 失败（NO_PATCH / SERVICE_DOWN / FUNCTIONAL_BROKEN / VULNERABLE）扣分
+/// （固定常量；练习 run 每轮每实例以同一幂等键写一条负 delta 账本）。
+pub const DEFAULT_FIX_ROUND_PENALTY: i64 = 50;
 
 /// awdp_events 配置值对象（与类型化列一一对应）。
 #[derive(Debug, Clone, PartialEq, Eq)]

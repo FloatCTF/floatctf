@@ -324,10 +324,11 @@ pub struct AwdpRunDto {
     pub current_round: i32,
     pub next_action_at: Option<DateTime<FixedOffset>>,
     pub my_score: i64,
+    /// 练习模式每轮 check 失败扣分（前端 History 展示用；竞赛 run 无此概念）。
+    pub fix_round_penalty: i64,
     /// Fix 阶段才返回的源码目录说明。
     pub source_code_dir: Option<String>,
     pub instances: Vec<RunInstanceDto>,
-    /// 练习模式提前 Check 确认修复的起始回合序号（该轮起自动计分；NULL=未确认）。
     /// 练习 data plane Flag Server endpoint（仅 GameBox 内部网络可达；Fix 阶段弱化）。
     pub judge_endpoint: Option<JudgeEndpointDto>,
 }
@@ -412,6 +413,9 @@ pub struct ManualCheckDto {
     pub healthcheck_detail: Option<Vec<String>>,
     pub judge_ok: Option<bool>,
     pub judge_detail: Option<String>,
+    /// 练习模式才执行 exploit 诊断（不计分）；非练习恒 None。
+    pub exploit_ok: Option<bool>,
+    pub exploit_detail: Option<String>,
 }
 
 /// 回合时间线 DTO。
@@ -436,7 +440,23 @@ pub struct AwdpEvaluationDto {
     pub status: crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
     pub healthcheck_result: Option<String>,
     pub judge_result: Option<String>,
+    /// exploit 结果详情（练习 manual / official 终态才有；其余 None）。
+    pub exploit_result: Option<String>,
     pub finished_at: Option<DateTime<FixedOffset>>,
+}
+
+/// ALL Check 结果（练习模式；status=patched → 剩余回合全部计分 + run 已结束）。
+#[derive(Debug, Clone, Serialize)]
+pub struct AllCheckDto {
+    /// 终态：patched=修复成功（swept=true）；其余 = 本次未通过（不落账，等官方 check）。
+    pub status: crate::entity::sea_orm_active_enums::AwdpEvaluationStatus,
+    /// status=patched：剩余回合已全部计分且 run 已结束。
+    pub swept: bool,
+    pub swept_rounds: i32,
+    pub target_round: i32,
+    pub healthcheck_detail: Option<String>,
+    pub judge_detail: Option<String>,
+    pub exploit_detail: Option<String>,
 }
 
 /// 我的 Writeup DTO（练习 run 属主可读写，一 run 一份）。

@@ -450,6 +450,8 @@ pub async fn manual_test_check(
             healthcheck_detail: None,
             judge_ok: None,
             judge_detail: None,
+            exploit_ok: None,
+            exploit_detail: None,
         }
         .into(),
     )
@@ -636,6 +638,7 @@ pub async fn get_my_evaluations(
             status: ev.status,
             healthcheck_result: ev.healthcheck_result,
             judge_result: ev.judge_result,
+            exploit_result: ev.exploit_result,
             finished_at: ev.finished_at,
         });
     }

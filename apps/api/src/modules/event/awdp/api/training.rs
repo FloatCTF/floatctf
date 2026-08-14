@@ -758,6 +758,75 @@ pub async fn manual_test_check(
             healthcheck_detail: None,
             judge_ok: None,
             judge_detail: None,
+            exploit_ok: None,
+            exploit_detail: None,
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// POST .../all-check —— 练习 ALL Check：一键官方判定（healthcheck→judge→exploit）。
+/// 成功（patched）→ 当前轮起全部剩余回合 +fix_round_score + 停止实例 + run 直接 Ended；
+/// 失败 → 不落账不扣分，等本轮 cutoff 官方 check 照常判定。
+#[post("awdp/runs/{run_id}/gameboxes/{gamebox_id}/all-check")]
+pub async fn all_check(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<AllCheckDto> {
+    let (run_id, gamebox_id) = path.into_inner();
+    let user = user.into_inner();
+    let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
+    if run.phase != AwdpPhase::Fix {
+        return Err(AppError::from(AwdpError::InvalidState(
+            "ALL Check 仅在 Fix 阶段可用".into(),
+        )));
+    }
+    let Some(view) =
+        runtime::get_my_instance_view(ctx.db.get_ref(), run.id, gamebox_id, Subject::user(user.id))
+            .await?
+    else {
+        return Err(AppError::NotFound("instance not started".into()));
+    };
+    let result = evaluation::all_check(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        run.id,
+        view.instance_id,
+        Subject::user(user.id),
+    )
+    .await
+    .map_err(AppError::from)?;
+    log_practice_action(
+        &ctx,
+        run.event_id,
+        user.id,
+        "awdp.train.all_check",
+        json!({ "run_id": run.id, "gamebox_id": gamebox_id, "status": result.status, "swept": result.swept, "swept_rounds": result.swept_rounds }),
+    )
+    .await;
+    UniResponse::ok(
+        AllCheckDto {
+            status: result.status,
+            swept: result.swept,
+            swept_rounds: result.swept_rounds,
+            target_round: result.target_round,
+            healthcheck_detail: if result.healthcheck_detail.is_empty() {
+                None
+            } else {
+                Some(result.healthcheck_detail)
+            },
+            judge_detail: if result.judge_detail.is_empty() {
+                None
+            } else {
+                Some(result.judge_detail)
+            },
+            exploit_detail: if result.exploit_detail.is_empty() {
+                None
+            } else {
+                Some(result.exploit_detail)
+            },
         }
         .into(),
     )
@@ -956,6 +1025,7 @@ pub async fn get_my_evaluations(
             status: ev.status,
             healthcheck_result: ev.healthcheck_result,
             judge_result: ev.judge_result,
+            exploit_result: ev.exploit_result,
             finished_at: ev.finished_at,
         });
     }
@@ -1179,6 +1249,7 @@ async fn build_run_dto(
         current_round: run.current_round,
         next_action_at: run.next_action_at,
         my_score,
+        fix_round_penalty: crate::modules::event::awdp::domain::config::DEFAULT_FIX_ROUND_PENALTY,
         source_code_dir: if run.phase == AwdpPhase::Fix {
             gamebox.awdp_source_code_dir.clone()
         } else {
@@ -1208,6 +1279,7 @@ pub fn configure_training_routes(cfg: &mut web::ServiceConfig) {
         .service(download_source)
         .service(upload_patch)
         .service(manual_test_check)
+        .service(all_check)
         .service(start_my_instance)
         .service(get_my_instance)
         .service(stop_my_instance)

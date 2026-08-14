@@ -510,7 +510,7 @@ pub async fn finish(
     Ok(())
 }
 
-/// 按 id 取评估（练习提前 Check 重取终态用）。
+/// 按 id 取评估（worker / ALL Check 重取终态用）。
 pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> AwdpResult<awdp_evaluations::Model> {
     awdp_evaluations::Entity::find_by_id(id)
         .one(db)

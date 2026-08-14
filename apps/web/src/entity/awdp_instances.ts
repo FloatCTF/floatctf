@@ -6,4 +6,5 @@ export type AwdpInstances = {
   created_at: string;
   run_id: string;
   gamebox_id: string;
+  reset_count: number;
 };

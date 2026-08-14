@@ -27,6 +27,8 @@ export type AwdpInstance = {
 	instance_id: string;
 	runtime_state: string;
 	runtime_generation: number;
+	/** 玩家手动 Reset 次数（比赛 subject×gamebox；练习恒 0）。 */
+	reset_count: number;
 	endpoints: AwdpEndpoint[];
 };
 

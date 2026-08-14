@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { AwdpPhase } from "@/api/awdp";
@@ -30,8 +36,7 @@ beforeAll(() => {
 		unobserve() {}
 		disconnect() {}
 	}
-	globalThis.ResizeObserver =
-		globalThis.ResizeObserver ?? ResizeObserverStub;
+	globalThis.ResizeObserver = globalThis.ResizeObserver ?? ResizeObserverStub;
 });
 
 afterEach(() => {
@@ -50,6 +55,7 @@ const gb: AwdpWorkbenchGameBox = {
 		instance_id: "i1",
 		runtime_state: "running",
 		runtime_generation: 1,
+		reset_count: 0,
 		endpoints: [],
 	},
 };
@@ -69,7 +75,8 @@ const vm = (
 		fixEndsAt: phase === "fix" ? fixAt : null,
 		breakDurationSecs: 3600,
 		fixDurationSecs: 3600,
-		phaseEndsAt: phase === "fix" ? fixAt : new Date(Date.now() + 3_600_000).toISOString(),
+		phaseEndsAt:
+			phase === "fix" ? fixAt : new Date(Date.now() + 3_600_000).toISOString(),
 		currentRound: phase === "fix" ? 1 : 0,
 		totalRounds: 6,
 		nextCheckAt: phase === "fix" ? fixAt : null,
@@ -165,19 +172,19 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				.hasAttribute("disabled"),
 		).toBe(true);
 		expect(
-			screen.getByRole("button", { name: /^Apply Patch$/ }).hasAttribute(
-				"disabled",
-			),
+			screen
+				.getByRole("button", { name: /^Apply Patch$/ })
+				.hasAttribute("disabled"),
 		).toBe(true);
 		expect(
-			screen.getByRole("button", { name: /^Test Check$/ }).hasAttribute(
-				"disabled",
-			),
+			screen
+				.getByRole("button", { name: /^Test Check$/ })
+				.hasAttribute("disabled"),
 		).toBe(true);
 		expect(
-			screen.getByRole("button", { name: /^ALL Check$/ }).hasAttribute(
-				"disabled",
-			),
+			screen
+				.getByRole("button", { name: /^ALL Check$/ })
+				.hasAttribute("disabled"),
 		).toBe(true);
 
 		resolveReset?.();
@@ -287,5 +294,74 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		).toBe(true);
 		expect(screen.queryByRole("button", { name: /停止中/ })).toBeNull();
 		resolvePhase?.();
+	});
+
+	it("比赛（isPractice=false）Fix：Reset 显示剩余次数；break 阶段禁用", async () => {
+		const { rerender } = render(
+			<AwdpWorkbench
+				viewModel={vm("fix", { isPractice: false })}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+			/>,
+		);
+		// 初始 reset_count=0 → 剩余 3 次
+		expect(
+			screen.getByRole("button", { name: /Reset \(3 left\)/ }),
+		).toBeDefined();
+		expect(
+			screen
+				.getByRole("button", { name: /Reset \(3 left\)/ })
+				.hasAttribute("disabled"),
+		).toBe(false);
+
+		// reset_count=3 → 剩余 0，禁用
+		rerender(
+			<AwdpWorkbench
+				viewModel={vm("fix", {
+					isPractice: false,
+					gameboxes: [
+						{
+							...gb,
+							instance: { ...gb.instance!, reset_count: 3 },
+						},
+					],
+				})}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+			/>,
+		);
+		expect(
+			screen.getByRole("button", { name: /Reset \(0 left\)/ }),
+		).toBeDefined();
+		expect(
+			screen
+				.getByRole("button", { name: /Reset \(0 left\)/ })
+				.hasAttribute("disabled"),
+		).toBe(true);
+
+		// break 阶段：即使剩余次数充足也禁用（仅 Fix 允许）
+		rerender(
+			<AwdpWorkbench
+				viewModel={vm("break", { isPractice: false })}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+			/>,
+		);
+		const breakReset = screen.getByRole("button", { name: /Reset \(3 left\)/ });
+		expect(breakReset.hasAttribute("disabled")).toBe(true);
+		expect(breakReset.getAttribute("title")).toContain("仅 Fix");
+	});
+
+	it("练习（isPractice=true）Fix：Reset 保持无次数限制文案", async () => {
+		render(
+			<AwdpWorkbench
+				viewModel={vm("fix")}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+			/>,
+		);
+		// 练习：按钮仍为纯「Reset」，不显示剩余次数
+		expect(screen.getByRole("button", { name: /^Reset$/ })).toBeDefined();
+		expect(screen.queryByRole("button", { name: /Reset \(/ })).toBeNull();
 	});
 });

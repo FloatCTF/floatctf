@@ -142,6 +142,7 @@ function toViewModel(
 						instance_id: gb.instance.instance_id,
 						runtime_state: gb.instance.runtime_state,
 						runtime_generation: gb.instance.runtime_generation,
+						reset_count: gb.instance.reset_count ?? 0,
 						endpoints: gb.instance.endpoints,
 					}
 				: null,

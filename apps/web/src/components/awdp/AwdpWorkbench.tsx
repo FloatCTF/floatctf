@@ -181,6 +181,8 @@ export type AwdpWorkbenchGameBox = {
 		instance_id: string;
 		runtime_state: string;
 		runtime_generation: number;
+		/** 玩家手动 Reset 次数（比赛 subject×gamebox；练习恒 0）。 */
+		reset_count: number;
 		endpoints: AwdpWorkbenchEndpoint[];
 	} | null;
 };
@@ -536,6 +538,9 @@ export function AwdpWorkbench({
 		// 阶段切换（页面级 phaseBusy）同样禁用本卡片全部按钮。
 		const resetting = !!busy[`reset:${gb.id}`];
 		const cardBlocked = resetting || phaseBusy;
+		// 比赛 Reset 次数：后端 RESET_LIMIT_COMPETITION=3；练习不受限（恒 3 不显示）。
+		const resetLimit = 3;
+		const resetLeft = resetLimit - (inst?.reset_count ?? 0);
 		const check = checkResults[gb.id];
 		const allCheckResult = allCheckResults[gb.id];
 		const patchStatus = lastPatch[gb.id];
@@ -604,15 +609,33 @@ export function AwdpWorkbench({
 				</dl>
 
 				{/* 实例操作（break|fix）：与练习一致仅保留 Reset——练习由页面级「开始 / End」
-				   统一管理生命周期；比赛实例到点由事件自动启动，无需手动 Start/Stop。 */}
+				   统一管理生命周期；比赛实例到点由事件自动启动，无需手动 Start/Stop。
+				   比赛 Reset 次数限制：仅 Fix 阶段允许（break 禁用），每 subject×gamebox
+				   最多 3 次（后端 RESET_LIMIT_COMPETITION），按钮上显示剩余次数。 */}
 				{active && (
 					<div className="flex items-center gap-2 mb-2">
 						<Button
 							variant="danger"
-							disabled={cardBlocked || !inst || busy[`reset:${gb.id}`]}
+							disabled={
+								cardBlocked ||
+								!inst ||
+								busy[`reset:${gb.id}`] ||
+								(!viewModel.isPractice && (phase !== "fix" || resetLeft <= 0))
+							}
+							title={
+								!viewModel.isPractice && phase !== "fix"
+									? "比赛仅 Fix 阶段允许 Reset"
+									: !viewModel.isPractice && resetLeft <= 0
+										? "Reset 次数已用完"
+										: undefined
+							}
 							onClick={() => handleInstanceOp("reset", gb)}
 						>
-							{resetting ? "Resetting…" : "Reset"}
+							{resetting
+								? "Resetting…"
+								: viewModel.isPractice
+									? "Reset"
+									: `Reset (${Math.max(0, resetLeft)} left)`}
 						</Button>
 					</div>
 				)}

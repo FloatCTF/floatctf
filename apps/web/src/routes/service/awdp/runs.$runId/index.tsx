@@ -134,6 +134,7 @@ function RouteComponent() {
 					instance_id: inst.instance_id,
 					runtime_state: inst.runtime_state,
 					runtime_generation: inst.runtime_generation,
+					reset_count: inst.reset_count ?? 0,
 					endpoints: inst.endpoints,
 				},
 			})),

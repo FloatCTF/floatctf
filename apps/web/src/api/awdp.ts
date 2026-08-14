@@ -159,6 +159,16 @@ export type AwdpAdminInstanceDto = {
 	endpoints: AwdpEndpoint[];
 };
 
+/** AWDP 赛事积分榜条目（个人或战队主体）。 */
+export type AwdpScoreRow = {
+	subject_id: string;
+	subject_name: string;
+	break_score: number;
+	fix_score: number;
+	total_score: number;
+	rank: number;
+};
+
 // ────────────────────────────────────────────────────────────────────────────
 // Admin client
 // ────────────────────────────────────────────────────────────────────────────
@@ -225,6 +235,12 @@ export const awdpAdminApi = {
 	listInstances: async (eventId: string) => {
 		const res = await admin_api.get<UniResponse<AwdpAdminInstanceDto[]>>(
 			`/events/${eventId}/awdp/instances`,
+		);
+		return res.data;
+	},
+	scores: async (eventId: string) => {
+		const res = await admin_api.get<UniResponse<AwdpScoreRow[]>>(
+			`/events/${eventId}/awdp/scores`,
 		);
 		return res.data;
 	},
@@ -304,6 +320,12 @@ export const awdpPlayerApi = {
 	evaluations: async (eventId: string) => {
 		const res = await service_api.get<UniResponse<AwdpEvaluationDto[]>>(
 			`/events/${eventId}/awdp/evaluations`,
+		);
+		return res.data;
+	},
+	scores: async (eventId: string) => {
+		const res = await service_api.get<UniResponse<AwdpScoreRow[]>>(
+			`/events/${eventId}/awdp/scores`,
 		);
 		return res.data;
 	},

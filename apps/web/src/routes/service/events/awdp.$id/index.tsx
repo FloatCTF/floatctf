@@ -5,6 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import MDEditor from "@uiw/react-md-editor";
 import dayjs from "dayjs";
 import { type FormEvent, useState } from "react";
+import { match } from "ts-pattern";
 
 import { serviceApi } from "@/api";
 import {
@@ -13,6 +14,7 @@ import {
 	computeEventStatus,
 	useMsgInlineBanner,
 } from "@/components";
+import { ParticipantMode } from "@/entity";
 import { ServiceRouteGuard } from "../../route";
 import { AwdpEventWorkbench } from "./-workbench";
 
@@ -54,6 +56,22 @@ function RouteComponent() {
 		onError: (e) => banner.showErrorBanner(e),
 	});
 
+	const leaveEventMutation = useMutation({
+		mutationFn: serviceApi.events.leave,
+		onMutate: () => banner.hideBanner(),
+		onSuccess: invalidate,
+		onError: (e) => banner.showErrorBanner(e),
+	});
+
+	const handleJoinSingle = () => {
+		if (!ev) return;
+		joinEventMutation.mutate(ev.id);
+	};
+	const handleLeaveSingle = () => {
+		if (!ev) return;
+		leaveEventMutation.mutate(ev.id);
+	};
+
 	const createEventTeamMutation = useMutation({
 		mutationFn: serviceApi.events.createTeam,
 		onMutate: () => banner.hideBanner(),
@@ -79,8 +97,11 @@ function RouteComponent() {
 	const [teamId, setTeamId] = useState("");
 	const [teamName, setTeamName] = useState("");
 
+	const isJoining = joinEventMutation.isPending;
 	const isLeaving =
-		quitEventTeamMutation.isPending || joinEventTeamMutation.isPending;
+		leaveEventMutation.isPending ||
+		quitEventTeamMutation.isPending ||
+		joinEventTeamMutation.isPending;
 
 	if (isLoading) {
 		return <div className="p-4">Loading…</div>;
@@ -120,116 +141,138 @@ function RouteComponent() {
 
 			<div className="flex flex-col gap-3 flex-1 min-w-[320px]">
 				<div className="flex flex-col gap-3">
-					{/* 队伍区（参考 AWD/Jeopardy 参赛形态） */}
-					<section className="p-3 rounded border flex gap-5">
-						{status !== "upcoming" && joined && (
-							<SubmitWriteup eventId={id} teamId={myTeam?.team.id} />
-						)}
-						{joined && (
-							<div className="flex flex-col gap-3">
-								<div className="flex items-center gap-2 mb-2">
-									<Heading as="h2">{myTeam?.team.name}</Heading>
-									{myTeam?.team.banned && (
-										<Label variant="danger">Banned</Label>
-									)}
-								</div>
-								<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2">
-									<dt className="font-bold">ID</dt>
-									<dd className="font-medium break-all">{myTeam?.team.id}</dd>
-									{myTeam?.members.map((member) => (
-										<>
-											<dt key={member.member.user_id} className="font-bold">
-												{member.member.role}
-											</dt>
-											<dd
-												key={member.member.user_id}
-												className="font-medium break-all"
-											>
-												{member.member_name} @{" "}
-												{dayjs
-													.utc(member.member.joined_at)
-													.local()
-													.format("YYYY-MM-DD HH:mm:ss")}
-											</dd>
-										</>
-									))}
-								</dl>
+					{/* 参赛区（个人：Join/Leave Event；团队：建队/入队） */}
+					{match(ev.participant_mode)
+						.with(ParticipantMode.Individual, () => (
+							<section className="p-3 rounded border flex items-center min-h-[72px]">
+								{status !== "upcoming" && joined && (
+									<SubmitWriteup eventId={id} />
+								)}
 								{status === "upcoming" && (
 									<Button
 										className="w-28"
-										variant="danger"
-										onClick={() =>
-											quitEventTeamMutation.mutate({
-												event_id: id,
-												team_id: myTeam?.team.id ?? "",
-											})
-										}
-										disabled={isLeaving}
-										aria-label="Leave event"
+										variant={joined ? "danger" : "primary"}
+										onClick={joined ? handleLeaveSingle : handleJoinSingle}
+										disabled={joined ? isLeaving : isJoining}
+										aria-label={joined ? "Leave event" : "Join event"}
 									>
-										{isLeaving ? "Leaving…" : "Leave"}
+										{joined
+											? isLeaving
+												? "Leaving…"
+												: "Leave"
+											: isJoining
+												? "Joining…"
+												: "Join"}
 									</Button>
 								)}
-							</div>
-						)}
-						{/* 未开始未加入 */}
-						{status === "upcoming" && !joined && (
-							<>
-								<form
-									className="flex w-full flex-col gap-2"
-									onSubmit={(e: FormEvent) => {
-										e.preventDefault();
-										joinEventTeamMutation.mutate({
-											event_id: id,
-											team_id: teamId,
-										});
-									}}
-								>
-									<FormControl required>
-										<FormControl.Label>Team ID</FormControl.Label>
-										<TextInput
-											value={teamId}
-											onChange={(e) => setTeamId(e.target.value)}
-											aria-label="Team ID"
-										/>
-									</FormControl>
-									<Button variant="primary" type="submit">
-										Join
-									</Button>
-								</form>
-								<form
-									className="flex w-full flex-col gap-2"
-									onSubmit={(e: FormEvent) => {
-										e.preventDefault();
-										createEventTeamMutation.mutate({
-											event_id: id,
-											name: teamName,
-										});
-									}}
-								>
-									<FormControl required>
-										<FormControl.Label>Team Name</FormControl.Label>
-										<TextInput
-											value={teamName}
-											onChange={(e) => setTeamName(e.target.value)}
-											aria-label="Team Name"
-										/>
-									</FormControl>
-									<Button variant="primary" type="submit">
-										Create
-									</Button>
-								</form>
-								{ev.allow_join && (
-									<Button
-										onClick={() => joinEventMutation.mutate(ev.id)}
-										disabled={joinEventMutation.isPending}
-									>
-										{joinEventMutation.isPending ? "Joining…" : "Join Event"}
-									</Button>
+							</section>
+						))
+						.with(ParticipantMode.Team, () => (
+							<section className="p-3 rounded border flex gap-5">
+								{status !== "upcoming" && joined && (
+									<SubmitWriteup eventId={id} teamId={myTeam?.team.id} />
 								)}
-							</>
-						)}
-					</section>
+								{joined && (
+									<div className="flex flex-col gap-3">
+										<div className="flex items-center gap-2 mb-2">
+											<Heading as="h2">{myTeam?.team.name}</Heading>
+											{myTeam?.team.banned && (
+												<Label variant="danger">Banned</Label>
+											)}
+										</div>
+										<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2">
+											<dt className="font-bold">ID</dt>
+											<dd className="font-medium break-all">
+												{myTeam?.team.id}
+											</dd>
+											{myTeam?.members.map((member) => (
+												<>
+													<dt key={member.member.user_id} className="font-bold">
+														{member.member.role}
+													</dt>
+													<dd
+														key={member.member.user_id}
+														className="font-medium break-all"
+													>
+														{member.member_name} @{" "}
+														{dayjs
+															.utc(member.member.joined_at)
+															.local()
+															.format("YYYY-MM-DD HH:mm:ss")}
+													</dd>
+												</>
+											))}
+										</dl>
+										{status === "upcoming" && (
+											<Button
+												className="w-28"
+												variant="danger"
+												onClick={() =>
+													quitEventTeamMutation.mutate({
+														event_id: id,
+														team_id: myTeam?.team.id ?? "",
+													})
+												}
+												disabled={isLeaving}
+												aria-label="Leave event"
+											>
+												{isLeaving ? "Leaving…" : "Leave"}
+											</Button>
+										)}
+									</div>
+								)}
+								{/* 未开始未加入 */}
+								{status === "upcoming" && !joined && (
+									<>
+										<form
+											className="flex w-full flex-col gap-2"
+											onSubmit={(e: FormEvent) => {
+												e.preventDefault();
+												joinEventTeamMutation.mutate({
+													event_id: id,
+													team_id: teamId,
+												});
+											}}
+										>
+											<FormControl required>
+												<FormControl.Label>Team ID</FormControl.Label>
+												<TextInput
+													value={teamId}
+													onChange={(e) => setTeamId(e.target.value)}
+													aria-label="Team ID"
+												/>
+											</FormControl>
+											<Button variant="primary" type="submit">
+												Join
+											</Button>
+										</form>
+										<form
+											className="flex w-full flex-col gap-2"
+											onSubmit={(e: FormEvent) => {
+												e.preventDefault();
+												createEventTeamMutation.mutate({
+													event_id: id,
+													name: teamName,
+												});
+											}}
+										>
+											<FormControl required>
+												<FormControl.Label>Team Name</FormControl.Label>
+												<TextInput
+													value={teamName}
+													onChange={(e) => setTeamName(e.target.value)}
+													aria-label="Team Name"
+												/>
+											</FormControl>
+											<Button variant="primary" type="submit">
+												Create
+											</Button>
+										</form>
+									</>
+								)}
+							</section>
+						))
+						.exhaustive()}
 
 					{/* AWDP 工作台（§65：共用组件，VM 由赛事 overview 适配） */}
 					<AwdpEventWorkbench eventId={id} />

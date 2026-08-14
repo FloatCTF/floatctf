@@ -5,7 +5,7 @@ import { createContext } from "react";
 
 import { adminApi } from "@/api";
 import { awdpAdminApi } from "@/api/awdp";
-import type { Events } from "@/entity";
+import { type Events, ParticipantMode } from "@/entity";
 import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
 
 export const Route = createFileRoute("/admin/events/awdp/$id")({
@@ -53,16 +53,42 @@ function RouteComponent() {
 					</>
 				) : (
 					<>
-						<RouterNavItem to="/admin/events/awdp/$id/configure" params={{ id }}>
+						<RouterNavItem
+							to="/admin/events/awdp/$id/configure"
+							params={{ id }}
+						>
 							Configure
 						</RouterNavItem>
 						{configured && (
 							<>
-								<RouterNavItem to="/admin/events/awdp/$id/gameboxes" params={{ id }}>
+								<RouterNavItem
+									to="/admin/events/awdp/$id/gameboxes"
+									params={{ id }}
+								>
 									GameBoxes
 								</RouterNavItem>
 								<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
 									Ops
+								</RouterNavItem>
+								{event.participant_mode === ParticipantMode.Team && (
+									<RouterNavItem
+										to="/admin/events/awdp/$id/teams"
+										params={{ id }}
+									>
+										Teams
+									</RouterNavItem>
+								)}
+								<RouterNavItem
+									to="/admin/events/awdp/$id/announcements"
+									params={{ id }}
+								>
+									Announcements
+								</RouterNavItem>
+								<RouterNavItem
+									to="/admin/events/awdp/$id/writeups"
+									params={{ id }}
+								>
+									WriteUps
 								</RouterNavItem>
 							</>
 						)}

@@ -320,10 +320,13 @@ pub async fn claim_jobs(
             target_ip,
             healthchecks,
             judge_script: gamebox.judge_script_content.clone(),
-            // manual 绝不带 exploit 脚本（产品语义：玩家不能把 official exploit 当 oracle）。
-            exploit_script: match kind {
-                AwdpEvaluationKind::Official => gamebox.awdp_exploit_script_content.clone(),
-                AwdpEvaluationKind::Manual => None,
+            // 练习模式（run.gamebox_id 非空）manual Test Check 带 exploit 脚本做诊断展示
+            // （绝不计分，Vulnerable 状态由执行方给出）；竞赛 manual 不带——玩家不能把
+            // official exploit 当 oracle。
+            exploit_script: match (&kind, run.gamebox_id.is_some()) {
+                (AwdpEvaluationKind::Official, _) => gamebox.awdp_exploit_script_content.clone(),
+                (AwdpEvaluationKind::Manual, true) => gamebox.awdp_exploit_script_content.clone(),
+                (AwdpEvaluationKind::Manual, false) => None,
             },
             proof_url,
         });

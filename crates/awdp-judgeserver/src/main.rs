@@ -17,7 +17,8 @@
 //! ```
 //!
 //! 每个 job 执行：internal Healthcheck（`target_ip:container_port`）→ Judge
-//! （check.py）→ Official 才有 Exploit（exploit.py）。Manual 绝不执行 exploit。
+//! （check.py）→ Official 才有 Exploit（exploit.py）。Manual 仅练习模式（job 携带
+//! exploit 脚本）执行 exploit 诊断展示，绝不计分；竞赛 Manual 绝不执行 exploit。
 //!
 //! 结果语义（plan §25/§26）：脚本正常返回的业务失败 → 业务终态；脚本 spawn 失败 /
 //! 超时 / 输出畸形 / 协议违规 → `platform_error`（平台侧释放重试，绝不判玩家失败）。
@@ -434,7 +435,7 @@ async fn execute_job(state: Arc<AppState>, job: ClaimedJob, hb_interval: Duratio
     }
 }
 
-/// 执行管线：healthcheck → judge → （official）exploit。
+/// 执行管线：healthcheck → judge → （official / 练习 manual 诊断）exploit。
 async fn run_job(state: &AppState, job: &ClaimedJob) -> JobOutcome {
     // 1. 容器未运行（claim 时无 IP）→ service_down。
     let Some(target_ip) = job.target_ip.as_deref() else {
@@ -502,17 +503,22 @@ async fn run_job(state: &AppState, job: &ClaimedJob) -> JobOutcome {
         );
     }
 
-    // 4. Exploit（official only）。
-    if job.kind == "official" {
+    // 4. Exploit（official；练习模式 manual 诊断同样执行——job 携带 exploit_script 时）。
+    let is_practice_manual_diag = job.kind == "manual" && job.exploit_script.is_some();
+    if job.kind == "official" || is_practice_manual_diag {
         let Some(exploit_script) = job.exploit_script.as_deref() else {
             return JobOutcome::Infrastructure("official 评估缺少 exploit 脚本".into());
         };
         // exploit 注入 FLOATCTF_PROOF_URL（official proof；目标 GameBox 执行后一次有效）。
-        let proof_env = job
-            .proof_url
-            .as_deref()
-            .map(|u| vec![("FLOATCTF_PROOF_URL".to_string(), u.to_string())])
-            .unwrap_or_default();
+        // 练习 manual 诊断绝不注入 proof、绝不计分。
+        let proof_env = if job.kind == "official" {
+            job.proof_url
+                .as_deref()
+                .map(|u| vec![("FLOATCTF_PROOF_URL".to_string(), u.to_string())])
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
         let exploit =
             match run_target_script(state, exploit_script, target_ip, 60, 32 * 1024, proof_env)
                 .await
@@ -555,7 +561,8 @@ async fn run_job(state: &AppState, job: &ClaimedJob) -> JobOutcome {
         );
     }
 
-    // manual：health + judge 全过 → patched（不计分；exploit 恒不执行）。
+    // manual：health + judge 全过 → patched（不计分；竞赛 manual 无 exploit 脚本，
+    // 练习 manual 已在第 4 步执行诊断并走到 VULNERABLE/PATCHED 分支）。
     JobOutcome::Business(
         ST_PATCHED,
         None,

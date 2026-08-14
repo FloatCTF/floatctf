@@ -34,8 +34,10 @@ pub async fn get_scoreboard(
 ) -> AwdpResult<Vec<AwdpScoreRow>> {
     let event_id = event.id;
     let agg = score_repo::scoreboard_aggregate(db, event_id).await?;
-    let agg_map: std::collections::HashMap<(Option<Uuid>, Option<Uuid>), (i64, i64)> =
-        agg.into_iter().map(|(u, t, b, f)| ((u, t), (b, f))).collect();
+    let agg_map: std::collections::HashMap<(Option<Uuid>, Option<Uuid>), (i64, i64)> = agg
+        .into_iter()
+        .map(|(u, t, b, f)| ((u, t), (b, f)))
+        .collect();
 
     // 主体清单（已注册者全列出，含 0 分）。
     let mut rows: Vec<AwdpScoreRow> = match event.participant_mode {
@@ -73,10 +75,7 @@ pub async fn get_scoreboard(
             teams
                 .into_iter()
                 .map(|t| {
-                    let (b, f) = agg_map
-                        .get(&(None, Some(t.id)))
-                        .copied()
-                        .unwrap_or((0, 0));
+                    let (b, f) = agg_map.get(&(None, Some(t.id))).copied().unwrap_or((0, 0));
                     AwdpScoreRow {
                         subject_id: t.id,
                         subject_name: t.name,

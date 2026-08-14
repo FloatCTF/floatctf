@@ -9,7 +9,8 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 use uuid::Uuid;
 
 use floatctf::entity::{
-    events, sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
+    events,
+    sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::domain::AwdpConfig;
 use floatctf::modules::event::awdp::repo::{run_repo, score_repo};
@@ -238,18 +239,66 @@ async fn scoreboard_aggregates_individual_mode() {
     // A：break 1000 + fix 300 + fix 150 = 1450
     let f1 = seed_fix_round(&db, run_id, 1).await;
     let f2 = seed_fix_round(&db, run_id, 2).await;
-    score(&db, run_id, Some(u_a), None, gb, "break", None, 1000, "sb-a-b1").await;
-    score(&db, run_id, Some(u_a), None, gb, "fix", Some(f1), 300, "sb-a-f1").await;
-    score(&db, run_id, Some(u_a), None, gb, "fix", Some(f2), 150, "sb-a-f2").await;
+    score(
+        &db,
+        run_id,
+        Some(u_a),
+        None,
+        gb,
+        "break",
+        None,
+        1000,
+        "sb-a-b1",
+    )
+    .await;
+    score(
+        &db,
+        run_id,
+        Some(u_a),
+        None,
+        gb,
+        "fix",
+        Some(f1),
+        300,
+        "sb-a-f1",
+    )
+    .await;
+    score(
+        &db,
+        run_id,
+        Some(u_a),
+        None,
+        gb,
+        "fix",
+        Some(f2),
+        150,
+        "sb-a-f2",
+    )
+    .await;
     // B：break 500
-    score(&db, run_id, Some(u_b), None, gb, "break", None, 500, "sb-b-b1").await;
+    score(
+        &db,
+        run_id,
+        Some(u_b),
+        None,
+        gb,
+        "break",
+        None,
+        500,
+        "sb-b-b1",
+    )
+    .await;
 
     let rows = scoreboard::get_scoreboard(&db, &ev).await.unwrap();
     assert_eq!(rows.len(), 3, "3 个注册用户全上榜");
 
     let a = &rows[0];
     assert_eq!(a.subject_id, u_a);
-    assert!(a.subject_name.starts_with("nick-a"), "{} not nick-a*", a.subject_name);
+    assert!(
+        a.subject_name.starts_with("nick-a"),
+        "{} not nick-a*",
+        a.subject_name
+    );
     assert_eq!(a.break_score, 1000);
     assert_eq!(a.fix_score, 450);
     assert_eq!(a.total_score, 1450);
@@ -314,8 +363,30 @@ async fn scoreboard_aggregates_team_mode() {
 
     // TeamOne：break 1000 + fix 150 = 1150；TeamTwo：0 分。
     let f1 = seed_fix_round(&db, run_id, 1).await;
-    score(&db, run_id, None, Some(t1), gb, "break", None, 1000, "sb-t1-b1").await;
-    score(&db, run_id, None, Some(t1), gb, "fix", Some(f1), 150, "sb-t1-f1").await;
+    score(
+        &db,
+        run_id,
+        None,
+        Some(t1),
+        gb,
+        "break",
+        None,
+        1000,
+        "sb-t1-b1",
+    )
+    .await;
+    score(
+        &db,
+        run_id,
+        None,
+        Some(t1),
+        gb,
+        "fix",
+        Some(f1),
+        150,
+        "sb-t1-f1",
+    )
+    .await;
 
     let rows = scoreboard::get_scoreboard(&db, &ev).await.unwrap();
     assert_eq!(rows.len(), 2, "2 支队伍全上榜");

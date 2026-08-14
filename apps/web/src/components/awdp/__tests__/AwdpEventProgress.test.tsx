@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
  *  - Fix：Next check in 文案 + Turn 文案
  *  - 无 overview 数据（未加入）→ 不渲染
  */
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import {
 	afterEach,
 	beforeAll,
@@ -18,6 +18,7 @@ import {
 } from "vitest";
 
 import type { AwdpOverview } from "@/api/awdp";
+import { awdpPlayerApi } from "@/api/awdp";
 
 import { AwdpEventProgress } from "../AwdpEventProgress";
 
@@ -44,7 +45,10 @@ beforeEach(() => {
 	vi.setSystemTime(new Date(now));
 });
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.restoreAllMocks();
+});
 
 const now = Date.parse("2026-08-14T08:00:00Z");
 
@@ -159,5 +163,91 @@ describe("AwdpEventProgress", () => {
 			}),
 		);
 		expect(screen.getByText("Finished")).toBeDefined();
+	});
+
+	it("preparing_fix：过渡提示 Preparing Fix…", () => {
+		renderWithQuery(
+			"evt-1",
+			makeOverview({
+				phase: "preparing_fix",
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+		);
+		expect(screen.getByText("Preparing Fix…")).toBeDefined();
+	});
+
+	it("倒计时到点：越过 deadline 的瞬间立即重新获取数据（不依赖 SSE/15s poll）", async () => {
+		const spy = vi
+			.spyOn(awdpPlayerApi, "overview")
+			.mockResolvedValue({ code: 0, message: "ok", data: makeOverview() });
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<AwdpEventProgress id="evt-1" />
+			</QueryClientProvider>,
+		);
+		// 初始 fetch。
+		expect(spy).toHaveBeenCalledTimes(1);
+		// 未到点（break_ends_at = now+900s）：推进 800s 不应额外请求。
+		await act(async () => {
+			vi.advanceTimersByTime(800_000);
+		});
+		expect(spy).toHaveBeenCalledTimes(1);
+		// 越过 break_ends_at：1s tick 检测到到点 → 立即 refetch。
+		await act(async () => {
+			vi.advanceTimersByTime(200_000);
+		});
+		expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it("到点后 refetch 反映新阶段 → 停止高频刷新", async () => {
+		let calls = 0;
+		const spy = vi
+			.spyOn(awdpPlayerApi, "overview")
+			.mockImplementation(async () => {
+				calls += 1;
+				// 第二次起返回 fix（阶段已切换）→ deadline 变为下一轮 cutoff（未来）。
+				if (calls >= 2) {
+					return {
+						code: 0,
+						message: "ok",
+						data: makeOverview({
+							phase: "fix",
+							current_round: 1,
+							started_at: new Date(now - 1800_000).toISOString(),
+							fix_started_at: new Date(now).toISOString(),
+							next_action_at: new Date(now + 3600_000).toISOString(),
+						}),
+					};
+				}
+				return { code: 0, message: "ok", data: makeOverview() };
+			});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<AwdpEventProgress id="evt-1" />
+			</QueryClientProvider>,
+		);
+		expect(spy).toHaveBeenCalledTimes(1);
+		// 越过 break_ends_at → 到点立即 refetch（返回 fix）。
+		await act(async () => {
+			vi.advanceTimersByTime(901_000);
+		});
+		expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+		// 等 data 更新稳定后（refetch 反映 fix 阶段）：兜底 interval 停止高频刷新。
+		await act(async () => {
+			vi.advanceTimersByTime(30_000);
+		});
+		const settled = spy.mock.calls.length;
+		// fix 阶段 deadline（next_action_at = now+1h）未到：再推进 60s 不应新增请求。
+		await act(async () => {
+			vi.advanceTimersByTime(60_000);
+		});
+		expect(spy.mock.calls.length).toBe(settled);
 	});
 });

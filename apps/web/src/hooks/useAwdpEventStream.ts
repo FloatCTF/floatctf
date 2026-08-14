@@ -20,7 +20,7 @@ export type UseAwdpEventStreamOptions = {
 };
 
 const SNAPSHOT_RE =
-	/awdp\.(score|phase|patch|manual|round|evaluation|instance)/;
+	/awdp\.(score|phase|config|event|patch|manual|round|evaluation|instance)/;
 
 export function useAwdpEventStream({
 	eventId,
@@ -31,14 +31,23 @@ export function useAwdpEventStream({
 	const [connected, setConnected] = useState(false);
 	const lastEventRef = useRef<AwdpStreamEvent | null>(null);
 	const queryClient = useQueryClient();
+	// 事件节流：比赛进行中 score/phase 事件可能密集（多人抢 flag），
+	// 把短窗口内多次 invalidate 合并为一次，避免 refetch 风暴卡住页面。
+	const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const invalidate = useCallback(() => {
-		queryClient.invalidateQueries({ queryKey: ["awdp-overview", eventId] });
-		queryClient.invalidateQueries({ queryKey: ["awdp-config", eventId] });
-		queryClient.invalidateQueries({ queryKey: ["awdp-rounds", eventId] });
-		queryClient.invalidateQueries({ queryKey: ["awdp-evals", eventId] });
-		queryClient.invalidateQueries({ queryKey: ["eventInfo", eventId] });
-		queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+		if (invalidateTimerRef.current) {
+			return;
+		}
+		invalidateTimerRef.current = setTimeout(() => {
+			invalidateTimerRef.current = null;
+			queryClient.invalidateQueries({ queryKey: ["awdp-overview", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["awdp-config", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["awdp-rounds", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["awdp-evals", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["eventInfo", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["event", eventId] });
+		}, 1000);
 	}, [queryClient, eventId]);
 
 	const onEvent = useCallback(
@@ -99,6 +108,10 @@ export function useAwdpEventStream({
 			es?.close();
 			if (pollTimer) {
 				clearInterval(pollTimer);
+			}
+			if (invalidateTimerRef.current) {
+				clearTimeout(invalidateTimerRef.current);
+				invalidateTimerRef.current = null;
 			}
 		};
 	}, [eventId, enabled, preferStream, pollMs, invalidate, onEvent]);

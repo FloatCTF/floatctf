@@ -192,6 +192,7 @@ export function computeTimelineState(
 
 	switch (phase) {
 		case "pending":
+		case "preparing_fix":
 			break;
 		case "break": {
 			breakElapsed = since(startedAt);

@@ -278,7 +278,9 @@ describe("AwdpPhaseOverview 渲染", () => {
 		const green = container.querySelectorAll('[class*="--fgColor-success"]');
 		expect(green.length).toBeGreaterThanOrEqual(3); // break fill + fix fill + marker
 		expect(container.querySelectorAll('[class*="--accent-fg"]').length).toBe(0);
-		expect(container.querySelectorAll('[class*="--attention-fg"]').length).toBe(0);
+		expect(container.querySelectorAll('[class*="--attention-fg"]').length).toBe(
+			0,
+		);
 	});
 
 	it("BREAK 阶段不显示 T 标签（时间节点仅 Fix/Ended）", () => {
@@ -294,9 +296,9 @@ describe("AwdpPhaseOverview 渲染", () => {
 		expect(screen.getByText("1,750")).toBeDefined();
 		expect(screen.getByText("Finished")).toBeDefined();
 		expect(screen.queryByText(/Next check in/)).toBeNull();
-		expect(
-			screen.getByRole("progressbar").getAttribute("aria-valuenow"),
-		).toBe("100");
+		expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe(
+			"100",
+		);
 	});
 
 	it("PENDING：Waiting to start / zero progress", () => {

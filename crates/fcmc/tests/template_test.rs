@@ -166,7 +166,7 @@ fn gamebox_template_meta_is_parseable() {
     let content = std::fs::read_to_string(meta_path).unwrap();
     let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
     assert_eq!(meta.name, "gb-roundtrip");
-    assert_eq!(meta.version, "1.0.0");
+    assert_eq!(meta.version, "1.0.3");
     assert_eq!(meta.gamebox.username, "floatctf");
     assert!(meta.judge.is_some());
     assert!(meta.awdp.is_some());

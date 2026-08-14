@@ -30,7 +30,7 @@ def check(target_ip: str) -> dict:
     result: dict = {"gamebox_ip": target_ip}
     try:
         with urllib.request.urlopen(
-            f"http://{target_ip}/", timeout=CHECK_TIMEOUT_SECS
+            f"http://{target_ip}/?url=http://127.0.0.1", timeout=CHECK_TIMEOUT_SECS
         ) as resp:
             if resp.status == 200:
                 result["success"] = True

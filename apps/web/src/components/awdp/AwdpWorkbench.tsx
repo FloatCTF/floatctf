@@ -960,22 +960,22 @@ export function AwdpWorkbench({
 
 				{/* Ended（§68） */}
 				{phase === "ended" ? (
-					<section className="p-3 rounded border flex flex-col gap-3">
-						{viewModel.isPractice ? (
-							// 练习：结束视图只保留 Train Again（练习不展示结算，只关心重训）。
-							onTrainAgain ? (
-								<div className="flex items-center justify-center py-2">
-									<Button
-										variant="primary"
-										className="w-40"
-										disabled={busy["train-again"]}
-										onClick={handleTrainAgain}
-									>
-										{busy["train-again"] ? "Restarting…" : "Train Again"}
-									</Button>
-								</div>
-							) : null
-						) : (
+					viewModel.isPractice ? (
+						// 练习：结束视图只保留 Train Again（无边框，按钮居中）。
+						onTrainAgain ? (
+							<div className="flex items-center justify-center py-2">
+								<Button
+									variant="primary"
+									className="w-40"
+									disabled={busy["train-again"]}
+									onClick={handleTrainAgain}
+								>
+									{busy["train-again"] ? "Restarting…" : "Train Again"}
+								</Button>
+							</div>
+						) : null
+					) : (
+						<section className="p-3 rounded border flex flex-col gap-3">
 							<>
 								<div className="flex items-center gap-2">
 									<h4 className="font-bold flex-1">Final Score</h4>
@@ -1024,8 +1024,8 @@ export function AwdpWorkbench({
 									</div>
 								) : null}
 							</>
-						)}
-					</section>
+						</section>
+					)
 				) : null}
 			</div>
 

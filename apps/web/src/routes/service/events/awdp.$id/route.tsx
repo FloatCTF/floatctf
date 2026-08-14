@@ -6,6 +6,7 @@ import { useTitle } from "ahooks";
 import { createContext } from "react";
 
 import { serviceApi } from "@/api";
+import { AwdpEventProgress } from "@/components/awdp/AwdpEventProgress";
 import { useAwdpEventStream } from "@/hooks/useAwdpEventStream";
 import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "../../route";
@@ -64,6 +65,8 @@ function RouteComponent() {
 					{stream.connected ? "live" : "poll"}
 				</span>
 			</div>
+			{/* 进度条：同 Jeopardy 位置（标题与导航之间），Break/Fix 分段 + 竖线 */}
+			<AwdpEventProgress id={id} />
 			<AwdpEventContext.Provider value={{ id }}>
 				<UnderlineNav aria-label="AWD Plus event">
 					<RouterNavItem to="/service/events/awdp/$id" id={id}>

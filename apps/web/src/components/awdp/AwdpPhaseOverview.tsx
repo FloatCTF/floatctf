@@ -248,7 +248,7 @@ type AwdpTimelineProps = {
 };
 
 /** 紧凑 track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
-function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
+export function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
 	// 进度条已走过部分整体为绿色（success），marker 跟随。
 	const markerColor =
 		phase === "pending"
@@ -510,11 +510,11 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 					<Button
 						variant="danger"
 						size="small"
-							disabled={endBusy}
-							onClick={() => onEnd()}
-						>
-							{endRunning ? "停止中…" : "End"}
-						</Button>
+						disabled={endBusy}
+						onClick={() => onEnd()}
+					>
+						{endRunning ? "停止中…" : "End"}
+					</Button>
 				) : null}
 			</div>
 
@@ -533,11 +533,7 @@ export function AwdpPhaseOverview(props: AwdpPhaseOverviewProps) {
 
 			{/* Row 3：Break → Fix Timeline */}
 			<div className="mt-1.5">
-				<AwdpTimeline
-					state={state}
-					phase={phase}
-					totalRounds={totalRounds}
-				/>
+				<AwdpTimeline state={state} phase={phase} totalRounds={totalRounds} />
 			</div>
 		</section>
 	);

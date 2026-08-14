@@ -74,6 +74,10 @@ pub async fn tick_once(
                         Ok(()) => {
                             info!(run_id = %run.id, "AWDP run started (Break)");
                             summary.started += 1;
+                            summary.phase_transitions.push(PhaseTransitionEvt {
+                                event_id,
+                                phase: "break",
+                            });
                             // 到时间：全部已挂载 GameBox 为所有队伍/用户自动启动（幂等）。
                             if let Err(e) = event_service::start_all_event_instances(
                                 db,
@@ -101,6 +105,10 @@ pub async fn tick_once(
                     Ok(()) => {
                         info!(run_id = %run.id, "AWDP break expired → preparing_fix");
                         summary.to_fix += 1;
+                        summary.phase_transitions.push(PhaseTransitionEvt {
+                            event_id: run.event_id,
+                            phase: "preparing_fix",
+                        });
                     }
                     Err(e) => {
                         warn!(run_id = %run.id, error = %e, "AWDP break→preparing_fix skipped")
@@ -114,6 +122,10 @@ pub async fn tick_once(
                     Ok(true) => {
                         info!(run_id = %run.id, "AWDP preparing_fix reconciled → Fix");
                         summary.to_fix += 1;
+                        summary.phase_transitions.push(PhaseTransitionEvt {
+                            event_id: run.event_id,
+                            phase: "fix",
+                        });
                     }
                     Ok(false) => {
                         warn!(run_id = %run.id, "AWDP preparing_fix reconcile pending");
@@ -130,8 +142,14 @@ pub async fn tick_once(
                     round_repo::materialize_rounds(db, run.id).await?;
                 }
                 // round cutoff due → 物化 official evaluations + 推进 current_round。
-                let processed = process_fix_round_cutoffs(db, run.id, now).await?;
+                let (processed, ended_evt) = process_fix_round_cutoffs(db, run.id, now).await?;
                 summary.round_cutoffs += processed;
+                if let Some(event_id) = ended_evt {
+                    summary.phase_transitions.push(PhaseTransitionEvt {
+                        event_id,
+                        phase: "ended",
+                    });
+                }
             }
             AwdpPhase::Ended => {} // 已结束 run 不会进入 due 集合（find_due_runs 排除）。
         }
@@ -154,11 +172,11 @@ async fn process_fix_round_cutoffs(
     db: &DatabaseConnection,
     run_id: uuid::Uuid,
     now: chrono::DateTime<Utc>,
-) -> AwdpResult<usize> {
+) -> AwdpResult<(usize, Option<uuid::Uuid>)> {
     let mut processed = 0usize;
     // 每 tick 至多推进一轮（外层 tick 再次触发），避免同一 tick 内无限循环。
     let Some(round) = round_repo::next_pending_due_round(db, run_id, now).await? else {
-        return Ok(processed);
+        return Ok((processed, None));
     };
 
     // 原子物化：lock round → CAS status=pending → 物化全部已启动实例的 official 评估
@@ -206,12 +224,22 @@ async fn process_fix_round_cutoffs(
             )
             .await
             {
-                Ok(()) => info!(run_id = %run_id, "AWDP fix ended (final round cutoff)"),
+                Ok(()) => {
+                    info!(run_id = %run_id, "AWDP fix ended (final round cutoff)");
+                    return Ok((processed, Some(run.event_id)));
+                }
                 Err(e) => warn!(run_id = %run_id, error = %e, "AWDP finalize skipped"),
             }
         }
     }
-    Ok(processed)
+    Ok((processed, None))
+}
+
+/// 一次阶段转换（tick 推进产生，交由 scheduler 推 SSE 供前端即时刷新）。
+#[derive(Debug, Clone)]
+pub struct PhaseTransitionEvt {
+    pub event_id: uuid::Uuid,
+    pub phase: &'static str,
 }
 
 /// 汇总信息（日志/可观测）。
@@ -221,4 +249,5 @@ pub struct TickSummary {
     pub to_fix: usize,
     pub round_cutoffs: usize,
     pub rounds_completed: usize,
+    pub phase_transitions: Vec<PhaseTransitionEvt>,
 }

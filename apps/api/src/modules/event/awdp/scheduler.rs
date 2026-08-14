@@ -13,7 +13,10 @@ use uuid::Uuid;
 
 use crate::{
     core::AppConfig,
-    infrastructure::{WebDb, WebDocker},
+    infrastructure::{
+        WebDb, WebDocker,
+        realtime::{EventPublisher, RealtimeEvent},
+    },
     scheduler::{TaskHandler, TaskKey},
 };
 
@@ -22,6 +25,7 @@ pub struct AwdpTickHandler {
     pub db: WebDb,
     pub docker: WebDocker,
     pub config: Arc<AppConfig>,
+    pub publisher: Arc<dyn EventPublisher>,
 }
 
 #[async_trait]
@@ -35,7 +39,7 @@ impl TaskHandler for AwdpTickHandler {
     }
 
     async fn run(&self, _task: crate::entity::scheduled_tasks::Model) -> anyhow::Result<()> {
-        crate::modules::event::awdp::service::tick_service::tick_once(
+        let summary = crate::modules::event::awdp::service::tick_service::tick_once(
             self.db.get_ref(),
             self.docker.get_ref(),
             self.config.auth.jwt_secret.expose().as_bytes(),
@@ -43,6 +47,20 @@ impl TaskHandler for AwdpTickHandler {
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        // tick 自动推进的阶段变化推 SSE（选手端倒计时到点/回合切换即时刷新，
+        // 不依赖 15s poll）。admin 手动 start/break-to-fix/finish 已有推送。
+        for t in summary.phase_transitions {
+            let event = RealtimeEvent::new(
+                t.event_id,
+                "awdp.phase_changed",
+                serde_json::json!({ "phase": t.phase }),
+            );
+            let publisher = self.publisher.clone();
+            actix_web::rt::spawn(async move {
+                let _ = publisher.publish(event).await;
+            });
+        }
         Ok(())
     }
 }

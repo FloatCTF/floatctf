@@ -97,6 +97,7 @@ pub async fn build_task_scheduler(
             db: db.clone(),
             docker: docker.clone(),
             config: config.clone(),
+            publisher: publisher.clone(),
         }),
         Arc::new(AwdpEvalWorkerHandler {
             db: db.clone(),

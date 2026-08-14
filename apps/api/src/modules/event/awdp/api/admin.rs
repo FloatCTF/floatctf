@@ -58,6 +58,7 @@ pub async fn get_awdp_config(
 pub async fn patch_awdp_config(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
     body: Json<AwdpConfigPatchRequest>,
 ) -> UniResult<AwdpEventConfigDto> {
@@ -72,6 +73,14 @@ pub async fn patch_awdp_config(
         fix_round_score: body.fix_round_score,
     };
     let row = event_repo::update_config(ctx.db.get_ref(), event_id, patch).await?;
+    // 配置变化即时推 SSE（选手端 awdp-config/overview/eventInfo 刷新，
+    // 避免等待 15s poll 才看到新参数/新 end_time）。
+    crate::modules::event::awdp::realtime::publish(
+        &state,
+        event_id,
+        "awdp.config_changed",
+        serde_json::json!({}),
+    );
     let run = run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await?;
     UniResponse::ok(AwdpEventConfigDto::from_config_and_run(&row, run.as_ref()).into()).into()
 }

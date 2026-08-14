@@ -148,8 +148,22 @@ pub async fn start_instance(
         Some(found) => found,
         None => {
             let instance_id = Uuid::new_v4();
-            let container_name =
-                format!("awdp-{}", &instance_id.to_string().replace('-', "")[..20]);
+            // 练习实例：规则风格短 id `AWDPP-{user 前8}-{gamebox 前8}-{run 前8}`
+            // （AWD 风格；run 段保证 event_instances.container_name 唯一约束跨训练会话不冲突）；
+            // 竞赛实例维持 `awdp-{instance 前20}`。
+            let container_name = if eg.is_none() {
+                match subject.user_id {
+                    Some(uid) => format!(
+                        "AWDPP-{}-{}-{}",
+                        &uid.to_string().replace('-', "")[..8],
+                        &gamebox_id.to_string().replace('-', "")[..8],
+                        &run_id.to_string().replace('-', "")[..8],
+                    ),
+                    None => format!("awdp-{}", &instance_id.to_string().replace('-', "")[..20]),
+                }
+            } else {
+                format!("awdp-{}", &instance_id.to_string().replace('-', "")[..20])
+            };
             instance_repo::create_instance(
                 db,
                 run_id,

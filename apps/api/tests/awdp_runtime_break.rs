@@ -19,7 +19,7 @@ use floatctf::modules::event::awdp::{
     domain::AwdpConfig,
     repo::{event_gamebox_repo, event_repo, run_repo, score_repo},
     service::{
-        break_service,
+        break_service, network_resolve,
         runtime::{self, Subject},
     },
 };
@@ -1213,4 +1213,71 @@ async fn proof_consume_lifecycle() {
     .await;
     let _ = awdp_runs::Entity::delete_by_id(run.id).exec(&db).await;
     let _ = gameboxes::Entity::delete_by_id(gb_id).exec(&db).await;
+}
+
+/// 比赛实例必须加入 data 网络——internal `/flag` 的 source-IP 解析
+/// （`network_resolve` 只 inspect `fctf-awdp-practice`）对比赛实例同样可用，
+/// 即 GameBox 内 SSRF `http://judge-server/flag` 能命中判定（§8/§9 链路）。
+#[tokio::test]
+async fn competition_instance_resolves_by_network_source_ip() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+
+    let (event_id, run_id) = seed_competition_run_in_break(&db, "sip").await;
+    let gb = seed_awdp_gamebox(
+        &db,
+        "sip",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
+        ]),
+        Some(event_id),
+    )
+    .await;
+    let user = seed_user(&db, "sip").await;
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb,
+        Subject::user(user),
+        "flag",
+    )
+    .await
+    .expect("start competition instance");
+
+    // 实例在 data 网络持有 IP（source-IP 解析的事实来源）。
+    let inst = floatctf::entity::event_instances::Entity::find_by_id(view.instance_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("instance row");
+    let ip = network_resolve::instance_internal_ip(&docker, &inst)
+        .await
+        .unwrap();
+    assert!(ip.is_some(), "比赛实例必须附着到 data 网络");
+    let source_ip = ip.unwrap();
+    let (found, ext) = network_resolve::resolve_instance_by_network_ip(&db, &docker, &source_ip)
+        .await
+        .expect("resolve by source ip");
+    assert_eq!(found.id, inst.id);
+    assert_eq!(ext.instance_id, inst.id);
+
+    // 清理：停容器（auto_remove）+ 删事件。
+    let _ = runtime::stop_instance(&db, &docker, view.instance_id, Subject::user(user)).await;
+    cleanup(&db, event_id).await;
 }

@@ -76,14 +76,6 @@ export function AwdpEventWorkbench({ eventId }: { eventId: string }) {
 				const res = await awdpPlayerApi.sourceUrl(eventId, egId);
 				return res.data;
 			},
-			onStartInstance: async (egId: string) => {
-				await awdpPlayerApi.startInstance(eventId, egId);
-				invalidate();
-			},
-			onStopInstance: async (egId: string) => {
-				await awdpPlayerApi.stopInstance(eventId, egId);
-				invalidate();
-			},
 			onResetInstance: async (egId: string) => {
 				await awdpPlayerApi.resetInstance(eventId, egId);
 				invalidate();

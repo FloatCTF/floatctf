@@ -147,7 +147,7 @@ export function buildAwdpHistory(
 			status,
 			label: practice
 				? practiceStatusLabel(status, fixRoundPenalty)
-				: EVAL_STATUS_LABEL[status] ?? status,
+				: (EVAL_STATUS_LABEL[status] ?? status),
 			delta,
 			finished_at: ev?.finished_at ?? null,
 		};
@@ -279,8 +279,6 @@ export type AwdpWorkbenchProps = {
 	) => Promise<string | undefined> | string | undefined;
 	/** 仅 practice ended：创建新 run（调用方负责跳转）。 */
 	onTrainAgain?: () => Promise<void> | undefined;
-	onStartInstance?: (egId: string) => void | Promise<void>;
-	onStopInstance?: (egId: string) => void | Promise<void>;
 	onResetInstance?: (egId: string) => void | Promise<void>;
 	/** 赛事页可注入队伍区/写 up 等 context 专属区。 */
 	children?: React.ReactNode;
@@ -300,8 +298,6 @@ export function AwdpWorkbench({
 	onSetPhase,
 	onEnd,
 	onTrainAgain,
-	onStartInstance,
-	onStopInstance,
 	onResetInstance,
 	children,
 }: AwdpWorkbenchProps) {
@@ -315,7 +311,10 @@ export function AwdpWorkbench({
 	const [patchFiles, setPatchFiles] = useState<Record<string, File | null>>({});
 	const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 	const [lastPatch, setLastPatch] = useState<
-		Record<string, { status: "applying" | "applied" | "failed"; error?: string }>
+		Record<
+			string,
+			{ status: "applying" | "applied" | "failed"; error?: string }
+		>
 	>({});
 	const [checkResults, setCheckResults] = useState<
 		Record<string, ManualCheckDto | undefined>
@@ -375,7 +374,10 @@ export function AwdpWorkbench({
 				banner.showBanner("success", "Patch applied");
 			} else {
 				const reason = res?.error_message ?? "Patch failed（未知原因）";
-				setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "failed", error: reason } }));
+				setLastPatch((prev) => ({
+					...prev,
+					[gb.id]: { status: "failed", error: reason },
+				}));
 				banner.showBanner("critical", reason);
 			}
 			setPatchFiles((prev) => ({ ...prev, [gb.id]: null }));
@@ -384,10 +386,14 @@ export function AwdpWorkbench({
 			}
 		} catch (e) {
 			const reason =
-				(e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+				(e as { response?: { data?: { message?: string } } })?.response?.data
+					?.message ||
 				(e as Error).message ||
 				"Patch failed（未知原因）";
-			setLastPatch((prev) => ({ ...prev, [gb.id]: { status: "failed", error: reason } }));
+			setLastPatch((prev) => ({
+				...prev,
+				[gb.id]: { status: "failed", error: reason },
+			}));
 			banner.showErrorBanner(e);
 		} finally {
 			setBusyKey(key, false);
@@ -462,16 +468,8 @@ export function AwdpWorkbench({
 		}
 	};
 
-	const handleInstanceOp = async (
-		op: "start" | "stop" | "reset",
-		gb: AwdpWorkbenchGameBox,
-	) => {
-		const fn =
-			op === "start"
-				? onStartInstance
-				: op === "stop"
-					? onStopInstance
-					: onResetInstance;
+	const handleInstanceOp = async (op: "reset", gb: AwdpWorkbenchGameBox) => {
+		const fn = onResetInstance;
 		if (!fn) {
 			return;
 		}
@@ -514,8 +512,6 @@ export function AwdpWorkbench({
 			setBusyKey("end", false);
 		}
 	};
-
-
 
 	const handleTrainAgain = async () => {
 		if (!onTrainAgain) {
@@ -607,31 +603,10 @@ export function AwdpWorkbench({
 					)}
 				</dl>
 
-				{/* 实例操作（break|fix）：练习模式由页面级「开始 / End」统一管理生命周期，
-				   不再显示单实例 Start/Stop（与 开始/End 重复）；Reset 保留。竞赛模式保持原样。 */}
+				{/* 实例操作（break|fix）：与练习一致仅保留 Reset——练习由页面级「开始 / End」
+				   统一管理生命周期；比赛实例到点由事件自动启动，无需手动 Start/Stop。 */}
 				{active && (
 					<div className="flex items-center gap-2 mb-2">
-						{!viewModel.isPractice && (
-							<>
-								<Button
-									variant="primary"
-									disabled={
-									cardBlocked || running || busy[`start:${gb.id}`]
-								}
-									onClick={() => handleInstanceOp("start", gb)}
-								>
-									Start
-								</Button>
-								<Button
-									disabled={
-									cardBlocked || !running || busy[`stop:${gb.id}`]
-								}
-									onClick={() => handleInstanceOp("stop", gb)}
-								>
-									Stop
-								</Button>
-							</>
-						)}
 						<Button
 							variant="danger"
 							disabled={cardBlocked || !inst || busy[`reset:${gb.id}`]}
@@ -718,7 +693,9 @@ export function AwdpWorkbench({
 								aria-label="选择 patch 脚本文件"
 								onClick={() => fileInputRefs.current[gb.id]?.click()}
 							>
-								{patchFiles[gb.id] ? patchFiles[gb.id]!.name : "选择 patch.tar.gz"}
+								{patchFiles[gb.id]
+									? patchFiles[gb.id]!.name
+									: "选择 patch.tar.gz"}
 							</Button>
 							<Button
 								variant="primary"
@@ -787,16 +764,16 @@ export function AwdpWorkbench({
 									<>
 										<span
 											className={
-												check.healthcheck_ok
-													? "text-green-600"
-													: "text-red-600"
+												check.healthcheck_ok ? "text-green-600" : "text-red-600"
 											}
 										>
 											健康检查：{check.healthcheck_ok ? "OK" : "DOWN"}
 										</span>
 										<span className="mx-2">·</span>
 										<span
-											className={check.judge_ok ? "text-green-600" : "text-red-600"}
+											className={
+												check.judge_ok ? "text-green-600" : "text-red-600"
+											}
 										>
 											Judge：{check.judge_ok ? "PASS" : "FAIL"}
 										</span>
@@ -805,9 +782,7 @@ export function AwdpWorkbench({
 												<span className="mx-2">·</span>
 												<span
 													className={
-														check.exploit_ok
-															? "text-red-600"
-															: "text-green-600"
+														check.exploit_ok ? "text-red-600" : "text-green-600"
 													}
 												>
 													漏洞利用：{check.exploit_ok ? "SUCCESS" : "FAIL"}
@@ -828,7 +803,8 @@ export function AwdpWorkbench({
 									</span>
 								) : (
 									<span className="text-orange-600">
-										ALL Check 未通过（{allCheckResult.status}）：不落账、不扣分，等本轮官方 check 判定
+										ALL Check 未通过（{allCheckResult.status}
+										）：不落账、不扣分，等本轮官方 check 判定
 									</span>
 								)}
 							</div>
@@ -904,37 +880,38 @@ export function AwdpWorkbench({
 				<div id="awdp-meta" className="shrink-0">
 					<p className="font-bold text-2xl">{viewModel.title}</p>
 					{viewModel.description ? (
-						<div className="border-top mt-2 pt-2">
-							{viewModel.description}
-						</div>
+						<div className="border-top mt-2 pt-2">{viewModel.description}</div>
 					) : null}
 				</div>
 			) : null}
 			<banner.BannerComponent />
 
-			{/* 顶部状态卡片：阶段控制（练习 SegmentedControl / 竞赛 badge）+ End | 事件式倒计时 + 得分 | Break→Fix 时间线 */}
-			<div className="mb-2 shrink-0">
-				<AwdpPhaseOverview
-					phase={phase}
-					startedAt={viewModel.startedAt ?? null}
-					breakEndsAt={viewModel.breakEndsAt ?? null}
-					fixStartedAt={viewModel.fixStartedAt ?? null}
-					fixEndsAt={viewModel.fixEndsAt ?? null}
-					breakDurationSecs={viewModel.breakDurationSecs}
-					fixDurationSecs={viewModel.fixDurationSecs}
-					currentRound={viewModel.currentRound}
-					totalRounds={viewModel.totalRounds}
-					nextCheckAt={viewModel.nextCheckAt}
-					score={viewModel.score}
-					now={now}
-					canControlPhase={viewModel.canControlPhase}
-					onSetPhase={onSetPhase ? handleSetPhase : undefined}
-					phaseBusy={phaseBusy}
-					onEnd={onEnd ? handleEnd : undefined}
-					endBusy={!!busy.end || phaseBusy}
-					endRunning={!!busy.end}
-				/>
-			</div>
+			{/* 顶部状态卡片：练习（runs 页）无全局进度条，保留阶段控制 + 倒计时 + 得分；
+			   比赛（Event）顶部已有 AwdpEventProgress 共享进度条，不再重复渲染。 */}
+			{viewModel.isPractice ? (
+				<div className="mb-2 shrink-0">
+					<AwdpPhaseOverview
+						phase={phase}
+						startedAt={viewModel.startedAt ?? null}
+						breakEndsAt={viewModel.breakEndsAt ?? null}
+						fixStartedAt={viewModel.fixStartedAt ?? null}
+						fixEndsAt={viewModel.fixEndsAt ?? null}
+						breakDurationSecs={viewModel.breakDurationSecs}
+						fixDurationSecs={viewModel.fixDurationSecs}
+						currentRound={viewModel.currentRound}
+						totalRounds={viewModel.totalRounds}
+						nextCheckAt={viewModel.nextCheckAt}
+						score={viewModel.score}
+						now={now}
+						canControlPhase={viewModel.canControlPhase}
+						onSetPhase={onSetPhase ? handleSetPhase : undefined}
+						phaseBusy={phaseBusy}
+						onEnd={onEnd ? handleEnd : undefined}
+						endBusy={!!busy.end || phaseBusy}
+						endRunning={!!busy.end}
+					/>
+				</div>
+			) : null}
 
 			{/* GameBox 卡片列表（超出高度内部滚动，避免页面溢出） */}
 			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">

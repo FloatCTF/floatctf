@@ -150,9 +150,9 @@ function RouteComponent() {
 			canControlPhase: true,
 			judgeEndpoint: run.judge_endpoint
 				? {
-					baseUrl: run.judge_endpoint.base_url,
-					flagUrl: run.judge_endpoint.flag_url,
-				}
+						baseUrl: run.judge_endpoint.base_url,
+						flagUrl: run.judge_endpoint.flag_url,
+					}
 				: null,
 		};
 	}, [run, roundsQuery.data, evalsQuery.data, scoresQuery.data, needTimeline]);
@@ -201,9 +201,7 @@ function RouteComponent() {
 							judge_ok: ev.status !== "functional_broken",
 							judge_detail: ev.judge_result ?? null,
 							exploit_ok:
-								ev.exploit_result == null
-									? null
-									: ev.status === "vulnerable",
+								ev.exploit_result == null ? null : ev.status === "vulnerable",
 							exploit_detail: ev.exploit_result ?? null,
 						};
 					}
@@ -241,14 +239,6 @@ function RouteComponent() {
 						params: { runId: newRunId },
 					});
 				}
-			},
-			onStartInstance: async (gameboxId: string) => {
-				await awdpRunApi.startInstance(runId, gameboxId);
-				invalidate();
-			},
-			onStopInstance: async (gameboxId: string) => {
-				await awdpRunApi.stopInstance(runId, gameboxId);
-				invalidate();
 			},
 			onResetInstance: async (gameboxId: string) => {
 				await awdpRunApi.resetInstance(runId, gameboxId);

@@ -29,6 +29,11 @@ use crate::modules::event::awdp::{
 };
 use crate::modules::gamebox::{effective_image_ref_from_gamebox, healthcheck::parse_healthchecks};
 
+/// 比赛（Competition）每 subject × gamebox 手动 Reset 次数上限。
+/// 系统级 reset（Break→Fix 自动 pristine 重建、管理端重置）不计入；
+/// 练习（虚拟训练）不受限。
+pub const RESET_LIMIT_COMPETITION: i64 = 3;
+
 /// 实例运行时视图（API DTO 数据源）。
 #[derive(Debug, Clone)]
 pub struct InstanceView {
@@ -38,6 +43,8 @@ pub struct InstanceView {
     pub gamebox_category: String,
     pub runtime_state: String,
     pub runtime_generation: i64,
+    /// 玩家手动 Reset 次数（比赛 subject×gamebox 计数；练习恒 0 不受限）。
+    pub reset_count: i64,
     pub broken: bool,
     pub endpoints: Vec<EndpointView>,
 }
@@ -395,6 +402,10 @@ fn healthchecks_of(
 
 /// Reset：移除物理容器并从 pristine 镜像重建（保留逻辑实例 + 端点分配）。
 /// 与 Patch / Evaluation / Manual check 使用同一把 instance advisory lock。
+///
+/// 比赛（competition）限制：仅 Fix 阶段允许手动 Reset，且每 subject × gamebox
+/// 最多 `RESET_LIMIT_COMPETITION` 次（由 reset_count 独立计数；patch/testcheck
+/// 只是 restart/评估，不重建容器、不消耗次数）。练习（虚拟训练）不受限。
 pub async fn reset_instance(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -404,12 +415,44 @@ pub async fn reset_instance(
     flag_prefix: &str,
 ) -> AwdpResult<InstanceView> {
     // 归属校验先行（拒绝未授权触发 reset）。
-    let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
     assert_owner(&instance, subject)?;
+    let run = run_repo::require_by_id(db, ext.run_id).await?;
+
+    // 比赛次数限制 + 阶段限制：仅 Fix 阶段允许手动 Reset。
+    check_reset_allowed(&run, &ext)?;
+
     let lock = super::lock::InstanceAdvisoryLock::acquire(db, instance_id).await?;
     let result = reset_instance_unchecked(db, docker, jwt_secret, instance_id, flag_prefix).await;
     lock.release().await;
+
+    // 成功后才递增计数（docker 失败不消耗次数）。
+    if result.is_ok() && run.gamebox_id.is_none() {
+        instance_repo::increment_reset_count(db, instance_id).await?;
+    }
     result
+}
+
+/// 比赛手动 Reset 门禁（DB-only，可测）：练习不受限；
+/// 比赛要求 Fix 阶段且 reset_count 未达 `RESET_LIMIT_COMPETITION`。
+pub fn check_reset_allowed(run: &awdp_runs::Model, ext: &awdp_instances::Model) -> AwdpResult<()> {
+    if run.gamebox_id.is_some() {
+        // practice：虚拟训练不受限。
+        return Ok(());
+    }
+    if run.phase != AwdpPhase::Fix {
+        return Err(AwdpError::InvalidState(format!(
+            "AWDP 比赛仅 Fix 阶段允许 Reset（当前 phase={:?}）",
+            run.phase
+        )));
+    }
+    if ext.reset_count >= RESET_LIMIT_COMPETITION {
+        return Err(AwdpError::Validation(format!(
+            "Reset 次数已达上限（{} 次），该 GameBox 不再允许手动 Reset",
+            RESET_LIMIT_COMPETITION
+        )));
+    }
+    Ok(())
 }
 
 /// 无归属校验的 reset（事件驱动 Break→Fix / 管理端，调用方负责授权）。
@@ -600,6 +643,7 @@ async fn build_view(
         gamebox_category: gamebox.category.clone(),
         runtime_state: instance.runtime_state.clone(),
         runtime_generation: instance.runtime_generation,
+        reset_count: ext.reset_count,
         broken,
         endpoints: endpoints
             .into_iter()

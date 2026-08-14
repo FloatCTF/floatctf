@@ -131,6 +131,24 @@ pub async fn find_by_instance_id(
     Ok((instance, ext))
 }
 
+/// 玩家手动 Reset 成功一次后递增计数（仅比赛；练习实例不受限，不调用）。
+pub async fn increment_reset_count(
+    db: &DatabaseConnection,
+    instance_id: Uuid,
+) -> AwdpResult<awdp_instances::Model> {
+    let mut am: awdp_instances::ActiveModel = awdp_instances::Entity::find_by_id(instance_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("awdp instance not found".into()))?
+        .into();
+    let next = *am.reset_count.as_ref() + 1;
+    am.reset_count = Set(next);
+    am.update(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))
+}
+
 /// 更新 runtime 状态（容器 create/start/stop/reset 后）。
 pub async fn update_runtime_state(
     db: &DatabaseConnection,

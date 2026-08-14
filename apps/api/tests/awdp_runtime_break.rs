@@ -300,6 +300,32 @@ async fn multi_endpoints_and_duplicate_port_dedup() {
 
     // 2. 重复 HTTP 80 healthcheck → 去重为 1 个发布端口（§80，runtime 纵深防御）。
     let (ev_b, run_b) = seed_competition_run_in_break(&db, "dup80").await;
+    // 玩家 Reset 仅比赛 Fix 阶段允许：把 run 推进到 Fix（Break→PreparingFix→Fix）。
+    let now = chrono::Utc::now();
+    for (expected, target) in [
+        (
+            floatctf::entity::sea_orm_active_enums::AwdpPhase::Break,
+            floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
+        ),
+        (
+            floatctf::entity::sea_orm_active_enums::AwdpPhase::PreparingFix,
+            floatctf::entity::sea_orm_active_enums::AwdpPhase::Fix,
+        ),
+    ] {
+        run_repo::transition_phase(
+            &db,
+            run_b,
+            expected,
+            target,
+            run_repo::PhaseTransitionPatch {
+                fix_started_at: Some(now),
+                next_action_at: Some(now + chrono::Duration::minutes(30)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("transition to fix");
+    }
     let gb_b = seed_awdp_gamebox(
         &db,
         "dup80",

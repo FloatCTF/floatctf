@@ -36,6 +36,8 @@ pub struct InstanceViewDto {
     pub instance_id: Uuid,
     pub runtime_state: String,
     pub runtime_generation: i64,
+    /// 玩家手动 Reset 次数（比赛 subject×gamebox；练习恒 0）。
+    pub reset_count: i64,
     pub endpoints: Vec<EndpointDto>,
 }
 
@@ -53,6 +55,7 @@ impl From<&InstanceView> for InstanceViewDto {
             instance_id: v.instance_id,
             runtime_state: v.runtime_state.clone(),
             runtime_generation: v.runtime_generation,
+            reset_count: v.reset_count,
             endpoints: v
                 .endpoints
                 .iter()
@@ -238,6 +241,8 @@ pub struct AwdpAdminInstanceDto {
     pub owner_team_id: Option<Uuid>,
     pub runtime_state: String,
     pub runtime_generation: i64,
+    /// 玩家手动 Reset 次数（管理端 inspect 用）。
+    pub reset_count: i64,
     pub container_name: String,
     pub endpoints: Vec<EndpointDto>,
 }
@@ -252,6 +257,7 @@ impl From<&InstanceView> for AwdpAdminInstanceDto {
             owner_team_id: None,
             runtime_state: v.runtime_state.clone(),
             runtime_generation: v.runtime_generation,
+            reset_count: v.reset_count,
             container_name: String::new(),
             endpoints: v
                 .endpoints
@@ -350,6 +356,7 @@ pub struct RunInstanceDto {
     pub gamebox_id: Uuid,
     pub runtime_state: String,
     pub runtime_generation: i64,
+    pub reset_count: i64,
     pub broken: bool,
     pub endpoints: Vec<EndpointDto>,
 }
@@ -361,6 +368,7 @@ impl From<&InstanceView> for RunInstanceDto {
             gamebox_id: v.gamebox_id,
             runtime_state: v.runtime_state.clone(),
             runtime_generation: v.runtime_generation,
+            reset_count: v.reset_count,
             broken: v.broken,
             endpoints: v
                 .endpoints

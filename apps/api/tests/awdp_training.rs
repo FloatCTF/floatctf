@@ -956,6 +956,7 @@ async fn solved_gamebox_ids_require_started_instance() {
         created_at: Set(now),
         run_id: Set(run.id),
         gamebox_id: Set(gb_id),
+        reset_count: Set(0),
     }
     .insert(&db)
     .await

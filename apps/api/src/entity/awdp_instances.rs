@@ -14,6 +14,7 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub run_id: Uuid,
     pub gamebox_id: Uuid,
+    pub reset_count: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

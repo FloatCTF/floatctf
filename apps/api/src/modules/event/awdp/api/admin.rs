@@ -287,6 +287,7 @@ pub async fn list_instances(
             owner_team_id: ext.owner_team_id,
             runtime_state: instance.runtime_state.clone(),
             runtime_generation: instance.runtime_generation,
+            reset_count: ext.reset_count,
             container_name: instance.container_name.clone(),
             endpoints: endpoints
                 .into_iter()

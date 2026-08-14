@@ -13,8 +13,8 @@ import {
  *
  * 把 event-scoped `AwdpOverview` 映射为统一 view-model，并接线 event 版
  * API 回调（mutations 后失效 overview/rounds/evals）。
- * index.tsx（Overview）与 gameboxes.tsx（GameBoxes tab）均渲染本组件，
- * 不复制两套页面实现。
+ * 赛事默认落地页（index.tsx）渲染本组件；比赛不再单列 Overview /
+ * GameBoxes tab（所有 gamebox 共享同一个顶部进度条，见 route.tsx）。
  */
 export function AwdpEventWorkbench({ eventId }: { eventId: string }) {
 	const queryClient = useQueryClient();

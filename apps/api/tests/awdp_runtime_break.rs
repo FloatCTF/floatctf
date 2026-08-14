@@ -955,24 +955,35 @@ async fn break_flag_resolve_by_source_ip() {
         "未知 source IP 必须 Forbidden: {err}"
     );
 
-    // 4. Fix 阶段 → Conflict。
+    // 4. Fix 阶段（练习模式）→ 固定 proof-of-exploit 标记（不泄露真实 flag；
+    //    供 exploit 诊断/正式判定漏洞是否仍可利用）。
     floatctf::modules::event::awdp::service::event_service::transition_break_to_fix(
         &db, &docker, JWT_SECRET, run.id,
     )
     .await
     .expect("to fix");
-    let err2 = floatctf::modules::event::awdp::service::break_service::resolve_break_flag(
+    let proof_flag = floatctf::modules::event::awdp::service::break_service::resolve_break_flag(
         &db,
         &docker,
         JWT_SECRET,
         &container_ip,
     )
     .await
-    .unwrap_err();
-    assert!(
-        matches!(err2, floatctf::modules::event::awdp::AwdpError::Conflict(_)),
-        "Fix 阶段必须拒绝 /flag: {err2}"
+    .expect("resolve by source ip in fix");
+    assert_eq!(
+        proof_flag, "flag{proof-of-exploit}",
+        "练习 Fix 阶段必须返回 proof-of-exploit 标记"
     );
+    // 练习 Fix 阶段同样拒绝真实 flag（确定性派生不泄露）。
+    let real_flag = floatctf::modules::event::awdp::domain::flag::awdp_flag(
+        JWT_SECRET,
+        run.id,
+        gb_id,
+        Some(user_id),
+        None,
+        "flag",
+    );
+    assert_ne!(proof_flag, real_flag, "Fix 阶段不得泄露真实 flag");
 
     let _ = floatctf::modules::event::awdp::service::runtime::stop_instance(
         &db,

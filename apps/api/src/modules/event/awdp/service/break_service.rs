@@ -52,6 +52,12 @@ pub async fn resolve_break_flag(
     // 3. 实例 → run（instance 属于该 run 由 awdp_instances 1:1 保证）。
     let run = run_repo::require_by_id(db, ext.run_id).await?;
     if run.phase != AwdpPhase::Break {
+        // 练习模式（gamebox_id 非空）Fix 阶段：返回固定 proof-of-exploit 标记——
+        // 让 exploit（SSRF 偷 flag）真实判定漏洞是否仍可利用，且不泄露真实 flag；
+        // 竞赛与非练习 run 保持仅 Break 发 flag。
+        if run.gamebox_id.is_some() && run.phase == AwdpPhase::Fix {
+            return Ok("flag{proof-of-exploit}".to_string());
+        }
         // Break 以外（Fix/PreparingFix/Ended）：flag 不可用。
         return Err(AwdpError::Conflict(format!(
             "flag only available in Break phase (phase={:?})",

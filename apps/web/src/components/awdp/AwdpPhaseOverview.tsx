@@ -303,9 +303,10 @@ export function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
 					/>
 				</div>
 
-				{/* Fix 段（含 Turn 分隔线） */}
+				{/* Fix 段（含 Turn 分隔线）；左边框即 Break|Fix 分割竖线，用深色
+				   常显（避免与 track 背景同色而“隐身”） */}
 				<div
-					className="absolute inset-y-0 border-l-2 border-[var(--borderColor-default)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
+					className="absolute inset-y-0 border-l-2 border-[var(--fgColor-muted)] transition-[width] duration-200 ease-out motion-reduce:transition-none"
 					style={{
 						left: `${state.breakWidthPct}%`,
 						width: `${state.fixWidthPct}%`,

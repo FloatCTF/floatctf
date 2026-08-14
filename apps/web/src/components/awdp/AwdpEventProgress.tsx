@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { serviceApi } from "@/api";
 import { awdpPlayerApi } from "@/api/awdp";
 import {
 	AwdpTimeline,
@@ -33,6 +34,14 @@ export function AwdpEventProgress({ id }: { id: string }) {
 	});
 	const overview = data?.data;
 
+	// pending 需要事件 start_time 计算「还有多久开始」（awdp-overview 无 start_time）。
+	const { data: eventData } = useQuery({
+		queryKey: ["eventInfo", id],
+		queryFn: () => serviceApi.events.get(id),
+		retry: false,
+	});
+	const ev = eventData?.data?.event;
+
 	if (!overview) {
 		return null;
 	}
@@ -54,11 +63,15 @@ export function AwdpEventProgress({ id }: { id: string }) {
 		return Math.max(0, (t - now) / 1000);
 	};
 
+	// 阶段名 + 剩余时间（Break xxxxxxx / Fix xxxxxxx 风格；
+	// pending 显示还有多久开始；ended 显示 Finished）。
 	let countdownText = "Waiting to start";
 	if (overview.phase === "break") {
-		countdownText = `Ends in: ${formatEventRemaining(secsUntil(overview.break_ends_at))}`;
+		countdownText = `Break ${formatEventRemaining(secsUntil(overview.break_ends_at))}`;
 	} else if (overview.phase === "fix") {
-		countdownText = `Next check in: ${formatEventRemaining(secsUntil(overview.next_action_at))}`;
+		countdownText = `Fix ${formatEventRemaining(secsUntil(overview.next_action_at))}`;
+	} else if (overview.phase === "pending") {
+		countdownText = `Starts in: ${formatEventRemaining(secsUntil(ev?.start_time))}`;
 	} else if (overview.phase === "ended") {
 		countdownText = "Finished";
 	}

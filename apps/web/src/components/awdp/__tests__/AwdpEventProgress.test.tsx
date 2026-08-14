@@ -71,7 +71,11 @@ function makeOverview(overrides: Partial<AwdpOverview> = {}): AwdpOverview {
 	};
 }
 
-function renderWithQuery(id: string, data: AwdpOverview | null) {
+function renderWithQuery(
+	id: string,
+	data: AwdpOverview | null,
+	event?: { start_time: string },
+) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: {
@@ -83,6 +87,13 @@ function renderWithQuery(id: string, data: AwdpOverview | null) {
 	queryClient.setQueryData(["awdp-overview", id], {
 		data,
 	});
+	queryClient.setQueryData(["eventInfo", id], {
+		data: {
+			event: event ?? { start_time: "" },
+			joined: true,
+			team_result: null,
+		},
+	});
 	return render(
 		<QueryClientProvider client={queryClient}>
 			<AwdpEventProgress id={id} />
@@ -91,9 +102,9 @@ function renderWithQuery(id: string, data: AwdpOverview | null) {
 }
 
 describe("AwdpEventProgress", () => {
-	it("Break：Ends in 文案 + Break/Fix 分段 progressbar", () => {
+	it("Break：阶段名 + 剩余时间文案（Break 15m）+ Break/Fix 分段 progressbar", () => {
 		renderWithQuery("evt-1", makeOverview());
-		expect(screen.getByText(/Ends in: 15m/)).toBeDefined();
+		expect(screen.getByText(/Break 15m/)).toBeDefined();
 		const bar = screen.getByRole("progressbar");
 		expect(bar).toBeDefined();
 		expect(bar.getAttribute("aria-valuemin")).toBe("0");
@@ -103,7 +114,7 @@ describe("AwdpEventProgress", () => {
 		expect(screen.getByText("Fix")).toBeDefined();
 	});
 
-	it("Fix：Next check in 文案 + Turn 进度", () => {
+	it("Fix：阶段名 + 下一检查文案（Fix 5m）+ Turn 进度", () => {
 		renderWithQuery(
 			"evt-1",
 			makeOverview({
@@ -114,8 +125,22 @@ describe("AwdpEventProgress", () => {
 				next_action_at: new Date(now + 300_000).toISOString(),
 			}),
 		);
-		expect(screen.getByText(/Next check in: 5m/)).toBeDefined();
+		expect(screen.getByText(/Fix 5m/)).toBeDefined();
 		expect(screen.getByText("Turn 3 / 6")).toBeDefined();
+	});
+
+	it("pending：显示还有多久开始（Starts in）", () => {
+		renderWithQuery(
+			"evt-1",
+			makeOverview({
+				phase: "pending",
+				started_at: null,
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+			{ start_time: new Date(now + 7200_000).toISOString() },
+		);
+		expect(screen.getByText(/Starts in: 2h/)).toBeDefined();
 	});
 
 	it("无 overview（未加入/未开始）→ 不渲染", () => {

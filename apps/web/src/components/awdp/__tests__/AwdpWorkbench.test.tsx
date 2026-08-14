@@ -296,7 +296,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		resolvePhase?.();
 	});
 
-	it("比赛（isPractice=false）Fix：Reset 显示剩余次数；break 阶段禁用", async () => {
+	it("比赛（isPractice=false）不渲染 Reset 按钮（fix 与 break 均无）", async () => {
 		const { rerender } = render(
 			<AwdpWorkbench
 				viewModel={vm("fix", { isPractice: false })}
@@ -304,42 +304,9 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				onResetInstance={vi.fn()}
 			/>,
 		);
-		// 初始 reset_count=0 → 剩余 3 次
-		expect(
-			screen.getByRole("button", { name: /Reset \(3 left\)/ }),
-		).toBeDefined();
-		expect(
-			screen
-				.getByRole("button", { name: /Reset \(3 left\)/ })
-				.hasAttribute("disabled"),
-		).toBe(false);
-
-		// reset_count=3 → 剩余 0，禁用
-		rerender(
-			<AwdpWorkbench
-				viewModel={vm("fix", {
-					isPractice: false,
-					gameboxes: [
-						{
-							...gb,
-							instance: { ...gb.instance!, reset_count: 3 },
-						},
-					],
-				})}
-				{...noopProps}
-				onResetInstance={vi.fn()}
-			/>,
-		);
-		expect(
-			screen.getByRole("button", { name: /Reset \(0 left\)/ }),
-		).toBeDefined();
-		expect(
-			screen
-				.getByRole("button", { name: /Reset \(0 left\)/ })
-				.hasAttribute("disabled"),
-		).toBe(true);
-
-		// break 阶段：即使剩余次数充足也禁用（仅 Fix 允许）
+		// fix：比赛卡片无 Reset（补丁/测试检查为主操作，重置次数由后端兑底）
+		expect(screen.queryByRole("button", { name: /Reset/ })).toBeNull();
+		// break：同样无 Reset
 		rerender(
 			<AwdpWorkbench
 				viewModel={vm("break", { isPractice: false })}
@@ -347,12 +314,10 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				onResetInstance={vi.fn()}
 			/>,
 		);
-		const breakReset = screen.getByRole("button", { name: /Reset \(3 left\)/ });
-		expect(breakReset.hasAttribute("disabled")).toBe(true);
-		expect(breakReset.getAttribute("title")).toContain("仅 Fix");
+		expect(screen.queryByRole("button", { name: /Reset/ })).toBeNull();
 	});
 
-	it("练习（isPractice=true）Fix：Reset 保持无次数限制文案", async () => {
+	it("练习（isPractice=true）Fix：Reset 按钮正常展示", async () => {
 		render(
 			<AwdpWorkbench
 				viewModel={vm("fix")}
@@ -360,7 +325,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				onResetInstance={vi.fn()}
 			/>,
 		);
-		// 练习：按钮仍为纯「Reset」，不显示剩余次数
+		// 练习：按钮仍为纯「Reset」，无次数限制文案
 		expect(screen.getByRole("button", { name: /^Reset$/ })).toBeDefined();
 		expect(screen.queryByRole("button", { name: /Reset \(/ })).toBeNull();
 	});

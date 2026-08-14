@@ -16,7 +16,6 @@ import {
 } from "@/components";
 import { ParticipantMode } from "@/entity";
 import { ServiceRouteGuard } from "../../route";
-import { AwdpEventWorkbench } from "./-workbench";
 
 export const Route = createFileRoute("/service/events/awdp/$id/")({
 	component: RouteComponent,
@@ -273,9 +272,6 @@ function RouteComponent() {
 							</section>
 						))
 						.exhaustive()}
-
-					{/* AWDP 工作台（§65：共用组件，VM 由赛事 overview 适配） */}
-					<AwdpEventWorkbench eventId={id} />
 
 					<banner.BannerComponent />
 				</div>

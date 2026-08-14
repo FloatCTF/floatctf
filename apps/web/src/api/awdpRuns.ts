@@ -1,4 +1,5 @@
 import {
+	type AllCheckDto,
 	type AwdpEndpoint,
 	type AwdpInstance,
 	type AwdpPhase,
@@ -23,6 +24,7 @@ import {
  *   POST  /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/break
  *   POST  /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/patch
  *   POST  /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/test-check
+ *   POST  /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/all-check
  *   GET   /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/source
  *   POST  /api/service/awdp/runs/{run_id}/gameboxes/{gamebox_id}/instance
  *        | .../instance/stop | .../instance/reset | GET .../instance
@@ -95,6 +97,8 @@ export type AwdpRunDto = {
 	current_round: number;
 	next_action_at: string | null;
 	my_score: number;
+	/** 练习模式每轮 check 失败扣分（History 展示用）。 */
+	fix_round_penalty: number;
 	/** Fix 阶段才非空。 */
 	source_code_dir: string | null;
 	instances: RunInstanceDto[];
@@ -117,6 +121,8 @@ export type AwdpRunEvaluationDto = {
 	status: string;
 	healthcheck_result: string | null;
 	judge_result: string | null;
+	/** exploit 结果详情（练习 manual / official 终态才有）。 */
+	exploit_result: string | null;
 	finished_at: string | null;
 };
 
@@ -141,9 +147,6 @@ export type AwdpRunWriteupDto = {
 	content: string;
 	updated_at: string | null;
 };
-
-/** 练习提前 Check 结果（status=patched → 从 target_round 起自动计分）。 */
-
 
 /** source presigned URL 响应（后端实现：直接返回 URL 字符串，非对象）。 */
 
@@ -266,6 +269,13 @@ export const awdpRunApi = {
 	testCheck: async (runId: string, gameboxId: string) => {
 		const res = await service_api.post<UniResponse<ManualCheckDto>>(
 			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/test-check`,
+		);
+		return res.data;
+	},
+	/** ALL Check：一键官方判定；成功 → 剩余回合全部计分 + run 直接结束。 */
+	allCheck: async (runId: string, gameboxId: string) => {
+		const res = await service_api.post<UniResponse<AllCheckDto>>(
+			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/all-check`,
 		);
 		return res.data;
 	},

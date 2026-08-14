@@ -138,7 +138,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		expect(submit.hasAttribute("disabled")).toBe(false);
 	});
 
-	it("Reset 进行中：Fix 阶段全部 fix 按钮禁用（Source/Patch/Test Check/提前 Check）", async () => {
+	it("Reset 进行中：Fix 阶段全部 fix 按钮禁用（Source/Patch/Test Check/ALL Check）", async () => {
 		let resolveReset: (() => void) | undefined;
 		const onResetInstance = vi.fn(
 			(_id: string) =>
@@ -152,6 +152,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 				{...noopProps}
 				onResetInstance={onResetInstance}
 				onDownloadSource={vi.fn(async () => "https://example.com")}
+				onAllCheck={vi.fn()}
 			/>,
 		);
 
@@ -174,7 +175,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 			),
 		).toBe(true);
 		expect(
-			screen.getByRole("button", { name: /^提前 Check$/ }).hasAttribute(
+			screen.getByRole("button", { name: /^ALL Check$/ }).hasAttribute(
 				"disabled",
 			),
 		).toBe(true);

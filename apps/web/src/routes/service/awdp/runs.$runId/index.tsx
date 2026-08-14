@@ -121,6 +121,7 @@ function RouteComponent() {
 			score: run.my_score,
 			breakScore: run.break_score,
 			fixRoundScore: run.fix_round_score,
+			fixRoundPenalty: run.fix_round_penalty ?? 0,
 			gameboxes: run.instances.map((inst) => ({
 				id: inst.gamebox_id,
 				gamebox_id: inst.gamebox_id,
@@ -141,6 +142,7 @@ function RouteComponent() {
 						roundsQuery.data?.data ?? [],
 						evalsQuery.data?.data ?? [],
 						run.fix_round_score,
+						run.fix_round_penalty,
 					)
 				: [],
 			scoreHistory: scoresQuery.data?.data?.history ?? [],
@@ -198,12 +200,22 @@ function RouteComponent() {
 								: [],
 							judge_ok: ev.status !== "functional_broken",
 							judge_detail: ev.judge_result ?? null,
+							exploit_ok:
+								ev.exploit_result == null
+									? null
+									: ev.status === "vulnerable",
+							exploit_detail: ev.exploit_result ?? null,
 						};
 					}
 					if (Date.now() > deadline) {
 						return res.data;
 					}
 				}
+			},
+			onAllCheck: async (gameboxId: string) => {
+				const res = await awdpRunApi.allCheck(runId, gameboxId);
+				invalidate();
+				return res.data;
 			},
 			onSetPhase: async (target: "break" | "fix") => {
 				const res = await awdpRunApi.setPhase(runId, target);

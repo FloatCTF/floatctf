@@ -83,6 +83,22 @@ export type ManualCheckDto = {
 	healthcheck_detail: string[] | null;
 	judge_ok: boolean | null;
 	judge_detail: string | null;
+	/** 练习模式才执行 exploit 诊断（不计分）；非练习恒 null。 */
+	exploit_ok: boolean | null;
+	exploit_detail: string | null;
+};
+
+/** ALL Check 结果（练习模式；status=patched → 剩余回合全部计分 + run 已结束）。 */
+export type AllCheckDto = {
+	/** 终态：patched=修复成功（swept=true）；其余 = 本次未通过（不落账，等官方 check）。 */
+	status: string;
+	/** status=patched：剩余回合已全部计分且 run 已结束。 */
+	swept: boolean;
+	swept_rounds: number;
+	target_round: number;
+	healthcheck_detail: string | null;
+	judge_detail: string | null;
+	exploit_detail: string | null;
 };
 
 export type AwdpEventConfigDto = {

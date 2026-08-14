@@ -23,6 +23,7 @@ import dayjs from "dayjs";
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import type {
+	AllCheckDto,
 	AwdpPhase,
 	BreakSubmitResponse,
 	ManualCheckDto,
@@ -46,6 +47,24 @@ export const EVAL_STATUS_LABEL: Record<string, string> = {
 	platform_error: "platform error",
 };
 
+/** 练习模式 History 状态标签（check 失败扣 -penalty）。 */
+function practiceStatusLabel(status: string, penalty: number): string {
+	switch (status) {
+		case "no_patch":
+			return `no patch (-${penalty})`;
+		case "service_down":
+			return `service down (-${penalty})`;
+		case "functional_broken":
+			return `broken (-${penalty})`;
+		case "vulnerable":
+			return `vulnerable (-${penalty})`;
+		case "patched":
+			return "patched (+score)";
+		default:
+			return EVAL_STATUS_LABEL[status] ?? status;
+	}
+}
+
 function fmtTime(iso?: string | null) {
 	return iso ? dayjs.utc(iso).local().format("MM-DD HH:mm:ss") : "-";
 }
@@ -61,8 +80,9 @@ function useNow() {
 
 /**
  * rounds × official evaluations 拼装 Official History（§67）。
- * 已 completed 且无评估行 → no_patch (+0)；有评估行按 status 映射，
- * 仅 patched 获得 +fixRoundScore；pending/running 未结算 delta=null。
+ * 已 completed 且无评估行 → no_patch；有评估行按 status 映射。
+ * 竞赛：仅 patched 获得 +fixRoundScore，其余 +0；
+ * 练习（penalty > 0）：patched → +fixRoundScore，check 失败 → -penalty。
  */
 export function buildAwdpHistory(
 	rounds: {
@@ -78,7 +98,9 @@ export function buildAwdpHistory(
 		finished_at: string | null;
 	}[],
 	fixRoundScore: number,
+	fixRoundPenalty = 0,
 ): AwdpHistoryRow[] {
+	const practice = fixRoundPenalty > 0;
 	const official = new Map<
 		number,
 		{ status: string; finished_at: string | null }
@@ -107,14 +129,26 @@ export function buildAwdpHistory(
 		const settled = ev
 			? !["pending", "running"].includes(status)
 			: r.status === "completed";
+		let delta: number | null = null;
+		if (settled) {
+			if (status === "patched") {
+				delta = fixRoundScore;
+			} else if (practice && status !== "platform_error") {
+				delta = -fixRoundPenalty;
+			} else {
+				delta = 0;
+			}
+		}
 		return {
 			id: `r${r.sequence}`,
 			sequence: r.sequence,
 			starts_at: r.starts_at,
 			cutoff_at: r.cutoff_at,
 			status,
-			label: EVAL_STATUS_LABEL[status] ?? status,
-			delta: settled ? (status === "patched" ? fixRoundScore : 0) : null,
+			label: practice
+				? practiceStatusLabel(status, fixRoundPenalty)
+				: EVAL_STATUS_LABEL[status] ?? status,
+			delta,
 			finished_at: ev?.finished_at ?? null,
 		};
 	});
@@ -195,6 +229,8 @@ export type AwdpWorkbenchViewModel = {
 	score: number;
 	breakScore: number;
 	fixRoundScore: number;
+	/** 练习模式每轮 check 失败扣分（>0 时 History 按扣分展示；竞赛为 0）。 */
+	fixRoundPenalty?: number;
 	gameboxes: AwdpWorkbenchGameBox[];
 	history: AwdpHistoryRow[];
 	/** ended 阶段可选：计分明细（/scores）。 */
@@ -229,6 +265,10 @@ export type AwdpWorkbenchProps = {
 	onTestCheck: (
 		egId: string,
 	) => Promise<ManualCheckDto | undefined> | ManualCheckDto | undefined;
+	/** 练习模式 ALL Check：一键官方判定；成功 → 剩余回合全部计分 + run 直接结束。 */
+	onAllCheck?: (
+		egId: string,
+	) => Promise<AllCheckDto | undefined> | AllCheckDto | undefined;
 	/** 练习「End」：停止全部实例并恢复如初（仅在 practice 非 ended 时显示按钮）。 */
 	onEnd?: () => void | Promise<void>;
 	/** 练习模式手动控制阶段（break↔fix）。 */
@@ -255,6 +295,7 @@ export function AwdpWorkbench({
 	onSubmitBreak,
 	onUploadPatch,
 	onTestCheck,
+	onAllCheck,
 	onDownloadSource,
 	onSetPhase,
 	onEnd,
@@ -280,6 +321,10 @@ export function AwdpWorkbench({
 		Record<string, ManualCheckDto | undefined>
 	>({});
 	const [checking, setChecking] = useState<Record<string, boolean>>({});
+	const [allChecking, setAllChecking] = useState<Record<string, boolean>>({});
+	const [allCheckResults, setAllCheckResults] = useState<
+		Record<string, AllCheckDto | undefined>
+	>({});
 	const [busy, setBusy] = useState<Record<string, boolean>>({});
 	const setBusyKey = (key: string, value: boolean) =>
 		setBusy((prev) => ({ ...prev, [key]: value }));
@@ -364,6 +409,38 @@ export function AwdpWorkbench({
 		} finally {
 			setBusyKey(key, false);
 			setChecking((prev) => ({ ...prev, [gb.id]: false }));
+		}
+	};
+
+	const handleAllCheck = async (gb: AwdpWorkbenchGameBox) => {
+		if (!onAllCheck) {
+			return;
+		}
+		const key = `all-check:${gb.id}`;
+		setBusyKey(key, true);
+		setAllChecking((prev) => ({ ...prev, [gb.id]: true }));
+		setAllCheckResults((prev) => ({ ...prev, [gb.id]: undefined }));
+		try {
+			const res = await onAllCheck(gb.id);
+			if (res) {
+				setAllCheckResults((prev) => ({ ...prev, [gb.id]: res }));
+				if (res.swept) {
+					banner.showBanner(
+						"success",
+						`ALL Check 通过：剩余 ${res.swept_rounds} 轮已全部计分，训练已结束`,
+					);
+				} else {
+					banner.showBanner(
+						"warning",
+						`ALL Check 未通过（${res.status}），本轮待官方 check 判定`,
+					);
+				}
+			}
+		} catch (e) {
+			banner.showErrorBanner(e);
+		} finally {
+			setBusyKey(key, false);
+			setAllChecking((prev) => ({ ...prev, [gb.id]: false }));
 		}
 	};
 
@@ -464,6 +541,7 @@ export function AwdpWorkbench({
 		const resetting = !!busy[`reset:${gb.id}`];
 		const cardBlocked = resetting || phaseBusy;
 		const check = checkResults[gb.id];
+		const allCheckResult = allCheckResults[gb.id];
 		const patchStatus = lastPatch[gb.id];
 
 		return (
@@ -657,6 +735,21 @@ export function AwdpWorkbench({
 							>
 								{checking[gb.id] ? "Checking…" : "Test Check"}
 							</Button>
+							{viewModel.isPractice && onAllCheck && (
+								<Button
+									variant="primary"
+									title="一键官方判定：通过后剩余回合全部计分并直接结束训练；未通过则等待本轮官方 check"
+									disabled={
+										cardBlocked ||
+										allChecking[gb.id] ||
+										busy[`all-check:${gb.id}`] ||
+										!running
+									}
+									onClick={() => handleAllCheck(gb)}
+								>
+									{allChecking[gb.id] ? "Checking…" : "ALL Check"}
+								</Button>
+							)}
 						</div>
 						<div className="text-sm flex items-center gap-2">
 							<span className="opacity-70">Last patch:</span>
@@ -702,8 +795,36 @@ export function AwdpWorkbench({
 										>
 											Judge：{check.judge_ok ? "PASS" : "FAIL"}
 										</span>
+										{check.exploit_ok != null && (
+											<>
+												<span className="mx-2">·</span>
+												<span
+													className={
+														check.exploit_ok
+															? "text-red-600"
+															: "text-green-600"
+													}
+												>
+													漏洞利用：{check.exploit_ok ? "SUCCESS" : "FAIL"}
+												</span>
+											</>
+										)}
 										<span className="ml-2 text-xs opacity-60">（不计分）</span>
 									</>
+								)}
+							</div>
+						)}
+						{allCheckResult && (
+							<div className="text-sm flex flex-col gap-0.5">
+								{allCheckResult.swept ? (
+									<span className="text-green-600 font-medium">
+										✓ 修复已确认：第 {allCheckResult.target_round} 轮起共{" "}
+										{allCheckResult.swept_rounds} 轮已全部计分，训练已结束
+									</span>
+								) : (
+									<span className="text-orange-600">
+										ALL Check 未通过（{allCheckResult.status}）：不落账、不扣分，等本轮官方 check 判定
+									</span>
 								)}
 							</div>
 						)}

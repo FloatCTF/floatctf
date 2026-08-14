@@ -20,9 +20,11 @@ use zip::write::FileOptions;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        awd_events, challenges, event_team_members, event_teams, event_users, event_writeup,
-        events, jeopardy_challenge_solves, jeopardy_event_challenges,
-        sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
+        awd_events, awdp_events, awdp_runs, challenges, event_team_members, event_teams,
+        event_users, event_writeup, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{
+            AwdpPhase, EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode,
+        },
         users,
     },
     infrastructure::{WebDb, WebRustfs},
@@ -233,7 +235,7 @@ where
         m_event.flag_prefix = Set(f.into());
     }
 
-    let updated = m_event.update(&txn).await?;
+    let mut updated = m_event.update(&txn).await?;
     if updated.purpose == EventPurpose::Competition {
         let end = updated
             .end_time
@@ -273,6 +275,44 @@ where
             )
             .await
             .map_err(AppError::from)?;
+        }
+
+        // AWDP：开始时间变更需同步派生 end_time（start + break + fix，与 awdp update_config 一致）
+        // 与 pending run 的 next_action_at（tick 到点自动 Break 的游标）。
+        let awdp_configured = awdp_events::Entity::find()
+            .filter(awdp_events::Column::EventId.eq(event_id))
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .is_some();
+        if awdp_configured {
+            let row = awdp_events::Entity::find_by_id(event_id)
+                .one(&txn)
+                .await?
+                .ok_or_else(|| AppError::Internal("awdp_events row missing".into()))?;
+            let derived_end = updated.start_time
+                + chrono::Duration::seconds(
+                    (row.break_duration_secs as i64) + (row.fix_duration_secs as i64),
+                );
+            if updated.end_time != Some(derived_end) {
+                let mut m2: events::ActiveModel = updated.clone().into();
+                m2.end_time = Set(Some(derived_end));
+                updated = m2.update(&txn).await?;
+            }
+            // pending run：next_action_at 跟随新开始时间（tick 到点 Break）。
+            use crate::modules::event::awdp::repo::run_repo as awdp_run_repo;
+            if let Some(run) = awdp_run_repo::find_active_competition_for_event(&txn, event_id)
+                .await
+                .map_err(AppError::from)?
+            {
+                if run.phase == AwdpPhase::Pending {
+                    let now = chrono::Utc::now();
+                    let mut m_run: awdp_runs::ActiveModel = run.into();
+                    m_run.next_action_at = Set(Some(updated.start_time.into()));
+                    m_run.updated_at = Set(now.into());
+                    m_run.update(&txn).await?;
+                }
+            }
         }
     }
 

@@ -2,16 +2,19 @@
 
 use bollard::Docker;
 use chrono::Utc;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::entity::sea_orm_active_enums::AwdpPhase;
+use crate::entity::{
+    event_teams, event_users, events,
+    sea_orm_active_enums::{AwdpPhase, ParticipantMode},
+};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
     domain::AwdpConfig,
-    repo::{instance_repo, round_repo, run_repo},
-    service::runtime,
+    repo::{event_gamebox_repo, instance_repo, round_repo, run_repo},
+    service::runtime::{self, Subject},
 };
 
 /// PreparingFix 阶段 reconcile 重试间隔（秒）：reset 失败后 tick 稍后重试。
@@ -185,4 +188,129 @@ pub async fn reset_all_run_instances(
         n += 1;
     }
     Ok(n)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 赛事开始自动启动（到时间所有 GameBox 为队伍/用户启动）
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 自动启动汇总（日志/可观测）。
+#[derive(Debug, Default)]
+pub struct AutoStartSummary {
+    /// 已启动（含已 running 幂等跳过）。
+    pub started: usize,
+    /// 启动失败（记录 warn；玩家仍可手动启动）。
+    pub failed: usize,
+}
+
+/// 枚举赛事自动启动目标：(Subject, gamebox_id) 全部组合（DB-only，供测试与启动循环共用）。
+///
+/// 主体：Individual → 全部 `event_users`；Team → 全部 `event_teams`。
+/// GameBox：`awdp_event_gameboxes` 中非 hidden 的全部挂载。
+pub async fn auto_start_targets(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+) -> AwdpResult<Vec<(Subject, Uuid)>> {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    let event_id = run.event_id;
+    let event = events::Entity::find_by_id(event_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?
+        .ok_or_else(|| AwdpError::NotFound("event not found".into()))?;
+
+    let subjects: Vec<Subject> = match event.participant_mode {
+        ParticipantMode::Individual => event_users::Entity::find()
+            .filter(event_users::Column::EventId.eq(event_id))
+            .all(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .into_iter()
+            .map(|row| Subject::user(row.user_id))
+            .collect(),
+        ParticipantMode::Team => event_teams::Entity::find()
+            .filter(event_teams::Column::EventId.eq(event_id))
+            .all(db)
+            .await
+            .map_err(|e| AwdpError::Database(e.to_string()))?
+            .into_iter()
+            .map(|row| Subject::team(row.id))
+            .collect(),
+    };
+    if subjects.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let gameboxes = event_gamebox_repo::list_for_event(db, event_id).await?;
+    let mut out = Vec::new();
+    for subject in &subjects {
+        for eg in gameboxes.iter().filter(|eg| !eg.hidden) {
+            out.push((*subject, eg.gamebox_id));
+        }
+    }
+    Ok(out)
+}
+
+/// 赛事开始（Break 进入）时自动为全部参与者启动全部已挂载 GameBox 实例。
+///
+/// 幂等：`runtime::start_instance` 对已 running 实例直接返回；单实例失败不阻断整体。
+///
+/// 调用时机：tick `Pending→Break` 成功（自动开赛）与 admin 手动 Start 后。
+#[allow(clippy::too_many_arguments)]
+pub async fn start_all_event_instances(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    jwt_secret: &[u8],
+    awdp_config: &crate::core::config::AwdpStaticConfig,
+    run_id: Uuid,
+) -> AwdpResult<AutoStartSummary> {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    // 仅赛事（competition run）自动启动；practice run 由训练模块按需启动。
+    if run.phase != AwdpPhase::Break {
+        return Ok(AutoStartSummary::default());
+    }
+
+    let targets = auto_start_targets(db, run_id).await?;
+    if targets.is_empty() {
+        return Ok(AutoStartSummary::default());
+    }
+
+    let flag_prefix = crate::infrastructure::settings::get_setting(db, "FLAG_PREFIX")
+        .await
+        .unwrap_or_else(|_| "flag".into());
+
+    let mut summary = AutoStartSummary::default();
+    for (subject, gamebox_id) in targets {
+        match runtime::start_instance(
+            db,
+            docker,
+            jwt_secret,
+            awdp_config,
+            run_id,
+            gamebox_id,
+            subject,
+            &flag_prefix,
+        )
+        .await
+        {
+            Ok(_) => summary.started += 1,
+            Err(e) => {
+                summary.failed += 1;
+                warn!(
+                    run_id = %run_id,
+                    gamebox_id = %gamebox_id,
+                    error = %e,
+                    "AWDP auto-start instance skipped (manual start available)"
+                );
+            }
+        }
+    }
+    info!(
+        run_id = %run_id,
+        targets = summary.started + summary.failed,
+        started = summary.started,
+        failed = summary.failed,
+        "AWDP auto-start all event instances"
+    );
+    Ok(summary)
 }

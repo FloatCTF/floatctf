@@ -64,10 +64,10 @@ async fn wait_container_running(
 
 /// Break 到期 → PreparingFix（tick 1）→ reconcile → Fix（tick 2，游标 now 立即 due）。
 async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker) {
-    tick_service::tick_once(db, docker, JWT_SECRET)
+    tick_service::tick_once(db, docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick: break → preparing_fix");
-    tick_service::tick_once(db, docker, JWT_SECRET)
+    tick_service::tick_once(db, docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick: preparing_fix reconcile → fix");
 }
@@ -489,7 +489,7 @@ async fn patch_rejected_while_prior_round_eval_unfinished() {
         floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
     );
     expire_round(&db, run_id, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
@@ -606,7 +606,7 @@ async fn reset_and_evaluation_concurrent() {
     // APPLIED-AT：回拨 applied_at 到 cutoff 前（expire_round 会把 cutoff 拨到过去）。
     backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
     // 此刻 round1 official eval 为 pending，run due 已清。
@@ -726,7 +726,7 @@ async fn manual_check_and_evaluation_concurrent() {
     // APPLIED-AT：回拨 applied_at 到 cutoff 前（expire_round 会把 cutoff 拨到过去）。
     backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
 

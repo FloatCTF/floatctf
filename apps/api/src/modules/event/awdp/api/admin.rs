@@ -114,6 +114,19 @@ pub async fn start_awdp_event(
         )
         .await?;
         crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "break");
+        // 到时间：全部已挂载 GameBox 为所有队伍/用户自动启动（幂等）。
+        if let Err(e) =
+            crate::modules::event::awdp::service::event_service::start_all_event_instances(
+                ctx.db.get_ref(),
+                ctx.docker.get_ref(),
+                ctx.config.auth.jwt_secret.expose().as_bytes(),
+                &ctx.config.awdp,
+                run.id,
+            )
+            .await
+        {
+            tracing::warn!(event_id = %event_id, error = %e, "AWDP manual start auto-start skipped");
+        }
     }
     UniResponse::ok_none().into()
 }

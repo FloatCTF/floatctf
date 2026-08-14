@@ -26,6 +26,7 @@ pub async fn tick_once(
     db: &DatabaseConnection,
     docker: &Docker,
     jwt_secret: &[u8],
+    awdp_config: &crate::core::config::AwdpStaticConfig,
 ) -> AwdpResult<TickSummary> {
     let now = Utc::now();
     let mut summary = TickSummary::default();
@@ -73,6 +74,22 @@ pub async fn tick_once(
                         Ok(()) => {
                             info!(run_id = %run.id, "AWDP run started (Break)");
                             summary.started += 1;
+                            // 到时间：全部已挂载 GameBox 为所有队伍/用户自动启动（幂等）。
+                            if let Err(e) = event_service::start_all_event_instances(
+                                db,
+                                docker,
+                                jwt_secret,
+                                awdp_config,
+                                run.id,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    run_id = %run.id,
+                                    error = %e,
+                                    "AWDP auto-start all instances skipped"
+                                );
+                            }
                         }
                         Err(e) => warn!(run_id = %run.id, error = %e, "AWDP start skipped"),
                     }

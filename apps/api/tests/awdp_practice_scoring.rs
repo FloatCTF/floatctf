@@ -311,7 +311,7 @@ async fn run_official_round(
     sequence: i32,
 ) -> floatctf::entity::awdp_evaluations::Model {
     expire_round(db, run_id, sequence).await;
-    tick_service::tick_once(db, docker, JWT_SECRET)
+    tick_service::tick_once(db, docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick");
     let _ = evaluation::worker_round(db, docker, "floatctf-api-worker", 8, 120, 3)

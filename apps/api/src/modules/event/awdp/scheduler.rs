@@ -39,6 +39,7 @@ impl TaskHandler for AwdpTickHandler {
             self.db.get_ref(),
             self.docker.get_ref(),
             self.config.auth.jwt_secret.expose().as_bytes(),
+            &self.config.awdp,
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;

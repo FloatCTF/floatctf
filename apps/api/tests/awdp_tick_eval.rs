@@ -25,10 +25,10 @@ use floatctf::modules::event::awdp::{
 
 /// Break 到期 → PreparingFix（tick 1）→ reconcile → Fix（tick 2，游标 now 立即 due）。
 async fn tick_to_fix(db: &sea_orm::DatabaseConnection, docker: &bollard::Docker) {
-    tick_service::tick_once(db, docker, JWT_SECRET)
+    tick_service::tick_once(db, docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick: break → preparing_fix");
-    tick_service::tick_once(db, docker, JWT_SECRET)
+    tick_service::tick_once(db, docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick: preparing_fix reconcile → fix");
 }
@@ -425,7 +425,7 @@ async fn tick_driven_rounds_and_scoring() {
     // 2. Round 1 cutoff（拨到过去）→ tick 物化 → worker：NO_PATCH（无 APPLIED patch）。
     expire_round(&db, run_a, 1).await;
     expire_round(&db, run_b, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
     let n1 = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
@@ -488,10 +488,10 @@ async fn tick_driven_rounds_and_scoring() {
     // Round 2 cutoff 到期 → 物化（幂等：重复 tick 不重复创建）。
     expire_round(&db, run_a, 2).await;
     expire_round(&db, run_b, 2).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r2a");
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r2b (idempotent)");
     let n2 = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
@@ -554,7 +554,7 @@ async fn tick_driven_rounds_and_scoring() {
     for seq in 3..=6 {
         expire_round(&db, run_a, seq).await;
         expire_round(&db, run_b, seq).await;
-        tick_service::tick_once(&db, &docker, JWT_SECRET)
+        tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
             .await
             .expect("tick seq");
         loop {
@@ -622,7 +622,7 @@ async fn tick_starts_pending_event_at_start_time() {
         "未开始事件无 run"
     );
 
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick");
     let run = run_repo::find_active_competition_for_event(&db, event.id)
@@ -703,7 +703,7 @@ async fn patch_eligibility_requires_current_round_patch() {
         r
     );
     expire_round(&db, run_id, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
     let n = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
@@ -747,7 +747,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     );
     backdate_patch_applied(&db, inst.instance_id, 30).await;
     expire_round(&db, run_id, 2).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r2");
     evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
@@ -772,7 +772,7 @@ async fn patch_eligibility_requires_current_round_patch() {
     // Round 3：无新 patch（即便 R2 patch 仍在容器里生效）→ NO_PATCH（§86）。
     open_round(&db, run_id, 3).await;
     expire_round(&db, run_id, 3).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r3");
     evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)
@@ -899,7 +899,7 @@ async fn official_eval_service_down_and_functional_broken() {
 
     expire_round(&db, run_a, 1).await;
     expire_round(&db, run_b, 1).await;
-    tick_service::tick_once(&db, &docker, JWT_SECRET)
+    tick_service::tick_once(&db, &docker, JWT_SECRET, &awdp_config())
         .await
         .expect("tick r1");
     let n = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 4, 120, 3)

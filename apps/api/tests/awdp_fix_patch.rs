@@ -544,6 +544,90 @@ exit 0
 }
 
 #[tokio::test]
+async fn manual_test_check_sync_returns_completed() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    remove_judge_container().await;
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+
+    let (event_id, run_id) = seed_event_and_run(&db, "mchksync", ParticipantMode::Individual).await;
+    let gb_id = seed_gamebox_and_attach(&db, event_id, "mchksync").await;
+    transition(&db, run_id, AwdpPhase::Fix).await;
+    let user_id = seed_user(&db, "mchksync").await;
+    let subject = Subject::user(user_id);
+    let view = runtime::start_instance(
+        &db,
+        &docker,
+        JWT_SECRET,
+        &awdp_config(),
+        run_id,
+        gb_id,
+        subject,
+        "flag",
+    )
+    .await
+    .expect("start");
+    let ok_payload = patch_payload(
+        r#"#!/bin/sh
+cp src/index.php "$FLOATCTF_SOURCE_DIR/index.php"
+echo "patched-ok"
+exit 0
+"#,
+        &[("src/index.php", "<?php echo 'patched-by-awdp'; ?>")],
+    );
+    let r =
+        patch_service::apply_patch(&db, &docker, run_id, view.instance_id, &ok_payload, subject)
+            .await
+            .expect("patch");
+    assert_eq!(r, patch_service::PatchResult::Applied);
+
+    // 同步 Test Check：HTTP 请求内直接执行（不排队），返回完成结果。
+    let ev = floatctf::modules::event::awdp::service::evaluation::manual_check_enqueue(
+        &db,
+        run_id,
+        view.instance_id,
+        subject,
+    )
+    .await
+    .expect("enqueue manual");
+    let res = floatctf::modules::event::awdp::service::evaluation::manual_check_run_now(
+        &db, &docker, &ev,
+    )
+    .await
+    .expect("sync manual check");
+    assert!(res.healthcheck_ok, "同步检查 healthcheck 应通过");
+    assert!(res.judge_ok, "同步检查 judge 应通过");
+    assert!(res.exploit_ok.is_none(), "比赛同步检查不运行 exploit");
+
+    // 行终态立即可见（无需 worker 消费）。
+    let fresh = evaluation_repo::find_by_id(&db, ev.id).await.unwrap();
+    assert_eq!(fresh.status, AwdpEvaluationStatus::Patched);
+    assert!(
+        fresh.exploit_result.is_none(),
+        "比赛同步检查不写 exploit 详情"
+    );
+    let total = score_repo::my_total(&db, run_id, Some(user_id), None)
+        .await
+        .unwrap();
+    assert_eq!(total, 0, "同步检查不计分");
+
+    let _ = runtime::stop_instance(&db, &docker, view.instance_id, subject).await;
+    let _ = events::Entity::delete_by_id(event_id).exec(&db).await;
+}
+
+#[tokio::test]
 async fn break_to_fix_resets_all_instances() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {

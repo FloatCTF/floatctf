@@ -68,6 +68,46 @@ pub async fn manual_check_enqueue(
     Ok(evaluation)
 }
 
+/// 同步执行 manual Test Check（不排队）：HTTP 请求内直接执行 healthcheck + judge，
+/// 写终态后返回结果。与 worker 经 instance advisory lock 串行；无 lease（同步独占）。
+pub async fn manual_check_run_now(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    evaluation: &crate::entity::awdp_evaluations::Model,
+) -> AwdpResult<ManualCheckResult> {
+    let lock = InstanceAdvisoryLock::acquire(db, evaluation.instance_id).await?;
+    let result = manual_leased_locked(db, docker, evaluation).await;
+    lock.release().await;
+
+    let (status, health_detail, judge_detail, _exploit_detail) = result?;
+    evaluation_repo::finish(
+        db,
+        evaluation.id,
+        status.clone(),
+        Some(&health_detail),
+        Some(&judge_detail),
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
+    Ok(ManualCheckResult {
+        healthcheck_ok: status != S::ServiceDown,
+        healthcheck_detail: if health_detail.is_empty() {
+            Vec::new()
+        } else {
+            vec![health_detail]
+        },
+        judge_ok: status != S::ServiceDown && status != S::FunctionalBroken,
+        judge_detail,
+        // 同步路径仅比赛使用（exploit 恒不执行）。
+        exploit_ok: None,
+        exploit_detail: None,
+    })
+}
+
 /// 进程内 worker 执行 manual 评估（lease 版）：internal healthcheck + judge，绝不 exploit/计分。
 async fn process_manual_leased(
     db: &DatabaseConnection,

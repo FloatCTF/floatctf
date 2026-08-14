@@ -5,15 +5,15 @@
 //!     → 平台端只校验根 `patch.sh` 存在并提取；包内其余文件原样解压（结构由用户自定）
 //!     → 校验当前 open round + prior-round 评估未完成 → 409
 //!     → 持久化 submission=applying（archive sha256 + 文件清单）
-//!     → docker cp（PUT /containers/{id}/archive）：整个包解压到容器内 /tmp/patch-<id>/，
-//!       注入 FLOATCTF_SOURCE_DIR（源码目录）；解压目录固定为容器内 /tmp/patch/
+//!     → docker cp（PUT /containers/{id}/archive）：整个包解压到容器内 /tmp/patch-{submission 前8}/，
+//!       注入 FLOATCTF_SOURCE_DIR（源码目录）；解压目录每提交唯一
 //!     → 容器内 exec /bin/sh patch.sh（60s 超时）
 //!     → exit 0 且未超时 → docker restart 同一容器（保留 writable layer）→ APPLIED（本轮 eligible）
 //!     → 非 0 / 超时 → FAILED（不算本轮 patch）
 //!
 //! 玩家「不真正写 patch」的闭环：下载 source.tar.gz → 原样重新打包上传 →
 //! 模板 patch.sh 为全注释空操作（exit 0）→ restart → APPLIED。
-//! 不限制包大小；patch.sh 内可直接引用固定路径 /tmp/patch/ 下的任意文件。
+//! 不限制包大小；patch.sh 内可直接引用固定路径 /tmp/patch-{submission 前8}/ 下的任意文件。
 //!
 //! 竞态纪律（plan §23）：Patch / Official evaluation / Reset / Manual check
 //! 全部使用同一把 instance advisory lock；本轮 cutoff 已过但评估未完成时拒绝修改容器。
@@ -41,7 +41,7 @@ pub const PATCH_APPLY_TIMEOUT_SECS: u64 = PATCH_EXEC_TIMEOUT_SECS;
 /// stdout/stderr 截断上限。
 pub const PATCH_OUTPUT_LIMIT: usize = 64 * 1024;
 
-/// 一个将随包解压进容器 /tmp/patch-<id>/ 的辅助文件（relative_path 相对该目录，路径由用户包自定）。
+/// 一个将随包解压进容器 /tmp/patch-{submission 前8}/ 的辅助文件（relative_path 相对该目录，路径由用户包自定）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchFile {
     pub relative_path: String,
@@ -274,11 +274,14 @@ async fn apply_patch_locked(
         .unwrap_or_else(|| "/app".to_string());
 
     let runtime = DockerContainerRuntime::new(docker.clone());
-    // 解压目录固定为容器内 /tmp/patch/（每个容器独立，天然隔离）。
-    const PATCH_DIR: &str = "/tmp/patch";
+    // 解压目录每提交唯一：/tmp/patch-{submission_id 前8}（实现与 doc 一致；
+    // 不同提交天然隔离，无需清理上次残留）。
+    let patch_dir = format!(
+        "/tmp/patch-{}",
+        &submission.id.to_string().replace('-', "")[..8]
+    );
 
-    // 5. 清理上次残留（同一实例多次上传复用同一目录）：先删目录再重建，
-    //    避免旧 patch 的辅助文件泄漏到本次。best-effort——失败不阻断后续。
+    // 5. 目标目录必须存在（docker put_archive 要求），best-effort——失败不阻断后续。
     let _ = runtime
         .exec(
             &instance.container_name,
@@ -286,7 +289,7 @@ async fn apply_patch_locked(
                 cmd: vec![
                     "/bin/sh".into(),
                     "-c".into(),
-                    format!("rm -rf '{PATCH_DIR}' && mkdir -p '{PATCH_DIR}'"),
+                    format!("mkdir -p '{patch_dir}'"),
                 ],
                 env: vec![],
                 workdir: None,
@@ -298,12 +301,12 @@ async fn apply_patch_locked(
         )
         .await;
 
-    // 6. 把 patch 内容（patch.sh + 辅助文件）重建为 tar（相对 /tmp/patch/）。
+    // 6. 把 patch 内容（patch.sh + 辅助文件）重建为 tar（相对解压目录）。
     let tar_bytes = build_patch_tar(payload);
 
-    // 7. docker cp：解压到容器内 /tmp/patch/（writable layer）。
+    // 7. docker cp：解压到容器内 /tmp/patch-{submission 前8}/（writable layer）。
     if let Err(e) = runtime
-        .copy_into_container(&instance.container_name, PATCH_DIR, tar_bytes)
+        .copy_into_container(&instance.container_name, &patch_dir, tar_bytes)
         .await
     {
         patch_repo::finish_apply(
@@ -319,16 +322,17 @@ async fn apply_patch_locked(
         return Err(AwdpError::Docker(format!("patch copy: {e}")));
     }
 
-    // 8. 容器内执行 patch.sh：workdir 设为解压目录 /tmp/patch/，
+    // 8. 容器内执行 patch.sh：workdir 设为解压目录，
     //    脚本内相对路径（如 `cp src/...`）以解压目录为基准。
     //    注入 FLOATCTF_SOURCE_DIR（源码目录）。
+    let script_path = format!("{patch_dir}/patch.sh");
     let outcome = runtime
         .exec(
             &instance.container_name,
             ExecOptions {
-                cmd: vec!["/bin/sh".into(), "/tmp/patch/patch.sh".into()],
+                cmd: vec!["/bin/sh".into(), script_path.into()],
                 env: vec![format!("FLOATCTF_SOURCE_DIR={source_dir}")],
-                workdir: Some(PATCH_DIR.into()),
+                workdir: Some(patch_dir.into()),
                 timeout: Duration::from_secs(PATCH_EXEC_TIMEOUT_SECS),
                 stdout_limit: PATCH_OUTPUT_LIMIT,
                 stderr_limit: PATCH_OUTPUT_LIMIT,

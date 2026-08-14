@@ -547,7 +547,12 @@ export function AwdpWorkbench({
 		return (
 			<section key={gb.id} className="p-3 rounded border">
 				<div className="flex items-center gap-2 mb-2">
-					<h4 className="font-bold flex-1">{gb.name}</h4>
+					{viewModel.isPractice ? (
+						// 练习：页面顶部标题已显示题目名，卡片内不再重复（Endpoints 框里只留状态标签）。
+						<span className="flex-1" />
+					) : (
+						<h4 className="font-bold flex-1">{gb.name}</h4>
+					)}
 					<Label variant={gb.broken ? "danger" : "success"}>
 						{gb.broken ? "Broken" : "Unbroken"}
 					</Label>

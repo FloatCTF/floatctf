@@ -72,6 +72,7 @@ function RouteComponent() {
 			if (!dirty && loadedVersion.current !== null) {
 				setForm(DEFAULT_FORM);
 				loadedVersion.current = null;
+				breakScoreTouched.current = false;
 			}
 			return;
 		}
@@ -85,6 +86,9 @@ function RouteComponent() {
 			fixRoundScore: String(config.fix_round_score),
 		});
 		loadedVersion.current = config.updated_at;
+		// 表单被远端配置（重新）加载后，恢复 Break Score 自动联动：
+		// 否则切换事件/刷新后残留的手动编辑标记会让动态计算永久失效。
+		breakScoreTouched.current = false;
 	}, [config, dirty]);
 
 	const save = useMutation({
@@ -99,6 +103,8 @@ function RouteComponent() {
 			}),
 		onSuccess: () => {
 			setDirty(false);
+			// 保存成功后继续编辑 Fix 参数时仍按 ×0.6 规则联动（除非再次手动改 Break Score）。
+			breakScoreTouched.current = false;
 			banner.showBanner("success", "AWDP configuration saved");
 			qc.invalidateQueries({ queryKey: ["awdp-config", id] });
 			qc.invalidateQueries({ queryKey: ["event", id] });

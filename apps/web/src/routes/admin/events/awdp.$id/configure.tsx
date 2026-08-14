@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 
-import { awdpAdminApi, type AwdpEventConfigDto } from "@/api/awdp";
+import { type AwdpEventConfigDto, awdpAdminApi } from "@/api/awdp";
 import { useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../../route";
 
@@ -31,11 +31,15 @@ const DEFAULT_FORM: FormState = {
 	breakDurationSecs: "3600",
 	fixDurationSecs: "3600",
 	fixRoundIntervalSecs: "600",
-	breakScore: "1000",
+	// 默认 Break Score = Fix 满分 × 0.6（150 × 6 轮 × 0.6 = 540）。
+	breakScore: "540",
 	fixRoundScore: "150",
 };
 
-const PHASE_LABEL: Record<string, { text: string; variant: "success" | "accent" | "attention" | "done" }> = {
+const PHASE_LABEL: Record<
+	string,
+	{ text: string; variant: "success" | "accent" | "attention" | "done" }
+> = {
 	pending: { text: "pending", variant: "attention" },
 	break: { text: "break", variant: "accent" },
 	fix: { text: "fix", variant: "success" },
@@ -54,6 +58,8 @@ function RouteComponent() {
 	const [form, setForm] = useState<FormState>(DEFAULT_FORM);
 	const [dirty, setDirty] = useState(false);
 	const loadedVersion = useRef<string | null>(null);
+	// 管理员手动改过 Break Score 后，不再被 Fix 参数联动覆盖。
+	const breakScoreTouched = useRef(false);
 
 	const configQuery = useQuery({
 		queryKey: ["awdp-config", id],
@@ -116,14 +122,40 @@ function RouteComponent() {
 	);
 	const formReady = !config || loadedVersion.current === config.updated_at;
 	const totalRounds = Math.floor(
-		(Number(form.fixDurationSecs) || 0) / (Number(form.fixRoundIntervalSecs) || 1),
+		(Number(form.fixDurationSecs) || 0) /
+			(Number(form.fixRoundIntervalSecs) || 1),
 	);
+	// Break Score 推导：全部防守成功总分（Fix 分 × 回合数）× 0.6。
+	const deriveBreakScore = (f: FormState) => {
+		const fixScore = Number(f.fixRoundScore) || 0;
+		const rounds = Math.floor(
+			(Number(f.fixDurationSecs) || 0) / (Number(f.fixRoundIntervalSecs) || 1),
+		);
+		return String(Math.round((fixScore * rounds * 3) / 5));
+	};
 	const phaseMeta = config ? PHASE_LABEL[config.phase] : null;
 
 	const set =
 		(key: keyof FormState) => (event: ChangeEvent<HTMLInputElement>) => {
 			setDirty(true);
-			setForm((current) => ({ ...current, [key]: event.target.value }));
+			if (key === "breakScore") {
+				breakScoreTouched.current = true;
+				setForm((current) => ({ ...current, breakScore: event.target.value }));
+				return;
+			}
+			setForm((current) => {
+				const next = { ...current, [key]: event.target.value };
+				// 改 Fix 时长/回合/单轮分时，Break Score 按 ×0.6 规则自动重算（未手动覆盖时）。
+				if (
+					!breakScoreTouched.current &&
+					(key === "fixDurationSecs" ||
+						key === "fixRoundIntervalSecs" ||
+						key === "fixRoundScore")
+				) {
+					next.breakScore = deriveBreakScore(next);
+				}
+				return next;
+			});
 		};
 	const submit = () => {
 		const fields = [
@@ -173,8 +205,9 @@ function RouteComponent() {
 					<div>
 						<h3 className="m-0">AWDP Configure</h3>
 						<p className="color-fg-muted mb-0 mt-1">
-							Break → Fix 双阶段（默认 1h + 1h / 每回合 10min）。赛事开始前可改；
-							进入 Break 后参数冻结。总回合数 = Fix 时长 ÷ 回合时长。
+							Break → Fix 双阶段（默认 1h + 1h / 每回合
+							10min）。赛事开始前可改； 进入 Break 后参数冻结。总回合数 = Fix
+							时长 ÷ 回合时长。
 						</p>
 					</div>
 					{phaseMeta && (
@@ -240,7 +273,7 @@ function RouteComponent() {
 				<Section title="Scoring">
 					<NumberField
 						label="Break Score"
-						caption="Break 阶段一次性得分（每 GameBox）。"
+						caption={`Break 阶段一次性得分（每 GameBox）；默认 = Fix 满分 × 0.6（当前 ${deriveBreakScore(form)}）。改 Fix 时长/回合/单轮分时自动重算，手动改过则不再跟随。`}
 						value={form.breakScore}
 						onChange={set("breakScore")}
 						min={0}
@@ -282,7 +315,9 @@ function RouteComponent() {
 				<Box sx={{ mt: 4 }}>
 					<Button
 						variant="primary"
-						disabled={!editable || !formReady || remoteChanged || save.isPending}
+						disabled={
+							!editable || !formReady || remoteChanged || save.isPending
+						}
 						onClick={submit}
 					>
 						{save.isPending ? "Saving…" : "Save AWDP Configuration"}

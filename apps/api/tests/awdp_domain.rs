@@ -205,7 +205,7 @@ async fn config_defaults_and_update_lifecycle() {
     assert_eq!(awdp.break_duration_secs, 3600);
     assert_eq!(awdp.fix_duration_secs, 3600);
     assert_eq!(awdp.fix_round_interval_secs, 600);
-    assert_eq!(awdp.break_score, 1000);
+    assert_eq!(awdp.break_score, 540);
     assert_eq!(awdp.fix_round_score, 150);
     assert_eq!(awdp.configuration_generation, 1);
 

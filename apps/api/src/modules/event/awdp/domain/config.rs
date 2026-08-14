@@ -10,8 +10,12 @@ use crate::modules::event::awdp::{AwdpError, AwdpResult};
 pub const DEFAULT_BREAK_DURATION_SECS: i32 = 3600;
 pub const DEFAULT_FIX_DURATION_SECS: i32 = 3600;
 pub const DEFAULT_FIX_ROUND_INTERVAL_SECS: i32 = 600;
-pub const DEFAULT_BREAK_SCORE: i64 = 1000;
+/// Break 满分默认 = Fix 全部防守成功总分 × 0.6（150 × 6 轮 × 0.6 = 540）。
+pub const DEFAULT_BREAK_SCORE: i64 = 540;
 pub const DEFAULT_FIX_ROUND_SCORE: i64 = 150;
+/// Break 分数推导比例：全部防守成功总分（fix_round_score × total_rounds）乘以 0.6。
+pub const BREAK_SCORE_RATIO_NUM: i64 = 3;
+pub const BREAK_SCORE_RATIO_DEN: i64 = 5;
 /// 练习模式每轮 check 失败（NO_PATCH / SERVICE_DOWN / FUNCTIONAL_BROKEN / VULNERABLE）扣分
 /// （固定常量；练习 run 每轮每实例以同一幂等键写一条负 delta 账本）。
 pub const DEFAULT_FIX_ROUND_PENALTY: i64 = 50;
@@ -85,6 +89,13 @@ impl AwdpConfig {
     /// 总回合数 = fix_duration / interval（默认 3600/600 = 6）。
     pub fn total_rounds(&self) -> i32 {
         self.fix_duration_secs / self.fix_round_interval_secs
+    }
+
+    /// Break 满分推导：全部防守成功总分（fix_round_score × total_rounds）× 0.6
+    /// （整数运算：先乘分子再除分母；默认 150×6×3/5 = 540）。
+    pub fn derived_break_score(&self) -> i64 {
+        self.fix_round_score * self.total_rounds() as i64 * BREAK_SCORE_RATIO_NUM
+            / BREAK_SCORE_RATIO_DEN
     }
 }
 
@@ -160,9 +171,11 @@ mod tests {
         assert_eq!(c.break_duration_secs, 3600);
         assert_eq!(c.fix_duration_secs, 3600);
         assert_eq!(c.fix_round_interval_secs, 600);
-        assert_eq!(c.break_score, 1000);
+        assert_eq!(c.break_score, 540);
         assert_eq!(c.fix_round_score, 150);
         assert_eq!(c.total_rounds(), 6);
+        // break = fix 满分 × 0.6：150×6×0.6 = 540
+        assert_eq!(c.derived_break_score(), 540);
     }
 
     #[test]

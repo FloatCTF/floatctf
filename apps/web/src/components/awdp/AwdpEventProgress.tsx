@@ -3,11 +3,19 @@ import { useEffect, useRef, useState } from "react";
 
 import { serviceApi } from "@/api";
 import { type AwdpOverview, awdpPlayerApi } from "@/api/awdp";
+import { computeEventStatus } from "@/components";
 import {
 	AwdpTimeline,
 	computeTimelineState,
 	formatEventRemaining,
 } from "@/components/awdp/AwdpPhaseOverview";
+
+/**
+ * 到点后 2s 兜底轮询的过期上限：deadline 已过去超过该时长仍无阶段变化时停止
+ * 高频轮询（如 pending 卡住、tick 未自动建 run），交给 SSE / 15s poll 兜底，
+ * 避免无限每 2s 一次 refetch。
+ */
+const DEADLINE_STALE_MS = 60_000;
 
 /**
  * 当前阶段的 deadline（本地时刻）；到点后需要重新获取数据（阶段/回合切换）。
@@ -96,11 +104,16 @@ export function AwdpEventProgress({ id }: { id: string }) {
 	overviewRef.current = overview;
 	startTimeRef.current = ev?.start_time;
 
-	// 兜底：到点期间每 2s 轮询 refetch（阶段切换 + 后端 tick 之间不留 15s 窗口）。
+	// 兜底：到点期间每 2s 轮询 refetch（阶段切换 + 后端 tick 之间不留 15s 窗口）；
+	// deadline 已过期太久（pending 卡住无 run 等）则停止，交给 SSE/15s poll。
 	useEffect(() => {
 		const timer = setInterval(() => {
 			const d = stageDeadlineMs(overviewRef.current, startTimeRef.current);
-			if (d !== null && Date.now() >= d) {
+			if (
+				d !== null &&
+				Date.now() >= d &&
+				Date.now() - d <= DEADLINE_STALE_MS
+			) {
 				void refetch();
 			}
 		}, 2000);
@@ -129,14 +142,25 @@ export function AwdpEventProgress({ id }: { id: string }) {
 	};
 
 	// 阶段名 + 剩余时间（Break xxxxxxx / Fix xxxxxxx 风格；
-	// pending 显示还有多久开始；preparing_fix 过渡提示；ended 显示 Finished）。
+	// pending 按赛事墙钟状态派生——未开始显示倒计时；赛事已开始但 run 未启动
+	// 显示 Waiting to start；赛事已结束（从未建 run 的边缘场景）显示 Ended，
+	// 不再出现 "Starts in: 0s"；ended 显示 Finished）。
 	let countdownText = "Waiting to start";
 	if (overview.phase === "break") {
 		countdownText = `Break ${formatEventRemaining(secsUntil(overview.break_ends_at))}`;
 	} else if (overview.phase === "fix") {
 		countdownText = `Fix ${formatEventRemaining(secsUntil(overview.next_action_at))}`;
 	} else if (overview.phase === "pending") {
-		countdownText = `Starts in: ${formatEventRemaining(secsUntil(ev?.start_time))}`;
+		const eventStatus = computeEventStatus(
+			ev?.start_time ?? "",
+			ev?.end_time,
+		);
+		countdownText =
+			eventStatus === "upcoming"
+				? `Starts in: ${formatEventRemaining(secsUntil(ev?.start_time))}`
+				: eventStatus === "ended"
+					? "Ended"
+					: "Waiting to start";
 	} else if (overview.phase === "preparing_fix") {
 		countdownText = "Preparing Fix…";
 	} else if (overview.phase === "ended") {

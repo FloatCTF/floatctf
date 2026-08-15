@@ -78,7 +78,7 @@ function makeOverview(overrides: Partial<AwdpOverview> = {}): AwdpOverview {
 function renderWithQuery(
 	id: string,
 	data: AwdpOverview | null,
-	event?: { start_time: string },
+	event?: { start_time: string; end_time?: string | null },
 ) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
@@ -145,6 +145,57 @@ describe("AwdpEventProgress", () => {
 			{ start_time: new Date(now + 7200_000).toISOString() },
 		);
 		expect(screen.getByText(/Starts in: 2h/)).toBeDefined();
+	});
+
+	it("pending + start 已过 + 赛事已结束 → Ended（回归：不再 Starts in: 0s）", () => {
+		renderWithQuery(
+			"evt-1",
+			makeOverview({
+				phase: "pending",
+				started_at: null,
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+			{
+				start_time: new Date(now - 7200_000).toISOString(),
+				end_time: new Date(now - 3600_000).toISOString(),
+			},
+		);
+		expect(screen.getByText("Ended")).toBeDefined();
+		expect(screen.queryByText(/Starts in/)).toBeNull();
+	});
+
+	it("pending + start 已过 + 赛事进行中（未结束/无 end_time）→ Waiting to start", () => {
+		renderWithQuery(
+			"evt-1",
+			makeOverview({
+				phase: "pending",
+				started_at: null,
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+			{
+				start_time: new Date(now - 7200_000).toISOString(),
+				end_time: new Date(now + 3600_000).toISOString(),
+			},
+		);
+		expect(screen.getByText("Waiting to start")).toBeDefined();
+		expect(screen.queryByText(/Starts in/)).toBeNull();
+	});
+
+	it("pending + start 已过 + 无 end_time（练习/开放式）→ Waiting to start", () => {
+		renderWithQuery(
+			"evt-1",
+			makeOverview({
+				phase: "pending",
+				started_at: null,
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+			{ start_time: new Date(now - 7200_000).toISOString() },
+		);
+		expect(screen.getByText("Waiting to start")).toBeDefined();
+		expect(screen.queryByText(/Starts in/)).toBeNull();
 	});
 
 	it("无 overview（未加入/未开始）→ 不渲染", () => {
@@ -247,6 +298,52 @@ describe("AwdpEventProgress", () => {
 		// fix 阶段 deadline（next_action_at = now+1h）未到：再推进 60s 不应新增请求。
 		await act(async () => {
 			vi.advanceTimersByTime(60_000);
+		});
+		expect(spy.mock.calls.length).toBe(settled);
+	});
+
+	it("pending + start 早已过期（卡死无 run）：补抓一次后停止 2s 高频轮询", async () => {
+		const spy = vi
+			.spyOn(awdpPlayerApi, "overview")
+			.mockResolvedValue({
+				code: 0,
+				message: "ok",
+				data: makeOverview({
+					phase: "pending",
+					started_at: null,
+					break_ends_at: null,
+					next_action_at: null,
+				}),
+			});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		queryClient.setQueryData(["eventInfo", "evt-1"], {
+			data: {
+				event: {
+					start_time: new Date(now - 7200_000).toISOString(),
+					end_time: new Date(now + 3600_000).toISOString(),
+				},
+				joined: true,
+				team_result: null,
+			},
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<AwdpEventProgress id="evt-1" />
+			</QueryClientProvider>,
+		);
+		// 初始 fetch。
+		expect(spy).toHaveBeenCalledTimes(1);
+		// 挂载后 overview 就绪 + 1s tick → 检测到 deadline 早已过期 → 补抓一次。
+		await act(async () => {
+			vi.advanceTimersByTime(1000);
+		});
+		expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+		const settled = spy.mock.calls.length;
+		// 之后 2s 兜底轮询因 deadline 已过期超 60s 停止：推进 30s 不应新增请求。
+		await act(async () => {
+			vi.advanceTimersByTime(30_000);
 		});
 		expect(spy.mock.calls.length).toBe(settled);
 	});

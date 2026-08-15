@@ -251,13 +251,17 @@ type AwdpTimelineProps = {
 /** 紧凑 track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
 export function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
 	// 进度条已走过部分整体为绿色（success），marker 跟随。
+	// pending / preparing_fix 未开始：marker 用 muted，避免绿点悬在空条上。
 	const markerColor =
-		phase === "pending"
+		phase === "pending" || phase === "preparing_fix"
 			? "border-[var(--fgColor-muted)]"
 			: "border-[var(--fgColor-success)]";
 
+	// Turn 分隔线只在 Fix/Ended 展示（回合时间线存在时）；pending/preparing_fix
+	// 空条上画分隔线属噪音。
 	const showTurnSeparators =
-		phase !== "break" && state.turnBoundariesPct.length > 0;
+		(phase === "fix" || phase === "ended") &&
+		state.turnBoundariesPct.length > 0;
 
 	return (
 		<div>

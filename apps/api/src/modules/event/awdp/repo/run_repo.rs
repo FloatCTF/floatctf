@@ -271,6 +271,36 @@ pub async fn find_active_competition_for_event<C: ConnectionTrait>(
         .map_err(|e| AwdpError::Database(e.to_string()))?)
 }
 
+/// 事件最新一条 run（任意 phase，按 created_at 倒序取首）。
+/// 同一 competition 事件至多一个 run（end 后禁止 restart），latest 即唯一/最新；
+/// 供展示类查询（overview/rounds/evaluations/admin config）在无 active run 时
+/// 回退到 Ended / PreparingFix run，避免把已结束赛事误报为 pending。
+pub async fn find_latest_for_event<C: ConnectionTrait>(
+    db: &C,
+    event_id: Uuid,
+) -> AwdpResult<Option<awdp_runs::Model>> {
+    Ok(awdp_runs::Entity::find()
+        .filter(awdp_runs::Column::EventId.eq(event_id))
+        .order_by_desc(awdp_runs::Column::CreatedAt)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?)
+}
+
+/// 展示用 run 解析：active（pending/break/fix）优先，否则回退最新一条 run。
+/// 与 `find_active_competition_for_event`（动作类端点专用）的区别：后者排除
+/// PreparingFix / Ended，前者允许展示这些非 active 阶段（如赛事已结束仍要
+/// 显示 Finished + 满进度条、过渡态显示 Preparing Fix…）。
+pub async fn find_display_run_for_event<C: ConnectionTrait>(
+    db: &C,
+    event_id: Uuid,
+) -> AwdpResult<Option<awdp_runs::Model>> {
+    if let Some(run) = find_active_competition_for_event(db, event_id).await? {
+        return Ok(Some(run));
+    }
+    find_latest_for_event(db, event_id).await
+}
+
 /// 事件的全部 run（管理端 inspect；含 ended 历史）。
 pub async fn list_for_event<C: ConnectionTrait>(
     db: &C,

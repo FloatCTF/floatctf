@@ -1,7 +1,10 @@
 //! AWDP 选手侧路由（挂 /api/events/{event_id}/awdp/*）。
 //!
 //! URL 保持 event-oriented（plan §59），handler 内经
-//! `run_repo::find_active_competition_for_event` 解析到 active competition run。
+//! `run_repo::find_active_competition_for_event` 解析到 active competition run
+//! （动作类端点）；展示类端点（overview/rounds/evaluations）用
+//! `find_display_run_for_event`——run 结束（Ended）或过渡态（PreparingFix）时
+//! 也要能如实展示，避免把已结束赛事误报为 pending。
 
 use actix_web::web::{self, Json};
 use uuid::Uuid;
@@ -60,6 +63,14 @@ async fn active_run_for_event(
     Ok(run_repo::find_active_competition_for_event(db, event_id).await?)
 }
 
+/// 解析事件的展示用 run（active 优先，否则最新一条——覆盖 Ended / PreparingFix）。
+async fn display_run_for_event(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+) -> Result<Option<awdp_runs::Model>, AppError> {
+    Ok(run_repo::find_display_run_for_event(db, event_id).await?)
+}
+
 async fn flag_prefix_async(ctx: &ReqCtx) -> String {
     crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "FLAG_PREFIX")
         .await
@@ -92,7 +103,9 @@ pub async fn get_overview(
         &crate::modules::event::awdp::domain::AwdpConfig::default(),
     )
     .await?;
-    let run = active_run_for_event(db, event_id).await?;
+    // 展示用 run：active 优先，否则回退最新一条（Ended 时仍显示 Finished + 全量
+    // timestamps/score；PreparingFix 过渡态如实展示，不再误报 pending）。
+    let run = display_run_for_event(db, event_id).await?;
     let gameboxes = event_gamebox_repo::list_for_event(db, event_id).await?;
     let my_score = match &run {
         Some(run) => score_repo::my_total(db, run.id, subject.user_id, subject.team_id).await?,
@@ -590,7 +603,7 @@ pub async fn get_rounds(
 ) -> UniResult<Vec<AwdpRoundDto>> {
     let event_id = path.into_inner();
     let _user = user.into_inner();
-    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+    let run = display_run_for_event(ctx.db.get_ref(), event_id)
         .await?
         .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
     let rounds = round_repo::list_for_run(ctx.db.get_ref(), run.id).await?;
@@ -620,7 +633,7 @@ pub async fn get_my_evaluations(
     let event_id = path.into_inner();
     let user = user.into_inner();
     let subject = resolve_subject(&ctx, event_id, user.id).await?;
-    let run = active_run_for_event(ctx.db.get_ref(), event_id)
+    let run = display_run_for_event(ctx.db.get_ref(), event_id)
         .await?
         .ok_or_else(|| AppError::InvalidState("AWDP 事件尚未开始".into()))?;
     let all = evaluation_repo::list_for_run(ctx.db.get_ref(), run.id).await?;

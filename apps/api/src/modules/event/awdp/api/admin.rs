@@ -49,7 +49,9 @@ pub async fn get_awdp_config(
     let event_id = path.into_inner();
     ensure_awdp_event(&ctx, event_id).await?;
     let row = event_repo::require_by_event_id(ctx.db.get_ref(), event_id).await?;
-    let run = run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await?;
+    // 展示用 run：Ended 时也要如实显示 ended（configure 锁定、ops 按钮禁用），
+    // 而非回退到 pending 让界面误以为可重新启动。
+    let run = run_repo::find_display_run_for_event(ctx.db.get_ref(), event_id).await?;
     UniResponse::ok(AwdpEventConfigDto::from_config_and_run(&row, run.as_ref()).into()).into()
 }
 
@@ -81,7 +83,7 @@ pub async fn patch_awdp_config(
         "awdp.config_changed",
         serde_json::json!({}),
     );
-    let run = run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await?;
+    let run = run_repo::find_display_run_for_event(ctx.db.get_ref(), event_id).await?;
     UniResponse::ok(AwdpEventConfigDto::from_config_and_run(&row, run.as_ref()).into()).into()
 }
 

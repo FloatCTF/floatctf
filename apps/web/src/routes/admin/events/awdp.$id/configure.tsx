@@ -8,11 +8,18 @@ import {
 } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import {
+	type ChangeEvent,
+	useContext,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 
 import { type AwdpEventConfigDto, awdpAdminApi } from "@/api/awdp";
 import { useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../../route";
+import { EventContext } from "./route";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/configure")({
 	component: RouteComponent,
@@ -53,6 +60,7 @@ function fmt(iso: string | null | undefined) {
 
 function RouteComponent() {
 	const { id } = Route.useParams();
+	const event = useContext(EventContext);
 	const qc = useQueryClient();
 	const banner = useMsgBanner({});
 	const [form, setForm] = useState<FormState>(DEFAULT_FORM);
@@ -78,9 +86,21 @@ function RouteComponent() {
 		}
 		if (loadedVersion.current === config.updated_at) return;
 		if (dirty && loadedVersion.current !== null) return;
+		const total =
+			event?.start_time && event?.end_time
+				? Math.floor(
+						(new Date(event.end_time).getTime() -
+							new Date(event.start_time).getTime()) /
+							1000,
+					)
+				: null;
+		const fixDurationSecs =
+			total !== null
+				? Math.max(0, total - config.break_duration_secs)
+				: config.fix_duration_secs;
 		setForm({
 			breakDurationSecs: String(config.break_duration_secs),
-			fixDurationSecs: String(config.fix_duration_secs),
+			fixDurationSecs: String(fixDurationSecs),
 			fixRoundIntervalSecs: String(config.fix_round_interval_secs),
 			breakScore: String(config.break_score),
 			fixRoundScore: String(config.fix_round_score),
@@ -96,7 +116,6 @@ function RouteComponent() {
 			awdpAdminApi.updateConfig(id, {
 				expected_updated_at: loadedVersion.current ?? undefined,
 				break_duration_secs: Number(form.breakDurationSecs),
-				fix_duration_secs: Number(form.fixDurationSecs),
 				fix_round_interval_secs: Number(form.fixRoundIntervalSecs),
 				break_score: Number(form.breakScore),
 				fix_round_score: Number(form.fixRoundScore),
@@ -127,15 +146,42 @@ function RouteComponent() {
 			loadedVersion.current !== config.updated_at,
 	);
 	const formReady = !config || loadedVersion.current === config.updated_at;
-	const totalRounds = Math.floor(
-		(Number(form.fixDurationSecs) || 0) /
-			(Number(form.fixRoundIntervalSecs) || 1),
-	);
+	// 比赛总时长 = event.end_time - event.start_time；Fix 时长 = 总时长 - Break 时长。
+	const totalSecs = (() => {
+		if (!event?.start_time || !event?.end_time) return null;
+		const diff =
+			new Date(event.end_time).getTime() - new Date(event.start_time).getTime();
+		return Math.floor(diff / 1000);
+	})();
+	const breakSecs = Number(form.breakDurationSecs) || 0;
+	const fixSecs =
+		totalSecs !== null
+			? Math.max(0, totalSecs - breakSecs)
+			: Number(form.fixDurationSecs) || 0;
+	const turnSecs = Number(form.fixRoundIntervalSecs) || 0;
+	const totalRounds = Math.floor(fixSecs / (turnSecs || 1));
+	// Timeline 预览：根据当前表单输入实时计算（Fix 时长由比赛总时长 - Break 推导）。
+	const startIso = event?.start_time ?? config?.started_at ?? null;
+	const startMs = startIso ? new Date(startIso).getTime() : null;
+	const breakEndIso =
+		startMs !== null
+			? new Date(startMs + breakSecs * 1000).toISOString()
+			: null;
+	const fixStartIso = breakEndIso;
+	const fixEndIso =
+		startMs !== null
+			? new Date(startMs + (breakSecs + fixSecs) * 1000).toISOString()
+			: null;
 	// Break Score 推导：全部防守成功总分（Fix 分 × 回合数）× 0.6。
 	const deriveBreakScore = (f: FormState) => {
 		const fixScore = Number(f.fixRoundScore) || 0;
+		const brk = Number(f.breakDurationSecs) || 0;
+		const fixDuration =
+			totalSecs !== null
+				? Math.max(0, totalSecs - brk)
+				: Number(f.fixDurationSecs) || 0;
 		const rounds = Math.floor(
-			(Number(f.fixDurationSecs) || 0) / (Number(f.fixRoundIntervalSecs) || 1),
+			fixDuration / (Number(f.fixRoundIntervalSecs) || 1),
 		);
 		return String(Math.round((fixScore * rounds * 3) / 5));
 	};
@@ -144,6 +190,28 @@ function RouteComponent() {
 	const set =
 		(key: keyof FormState) => (event: ChangeEvent<HTMLInputElement>) => {
 			setDirty(true);
+			if (key === "fixDurationSecs") {
+				// Fix 时长由“比赛总时长 - Break 时长”推导，不允许直接修改。
+				return;
+			}
+			if (key === "breakDurationSecs") {
+				setForm((current) => {
+					const next = {
+						...current,
+						breakDurationSecs: event.target.value,
+					};
+					if (totalSecs !== null) {
+						next.fixDurationSecs = String(
+							Math.max(0, totalSecs - Number(next.breakDurationSecs)),
+						);
+					}
+					if (!breakScoreTouched.current) {
+						next.breakScore = deriveBreakScore(next);
+					}
+					return next;
+				});
+				return;
+			}
 			if (key === "breakScore") {
 				breakScoreTouched.current = true;
 				setForm((current) => ({ ...current, breakScore: event.target.value }));
@@ -151,12 +219,10 @@ function RouteComponent() {
 			}
 			setForm((current) => {
 				const next = { ...current, [key]: event.target.value };
-				// 改 Fix 时长/回合/单轮分时，Break Score 按 ×0.6 规则自动重算（未手动覆盖时）。
+				// 改回合/单轮分时，Break Score 按 ×0.6 规则自动重算（未手动覆盖时）。
 				if (
 					!breakScoreTouched.current &&
-					(key === "fixDurationSecs" ||
-						key === "fixRoundIntervalSecs" ||
-						key === "fixRoundScore")
+					(key === "fixRoundIntervalSecs" || key === "fixRoundScore")
 				) {
 					next.breakScore = deriveBreakScore(next);
 				}
@@ -164,21 +230,25 @@ function RouteComponent() {
 			});
 		};
 	const submit = () => {
-		const fields = [
-			form.breakDurationSecs,
-			form.fixDurationSecs,
-			form.fixRoundIntervalSecs,
-			form.breakScore,
-			form.fixRoundScore,
-		].map(Number);
-		if (fields.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+		const breakDurationSecs = Number(form.breakDurationSecs) || 0;
+		const fixDurationSecs = fixSecs;
+		const fixRoundIntervalSecs = Number(form.fixRoundIntervalSecs) || 0;
+		const breakScore = Number(form.breakScore);
+		const fixRoundScore = Number(form.fixRoundScore);
+		const values = [
+			breakDurationSecs,
+			fixDurationSecs,
+			fixRoundIntervalSecs,
+			breakScore,
+			fixRoundScore,
+		];
+		if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
 			banner.showBanner(
 				"critical",
 				"All numeric fields must be non-negative integers.",
 			);
 			return;
 		}
-		const [breakDurationSecs, fixDurationSecs, fixRoundIntervalSecs] = fields;
 		if (breakDurationSecs <= 0 || fixDurationSecs <= 0) {
 			banner.showBanner("critical", "Break/Fix duration must be positive.");
 			return;
@@ -260,11 +330,11 @@ function RouteComponent() {
 					/>
 					<NumberField
 						label="Fix Duration"
-						caption="Fix 阶段时长（秒），默认 3600。"
+						caption="Fix 阶段时长（秒），由比赛总时长 - Break 时长自动推导，不可直接修改。"
 						value={form.fixDurationSecs}
 						onChange={set("fixDurationSecs")}
 						min={1}
-						disabled={!editable}
+						disabled
 					/>
 					<NumberField
 						label="Turn Interval"
@@ -279,7 +349,7 @@ function RouteComponent() {
 				<Section title="Scoring">
 					<NumberField
 						label="Break Score"
-						caption={`Break 阶段一次性得分（每 GameBox）；默认 = Fix 满分 × 0.6（当前 ${deriveBreakScore(form)}）。改 Fix 时长/回合/单轮分时自动重算，手动改过则不再跟随。`}
+						caption={`Break 阶段一次性得分（每 GameBox）；默认 = Fix 满分 × 0.6（当前 ${deriveBreakScore(form)}）。改回合/单轮分时自动重算，手动改过则不再跟随。`}
 						value={form.breakScore}
 						onChange={set("breakScore")}
 						min={0}
@@ -296,26 +366,28 @@ function RouteComponent() {
 				</Section>
 
 				<Section title="Timeline">
-					{config ? (
-						<dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
-							<dt className="font-bold">Started</dt>
-							<dd className="font-medium">{fmt(config.started_at)}</dd>
-							<dt className="font-bold">Break 至</dt>
-							<dd className="font-medium">{fmt(config.break_ends_at)}</dd>
-							<dt className="font-bold">Fix 开始</dt>
-							<dd className="font-medium">{fmt(config.fix_started_at)}</dd>
-							<dt className="font-bold">Fix 至</dt>
-							<dd className="font-medium">{fmt(config.fix_ends_at)}</dd>
-							<dt className="font-bold">Finished</dt>
-							<dd className="font-medium">{fmt(config.finished_at)}</dd>
-							<dt className="font-bold">Next Action</dt>
-							<dd className="font-medium">{fmt(config.next_action_at)}</dd>
-						</dl>
-					) : (
-						<p className="text-sm color-fg-muted">
-							尚未创建配置——首次保存后生效。
-						</p>
-					)}
+					<dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
+						<dt className="font-bold">Event Start</dt>
+						<dd className="font-medium">{fmt(startIso)}</dd>
+						<dt className="font-bold">Break 至</dt>
+						<dd className="font-medium">{fmt(breakEndIso)}</dd>
+						<dt className="font-bold">Fix 开始</dt>
+						<dd className="font-medium">{fmt(fixStartIso)}</dd>
+						<dt className="font-bold">Fix 至</dt>
+						<dd className="font-medium">{fmt(fixEndIso)}</dd>
+						<dt className="font-bold">Total</dt>
+						<dd className="font-medium">
+							{totalSecs !== null ? `${totalSecs}s` : "-"}
+						</dd>
+						<dt className="font-bold">Break</dt>
+						<dd className="font-medium">{breakSecs}s</dd>
+						<dt className="font-bold">Fix</dt>
+						<dd className="font-medium">{fixSecs}s（总时长 - Break）</dd>
+						<dt className="font-bold">Turn</dt>
+						<dd className="font-medium">{turnSecs}s</dd>
+						<dt className="font-bold">Rounds</dt>
+						<dd className="font-medium">{totalRounds}</dd>
+					</dl>
 				</Section>
 
 				<Box sx={{ mt: 4 }}>

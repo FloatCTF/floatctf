@@ -83,6 +83,9 @@ function RouteComponent() {
 					<RouterNavItem to="/service/events/awdp/$id/scoreboard" id={id}>
 						Scoreboard
 					</RouterNavItem>
+					<RouterNavItem to="/service/events/awdp/$id/trend" id={id}>
+						Trend
+					</RouterNavItem>
 					<RouterNavItem to="/service/events/awdp/$id/announcement" id={id}>
 						Announcement
 					</RouterNavItem>

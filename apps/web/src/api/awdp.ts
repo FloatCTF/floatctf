@@ -212,6 +212,48 @@ export type AwdpScoreboardDetail = {
 	rows: AwdpScoreboardRow[];
 };
 
+/** AWDP 得分趋势（与 Jeopardy TrendChart 数据结构一致）。 */
+export type AwdpTrendPoint = {
+	name: string;
+	score: number;
+	time: string;
+};
+
+export type AwdpTrendItem = {
+	name: string;
+	points: AwdpTrendPoint[];
+};
+
+/** 管理端大屏中一道 GameBox 的统计卡。 */
+export type AwdpDataGameBox = {
+	id: string;
+	name: string;
+	category: string;
+	break_count: number;
+	fix_count: number;
+};
+
+/** 管理端大屏最近计分动态。 */
+export type AwdpDataActivity = {
+	subject_name: string;
+	gamebox_name: string;
+	gamebox_category: string;
+	action: "break" | "fix";
+	delta: number;
+	created_at: string;
+};
+
+/** 管理端 AWDP Data Present 聚合响应。 */
+export type AwdpDataPresent = {
+	event: import("@/entity").Events;
+	user_count: number;
+	team_count: number;
+	gameboxes: AwdpDataGameBox[];
+	scoreboard_top10: AwdpScoreRow[];
+	trend: AwdpTrendItem[];
+	recent_activity: AwdpDataActivity[];
+};
+
 // ────────────────────────────────────────────────────────────────────────────
 // Admin client
 // ────────────────────────────────────────────────────────────────────────────
@@ -284,6 +326,12 @@ export const awdpAdminApi = {
 	scores: async (eventId: string) => {
 		const res = await admin_api.get<UniResponse<AwdpScoreRow[]>>(
 			`/events/${eventId}/awdp/scores`,
+		);
+		return res.data;
+	},
+	dataPresent: async (eventId: string) => {
+		const res = await admin_api.get<UniResponse<AwdpDataPresent>>(
+			`/events/${eventId}/awdp/data`,
 		);
 		return res.data;
 	},
@@ -375,6 +423,12 @@ export const awdpPlayerApi = {
 	scoreboard: async (eventId: string) => {
 		const res = await service_api.get<UniResponse<AwdpScoreboardDetail>>(
 			`/events/${eventId}/awdp/scoreboard`,
+		);
+		return res.data;
+	},
+	trend: async (eventId: string) => {
+		const res = await service_api.get<UniResponse<AwdpTrendItem[]>>(
+			`/events/${eventId}/awdp/trend`,
 		);
 		return res.data;
 	},

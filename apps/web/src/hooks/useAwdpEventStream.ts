@@ -46,6 +46,7 @@ export function useAwdpEventStream({
 			queryClient.invalidateQueries({ queryKey: ["awdp-rounds", eventId] });
 			queryClient.invalidateQueries({ queryKey: ["awdp-evals", eventId] });
 			queryClient.invalidateQueries({ queryKey: ["awdp-scoreboard", eventId] });
+			queryClient.invalidateQueries({ queryKey: ["awdp-trend", eventId] });
 			queryClient.invalidateQueries({ queryKey: ["eventInfo", eventId] });
 			queryClient.invalidateQueries({ queryKey: ["event", eventId] });
 		}, 1000);

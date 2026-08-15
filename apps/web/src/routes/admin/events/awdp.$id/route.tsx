@@ -90,6 +90,12 @@ function RouteComponent() {
 								>
 									WriteUps
 								</RouterNavItem>
+								<RouterNavItem
+									to="/admin/events/awdp/$id/data_present"
+									params={{ id }}
+								>
+									Data Present
+								</RouterNavItem>
 							</>
 						)}
 						<RouterNavItem to="/admin/events/awdp/$id/instance" params={{ id }}>

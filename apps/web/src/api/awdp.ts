@@ -171,6 +171,47 @@ export type AwdpScoreRow = {
 	rank: number;
 };
 
+/** 积分榜明细矩阵中的一道题（索引与 rows 内数组对齐）。 */
+export type AwdpScoreboardGameBox = {
+	id: string;
+	name: string;
+	category: string;
+};
+
+/** 积分榜明细矩阵中的一轮（索引与 fix_round_status 内层数组对齐）。 */
+export type AwdpScoreboardRound = {
+	sequence: number;
+	status: string;
+	cutoff_at: string;
+};
+
+/** 积分榜明细矩阵行（与聚合榜同序，追加每题明细）。 */
+export type AwdpScoreboardRow = {
+	subject_id: string;
+	subject_name: string;
+	rank: number;
+	break_score: number;
+	fix_score: number;
+	total_score: number;
+	/** 当前登录用户/队伍（自己的行高亮）。 */
+	is_me: boolean;
+	/** 每题是否已攻破（对齐 gameboxes）。 */
+	break_status: boolean[];
+	/** 每题 fix 实际计分（score events 权威；对齐 gameboxes）。 */
+	fix_gamebox_score: number[];
+	/** 每题 × 每回合官方评估终态（[gamebox][round]；无实例/未评估 = null）。 */
+	fix_round_status: (string | null)[][];
+};
+
+/** 积分榜明细：汇总行 + 题目 + 回合 + 每题矩阵。 */
+export type AwdpScoreboardDetail = {
+	/** individual / team（前端按赛制区分"人数"/"队伍数"文案）。 */
+	participant_mode: "individual" | "team";
+	gameboxes: AwdpScoreboardGameBox[];
+	rounds: AwdpScoreboardRound[];
+	rows: AwdpScoreboardRow[];
+};
+
 // ────────────────────────────────────────────────────────────────────────────
 // Admin client
 // ────────────────────────────────────────────────────────────────────────────
@@ -328,6 +369,12 @@ export const awdpPlayerApi = {
 	scores: async (eventId: string) => {
 		const res = await service_api.get<UniResponse<AwdpScoreRow[]>>(
 			`/events/${eventId}/awdp/scores`,
+		);
+		return res.data;
+	},
+	scoreboard: async (eventId: string) => {
+		const res = await service_api.get<UniResponse<AwdpScoreboardDetail>>(
+			`/events/${eventId}/awdp/scoreboard`,
 		);
 		return res.data;
 	},

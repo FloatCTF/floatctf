@@ -78,6 +78,8 @@ type GenericTableProps<T> = {
     patchFn?: (data: Partial<T>) => Promise<UniResponse<T>>;
     mutationColumns?: MutationColumn[];
     mutationData?: Partial<T>;
+    /** 点 Add（新增）时重置表单到该默认值；未提供则保持现状（不重置）。 */
+    defaultMutationData?: Partial<T>;
     customActions?: ReactNode;
     columnActions?: (row: T) => ReactNode;
     externalBanner?: ReturnType<typeof useMsgBanner>;
@@ -106,6 +108,7 @@ export const GenericTable = <T extends object>({
     patchFn,
     mutationColumns,
     mutationData,
+    defaultMutationData,
     customActions,
     columnActions,
     externalBanner,
@@ -479,7 +482,11 @@ export const GenericTable = <T extends object>({
                             variant="primary"
                             onClick={() => {
                                 if (mutationData) {
-                                    Object.assign(mutationData, {});
+                                    // 新增：重置到 defaultMutationData（未提供则保持现状）。
+                                    Object.assign(
+                                        mutationData,
+                                        defaultMutationData ?? {},
+                                    );
                                 }
                                 setDialogMode("add");
                                 setIsOpen(true);

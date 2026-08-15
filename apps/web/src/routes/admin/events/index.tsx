@@ -24,6 +24,64 @@ export const Route = createFileRoute("/admin/events/")({
 	loader: AdminRouteGuard,
 });
 
+/** 新建赛事时 RULES 默认填充的正规 Markdown 模板（demo，管理员可按需修改）。 */
+const RULES_DEFAULT = `# 赛事规则
+
+## 一、比赛时间
+- **开始时间**：以赛事详情页公布为准
+- **结束时间**：以赛事详情页公布为准
+- 比赛期间如遇平台故障，组织方将根据实际情况延长比赛时间或予以补偿
+
+## 二、参赛说明
+- 本赛事为**个人赛或团队赛**（以报名页面为准），请使用真实信息报名参赛
+- 报名截止后，参赛队伍成员与报名信息不可修改
+- 每位选手 / 每支队伍仅可提交一份答卷与 WriteUp
+
+## 三、计分规则
+- 每道题根据难度设置对应分值，具体分值以题目页展示为准
+- 得分以平台记录为准，重复提交不重复计分
+- 排行榜按总分实时排序，同分时按达到该分数的先后顺序排名
+
+## 四、Flag 提交格式
+- Flag 格式：\`flag{...}\`
+- 提交时请勿携带多余空格或换行，避免提交失败
+- 若多次提交失败，请先检查格式是否正确
+
+## 五、WriteUp 要求
+- 比赛结束后请在规定时间内提交解题 WriteUp
+- WriteUp 需包含题目思路、利用过程与 Flag
+- 未按时提交或内容与解题过程明显不符的题目，成绩将被取消
+
+## 六、公平竞赛
+- 禁止攻击比赛平台、其他参赛者或比赛基础设施
+- 禁止恶意干扰他人答题、共享 Flag / 答案 / WriteUp
+- 违者将取消参赛资格与全部成绩
+
+## 七、违规处理
+- 违反上述规则的选手或队伍将被取消成绩并禁止参加后续赛事
+- 情节严重者将上报主办方处理
+
+## 八、联系我们
+- 比赛交流群与问题反馈渠道：请关注赛事公告
+`;
+
+/** 新增表单的初始/重置默认值（rules 预填 Markdown 模板）。 */
+const defaultEventData: Partial<Events> & {
+	family: EventFamily;
+	participant_mode: ParticipantMode;
+} = {
+	family: EventFamily.Jeopardy,
+	participant_mode: ParticipantMode.Individual,
+	title: "",
+	description: "",
+	hidden: false,
+	start_time: DatetimeToShow(""),
+	end_time: DatetimeToShow(""),
+	rules: RULES_DEFAULT,
+	flag_prefix: "flag",
+	allow_join: false,
+};
+
 function RouteComponent() {
 	const columns = [
 		{
@@ -116,17 +174,10 @@ function RouteComponent() {
 			},
 		},
 	];
-	const mutationEvent = useReactive<Partial<Events> & { family: EventFamily; participant_mode: ParticipantMode }>({
-		family: EventFamily.Jeopardy,
-		participant_mode: ParticipantMode.Individual,
-		title: "",
-		description: "",
-		hidden: false,
-		start_time: DatetimeToShow(""),
-		end_time: DatetimeToShow(""),
-		rules: "",
-		flag_prefix: "flag",
-		allow_join: false,
+	const mutationEvent = useReactive<
+		Partial<Events> & { family: EventFamily; participant_mode: ParticipantMode }
+	>({
+		...defaultEventData,
 	});
 	const mutationColumns = [
 		{
@@ -339,6 +390,9 @@ function RouteComponent() {
 				}}
 				mutationColumns={view === "normal" ? mutationColumns : undefined}
 				mutationData={view === "normal" ? mutationEvent : undefined}
+				defaultMutationData={
+					view === "normal" ? defaultEventData : undefined
+				}
 			/>
 		</>
 	);

@@ -535,6 +535,50 @@ pub async fn get_scoreboard(
     UniResponse::ok(rows.into()).into()
 }
 
+/// GET {event_id}/awdp/scoreboard —— 选手端积分榜明细矩阵：
+/// 汇总行 + Break 每题攻破状态 + Fix 每题每回合官方结果 + 每题 fix 得分。
+#[get("{event_id}/awdp/scoreboard")]
+pub async fn get_scoreboard_detail(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<crate::modules::event::awdp::service::scoreboard::AwdpScoreboardDetail> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+    let event = events::Entity::find_by_id(event_id)
+        .filter(events::Column::Hidden.eq(false))
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+    if event.family != EventFamily::Awdp {
+        return Err(AppError::Validation("not an AWDP event".into()));
+    }
+    // is_me 高亮：Team 模式查当前用户所属队伍（无队伍 → None，不强制要求已加入，
+    // 与现有 /scores 的"登录即可看榜"语义一致）。
+    let me_team_id = if event.participant_mode == ParticipantMode::Team {
+        crate::modules::event::common::infrastructure::event_repository::find_user_team_membership(
+            ctx.db.get_ref(),
+            event_id,
+            user.id,
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|m| m.team_id)
+    } else {
+        None
+    };
+    let detail = crate::modules::event::awdp::service::scoreboard::get_scoreboard_detail(
+        ctx.db.get_ref(),
+        &event,
+        Some(user.id),
+        me_team_id,
+    )
+    .await
+    .map_err(AppError::from)?;
+    UniResponse::ok(detail.into()).into()
+}
+
 /// GET {event_id}/awdp/stream —— AWDP 实时事件流（competition 按 event_id 过滤）。
 #[get("{event_id}/awdp/stream")]
 pub async fn event_stream(
@@ -701,5 +745,6 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(get_rounds)
         .service(get_my_evaluations)
         .service(get_scoreboard)
+        .service(get_scoreboard_detail)
         .service(event_stream);
 }

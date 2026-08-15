@@ -231,6 +231,46 @@ pub async fn scoreboard_aggregate(
         .collect())
 }
 
+/// run 内每题 fix 得分聚合（scoreboard 明细用）。
+/// 返回 (user_id, team_id, gamebox_id, fix_total)——主体二选一。
+pub async fn fix_score_by_gamebox(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+) -> AwdpResult<Vec<(Option<Uuid>, Option<Uuid>, Uuid, i64)>> {
+    use sea_orm::{QuerySelect, sea_query::Expr};
+    #[derive(Debug, serde::Deserialize, sea_orm::FromQueryResult)]
+    struct Row {
+        user_id: Option<Uuid>,
+        team_id: Option<Uuid>,
+        gamebox_id: Uuid,
+        total: Option<i64>,
+    }
+    let rows = awdp_score_events::Entity::find()
+        .filter(awdp_score_events::Column::RunId.eq(run_id))
+        .filter(awdp_score_events::Column::ScoreType.eq("fix"))
+        .select_only()
+        .column_as(awdp_score_events::Column::UserId, "user_id")
+        .column_as(awdp_score_events::Column::TeamId, "team_id")
+        .column_as(awdp_score_events::Column::GameboxId, "gamebox_id")
+        .column_as(
+            Expr::col(awdp_score_events::Column::Delta)
+                .sum()
+                .cast_as(sea_orm::sea_query::Alias::new("bigint")),
+            "total",
+        )
+        .group_by(awdp_score_events::Column::UserId)
+        .group_by(awdp_score_events::Column::TeamId)
+        .group_by(awdp_score_events::Column::GameboxId)
+        .into_model::<Row>()
+        .all(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.user_id, r.team_id, r.gamebox_id, r.total.unwrap_or(0)))
+        .collect())
+}
+
 /// 删除 run 的全部计分记录（练习 End「恢复如初」用；幂等键随之失效，重新破解可再计分）。
 pub async fn delete_for_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpResult<u64> {
     let res = awdp_score_events::Entity::delete_many()

@@ -4,16 +4,20 @@
 //!   - Individual：多用户注册 + break/fix 分项聚合 + 排名 + 0 分参与者上榜
 //!   - Team：多队伍聚合（team 主体） + 排名
 //!   - 空事件 → 空榜
+//!   - detail 明细矩阵：break_status / fix_round_status / fix_gamebox_score / is_me
+//!   - detail：hidden gamebox 排除；无 run → 空明细
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use floatctf::entity::{
     events,
-    sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
+    sea_orm_active_enums::{AwdpEvaluationStatus, EventFamily, EventPurpose, ParticipantMode},
 };
 use floatctf::modules::event::awdp::domain::AwdpConfig;
-use floatctf::modules::event::awdp::repo::{run_repo, score_repo};
+use floatctf::modules::event::awdp::repo::{
+    break_repo, evaluation_repo, event_gamebox_repo, run_repo, score_repo,
+};
 use floatctf::modules::event::awdp::service::scoreboard;
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -217,6 +221,70 @@ async fn score(
     .unwrap();
 }
 
+/// 造一个 subject × gamebox 的实例（event_instances + awdp_instances）。
+async fn seed_instance(
+    db: &sea_orm::DatabaseConnection,
+    run_id: Uuid,
+    event_id: Uuid,
+    gamebox_id: Uuid,
+    user_id: Option<Uuid>,
+    team_id: Option<Uuid>,
+) -> Uuid {
+    let now = chrono::Utc::now().into();
+    let instance_id = Uuid::new_v4();
+    floatctf::entity::event_instances::ActiveModel {
+        id: Set(instance_id),
+        event_id: Set(event_id),
+        owner_user_id: Set(user_id),
+        owner_team_id: Set(team_id),
+        image_ref: Set(None),
+        container_id: Set(None),
+        container_name: Set(format!("awdp-it-sb-{}", &instance_id.to_string()[..8])),
+        runtime_state: Set("running".into()),
+        runtime_generation: Set(1),
+        created_at: Set(now),
+        started_at: Set(None),
+        stopped_at: Set(None),
+        expires_at: Set(None),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    floatctf::entity::awdp_instances::ActiveModel {
+        instance_id: Set(instance_id),
+        event_id: Set(event_id),
+        owner_user_id: Set(user_id),
+        owner_team_id: Set(team_id),
+        created_at: Set(now),
+        run_id: Set(run_id),
+        gamebox_id: Set(gamebox_id),
+        reset_count: Set(0),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    instance_id
+}
+
+/// 造一条官方评估并置终态。
+async fn seed_official_eval(
+    db: &sea_orm::DatabaseConnection,
+    run_id: Uuid,
+    instance_id: Uuid,
+    round_id: Uuid,
+    status: AwdpEvaluationStatus,
+) {
+    let ev = evaluation_repo::create_official(db, run_id, instance_id, round_id)
+        .await
+        .unwrap();
+    let mut am: floatctf::entity::awdp_evaluations::ActiveModel = ev.into();
+    am.status = Set(status);
+    am.updated_at = Set(chrono::Utc::now().into());
+    am.update(db).await.unwrap();
+}
+
 #[tokio::test]
 async fn scoreboard_aggregates_individual_mode() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -417,4 +485,156 @@ async fn scoreboard_empty_event_returns_empty() {
     let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-empty").await;
     let rows = scoreboard::get_scoreboard(&db, &ev).await.unwrap();
     assert!(rows.is_empty(), "未注册用户 → 空榜");
+}
+
+#[tokio::test]
+async fn scoreboard_detail_builds_break_and_fix_matrices() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-detail").await;
+    let run_id = start_run(&db, ev.id).await;
+    let gb = seed_gamebox(&db, "dt").await;
+    event_gamebox_repo::attach_gamebox(&db, ev.id, gb, false)
+        .await
+        .unwrap();
+
+    let u_a = seed_user(&db, "da").await;
+    let u_b = seed_user(&db, "db").await;
+    register_user(&db, ev.id, u_a).await;
+    register_user(&db, ev.id, u_b).await;
+
+    // A：攻破 gb + 两轮官方评估（patched / no_patch）→ fix 得分 150；B 无任何记录。
+    break_repo::record_break(&db, run_id, gb, Some(u_a), None, "flag-a")
+        .await
+        .unwrap();
+    let inst_a = seed_instance(&db, run_id, ev.id, gb, Some(u_a), None).await;
+    let f1 = seed_fix_round(&db, run_id, 1).await;
+    let f2 = seed_fix_round(&db, run_id, 2).await;
+    seed_official_eval(&db, run_id, inst_a, f1, AwdpEvaluationStatus::Patched).await;
+    seed_official_eval(&db, run_id, inst_a, f2, AwdpEvaluationStatus::NoPatch).await;
+    score(
+        &db,
+        run_id,
+        Some(u_a),
+        None,
+        gb,
+        "fix",
+        Some(f1),
+        150,
+        "dt-a-f1",
+    )
+    .await;
+
+    let detail = scoreboard::get_scoreboard_detail(&db, &ev, Some(u_a), None)
+        .await
+        .unwrap();
+
+    assert_eq!(detail.gameboxes.len(), 1, "可见题目");
+    assert_eq!(detail.gameboxes[0].name, "awdp-gb-dt");
+    assert_eq!(detail.rounds.len(), 2, "两轮回合");
+    assert_eq!(detail.rows.len(), 2, "两个注册用户全上榜");
+
+    let a = detail.rows.iter().find(|r| r.subject_id == u_a).unwrap();
+    assert!(a.is_me, "me_user_id=u_a → 自己的行高亮");
+    assert_eq!(a.break_status, vec![true], "A 已攻破该题");
+    assert_eq!(a.fix_round_status[0].len(), 2);
+    assert_eq!(
+        a.fix_round_status[0],
+        vec![
+            Some(AwdpEvaluationStatus::Patched),
+            Some(AwdpEvaluationStatus::NoPatch)
+        ],
+        "A 每题×每回合官方终态"
+    );
+    assert_eq!(a.fix_gamebox_score, vec![150], "A 该题 fix 计分");
+    assert_eq!(a.fix_score, 150);
+    assert_eq!(a.total_score, 150, "A 未计 break score event，总分=fix");
+
+    let b = detail.rows.iter().find(|r| r.subject_id == u_b).unwrap();
+    assert!(!b.is_me);
+    assert_eq!(b.break_status, vec![false], "B 未攻破");
+    assert_eq!(b.fix_round_status, vec![vec![None, None]], "B 无实例/评估");
+    assert_eq!(b.fix_gamebox_score, vec![0]);
+}
+
+#[tokio::test]
+async fn scoreboard_detail_excludes_hidden_gameboxes_and_empty_without_run() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-hidden").await;
+    let gb_vis = seed_gamebox(&db, "v").await;
+    let gb_hid = seed_gamebox(&db, "h").await;
+    event_gamebox_repo::attach_gamebox(&db, ev.id, gb_vis, false)
+        .await
+        .unwrap();
+    event_gamebox_repo::attach_gamebox(&db, ev.id, gb_hid, true)
+        .await
+        .unwrap();
+
+    // 无 run：rounds/rows 空（页面显示空态）。
+    let empty = scoreboard::get_scoreboard_detail(&db, &ev, None, None)
+        .await
+        .unwrap();
+    assert!(empty.rounds.is_empty());
+    assert!(empty.rows.is_empty());
+
+    // 有 run 后 hidden gamebox 不出现在矩阵。
+    let run_id = start_run(&db, ev.id).await;
+    let _ = run_id;
+    let detail = scoreboard::get_scoreboard_detail(&db, &ev, None, None)
+        .await
+        .unwrap();
+    assert_eq!(detail.gameboxes.len(), 1, "hidden gamebox 排除");
+    assert_eq!(detail.gameboxes[0].name, "awdp-gb-v");
+}
+
+#[tokio::test]
+async fn scoreboard_detail_includes_detached_gamebox_with_activity() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-detach").await;
+    let run_id = start_run(&db, ev.id).await;
+    let gb_attached = seed_gamebox(&db, "att").await;
+    let gb_detached = seed_gamebox(&db, "det").await;
+    // 仅挂载 gb_attached；gb_detached 模拟"曾挂载后 detach"：有实例 + break，无挂载行。
+    event_gamebox_repo::attach_gamebox(&db, ev.id, gb_attached, false)
+        .await
+        .unwrap();
+
+    let u_a = seed_user(&db, "da").await;
+    register_user(&db, ev.id, u_a).await;
+    seed_instance(&db, run_id, ev.id, gb_detached, Some(u_a), None).await;
+    break_repo::record_break(&db, run_id, gb_detached, Some(u_a), None, "flag-det")
+        .await
+        .unwrap();
+
+    let detail = scoreboard::get_scoreboard_detail(&db, &ev, None, None)
+        .await
+        .unwrap();
+    assert_eq!(detail.participant_mode, ParticipantMode::Individual);
+    let names: Vec<&str> = detail.gameboxes.iter().map(|g| g.name.as_str()).collect();
+    assert!(names.contains(&"awdp-gb-att"), "当前挂载的题在榜");
+    assert!(
+        names.contains(&"awdp-gb-det"),
+        "detach 残留的题（有实例/break）也必须在榜，否则已发生的 break 计数消失"
+    );
+    let a = detail.rows.iter().find(|r| r.subject_id == u_a).unwrap();
+    let det_idx = detail
+        .gameboxes
+        .iter()
+        .position(|g| g.id == gb_detached)
+        .unwrap();
+    assert!(a.break_status[det_idx], "detach 题的 break 计数如实展示");
 }

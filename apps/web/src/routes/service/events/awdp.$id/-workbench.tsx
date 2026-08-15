@@ -2,19 +2,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import { type AwdpOverview, awdpPlayerApi } from "@/api/awdp";
-import {
-	AwdpWorkbench,
-	type AwdpWorkbenchViewModel,
-	buildAwdpHistory,
-} from "@/components/awdp/AwdpWorkbench";
+import { AwdpWorkbench, type AwdpWorkbenchViewModel } from "@/components/awdp/AwdpWorkbench";
 
 /**
  * 赛事（Competition）→ AwdpWorkbench 适配器（§65）。
  *
  * 把 event-scoped `AwdpOverview` 映射为统一 view-model，并接线 event 版
  * API 回调（mutations 后失效 overview/rounds/evals）。
- * 赛事默认落地页（index.tsx，Overview）与 gameboxes.tsx（GameBoxes tab）
- * 均渲染本组件，不复制两套页面实现；顶部进度条为事件级共享。
+ * 赛事 GameBoxes tab 渲染本组件；顶部进度条为事件级共享。
+ * 注意：赛事不再渲染 Official History / Final Score（由 Rounds / Scoreboard
+ * tab 承载），故不在此预取 rounds/evals——history 恒为空。
  */
 export function AwdpEventWorkbench({ eventId }: { eventId: string }) {
 	const queryClient = useQueryClient();
@@ -24,33 +21,17 @@ export function AwdpEventWorkbench({ eventId }: { eventId: string }) {
 		queryFn: () => awdpPlayerApi.overview(eventId),
 	});
 	const overview = overviewQuery.data?.data;
-	const phase = overview?.phase;
-	const needTimeline = phase === "fix" || phase === "ended";
-
-	const roundsQuery = useQuery({
-		queryKey: ["awdp-rounds", eventId],
-		queryFn: () => awdpPlayerApi.rounds(eventId),
-		enabled: needTimeline,
-	});
-	const evalsQuery = useQuery({
-		queryKey: ["awdp-evals", eventId],
-		queryFn: () => awdpPlayerApi.evaluations(eventId),
-		enabled: needTimeline,
-	});
 
 	const viewModel = useMemo<AwdpWorkbenchViewModel | null>(() => {
 		if (!overview) {
 			return null;
 		}
-		return toViewModel(
-			overview,
-			needTimeline ? (roundsQuery.data?.data ?? []) : [],
-			needTimeline ? (evalsQuery.data?.data ?? []) : [],
-		);
-	}, [overview, needTimeline, roundsQuery.data, evalsQuery.data]);
+		return toViewModel(overview);
+	}, [overview]);
 
 	const invalidate = () => {
 		queryClient.invalidateQueries({ queryKey: ["awdp-overview", eventId] });
+		// rounds/evals 由 Rounds tab 自己订阅；这里一并失效保持新鲜。
 		queryClient.invalidateQueries({ queryKey: ["awdp-rounds", eventId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-evals", eventId] });
 	};
@@ -91,21 +72,7 @@ export function AwdpEventWorkbench({ eventId }: { eventId: string }) {
 	return <AwdpWorkbench viewModel={viewModel} {...callbacks} />;
 }
 
-function toViewModel(
-	overview: AwdpOverview,
-	rounds: {
-		sequence: number;
-		starts_at: string;
-		cutoff_at: string;
-		status: string;
-	}[],
-	evals: {
-		round_sequence: number | null;
-		kind: string;
-		status: string;
-		finished_at: string | null;
-	}[],
-): AwdpWorkbenchViewModel {
+function toViewModel(overview: AwdpOverview): AwdpWorkbenchViewModel {
 	const phase = overview.phase;
 	return {
 		title: "",
@@ -147,7 +114,7 @@ function toViewModel(
 					}
 				: null,
 		})),
-		history: buildAwdpHistory(rounds, evals, overview.fix_round_score),
+		history: [],
 		isPractice: false,
 	};
 }

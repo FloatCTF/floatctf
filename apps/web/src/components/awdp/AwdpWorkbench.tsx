@@ -20,7 +20,7 @@ import { Button, Label, TextInput } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import dayjs from "dayjs";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
 	AllCheckDto,
@@ -199,14 +199,6 @@ export type AwdpHistoryRow = {
 	finished_at: string | null;
 };
 
-export type AwdpScoreEventView = {
-	id: string;
-	score_type: "break" | "fix";
-	delta: number;
-	fix_round_id: string | null;
-	created_at: string | null;
-};
-
 export type AwdpWorkbenchViewModel = {
 	/** 空字符串则不渲染标题行（competition 由赛事路由头展示）。 */
 	title?: string;
@@ -235,8 +227,6 @@ export type AwdpWorkbenchViewModel = {
 	fixRoundPenalty?: number;
 	gameboxes: AwdpWorkbenchGameBox[];
 	history: AwdpHistoryRow[];
-	/** ended 阶段可选：计分明细（/scores）。 */
-	scoreHistory?: AwdpScoreEventView[];
 	/** 控制 Train Again 等 practice 专属交互。 */
 	isPractice: boolean;
 	/** 练习模式手动控制阶段（break↔fix）。 */
@@ -924,8 +914,9 @@ export function AwdpWorkbench({
 					<p className="text-sm opacity-70">暂无 GameBox。</p>
 				)}
 
-				{/* Official History（fix|ended） */}
-				{phase === "fix" || phase === "ended" ? (
+				{/* Official History（fix|ended；练习模式展示——赛事 Event 页的回合/得分
+				   由 Rounds 与 Scoreboard tab 承载，GameBoxes 页不再重复展示） */}
+				{viewModel.isPractice && (phase === "fix" || phase === "ended") ? (
 					<section className="p-3 rounded border">
 						<h4 className="font-bold mb-2">Official History</h4>
 						<Table.Container>
@@ -944,74 +935,22 @@ export function AwdpWorkbench({
 					</section>
 				) : null}
 
-				{/* Ended（§68） */}
-				{phase === "ended" ? (
-					viewModel.isPractice ? (
-						// 练习：结束视图只保留 Train Again（无边框，按钮居中）。
-						onTrainAgain ? (
-							<div className="flex items-center justify-center py-2">
-								<Button
-									variant="primary"
-									className="w-40"
-									disabled={busy["train-again"]}
-									onClick={handleTrainAgain}
-								>
-									{busy["train-again"] ? "Restarting…" : "Train Again"}
-								</Button>
-							</div>
-						) : null
-					) : (
-						<section className="p-3 rounded border flex flex-col gap-3">
-							<>
-								<div className="flex items-center gap-2">
-									<h4 className="font-bold flex-1">Final Score</h4>
-									<strong className="text-lg tabular-nums">
-										{viewModel.score}
-									</strong>
-								</div>
-								<div>
-									<h5 className="font-bold text-sm mb-2">Break Results</h5>
-									<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-										{viewModel.gameboxes.map((gb) => (
-											<Fragment key={gb.id}>
-												<dt className="font-bold">{gb.name}</dt>
-												<dd className="font-medium">
-													{gb.broken ? (
-														<span className="text-green-600">
-															Broken +{viewModel.breakScore}
-														</span>
-													) : (
-														<span className="opacity-60">Unbroken</span>
-													)}
-												</dd>
-											</Fragment>
-										))}
-										{viewModel.gameboxes.length === 0 && (
-											<dd className="font-medium opacity-60">暂无 GameBox。</dd>
-										)}
-									</dl>
-								</div>
-								{viewModel.scoreHistory && viewModel.scoreHistory.length > 0 ? (
-									<div>
-										<h5 className="font-bold text-sm mb-2">Score Ledger</h5>
-										<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 text-sm">
-											{viewModel.scoreHistory.map((s) => (
-												<Fragment key={s.id}>
-													<dt className="font-bold">
-														{s.score_type === "break" ? "Break" : "Fix"}
-													</dt>
-													<dd className="font-medium tabular-nums">
-														{s.delta > 0 ? "+" : ""}
-														{s.delta} · {fmtTime(s.created_at)}
-													</dd>
-												</Fragment>
-											))}
-										</dl>
-									</div>
-								) : null}
-							</>
-						</section>
-					)
+				{/* Ended（§68）：练习模式仅保留 Train Again；赛事 Event 页的
+				   Final Score / Break Results / Score Ledger 由 Scoreboard tab 承载，
+				   GameBoxes 页不再重复展示。 */}
+				{viewModel.isPractice && phase === "ended" ? (
+					onTrainAgain ? (
+						<div className="flex items-center justify-center py-2">
+							<Button
+								variant="primary"
+								className="w-40"
+								disabled={busy["train-again"]}
+								onClick={handleTrainAgain}
+							>
+								{busy["train-again"] ? "Restarting…" : "Train Again"}
+							</Button>
+						</div>
+					) : null
 				) : null}
 			</div>
 

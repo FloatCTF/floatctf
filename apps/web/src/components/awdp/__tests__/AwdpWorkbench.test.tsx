@@ -329,4 +329,53 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		expect(screen.getByRole("button", { name: /^Reset$/ })).toBeDefined();
 		expect(screen.queryByRole("button", { name: /Reset \(/ })).toBeNull();
 	});
+
+	it("比赛（isPractice=false）不渲染 Official History / Final Score（由 Rounds/Scoreboard tab 承载）", () => {
+		const row = {
+			id: "r1",
+			sequence: 1,
+			starts_at: new Date().toISOString(),
+			cutoff_at: new Date().toISOString(),
+			status: "patched",
+			label: "patched (+150)",
+			delta: 150,
+			finished_at: new Date().toISOString(),
+		};
+		const { rerender } = render(
+			<AwdpWorkbench
+				viewModel={vm("fix", { isPractice: false, history: [row] })}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByText("Official History")).toBeNull();
+		expect(screen.queryByText("Final Score")).toBeNull();
+
+		// ended 同样不渲染（含 Final Score / Break Results / Train Again）
+		rerender(
+			<AwdpWorkbench
+				viewModel={vm("ended", { isPractice: false, history: [row], score: 1750 })}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+				onTrainAgain={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByText("Official History")).toBeNull();
+		expect(screen.queryByText("Final Score")).toBeNull();
+		expect(screen.queryByText("Break Results")).toBeNull();
+		expect(screen.queryByRole("button", { name: /Train Again/ })).toBeNull();
+	});
+
+	it("练习（isPractice=true）ended 仍显示 Official History + Train Again", () => {
+		render(
+			<AwdpWorkbench
+				viewModel={vm("ended")}
+				{...noopProps}
+				onResetInstance={vi.fn()}
+				onTrainAgain={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Official History")).toBeDefined();
+		expect(screen.getByRole("button", { name: /Train Again/ })).toBeDefined();
+	});
 });

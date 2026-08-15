@@ -88,11 +88,6 @@ function RouteComponent() {
 		queryFn: () => awdpRunApi.evaluations(runId),
 		enabled: needTimeline,
 	});
-	const scoresQuery = useQuery({
-		queryKey: ["awdp-run-scores", runId],
-		queryFn: () => awdpRunApi.scores(runId),
-		enabled: phase === "ended",
-	});
 
 	// GameBox 名称/分类由 run DTO 直接提供（后端实现补充字段）。
 	const viewModel = useMemo<AwdpWorkbenchViewModel | null>(() => {
@@ -146,7 +141,6 @@ function RouteComponent() {
 						run.fix_round_penalty,
 					)
 				: [],
-			scoreHistory: scoresQuery.data?.data?.history ?? [],
 			isPractice: true,
 			canControlPhase: true,
 			judgeEndpoint: run.judge_endpoint
@@ -156,13 +150,12 @@ function RouteComponent() {
 					}
 				: null,
 		};
-	}, [run, roundsQuery.data, evalsQuery.data, scoresQuery.data, needTimeline]);
+	}, [run, roundsQuery.data, evalsQuery.data, needTimeline]);
 
 	const invalidate = () => {
 		queryClient.invalidateQueries({ queryKey: ["awdp-run", runId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-run-rounds", runId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-run-evals", runId] });
-		queryClient.invalidateQueries({ queryKey: ["awdp-run-scores", runId] });
 	};
 
 	const callbacks = useMemo(

@@ -14,7 +14,7 @@ use crate::{
         api::dto::*,
         domain::{AwdpConfig, AwdpConfigPatch},
         repo::{event_gamebox_repo, event_repo, instance_repo, run_repo, score_repo},
-        service::runtime,
+        service::{data, runtime},
     },
 };
 
@@ -314,6 +314,25 @@ pub async fn list_instances(
     UniResponse::ok(out.into()).into()
 }
 
+/// GET /api/admin/events/{event_id}/awdp/data —— 管理端大屏数据聚合。
+#[get("{event_id}/awdp/data")]
+pub async fn get_data(
+    _admin: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<data::AwdpDataPresent> {
+    let event_id = path.into_inner();
+    ensure_awdp_event(&ctx, event_id).await?;
+    let event = crate::entity::events::Entity::find_by_id(event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+    let present = data::get_data_present(ctx.db.get_ref(), &event)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(present.into()).into()
+}
+
 /// GET /api/admin/events/{event_id}/awdp/scores —— 管理端积分榜（同 player 服务）。
 #[get("{event_id}/awdp/scores")]
 pub async fn get_scores(
@@ -346,5 +365,6 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(list_event_gameboxes)
         .service(list_instances)
         .service(get_scores)
+        .service(get_data)
         .service(break_to_fix);
 }

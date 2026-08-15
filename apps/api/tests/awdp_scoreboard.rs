@@ -18,7 +18,7 @@ use floatctf::modules::event::awdp::domain::AwdpConfig;
 use floatctf::modules::event::awdp::repo::{
     break_repo, evaluation_repo, event_gamebox_repo, run_repo, score_repo,
 };
-use floatctf::modules::event::awdp::service::scoreboard;
+use floatctf::modules::event::awdp::service::{data, scoreboard, trend};
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -217,6 +217,40 @@ async fn score(
         delta,
         key,
     )
+    .await
+    .unwrap();
+}
+
+/// 带自定义时间的计分（趋势测试需要控制时间轴）。
+async fn score_at(
+    db: &sea_orm::DatabaseConnection,
+    run_id: Uuid,
+    event_id: Uuid,
+    user_id: Option<Uuid>,
+    team_id: Option<Uuid>,
+    gamebox_id: Uuid,
+    score_type: &str,
+    fix_round_id: Option<Uuid>,
+    delta: i64,
+    key: &str,
+    created_at: chrono::DateTime<chrono::FixedOffset>,
+) {
+    use floatctf::entity::awdp_score_events;
+    use sea_orm::ActiveValue::Set;
+    awdp_score_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        run_id: Set(run_id),
+        event_id: Set(Some(event_id)),
+        user_id: Set(user_id),
+        team_id: Set(team_id),
+        gamebox_id: Set(gamebox_id),
+        score_type: Set(score_type.to_string()),
+        fix_round_id: Set(fix_round_id),
+        delta: Set(delta),
+        idempotency_key: Set(key.to_string()),
+        created_at: Set(created_at),
+    }
+    .insert(db)
     .await
     .unwrap();
 }
@@ -637,4 +671,146 @@ async fn scoreboard_detail_includes_detached_gamebox_with_activity() {
         .position(|g| g.id == gb_detached)
         .unwrap();
     assert!(a.break_status[det_idx], "detach 题的 break 计数如实展示");
+}
+
+#[tokio::test]
+async fn trend_builds_cumulative_score_curves() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-trend").await;
+    let run_id = start_run(&db, ev.id).await;
+    let gb = seed_gamebox(&db, "tr").await;
+    let u_a = seed_user(&db, "ta").await;
+    let u_b = seed_user(&db, "tb").await;
+    register_user(&db, ev.id, u_a).await;
+    register_user(&db, ev.id, u_b).await;
+
+    let t0 = chrono::Utc::now().fixed_offset();
+    let t1 = t0 + chrono::Duration::minutes(1);
+
+    score_at(
+        &db,
+        run_id,
+        ev.id,
+        Some(u_a),
+        None,
+        gb,
+        "break",
+        None,
+        1000,
+        "tr-a-b1",
+        t0,
+    )
+    .await;
+    score_at(
+        &db,
+        run_id,
+        ev.id,
+        Some(u_a),
+        None,
+        gb,
+        "fix",
+        None,
+        150,
+        "tr-a-f1",
+        t1,
+    )
+    .await;
+    score_at(
+        &db,
+        run_id,
+        ev.id,
+        Some(u_b),
+        None,
+        gb,
+        "break",
+        None,
+        500,
+        "tr-b-b1",
+        t1,
+    )
+    .await;
+
+    let items = trend::get_trend(&db, &ev).await.unwrap();
+    assert_eq!(items.len(), 2, "两个有得分的用户都出现在趋势中");
+
+    let a = items
+        .iter()
+        .find(|i| i.name.starts_with("nick-ta"))
+        .unwrap();
+    assert_eq!(a.points.len(), 2, "A 在 t0/t1 两个时间点都有曲线点");
+    assert_eq!(a.points[0].score, 1000.0);
+    assert_eq!(a.points[1].score, 1150.0);
+
+    let b = items
+        .iter()
+        .find(|i| i.name.starts_with("nick-tb"))
+        .unwrap();
+    assert_eq!(b.points.len(), 2);
+    assert_eq!(b.points[0].score, 0.0, "B 在 t0 尚无得分，曲线从 0 开始");
+    assert_eq!(b.points[1].score, 500.0);
+
+    // 默认按最终总分降序：A 1150 在 B 500 前面。
+    assert!(items[0].name.starts_with("nick-ta"));
+}
+
+#[tokio::test]
+async fn data_present_builds_dashboard_payload() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-data").await;
+    let run_id = start_run(&db, ev.id).await;
+    let gb = seed_gamebox(&db, "dp").await;
+    event_gamebox_repo::attach_gamebox(&db, ev.id, gb, false)
+        .await
+        .unwrap();
+
+    let u_a = seed_user(&db, "da").await;
+    let u_b = seed_user(&db, "db").await;
+    register_user(&db, ev.id, u_a).await;
+    register_user(&db, ev.id, u_b).await;
+
+    score(
+        &db,
+        run_id,
+        Some(u_a),
+        None,
+        gb,
+        "break",
+        None,
+        1000,
+        "dp-a-b1",
+    )
+    .await;
+    score(
+        &db,
+        run_id,
+        Some(u_b),
+        None,
+        gb,
+        "fix",
+        None,
+        150,
+        "dp-b-f1",
+    )
+    .await;
+
+    let present = data::get_data_present(&db, &ev).await.unwrap();
+    assert_eq!(present.user_count, 2);
+    assert_eq!(present.team_count, 0);
+    assert_eq!(present.gameboxes.len(), 1);
+    assert_eq!(present.gameboxes[0].name, "awdp-gb-dp");
+    assert_eq!(present.gameboxes[0].break_count, 1);
+    assert_eq!(present.gameboxes[0].fix_count, 1);
+    assert_eq!(present.scoreboard_top10.len(), 2);
+    assert_eq!(present.trend.len(), 2);
+    assert_eq!(present.recent_activity.len(), 2);
 }

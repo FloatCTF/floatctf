@@ -2,6 +2,7 @@
 
 pub mod authorization;
 pub mod break_service;
+pub mod data;
 pub mod evaluation;
 pub mod event_service;
 pub mod judge_worker;
@@ -14,3 +15,4 @@ pub mod practice_service;
 pub mod runtime;
 pub mod scoreboard;
 pub mod tick_service;
+pub mod trend;

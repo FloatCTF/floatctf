@@ -23,6 +23,7 @@ use crate::{
         service::{
             break_service, evaluation, patch_service,
             runtime::{self, Subject},
+            trend,
         },
     },
 };
@@ -535,6 +536,28 @@ pub async fn get_scoreboard(
     UniResponse::ok(rows.into()).into()
 }
 
+/// GET {event_id}/awdp/trend —— AWDP 官方积分趋势（Break/Fix 累计得分曲线）。
+#[get("{event_id}/awdp/trend")]
+pub async fn get_trend(
+    _user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<trend::TrendItem>> {
+    let event_id = path.into_inner();
+    let event = events::Entity::find_by_id(event_id)
+        .filter(events::Column::Hidden.eq(false))
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+    if event.family != EventFamily::Awdp {
+        return Err(AppError::Validation("not an AWDP event".into()));
+    }
+    let items = trend::get_trend(ctx.db.get_ref(), &event)
+        .await
+        .map_err(AppError::from)?;
+    UniResponse::ok(items.into()).into()
+}
+
 /// GET {event_id}/awdp/scoreboard —— 选手端积分榜明细矩阵：
 /// 汇总行 + Break 每题攻破状态 + Fix 每题每回合官方结果 + 每题 fix 得分。
 #[get("{event_id}/awdp/scoreboard")]
@@ -745,6 +768,7 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
         .service(get_rounds)
         .service(get_my_evaluations)
         .service(get_scoreboard)
+        .service(get_trend)
         .service(get_scoreboard_detail)
         .service(event_stream);
 }

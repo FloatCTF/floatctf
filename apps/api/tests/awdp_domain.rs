@@ -196,7 +196,7 @@ async fn config_defaults_and_update_lifecycle() {
     cleanup(&db).await;
 
     let mode = EventMode::awdp_individual_competition();
-    let ev = create_event(&db, &mode, "awdp-it-config", 60, 3600).await;
+    let ev = create_event(&db, &mode, "awdp-it-config", 0, 7200).await;
 
     // ensure 默认配置（awdp_events 不再有 phase/next_action_at；plan §76 defaults 全断言）。
     let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
@@ -213,7 +213,8 @@ async fn config_defaults_and_update_lifecycle() {
     let patch = AwdpConfigPatch {
         expected_updated_at: Some(awdp.updated_at.into()),
         break_duration_secs: Some(1800),
-        fix_duration_secs: Some(1800),
+        // fix_duration_secs 由“总时长 - Break”推导，这里不提交。
+        fix_duration_secs: None,
         fix_round_interval_secs: Some(600),
         break_score: Some(2000),
         fix_round_score: Some(300),
@@ -222,24 +223,37 @@ async fn config_defaults_and_update_lifecycle() {
         .await
         .expect("update before start");
     assert_eq!(updated.break_duration_secs, 1800);
+    assert_eq!(updated.fix_duration_secs, 5400, "fix = 7200 - 1800");
     assert_eq!(updated.fix_round_score, 300);
     assert_eq!(updated.configuration_generation, 2);
 
-    // 事件 end_time 与 start + break + fix 同步。
+    // 事件 end_time 保持 start + break + fix = 原始总时长。
     let ev_reload = events::Entity::find_by_id(ev.id)
         .one(&db)
         .await
         .unwrap()
         .unwrap();
     let expected_end =
-        ev_reload.start_time + chrono::Duration::seconds(1800) + chrono::Duration::seconds(1800);
+        ev_reload.start_time + chrono::Duration::seconds(1800) + chrono::Duration::seconds(5400);
     assert_eq!(ev_reload.end_time.unwrap(), expected_end, "end_time synced");
 
-    // 非整除 interval 拒绝。
+    // Fix 时长不能由调用方直接指定，必须等于“总时长 - Break”。
+    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let wrong_fix = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        fix_duration_secs: Some(1200),
+        ..Default::default()
+    };
+    let err = event_repo::update_config(&db, ev.id, wrong_fix)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("derived"), "{err}");
+
+    // 非整除 interval 拒绝（fix 仍按推导值 5400）。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
     let bad = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
-        fix_duration_secs: Some(3600),
+        fix_duration_secs: Some(5400),
         fix_round_interval_secs: Some(700),
         ..Default::default()
     };
@@ -270,7 +284,6 @@ async fn config_defaults_and_update_lifecycle() {
     assert!(err.to_string().contains(">= 0"), "{err}");
 
     // 乐观锁冲突。
-    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
     let stale = AwdpConfigPatch {
         expected_updated_at: Some((chrono::Utc::now() - chrono::Duration::hours(1)).into()),
         break_duration_secs: Some(3600),
@@ -287,7 +300,7 @@ async fn config_defaults_and_update_lifecycle() {
         ev.id,
         &AwdpConfig {
             break_duration_secs: 1800,
-            fix_duration_secs: 1800,
+            fix_duration_secs: 5400,
             fix_round_interval_secs: 600,
             break_score: 2000,
             fix_round_score: 300,
@@ -336,16 +349,16 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
     cleanup(&db).await;
 
     let mode = EventMode::awdp_individual_competition();
-    let ev = create_event(&db, &mode, "awdp-it-snapshot", 60, 3600).await;
+    let ev = create_event(&db, &mode, "awdp-it-snapshot", 0, 7200).await;
     let awdp = event_repo::ensure_by_event_id(&db, ev.id, &AwdpConfig::default())
         .await
         .expect("ensure");
 
-    // 启动前把配置改为自定义（break 1800 / fix 1800 / interval 600 / 2000+300）。
+    // 启动前把配置改为自定义（break 1800 / fix 固定 3600 / interval 600 / 2000+300）。
     let patch = AwdpConfigPatch {
         expected_updated_at: Some(awdp.updated_at.into()),
         break_duration_secs: Some(1800),
-        fix_duration_secs: Some(1800),
+        fix_duration_secs: None,
         fix_round_interval_secs: Some(600),
         break_score: Some(2000),
         fix_round_score: Some(300),
@@ -361,7 +374,7 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
         ev.id,
         &AwdpConfig {
             break_duration_secs: 1800,
-            fix_duration_secs: 1800,
+            fix_duration_secs: 5400,
             fix_round_interval_secs: 600,
             break_score: 2000,
             fix_round_score: 300,
@@ -371,11 +384,11 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
     .expect("create run");
     let row = run_repo::require_by_id(&db, run.id).await.unwrap();
     assert_eq!(row.break_duration_secs, 1800);
-    assert_eq!(row.fix_duration_secs, 1800);
+    assert_eq!(row.fix_duration_secs, 5400);
     assert_eq!(row.fix_round_interval_secs, 600);
     assert_eq!(row.break_score, 2000);
     assert_eq!(row.fix_round_score, 300);
-    assert_eq!(row.total_rounds, 3, "1800/600 = 3 rounds");
+    assert_eq!(row.total_rounds, 9, "5400/600 = 9 rounds");
 
     // 2. active run 期间配置冻结：admin 修改被拒（plan §76 已锁定）。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
@@ -450,7 +463,7 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
     let reopen = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
-        fix_duration_secs: Some(1200),
+        break_duration_secs: Some(1200),
         fix_round_interval_secs: Some(600),
         ..Default::default()
     };
@@ -467,7 +480,7 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
         user_id,
         &AwdpConfig {
             break_duration_secs: 600,
-            fix_duration_secs: 1200,
+            fix_duration_secs: 6600,
             fix_round_interval_secs: 600,
             break_score: 500,
             fix_round_score: 100,
@@ -477,9 +490,9 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
     .expect("new practice run");
     let new_row = run_repo::require_by_id(&db, new_run.id).await.unwrap();
     assert_eq!(new_row.break_duration_secs, 600);
-    assert_eq!(new_row.fix_duration_secs, 1200);
+    assert_eq!(new_row.fix_duration_secs, 6600);
     assert_eq!(new_row.fix_round_score, 100);
-    assert_eq!(new_row.total_rounds, 2);
+    assert_eq!(new_row.total_rounds, 11);
 
     cleanup(&db).await;
 }

@@ -103,6 +103,14 @@ pub async fn update_config(
         .map_err(|e| AwdpError::Database(e.to_string()))?
         .ok_or_else(|| AwdpError::NotFound("awdp event not configured".into()))?;
 
+    // 产品规则：Fix 时长不是独立可配置项，而是由“比赛总时间 - Break 时长”推导。
+    let total_secs = {
+        let end = event.end_time.ok_or_else(|| {
+            AwdpError::Validation("AWDP event end_time is required to derive fix duration".into())
+        })?;
+        (end - event.start_time).num_seconds() as i32
+    };
+
     // 运行态已迁到 run：存在 active competition run = 事件已启动 → 配置冻结。
     if run_repo::find_active_competition_for_event(&txn, event_id)
         .await?
@@ -126,7 +134,23 @@ pub async fn update_config(
         break_score: current.break_score,
         fix_round_score: current.fix_round_score,
     };
-    let next = patch.apply_to(&base);
+    let mut next = patch.apply_to(&base);
+    // Fix 时长 = 比赛总时长 - Break 时长；不接受调用方直接指定。
+    if let Some(fix_duration) = patch.fix_duration_secs {
+        let derived = total_secs - next.break_duration_secs;
+        if fix_duration != derived {
+            return Err(AwdpError::Validation(
+                "fix_duration_secs is derived from event total duration - break_duration".into(),
+            ));
+        }
+    }
+    next.fix_duration_secs = total_secs - next.break_duration_secs;
+    if next.fix_duration_secs <= 0 {
+        return Err(AwdpError::Validation(
+            "fix_duration_secs must be > 0 (event total duration must be greater than break duration)"
+                .into(),
+        ));
+    }
     next.validate()?;
 
     let now = Utc::now().into();

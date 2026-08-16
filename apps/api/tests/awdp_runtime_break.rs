@@ -1292,3 +1292,105 @@ async fn competition_instance_resolves_by_network_source_ip() {
     let _ = runtime::stop_instance(&db, &docker, view.instance_id, Subject::user(user)).await;
     cleanup(&db, event_id).await;
 }
+
+/// BUG1 回归：比赛进行中（Break）新挂载 GameBox → `start_gamebox_for_active_run`
+/// 自动为全部已注册参与者创建并启动实例（attach 后无需手动启动，幂等）。
+#[tokio::test]
+async fn mid_run_attach_auto_starts_gamebox_instances() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let Some(docker) = docker_or_skip() else {
+        return;
+    };
+    let rt = fcmc::DockerContainerRuntime::new(docker.clone());
+    if fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: image {IMAGE_REF} not present");
+        return;
+    }
+
+    let (ev, run) = seed_competition_run_in_break(&db, "atk1").await;
+    let user_a = seed_user(&db, "atk1a").await;
+    let user_b = seed_user(&db, "atk1b").await;
+    // 注册参赛者（event_users）——auto-start 目标主体。
+    for uid in [user_a, user_b] {
+        floatctf::entity::event_users::ActiveModel {
+            event_id: Set(ev),
+            user_id: Set(uid),
+            points: Set(0.0),
+            banned: Set(false),
+            joined_at: Set(chrono::Utc::now().into()),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    // 模拟「赛事开始后新增 gamebox」：此时才 attach 到赛事。
+    let gb = seed_awdp_gamebox(
+        &db,
+        "atk1",
+        serde_json::json!([
+            {"type": "http", "port": 80, "path": "/", "expected_status": 200}
+        ]),
+        Some(ev),
+    )
+    .await;
+
+    // attach 后的自动启动：全部参与者实例启动。
+    let summary =
+        floatctf::modules::event::awdp::service::event_service::start_gamebox_for_active_run(
+            &db,
+            &docker,
+            JWT_SECRET,
+            &awdp_config(),
+            run,
+            gb,
+        )
+        .await
+        .expect("mid-run attach auto-start");
+    assert_eq!(summary.started, 2, "全部参与者实例启动");
+    assert_eq!(summary.failed, 0);
+
+    let views = runtime::list_instances(&db, run).await.unwrap();
+    assert_eq!(views.len(), 2, "每参与者一个实例");
+    assert!(views.iter().all(|v| v.runtime_state == "running"));
+
+    // 幂等：重复调用不重复创建实例（已 running 直接返回）。
+    let summary2 =
+        floatctf::modules::event::awdp::service::event_service::start_gamebox_for_active_run(
+            &db,
+            &docker,
+            JWT_SECRET,
+            &awdp_config(),
+            run,
+            gb,
+        )
+        .await
+        .expect("idempotent auto-start");
+    assert_eq!(summary2.started, 2);
+    let views2 = runtime::list_instances(&db, run).await.unwrap();
+    assert_eq!(views2.len(), 2, "幂等：不重复创建实例");
+
+    // 清理：按 owner 停容器（auto_remove）+ 删事件。
+    for v in views2 {
+        let (inst, _ext) =
+            floatctf::modules::event::awdp::repo::instance_repo::find_by_instance_id(
+                &db,
+                v.instance_id,
+            )
+            .await
+            .unwrap();
+        let sub = match (inst.owner_user_id, inst.owner_team_id) {
+            (Some(uid), _) => Subject::user(uid),
+            (_, Some(tid)) => Subject::team(tid),
+            _ => continue,
+        };
+        let _ = runtime::stop_instance(&db, &docker, v.instance_id, sub).await;
+    }
+    cleanup(&db, ev).await;
+}

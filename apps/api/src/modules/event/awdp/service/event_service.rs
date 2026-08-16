@@ -203,16 +203,8 @@ pub struct AutoStartSummary {
     pub failed: usize,
 }
 
-/// 枚举赛事自动启动目标：(Subject, gamebox_id) 全部组合（DB-only，供测试与启动循环共用）。
-///
-/// 主体：Individual → 全部 `event_users`；Team → 全部 `event_teams`。
-/// GameBox：`awdp_event_gameboxes` 中非 hidden 的全部挂载。
-pub async fn auto_start_targets(
-    db: &DatabaseConnection,
-    run_id: Uuid,
-) -> AwdpResult<Vec<(Subject, Uuid)>> {
-    let run = run_repo::require_by_id(db, run_id).await?;
-    let event_id = run.event_id;
+/// 枚举赛事参与者主体（Individual → 全部 event_users；Team → 全部 event_teams）。
+pub async fn event_subjects(db: &DatabaseConnection, event_id: Uuid) -> AwdpResult<Vec<Subject>> {
     let event = events::Entity::find_by_id(event_id)
         .one(db)
         .await
@@ -237,6 +229,20 @@ pub async fn auto_start_targets(
             .map(|row| Subject::team(row.id))
             .collect(),
     };
+    Ok(subjects)
+}
+
+/// 枚举赛事自动启动目标：(Subject, gamebox_id) 全部组合（DB-only，供测试与启动循环共用）。
+///
+/// 主体：Individual → 全部 `event_users`；Team → 全部 `event_teams`。
+/// GameBox：`awdp_event_gameboxes` 中非 hidden 的全部挂载。
+pub async fn auto_start_targets(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+) -> AwdpResult<Vec<(Subject, Uuid)>> {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    let event_id = run.event_id;
+    let subjects = event_subjects(db, event_id).await?;
     if subjects.is_empty() {
         return Ok(Vec::new());
     }
@@ -311,6 +317,68 @@ pub async fn start_all_event_instances(
         started = summary.started,
         failed = summary.failed,
         "AWDP auto-start all event instances"
+    );
+    Ok(summary)
+}
+
+/// 比赛进行中（Break / Fix）新挂载 GameBox 的自动启动（BUG：attach 只写挂载行，
+/// 不会为参与者创建实例）。为全部参与者启动该 gamebox 的实例，语义与赛事开始时
+/// `start_all_event_instances` 一致；Fix 阶段新容器天然 pristine（从未参与 Break），
+/// 无需额外 reset。幂等：已 running 直接返回；单实例失败不阻断整体（玩家仍可手动启动）。
+pub async fn start_gamebox_for_active_run(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    jwt_secret: &[u8],
+    awdp_config: &crate::core::config::AwdpStaticConfig,
+    run_id: Uuid,
+    gamebox_id: Uuid,
+) -> AwdpResult<AutoStartSummary> {
+    let run = run_repo::require_by_id(db, run_id).await?;
+    if !matches!(run.phase, AwdpPhase::Break | AwdpPhase::Fix) {
+        return Ok(AutoStartSummary::default());
+    }
+    let subjects = event_subjects(db, run.event_id).await?;
+    if subjects.is_empty() {
+        return Ok(AutoStartSummary::default());
+    }
+
+    let flag_prefix = crate::infrastructure::settings::get_setting(db, "FLAG_PREFIX")
+        .await
+        .unwrap_or_else(|_| "flag".into());
+
+    let mut summary = AutoStartSummary::default();
+    for subject in subjects {
+        match runtime::start_instance(
+            db,
+            docker,
+            jwt_secret,
+            awdp_config,
+            run_id,
+            gamebox_id,
+            subject,
+            &flag_prefix,
+        )
+        .await
+        {
+            Ok(_) => summary.started += 1,
+            Err(e) => {
+                summary.failed += 1;
+                warn!(
+                    run_id = %run_id,
+                    gamebox_id = %gamebox_id,
+                    error = %e,
+                    "AWDP attach auto-start instance skipped (manual start available)"
+                );
+            }
+        }
+    }
+    info!(
+        run_id = %run_id,
+        gamebox_id = %gamebox_id,
+        targets = summary.started + summary.failed,
+        started = summary.started,
+        failed = summary.failed,
+        "AWDP auto-start gamebox instances (attached mid-run)"
     );
     Ok(summary)
 }

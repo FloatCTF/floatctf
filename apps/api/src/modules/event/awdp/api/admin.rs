@@ -238,6 +238,7 @@ pub async fn list_runs(
 }
 
 /// POST /api/admin/events/{event_id}/awdp/gameboxes —— attach（仅完整 [awdp] capability）。
+/// 比赛进行中（Break/Fix）新挂载 → 自动为全部参与者启动该 gamebox 实例（幂等）。
 #[post("{event_id}/awdp/gameboxes")]
 pub async fn attach_gamebox(
     _admin: SuperAdminJwtGuard,
@@ -254,6 +255,34 @@ pub async fn attach_gamebox(
         body.hidden.unwrap_or(false),
     )
     .await?;
+    // 比赛已开始（active run 处于 Break/Fix）：新挂载的 gamebox 需要自行启动
+    // （否则参与者看不到实例）。hidden 不启动（与赛事开始时语义一致）；
+    // 失败仅 warn，不阻塞 attach（玩家仍可手动启动）。
+    if !eg.hidden {
+        if let Ok(Some(run)) =
+            run_repo::find_active_competition_for_event(ctx.db.get_ref(), event_id).await
+            && matches!(run.phase, AwdpPhase::Break | AwdpPhase::Fix)
+        {
+            if let Err(e) =
+                crate::modules::event::awdp::service::event_service::start_gamebox_for_active_run(
+                    ctx.db.get_ref(),
+                    ctx.docker.get_ref(),
+                    ctx.config.auth.jwt_secret.expose().as_bytes(),
+                    &ctx.config.awdp,
+                    run.id,
+                    eg.gamebox_id,
+                )
+                .await
+            {
+                tracing::warn!(
+                    event_id = %event_id,
+                    gamebox_id = %eg.gamebox_id,
+                    error = %e,
+                    "AWDP attach auto-start skipped"
+                );
+            }
+        }
+    }
     let gb = event_gamebox_repo::find_gamebox_identity(ctx.db.get_ref(), eg.gamebox_id).await?;
     UniResponse::ok(AwdpAdminEventGameBoxDto::from_join(&eg, &gb).into()).into()
 }

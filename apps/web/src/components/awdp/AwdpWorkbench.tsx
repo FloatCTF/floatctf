@@ -430,7 +430,7 @@ export function AwdpWorkbench({
 				} else {
 					banner.showBanner(
 						"warning",
-						`ALL Check 未通过（${res.status}），本轮待官方 check 判定`,
+						`ALL Check 未通过（${res.status}）：本次结果不计入成绩、不扣除分数，最终以本轮官方 Check 判定为准`,
 					);
 				}
 			}
@@ -776,10 +776,13 @@ export function AwdpWorkbench({
 												<span className="mx-2">·</span>
 												<span
 													className={
-														check.exploit_ok ? "text-red-600" : "text-green-600"
+														check.exploit_ok
+															? "text-red-600"
+															: "text-green-600"
 													}
 												>
-													漏洞利用：{check.exploit_ok ? "SUCCESS" : "FAIL"}
+													修复成功：
+													{check.exploit_ok ? "False" : "True"}
 												</span>
 											</>
 										)}
@@ -798,7 +801,7 @@ export function AwdpWorkbench({
 								) : (
 									<span className="text-orange-600">
 										ALL Check 未通过（{allCheckResult.status}
-										）：不落账、不扣分，等本轮官方 check 判定
+										）：本次结果不计入成绩、不扣除分数，最终以本轮官方 Check 判定为准。
 									</span>
 								)}
 							</div>

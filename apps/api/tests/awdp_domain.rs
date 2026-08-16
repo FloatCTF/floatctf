@@ -209,12 +209,12 @@ async fn config_defaults_and_update_lifecycle() {
     assert_eq!(awdp.fix_round_score, 150);
     assert_eq!(awdp.configuration_generation, 1);
 
-    // 未启动（无 active run）可改（乐观锁必填）。
+    // 未启动（无 active run）可改（乐观锁必填）。V2：Fix 可配置，Break 由总时长 - Fix 推导。
     let patch = AwdpConfigPatch {
         expected_updated_at: Some(awdp.updated_at.into()),
-        break_duration_secs: Some(1800),
-        // fix_duration_secs 由“总时长 - Break”推导，这里不提交。
-        fix_duration_secs: None,
+        // break_duration_secs 由“总时长 - Fix”推导，这里不提交。
+        break_duration_secs: None,
+        fix_duration_secs: Some(5400),
         fix_round_interval_secs: Some(600),
         break_score: Some(2000),
         fix_round_score: Some(300),
@@ -222,8 +222,8 @@ async fn config_defaults_and_update_lifecycle() {
     let updated = event_repo::update_config(&db, ev.id, patch)
         .await
         .expect("update before start");
-    assert_eq!(updated.break_duration_secs, 1800);
-    assert_eq!(updated.fix_duration_secs, 5400, "fix = 7200 - 1800");
+    assert_eq!(updated.fix_duration_secs, 5400);
+    assert_eq!(updated.break_duration_secs, 1800, "break = 7200 - 5400");
     assert_eq!(updated.fix_round_score, 300);
     assert_eq!(updated.configuration_generation, 2);
 
@@ -237,36 +237,54 @@ async fn config_defaults_and_update_lifecycle() {
         ev_reload.start_time + chrono::Duration::seconds(1800) + chrono::Duration::seconds(5400);
     assert_eq!(ev_reload.end_time.unwrap(), expected_end, "end_time synced");
 
-    // Fix 时长不能由调用方直接指定，必须等于“总时长 - Break”。
+    // Break 时长不能由调用方直接指定，必须等于“总时长 - Fix”。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
-    let wrong_fix = AwdpConfigPatch {
+    let wrong_break = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
-        fix_duration_secs: Some(1200),
+        break_duration_secs: Some(1200),
         ..Default::default()
     };
-    let err = event_repo::update_config(&db, ev.id, wrong_fix)
+    let err = event_repo::update_config(&db, ev.id, wrong_break)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("derived"), "{err}");
 
-    // 非整除 interval 拒绝（fix 仍按推导值 5400）。
+    // 非整除 interval：fix 向下取整到回合时长倍数（整数回退），不再报错。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
-    let bad = AwdpConfigPatch {
+    let round_down = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
         fix_duration_secs: Some(5400),
         fix_round_interval_secs: Some(700),
         ..Default::default()
     };
-    let err = event_repo::update_config(&db, ev.id, bad)
+    let updated = event_repo::update_config(&db, ev.id, round_down)
+        .await
+        .expect("整数回退：fix 向下取整到 interval 倍数");
+    assert_eq!(updated.fix_duration_secs, 4900, "5400 → 7×700 = 4900");
+    assert_eq!(updated.break_duration_secs, 2300, "break = 7200 - 4900");
+    assert_eq!(
+        updated.fix_duration_secs / updated.fix_round_interval_secs,
+        7
+    );
+
+    // Break 保底：fix 逼近总时长导致 break < BREAK_MIN_SECS → 拒绝。
+    let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
+    let too_long = AwdpConfigPatch {
+        expected_updated_at: Some(cur.updated_at.into()),
+        fix_duration_secs: Some(7200),
+        fix_round_interval_secs: Some(600),
+        ..Default::default()
+    };
+    let err = event_repo::update_config(&db, ev.id, too_long)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("divisible"), "{err}");
+    assert!(err.to_string().contains("at least"), "{err}");
 
     // 零值拒绝（plan §76）。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
     let zero = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
-        break_duration_secs: Some(0),
+        fix_duration_secs: Some(0),
         ..Default::default()
     };
     let err = event_repo::update_config(&db, ev.id, zero)
@@ -354,11 +372,11 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
         .await
         .expect("ensure");
 
-    // 启动前把配置改为自定义（break 1800 / fix 固定 3600 / interval 600 / 2000+300）。
+    // 启动前把配置改为自定义（fix 5400 / break 自动 1800 / interval 600 / 2000+300）。
     let patch = AwdpConfigPatch {
         expected_updated_at: Some(awdp.updated_at.into()),
-        break_duration_secs: Some(1800),
-        fix_duration_secs: None,
+        break_duration_secs: None,
+        fix_duration_secs: Some(5400),
         fix_round_interval_secs: Some(600),
         break_score: Some(2000),
         fix_round_score: Some(300),
@@ -463,7 +481,9 @@ async fn run_snapshot_captures_config_immune_to_later_changes() {
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
     let reopen = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
-        break_duration_secs: Some(1200),
+        // V2：Fix 可配置；Break 由总时长 - Fix 推导。
+        break_duration_secs: None,
+        fix_duration_secs: Some(1200),
         fix_round_interval_secs: Some(600),
         ..Default::default()
     };

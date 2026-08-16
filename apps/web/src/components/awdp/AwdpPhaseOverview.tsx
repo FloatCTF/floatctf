@@ -246,10 +246,17 @@ type AwdpTimelineProps = {
 	state: AwdpTimelineState;
 	phase: AwdpPhase;
 	totalRounds: number;
+	/** 静态预览模式：隐藏“当前时间”marker（Configure 配置预览用）。默认 false。 */
+	showMarker?: boolean;
 };
 
 /** 紧凑 track，Break/Fix 双段按 duration 比例，Fix 段内均分 Turn 分隔线。 */
-export function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
+export function AwdpTimeline({
+	state,
+	phase,
+	totalRounds,
+	showMarker = true,
+}: AwdpTimelineProps) {
 	// 进度条已走过部分整体为绿色（success），marker 跟随。
 	// pending / preparing_fix 未开始：marker 用 muted，避免绿点悬在空条上。
 	const markerColor =
@@ -332,12 +339,14 @@ export function AwdpTimeline({ state, phase, totalRounds }: AwdpTimelineProps) {
 						))}
 				</div>
 
-				{/* marker */}
-				<div
-					aria-hidden="true"
-					className={`absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 ${markerColor} transition-[left] duration-200 ease-out motion-reduce:transition-none`}
-					style={{ left: `${state.markerPct}%` }}
-				/>
+				{/* marker（静态预览模式隐藏） */}
+				{showMarker && (
+					<div
+						aria-hidden="true"
+						className={`absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 ${markerColor} transition-[left] duration-200 ease-out motion-reduce:transition-none`}
+						style={{ left: `${state.markerPct}%` }}
+					/>
+				)}
 			</div>
 
 			{/* 时间节点：Fix/Ended 且回合数 <= 8 时显示 T1..Tn（每个 Turn 起点/段中心），避免拥挤 */}

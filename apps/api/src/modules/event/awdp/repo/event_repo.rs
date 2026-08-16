@@ -36,6 +36,10 @@ pub async fn require_by_event_id<C: ConnectionTrait>(
 
 /// 确保 awdp_events 行存在（默认配置）。创建/读取事件时调用。
 /// 不再承载 next_action_at（tick 排期在 run 上）。
+///
+/// 新建行时优先按比赛总时长推导初始配置（Break ≈ 总时长一半，Fix = 剩余；
+/// 见 `AwdpConfig::derive_for_total`）；总时长缺失（未设 end_time）或过短时
+/// 回退调用方传入的默认配置。
 pub async fn ensure_by_event_id(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -47,15 +51,24 @@ pub async fn ensure_by_event_id(
     {
         return Ok(existing);
     }
-    config.validate()?;
+    let initial = match events::Entity::find_by_id(event_id).one(db).await {
+        Ok(Some(ev)) => {
+            let total = ev
+                .end_time
+                .map(|end| (end - ev.start_time).num_seconds() as i32);
+            AwdpConfig::derive_for_total(total)
+        }
+        _ => config.clone(),
+    };
+    initial.validate()?;
     let now = Utc::now().into();
     awdp_events::ActiveModel {
         event_id: Set(event_id),
-        break_duration_secs: Set(config.break_duration_secs),
-        fix_duration_secs: Set(config.fix_duration_secs),
-        fix_round_interval_secs: Set(config.fix_round_interval_secs),
-        break_score: Set(config.break_score),
-        fix_round_score: Set(config.fix_round_score),
+        break_duration_secs: Set(initial.break_duration_secs),
+        fix_duration_secs: Set(initial.fix_duration_secs),
+        fix_round_interval_secs: Set(initial.fix_round_interval_secs),
+        break_score: Set(initial.break_score),
+        fix_round_score: Set(initial.fix_round_score),
         configuration_generation: Set(1),
         created_at: Set(now),
         updated_at: Set(now),
@@ -68,6 +81,10 @@ pub async fn ensure_by_event_id(
 
 /// 乐观锁配置更新：仅“尚无 active run”（事件未启动）可改；expected_updated_at 必填。
 /// 锁序：events → awdp_events。成功时同步 events.end_time = start + break + fix（plan §4，事务性）。
+///
+/// V2 编辑规则：**Fix 时长可配置**，保存时向下取整到回合时长（interval）的整数倍
+/// （“整数回退”，保证 fix % interval == 0）；**Break 时长不可配置**，由
+/// “比赛总时长 - Fix 时长”推导（调用方若传 break_duration_secs 必须等于推导值）。
 pub async fn update_config(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -103,10 +120,10 @@ pub async fn update_config(
         .map_err(|e| AwdpError::Database(e.to_string()))?
         .ok_or_else(|| AwdpError::NotFound("awdp event not configured".into()))?;
 
-    // 产品规则：Fix 时长不是独立可配置项，而是由“比赛总时间 - Break 时长”推导。
+    // 产品规则：Break 时长不是独立可配置项，而是由“比赛总时间 - Fix 时长”推导。
     let total_secs = {
         let end = event.end_time.ok_or_else(|| {
-            AwdpError::Validation("AWDP event end_time is required to derive fix duration".into())
+            AwdpError::Validation("AWDP event end_time is required to derive break duration".into())
         })?;
         (end - event.start_time).num_seconds() as i32
     };
@@ -135,21 +152,31 @@ pub async fn update_config(
         fix_round_score: current.fix_round_score,
     };
     let mut next = patch.apply_to(&base);
-    // Fix 时长 = 比赛总时长 - Break 时长；不接受调用方直接指定。
-    if let Some(fix_duration) = patch.fix_duration_secs {
-        let derived = total_secs - next.break_duration_secs;
-        if fix_duration != derived {
+    // Break 不可直接指定：若调用方传了 break_duration_secs，必须等于“总时长 - fix”。
+    let derived_break = total_secs - next.fix_duration_secs;
+    if let Some(break_duration) = patch.break_duration_secs {
+        if break_duration != derived_break {
             return Err(AwdpError::Validation(
-                "fix_duration_secs is derived from event total duration - break_duration".into(),
+                "break_duration_secs is derived from event total duration - fix_duration".into(),
             ));
         }
     }
-    next.fix_duration_secs = total_secs - next.break_duration_secs;
-    if next.fix_duration_secs <= 0 {
+    // 整数回退：fix 向下取整到回合时长倍数（fix % interval == 0，无 partial round）。
+    let fix =
+        (next.fix_duration_secs / next.fix_round_interval_secs) * next.fix_round_interval_secs;
+    if fix <= 0 {
         return Err(AwdpError::Validation(
-            "fix_duration_secs must be > 0 (event total duration must be greater than break duration)"
-                .into(),
+            "fix_duration_secs must cover at least one full turn".into(),
         ));
+    }
+    next.fix_duration_secs = fix;
+    // Break 吸收总时长零头（可非整数），但不得低于保底 BREAK_MIN_SECS。
+    next.break_duration_secs = total_secs - fix;
+    if next.break_duration_secs < crate::modules::event::awdp::domain::config::BREAK_MIN_SECS {
+        return Err(AwdpError::Validation(format!(
+            "break_duration_secs must be at least {}s (event total duration - fix duration too small)",
+            crate::modules::event::awdp::domain::config::BREAK_MIN_SECS
+        )));
     }
     next.validate()?;
 

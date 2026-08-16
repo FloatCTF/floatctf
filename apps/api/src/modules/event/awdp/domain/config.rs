@@ -10,6 +10,9 @@ use crate::modules::event::awdp::{AwdpError, AwdpResult};
 pub const DEFAULT_BREAK_DURATION_SECS: i32 = 3600;
 pub const DEFAULT_FIX_DURATION_SECS: i32 = 3600;
 pub const DEFAULT_FIX_ROUND_INTERVAL_SECS: i32 = 600;
+/// Break 阶段最少保底时长（秒）：Break 吸收总时长的零头且可非整数，
+/// 但不得低于该值（编辑时前端夹取 Fix 保证，后端校验兜底）。
+pub const BREAK_MIN_SECS: i32 = 60;
 /// Break 满分默认 = Fix 全部防守成功总分 × 0.6（150 × 6 轮 × 0.6 = 540）。
 pub const DEFAULT_BREAK_SCORE: i64 = 540;
 pub const DEFAULT_FIX_ROUND_SCORE: i64 = 150;
@@ -43,6 +46,44 @@ impl Default for AwdpConfig {
 }
 
 impl AwdpConfig {
+    /// 按比赛总时长推导初始配置：**Fix 默认 = 总时长的一半**（整数回退到回合时长
+    /// 的整数倍，保证 `validate` 通过：fix % interval == 0）；**Break = 总时长 - Fix**
+    /// （不可直接配置，前端只读展示）。
+    ///
+    /// - 常规时长（一半 ≥ 默认回合时长 600s）：保持回合时长 600，Fix 向下取整到
+    ///   回合时长的整数倍，Break 略 ≥ 一半；
+    /// - 过短时长（一半 < 600s，如 10 分钟赛事）：把回合时长缩到 ≈ 一半，使
+    ///   Break = Fix = 一半（恰为总时长的一半）且仍可通过校验（至少 1 个完整回合）。
+    ///
+    /// 总时长缺失（未设置 end_time，如练习虚拟赛事）或过小（≤ 1s）时回退默认配置。
+    pub fn derive_for_total(total_secs: Option<i32>) -> AwdpConfig {
+        let mut cfg = AwdpConfig::default();
+        let Some(total) = total_secs else {
+            return cfg;
+        };
+        if total <= 0 {
+            return cfg;
+        }
+        let half = total / 2;
+        if half <= 0 {
+            return cfg;
+        }
+        if half >= DEFAULT_FIX_ROUND_INTERVAL_SECS {
+            // 常规时长：至少 1 个完整回合，回合时长保持默认 600s。
+            let rounds = half / cfg.fix_round_interval_secs;
+            let fix = rounds * cfg.fix_round_interval_secs;
+            cfg.fix_duration_secs = fix;
+            cfg.break_duration_secs = total - fix;
+        } else {
+            // 过短时长：回合时长缩到 ≈ 一半，保证 break = fix = 一半且校验通过。
+            cfg.fix_round_interval_secs = half;
+            cfg.fix_duration_secs = half;
+            cfg.break_duration_secs = total - half;
+        }
+        cfg.break_score = cfg.derived_break_score();
+        cfg
+    }
+
     /// 从 run 快照列重建配置（run 启动后 snapshot 冻结，此后不随 awdp_events 变化）。
     pub fn from_run(run: &crate::entity::awdp_runs::Model) -> Self {
         Self {
@@ -196,6 +237,59 @@ mod tests {
             ..Default::default()
         };
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn derive_for_total_splits_half_and_passes_validation() {
+        // 2h 整：break == fix == 3600（精确一半）。
+        let c = AwdpConfig::derive_for_total(Some(7200));
+        assert_eq!(c.break_duration_secs, 3600);
+        assert_eq!(c.fix_duration_secs, 3600);
+        assert_eq!(c.fix_round_interval_secs, 600);
+        assert_eq!(c.total_rounds(), 6);
+        c.validate().unwrap();
+        // 非 1200 整数倍：fix 向下取整到回合时长倍数，break 略 ≥ 一半，仍可校验。
+        let c = AwdpConfig::derive_for_total(Some(9000));
+        assert_eq!(c.fix_duration_secs % 600, 0);
+        assert_eq!(c.break_duration_secs + c.fix_duration_secs, 9000);
+        assert!(c.break_duration_secs >= 4500);
+        assert_eq!(c.total_rounds(), c.fix_duration_secs / 600);
+        c.validate().unwrap();
+        // break 分数按推导后的回合数联动。
+        let c = AwdpConfig::derive_for_total(Some(7200));
+        assert_eq!(c.break_score, 540);
+    }
+
+    #[test]
+    fn derive_for_total_splits_short_events_by_half() {
+        // 20 分钟（1200s）：break = fix = 600，回合 600（1 回合）。
+        let c = AwdpConfig::derive_for_total(Some(1200));
+        assert_eq!(c.break_duration_secs, 600);
+        assert_eq!(c.fix_duration_secs, 600);
+        assert_eq!(c.fix_round_interval_secs, 600);
+        assert_eq!(c.total_rounds(), 1);
+        c.validate().unwrap();
+        // 10 分钟（600s）：break = fix = 300，回合时长缩到 300（1 回合）。
+        let c = AwdpConfig::derive_for_total(Some(600));
+        assert_eq!(c.break_duration_secs, 300, "break = 总时长一半");
+        assert_eq!(c.fix_duration_secs, 300, "fix = 总时长一半");
+        assert_eq!(c.fix_round_interval_secs, 300, "短赛事回合时长自动缩短");
+        assert_eq!(c.total_rounds(), 1);
+        c.validate().unwrap();
+        // 奇数秒（5 分钟 = 300s）：同样各半，校验通过。
+        let c = AwdpConfig::derive_for_total(Some(300));
+        assert_eq!(c.break_duration_secs, 150);
+        assert_eq!(c.fix_duration_secs, 150);
+        assert_eq!(c.total_rounds(), 1);
+        c.validate().unwrap();
+    }
+
+    #[test]
+    fn derive_for_total_falls_back_when_times_missing_or_too_small() {
+        assert_eq!(AwdpConfig::derive_for_total(None), AwdpConfig::default());
+        assert_eq!(AwdpConfig::derive_for_total(Some(0)), AwdpConfig::default());
+        // 1s：一半为 0，无法构成赛事 → 回退默认。
+        assert_eq!(AwdpConfig::derive_for_total(Some(1)), AwdpConfig::default());
     }
 
     #[test]

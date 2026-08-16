@@ -411,17 +411,19 @@ pub struct PatchSubmitResponse {
 
 /// 手动 Test Check 结果。
 #[derive(Debug, Clone, Serialize)]
-/// 手动 Test Check 结果 DTO（异步：POST 后立即返回 pending，前端轮询 evaluations 终态）。
+/// 手动 Test Check 结果 DTO（同步：POST 内直接执行 healthcheck + judge + exploit，
+/// 返回 completed 与全部结果；不计分）。
 pub struct ManualCheckDto {
-    /// 创建的 manual 评估 id（前端据 id 从 evaluations 列表取终态详情）。
+    /// 创建的 manual 评估 id。
     pub evaluation_id: Uuid,
-    /// 初始状态（"pending"）；终态时前端用 evaluations 行的 healthcheck/judge 结果。
+    /// 终态（"completed"）；结果字段随 status 一并返回。
     pub status: String,
     pub healthcheck_ok: Option<bool>,
     pub healthcheck_detail: Option<Vec<String>>,
     pub judge_ok: Option<bool>,
     pub judge_detail: Option<String>,
-    /// 练习模式才执行 exploit 诊断（不计分）；非练习恒 None。
+    /// exploit 诊断展示（不计分）：练习与竞赛 manual Test Check 均执行；
+    /// healthcheck/judge 未通过（未执行到 exploit）时为 None。
     pub exploit_ok: Option<bool>,
     pub exploit_detail: Option<String>,
 }

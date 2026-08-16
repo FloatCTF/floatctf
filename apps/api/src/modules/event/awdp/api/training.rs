@@ -718,7 +718,9 @@ pub async fn upload_patch(
     .into()
 }
 
-/// POST .../test-check —— 手动 Test Check 入队（异步；worker 执行 healthcheck + judge，不计分）。
+/// POST .../test-check —— 手动 Test Check 同步执行（不排队）：HTTP 请求内直接
+/// healthcheck + judge + exploit（诊断展示，不计分），写终态并返回结果。
+/// 与竞赛路径一致：manual 评估由 Test Check 同步流程独占，worker 不领取。
 #[post("awdp/runs/{run_id}/gameboxes/{gamebox_id}/test-check")]
 pub async fn manual_test_check(
     user: UserJwtGuard,
@@ -742,6 +744,11 @@ pub async fn manual_test_check(
     )
     .await
     .map_err(AppError::from)?;
+    // 同步执行：直接跑完 healthcheck + judge + exploit 再返回终态。
+    let result =
+        evaluation::manual_check_run_now(ctx.db.get_ref(), ctx.docker.get_ref(), &evaluation)
+            .await
+            .map_err(AppError::from)?;
     log_practice_action(
         &ctx,
         run.event_id,
@@ -753,13 +760,13 @@ pub async fn manual_test_check(
     UniResponse::ok(
         ManualCheckDto {
             evaluation_id: evaluation.id,
-            status: "pending".to_string(),
-            healthcheck_ok: None,
-            healthcheck_detail: None,
-            judge_ok: None,
-            judge_detail: None,
-            exploit_ok: None,
-            exploit_detail: None,
+            status: "completed".to_string(),
+            healthcheck_ok: Some(result.healthcheck_ok),
+            healthcheck_detail: Some(result.healthcheck_detail),
+            judge_ok: Some(result.judge_ok),
+            judge_detail: Some(result.judge_detail),
+            exploit_ok: result.exploit_ok,
+            exploit_detail: result.exploit_detail,
         }
         .into(),
     )

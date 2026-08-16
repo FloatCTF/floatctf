@@ -222,6 +222,12 @@ pub async fn claim_jobs(
     if !kinds.is_empty() {
         query = query.filter(awdp_evaluations::Column::Kind.is_in(kinds.iter().cloned()));
     }
+    if let Some(event_id) = event_id {
+        // 赛事专属 worker：只领本赛事 job（evaluations.run_id → awdp_runs.event_id）。
+        query = query
+            .inner_join(crate::entity::awdp_runs::Entity)
+            .filter(crate::entity::awdp_runs::Column::EventId.eq(event_id));
+    }
     let rows = query
         .all(&txn)
         .await
@@ -473,6 +479,10 @@ fn truncate_str(s: &str, max: usize) -> String {
 }
 
 /// 写入终态（无 lease 校验版）——仅用于非 claim 的同步流程（manual Test Check）。
+///
+/// 终态必须释放 lease 元数据（`awdp_evaluations_lease_consistency_check` 要求终态行
+/// lease_token_hash 为 NULL）。防御性清空：即使该行曾被 worker 误 claim（历史竞态），
+/// 同步路径写终态也不会触发约束违例。
 pub async fn finish(
     db: &DatabaseConnection,
     evaluation_id: Uuid,
@@ -507,6 +517,12 @@ pub async fn finish(
         am.stderr_limited = Set(Some(v.to_string()));
     }
     am.finished_at = Set(Some(now));
+    // 终态释放 lease（约束：终态行不得持有 lease）。
+    am.claimed_by = Set(None);
+    am.claimed_at = Set(None);
+    am.heartbeat_at = Set(None);
+    am.lease_expires_at = Set(None);
+    am.lease_token_hash = Set(None);
     am.updated_at = Set(now);
     am.update(db)
         .await

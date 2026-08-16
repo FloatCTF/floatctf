@@ -661,12 +661,23 @@ async fn manual_test_check_practice_runs_exploit_and_marks_vulnerable() {
         floatctf::modules::event::awdp::service::patch_service::PatchResult::Applied
     );
 
+    // Test Check 同步执行（worker 不领 manual）：healthcheck + judge + exploit。
     let ev = evaluation::manual_check_enqueue(&db, run_id, inst_id, sub)
         .await
         .expect("enqueue manual");
-    let _ = evaluation::worker_round(&db, &docker, "floatctf-api-worker", 8, 120, 3)
+    let result = evaluation::manual_check_run_now(&db, &docker, &ev)
         .await
-        .expect("worker");
+        .expect("manual check run now");
+    assert_eq!(
+        result.exploit_ok,
+        Some(true),
+        "exploit 成功 → exploit_ok=true（仍可利用）"
+    );
+    assert!(
+        result.exploit_detail.is_some(),
+        "exploit 详情随同步结果返回: {:?}",
+        result.exploit_detail
+    );
     let fresh = evaluation_repo::find_by_id(&db, ev.id).await.unwrap();
     assert_eq!(
         fresh.status,
@@ -677,6 +688,11 @@ async fn manual_test_check_practice_runs_exploit_and_marks_vulnerable() {
         fresh.exploit_result.is_some(),
         "exploit 详情已落评估行: {:?}",
         fresh.exploit_result
+    );
+    // 同步路径写终态后不得持有 lease（约束：终态行 lease_token_hash 必须为空）。
+    assert!(
+        fresh.lease_token_hash.is_none(),
+        "终态行不得持有 lease（lease_consistency_check）"
     );
     // manual 不计分。
     let total = score_repo::my_total(&db, run_id, Some(user_id), None)

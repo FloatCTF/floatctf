@@ -25,7 +25,7 @@ pub struct ManualCheckResult {
     pub healthcheck_detail: Vec<String>,
     pub judge_ok: bool,
     pub judge_detail: String,
-    /// 练习模式才执行（exploit 诊断展示；不计分）。
+    /// exploit 诊断展示（不计分）：练习与竞赛的 manual Test Check 均执行。
     pub exploit_ok: Option<bool>,
     pub exploit_detail: Option<String>,
 }
@@ -68,8 +68,9 @@ pub async fn manual_check_enqueue(
     Ok(evaluation)
 }
 
-/// 同步执行 manual Test Check（不排队）：HTTP 请求内直接执行 healthcheck + judge，
-/// 写终态后返回结果。与 worker 经 instance advisory lock 串行；无 lease（同步独占）。
+/// 同步执行 manual Test Check（不排队）：HTTP 请求内直接执行 healthcheck + judge +
+/// exploit（诊断展示，不计分），写终态后返回结果。与 worker 经 instance advisory
+/// lock 串行；无 lease（同步独占）。
 pub async fn manual_check_run_now(
     db: &DatabaseConnection,
     docker: &Docker,
@@ -79,14 +80,18 @@ pub async fn manual_check_run_now(
     let result = manual_leased_locked(db, docker, evaluation).await;
     lock.release().await;
 
-    let (status, health_detail, judge_detail, _exploit_detail) = result?;
+    let (status, health_detail, judge_detail, exploit_detail) = result?;
     evaluation_repo::finish(
         db,
         evaluation.id,
         status.clone(),
         Some(&health_detail),
         Some(&judge_detail),
-        None,
+        if exploit_detail.is_empty() {
+            None
+        } else {
+            Some(&exploit_detail)
+        },
         None,
         None,
     )
@@ -102,9 +107,18 @@ pub async fn manual_check_run_now(
         },
         judge_ok: status != S::ServiceDown && status != S::FunctionalBroken,
         judge_detail,
-        // 同步路径仅比赛使用（exploit 恒不执行）。
-        exploit_ok: None,
-        exploit_detail: None,
+        // exploit 已执行（healthcheck+judge 通过才到 exploit 步骤）→ 按终态映射：
+        // Vulnerable = exploit 成功（仍可利用）；Patched = exploit 失败（已修复）。
+        exploit_ok: if exploit_detail.is_empty() {
+            None
+        } else {
+            Some(status == S::Vulnerable)
+        },
+        exploit_detail: if exploit_detail.is_empty() {
+            None
+        } else {
+            Some(exploit_detail)
+        },
     })
 }
 
@@ -161,9 +175,8 @@ async fn manual_leased_locked(
     use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
     let (instance, ext) = instance_repo::find_by_instance_id(db, ev.instance_id).await?;
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, ext.gamebox_id).await?;
-    let run = run_repo::require_by_id(db, ext.run_id).await?;
-    // 练习模式（run.gamebox_id 非空）才执行 exploit 诊断；竞赛保持 healthcheck + judge。
-    let is_practice = run.gamebox_id.is_some();
+    // run 必须存在（阶段语义由调用方保证；这里仅校验）。
+    run_repo::require_by_id(db, ext.run_id).await?;
 
     // 容器内网 IP（internal healthcheck 目标；public NAT 失败不算 SERVICE_DOWN）。
     let container_ip = if instance.runtime_state == "running" {
@@ -265,51 +278,44 @@ async fn manual_leased_locked(
         None => (false, "GameBox 未配置 judge 脚本".into()),
     };
 
-    // 3. Exploit（仅练习模式；诊断展示，不计分）：与 official 同款批量契约单目标。
-    let (exploit_ok, exploit_detail) = if is_practice {
-        match gamebox.awdp_exploit_script_content.clone() {
-            Some(script) => {
-                let outcome = run_script(
-                    &script,
-                    "python3",
-                    &[container_ip.clone()],
-                    &[],
-                    Duration::from_secs(60),
-                    32 * 1024,
-                    32 * 1024,
-                )
-                .await
-                .map_err(|e| AwdpError::Internal(format!("exploit runner: {e}")))?;
-                match parse_batch_results(&outcome.stdout) {
-                    Ok(rows) => {
-                        let hit = rows
-                            .iter()
-                            .find(|r| r.ip == container_ip || r.ip.is_empty())
-                            .or_else(|| rows.first());
-                        match hit {
-                            Some(r) => (
-                                Some(r.success),
-                                r.error.clone().unwrap_or_else(|| {
-                                    format!(
-                                        "{}: {}",
-                                        r.ip,
-                                        if r.success { "SUCCESS" } else { "FAIL" }
-                                    )
-                                }),
-                            ),
-                            None => (Some(false), "exploit 无该目标结果".into()),
-                        }
+    // 3. Exploit（练习与竞赛 manual Test Check 均执行；诊断展示，不计分）：
+    //    与 official 同款批量契约单目标。success = 仍可利用（Vulnerable）。
+    let (exploit_ok, exploit_detail) = match gamebox.awdp_exploit_script_content.clone() {
+        Some(script) => {
+            let outcome = run_script(
+                &script,
+                "python3",
+                &[container_ip.clone()],
+                &[],
+                Duration::from_secs(60),
+                32 * 1024,
+                32 * 1024,
+            )
+            .await
+            .map_err(|e| AwdpError::Internal(format!("exploit runner: {e}")))?;
+            match parse_batch_results(&outcome.stdout) {
+                Ok(rows) => {
+                    let hit = rows
+                        .iter()
+                        .find(|r| r.ip == container_ip || r.ip.is_empty())
+                        .or_else(|| rows.first());
+                    match hit {
+                        Some(r) => (
+                            Some(r.success),
+                            r.error.clone().unwrap_or_else(|| {
+                                format!("{}: {}", r.ip, if r.success { "SUCCESS" } else { "FAIL" })
+                            }),
+                        ),
+                        None => (Some(false), "exploit 无该目标结果".into()),
                     }
-                    Err(e) => (
-                        Some(false),
-                        format!("exploit 输出解析失败: {e}; exit={:?}", outcome.exit_code),
-                    ),
                 }
+                Err(e) => (
+                    Some(false),
+                    format!("exploit 输出解析失败: {e}; exit={:?}", outcome.exit_code),
+                ),
             }
-            None => (Some(false), "GameBox 未配置 exploit 脚本".into()),
         }
-    } else {
-        (None, String::new())
+        None => (Some(false), "GameBox 未配置 exploit 脚本".into()),
     };
 
     // 4. 终态（manual 不计分；练习模式 exploit 成功 → Vulnerable）。

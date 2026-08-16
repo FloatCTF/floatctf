@@ -470,8 +470,9 @@ pub async fn manual_test_check(
             healthcheck_detail: Some(result.healthcheck_detail),
             judge_ok: Some(result.judge_ok),
             judge_detail: Some(result.judge_detail),
-            exploit_ok: None,
-            exploit_detail: None,
+            // Fix 阶段 Test Check 含 exploit 诊断（与练习模式一致；不计分）。
+            exploit_ok: result.exploit_ok,
+            exploit_detail: result.exploit_detail,
         }
         .into(),
     )

@@ -173,7 +173,12 @@ function RouteComponent() {
 			onTestCheck: async (gameboxId: string) => {
 				const res = await awdpRunApi.testCheck(runId, gameboxId);
 				invalidate();
-				// 异步 manual：轮询 evaluations 直到该评估终态（默认 ≤60s）。
+				// 同步 Test Check：POST 内直接执行完成（healthcheck + judge + exploit，
+				// 不计分），无需再轮询 evaluations；旧响应保持兼容。
+				if (res.data?.status === "completed") {
+					return res.data;
+				}
+				// 异步 manual（旧后端）：轮询 evaluations 直到该评估终态（默认 ≤60s）。
 				const evalId = res.data?.evaluation_id;
 				if (!evalId) {
 					return res.data;

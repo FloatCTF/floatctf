@@ -5,7 +5,7 @@
 //!   - advisory lock 同 key 互斥、不同 key 不互斥（DB 层，无 Docker）；
 //!   - patch vs evaluation：prior-round 评估未完成 → patch 拒绝（Conflict），完成后放行；
 //!   - reset vs evaluation：并发执行互不踩踏（评估终态 + reset gen+1 + 端点保留）；
-//!   - manual check vs evaluation：并发执行互不干扰（manual 不运行 exploit）。
+//!   - manual check vs evaluation：并发执行互不干扰（manual 由同步路径独占，含 exploit 诊断）。
 
 use std::time::Duration;
 
@@ -732,7 +732,8 @@ async fn manual_check_and_evaluation_concurrent() {
         .await
         .expect("tick r1");
 
-    // 并发：manual check 入队 + worker 消费（同一把 instance 锁；official + manual 互不踩踏）。
+    // 并发：manual check 同步执行 + worker 消费 official（同一把 instance 锁；
+    // manual 由 Test Check 同步路径独占——worker 只领 official，互不踩踏）。
     let enqueued = floatctf::modules::event::awdp::service::evaluation::manual_check_enqueue(
         &db,
         run_id,
@@ -756,21 +757,38 @@ async fn manual_check_and_evaluation_concurrent() {
         .expect("worker")
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
+    // 同步执行 manual（与 worker 并行处理 official）。
+    let _res = floatctf::modules::event::awdp::service::evaluation::manual_check_run_now(
+        &db, &docker, &enqueued,
+    )
+    .await
+    .expect("manual check sync");
     let n = worker.await.expect("worker joined");
-    assert!(n >= 1, "worker processed at least our eval");
+    assert!(n >= 1, "worker processed at least our official eval");
     let mc = floatctf::modules::event::awdp::repo::evaluation_repo::find_by_id(&db, enqueued.id)
         .await
         .expect("manual eval");
     assert_eq!(mc.status, AwdpEvaluationStatus::Patched, "{mc:?}");
+    // BUG5 不变量：即使被（旧版/外部）worker 误 claim 过（attempt_count>0），
+    // 同步路径写终态后也必须释放 lease——不得违反 awdp_evaluations_lease_consistency_check。
+    // （测试进程内 worker 只领 official；dev 环境若有旧代码 API 在跑可能误 claim。）
+    assert!(
+        mc.lease_token_hash.is_none(),
+        "终态不得持有 lease（lease_consistency_check）"
+    );
+    assert!(mc.claimed_by.is_none());
 
-    // manual 评估：只跑 health+judge，不运行 exploit（exploit_result NULL）。
+    // manual 评估：health + judge + exploit 诊断（不计分；exploit 结果落行）。
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
     let manual = evals
         .iter()
         .find(|e| e.kind == floatctf::entity::sea_orm_active_enums::AwdpEvaluationKind::Manual)
         .expect("manual eval row");
     assert_eq!(manual.status, AwdpEvaluationStatus::Patched);
-    assert!(manual.exploit_result.is_none(), "manual 不运行 exploit");
+    assert!(
+        manual.exploit_result.is_some(),
+        "manual 同步执行含 exploit 诊断（竞赛同样执行）"
+    );
 
     // official 评估终态（互不踩踏）。
     let official = evals

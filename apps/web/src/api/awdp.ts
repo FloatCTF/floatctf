@@ -77,15 +77,15 @@ export type PatchSubmitResponse = {
 };
 
 export type ManualCheckDto = {
-	/** 创建的 manual 评估 id（前端据 id 从 evaluations 列表取终态详情）。 */
+	/** 创建的 manual 评估 id。 */
 	evaluation_id: string;
-	/** 初始状态（"pending"）；终态用 evaluations 行的 healthcheck/judge 结果。 */
+	/** 终态（"completed"）；结果字段随 status 一并返回。 */
 	status: string;
 	healthcheck_ok: boolean | null;
 	healthcheck_detail: string[] | null;
 	judge_ok: boolean | null;
 	judge_detail: string | null;
-	/** 练习模式才执行 exploit 诊断（不计分）；非练习恒 null。 */
+	/** exploit 诊断展示（不计分）：练习与竞赛 manual Test Check 均执行；未执行到 exploit 时为 null。 */
 	exploit_ok: boolean | null;
 	exploit_detail: string | null;
 };

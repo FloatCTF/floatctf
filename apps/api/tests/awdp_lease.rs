@@ -717,6 +717,89 @@ async fn in_process_worker_only_claims_official() {
     cleanup(&db).await;
 }
 
+/// BUG5 回归：Test Check 快速连点 → 同步路径写终态必须释放 lease。
+///
+/// 竞态：同步检查执行期间（数秒）worker 若 claim 了同一条 manual（status=running +
+/// lease_token_hash 设置），同步路径 `finish` 写终态时若不清 lease，UPDATE 会违反
+/// `awdp_evaluations_lease_consistency_check`（终态行不得持有 lease）。本测试直接
+/// 构造「被误 claim 的 manual 行」并走同步 finish，断言约束不再触发。
+#[tokio::test]
+async fn sync_finish_releases_lease_on_misclaimed_manual() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    cleanup(&db).await;
+    let (run, inst, _round, _u, _gb) = seed_env(&db, "lscons").await;
+    let manual = evaluation_repo::create_manual(&db, run, inst)
+        .await
+        .unwrap();
+
+    // 模拟竞态窗口：worker 在同步检查执行期间 claim 了这条 manual。
+    let jobs = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Manual],
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(jobs.len(), 1, "manual 被（历史竞态）worker claim");
+    let claimed = eval_by_id(&db, manual.id).await;
+    assert_eq!(claimed.status, AwdpEvaluationStatus::Running);
+    assert!(claimed.lease_token_hash.is_some());
+
+    // 同步 Test Check 路径写终态：必须清空 lease 元数据，不得违反 CHECK。
+    evaluation_repo::finish(
+        &db,
+        manual.id,
+        AwdpEvaluationStatus::Patched,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("finish 不得违反 awdp_evaluations_lease_consistency_check");
+    let fresh = eval_by_id(&db, manual.id).await;
+    assert_eq!(fresh.status, AwdpEvaluationStatus::Patched);
+    assert!(
+        fresh.lease_token_hash.is_none(),
+        "终态不得持有 lease（lease_consistency_check）"
+    );
+    assert!(fresh.claimed_by.is_none());
+
+    // worker 的晚结果走 finish_with_lease → StaleRejected（不覆盖同步结果）。
+    let outcome = evaluation_repo::finish_with_lease(
+        &db,
+        manual.id,
+        WORKER_A,
+        &jobs[0].lease_token,
+        jobs[0].attempt,
+        AwdpEvaluationStatus::Vulnerable,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, evaluation_repo::FinishOutcome::StaleRejected);
+    let fresh = eval_by_id(&db, manual.id).await;
+    assert_eq!(
+        fresh.status,
+        AwdpEvaluationStatus::Patched,
+        "stale 结果不覆盖"
+    );
+
+    cleanup(&db).await;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Internal API 鉴权契约（新增 claim/heartbeat/result 端点必须服务身份认证）
 // ────────────────────────────────────────────────────────────────────────────

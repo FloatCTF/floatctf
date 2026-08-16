@@ -465,7 +465,7 @@ exit 0
     let before = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();
-    // 异步 manual：入队 → 进程内 worker 消费（health+judge；exploit 恒不执行）。
+    // 同步 manual：Test Check 流程独占（worker 不领取）；health+judge+exploit 诊断。
     let enqueued = floatctf::modules::event::awdp::service::evaluation::manual_check_enqueue(
         &db,
         run_id,
@@ -474,17 +474,11 @@ exit 0
     )
     .await
     .expect("enqueue manual check");
-    let n = floatctf::modules::event::awdp::service::evaluation::worker_round(
-        &db,
-        &docker,
-        "floatctf-api-worker",
-        4,
-        120,
-        3,
+    let _res = floatctf::modules::event::awdp::service::evaluation::manual_check_run_now(
+        &db, &docker, &enqueued,
     )
     .await
-    .expect("worker");
-    assert!(n >= 1, "worker 应消费 manual 评估");
+    .expect("manual check sync");
     let mc = evaluation_repo::find_by_id(&db, enqueued.id)
         .await
         .expect("eval");
@@ -498,7 +492,7 @@ exit 0
         .unwrap();
     assert_eq!(before, after, "manual check 不计分");
 
-    // §84：manual check 绝不运行 exploit —— exploit_result 恒 NULL；只跑 health+judge。
+    // §84：manual 同步执行含 exploit 诊断（不计分；exploit 结果落行）。
     let evals = evaluation_repo::list_for_run(&db, run_id).await.unwrap();
     let manual = evals
         .iter()
@@ -506,8 +500,8 @@ exit 0
         .expect("manual evaluation row");
     assert_eq!(manual.status, AwdpEvaluationStatus::Patched);
     assert!(
-        manual.exploit_result.is_none(),
-        "manual check 不运行 exploit"
+        manual.exploit_result.is_some(),
+        "manual 同步执行含 exploit 诊断"
     );
     assert!(
         manual.healthcheck_result.is_some() && manual.judge_result.is_some(),
@@ -611,15 +605,23 @@ exit 0
     .expect("sync manual check");
     assert!(res.healthcheck_ok, "同步检查 healthcheck 应通过");
     assert!(res.judge_ok, "同步检查 judge 应通过");
-    assert!(res.exploit_ok.is_none(), "比赛同步检查不运行 exploit");
+    // BUG4：比赛 Fix 阶段 Test Check 同样执行 exploit 诊断（不计分）。
+    // 本测试 gamebox 的 exploit 脚本为占位（非合法 python）→ 输出解析失败 → 视为已修复。
+    assert_eq!(
+        res.exploit_ok,
+        Some(false),
+        "比赛同步检查运行 exploit（占位脚本解析失败 → 修复成功 False）"
+    );
+    assert!(res.exploit_detail.is_some(), "exploit 详情随结果返回");
 
     // 行终态立即可见（无需 worker 消费）。
     let fresh = evaluation_repo::find_by_id(&db, ev.id).await.unwrap();
     assert_eq!(fresh.status, AwdpEvaluationStatus::Patched);
     assert!(
-        fresh.exploit_result.is_none(),
-        "比赛同步检查不写 exploit 详情"
+        fresh.exploit_result.is_some(),
+        "比赛同步检查写 exploit 详情"
     );
+    assert!(fresh.lease_token_hash.is_none(), "终态行不得持有 lease");
     let total = score_repo::my_total(&db, run_id, Some(user_id), None)
         .await
         .unwrap();

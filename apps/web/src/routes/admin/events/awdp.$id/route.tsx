@@ -70,6 +70,12 @@ function RouteComponent() {
 								<RouterNavItem to="/admin/events/awdp/$id/ops" params={{ id }}>
 									Ops
 								</RouterNavItem>
+								<RouterNavItem
+									to="/admin/events/awdp/$id/scoreboard"
+									params={{ id }}
+								>
+									Scoreboard
+								</RouterNavItem>
 								{event.participant_mode === ParticipantMode.Team && (
 									<RouterNavItem
 										to="/admin/events/awdp/$id/teams"

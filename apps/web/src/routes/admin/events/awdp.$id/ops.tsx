@@ -2,7 +2,7 @@ import { Button, ButtonGroup, Label, Spinner, useConfirm } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { type AwdpScoreRow, awdpAdminApi } from "@/api/awdp";
+import { awdpAdminApi } from "@/api/awdp";
 import { useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../../route";
 
@@ -34,17 +34,9 @@ function RouteComponent() {
 	const phase = configQuery.data?.data?.phase ?? "pending";
 	const phaseMeta = PHASE_META[phase] ?? PHASE_META.pending;
 
-	const scoresQuery = useQuery({
-		queryKey: ["admin-awdp-scores", id],
-		queryFn: () => awdpAdminApi.scores(id),
-		refetchInterval: 30000,
-	});
-	const scoreRows = scoresQuery.data?.data ?? [];
-
 	const invalidate = () => {
 		qc.invalidateQueries({ queryKey: ["awdp-config", id] });
 		qc.invalidateQueries({ queryKey: ["event", id] });
-		qc.invalidateQueries({ queryKey: ["admin-awdp-scores", id] });
 	};
 
 	const start = useMutation({
@@ -131,43 +123,6 @@ function RouteComponent() {
 						+1，公开端口不变）。
 					</li>
 				</ul>
-			</section>
-
-			<section>
-				<h4 className="font-bold mb-2">Scoreboard</h4>
-				{scoresQuery.isLoading ? (
-					<Spinner />
-				) : (
-					<table className="w-full text-sm">
-						<thead>
-							<tr>
-								<th align="left">#</th>
-								<th align="left">Participant</th>
-								<th align="right">Break</th>
-								<th align="right">Fix</th>
-								<th align="right">Total</th>
-							</tr>
-						</thead>
-						<tbody>
-							{scoreRows.map((r: AwdpScoreRow) => (
-								<tr key={r.subject_id}>
-									<td>{r.rank}</td>
-									<td>{r.subject_name}</td>
-									<td align="right">{r.break_score}</td>
-									<td align="right">{r.fix_score}</td>
-									<td align="right">
-										<strong>{r.total_score}</strong>
-									</td>
-								</tr>
-							))}
-							{scoreRows.length === 0 && (
-								<tr>
-									<td colSpan={5}>No scores yet.</td>
-								</tr>
-							)}
-						</tbody>
-					</table>
-				)}
 			</section>
 		</div>
 	);

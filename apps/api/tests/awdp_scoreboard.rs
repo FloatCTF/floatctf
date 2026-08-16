@@ -681,7 +681,8 @@ async fn trend_builds_cumulative_score_curves() {
     };
     cleanup(&db).await;
 
-    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-trend").await;
+    // 标题须命中 cleanup 的 `awdp-it-sb-%` 模式，否则残留事件会让幂等键跨运行冲突。
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-trend").await;
     let run_id = start_run(&db, ev.id).await;
     let gb = seed_gamebox(&db, "tr").await;
     let u_a = seed_user(&db, "ta").await;
@@ -706,6 +707,8 @@ async fn trend_builds_cumulative_score_curves() {
         t0,
     )
     .await;
+    // fix 得分必须携带 fix_round_id（awdp_score_events_fix_round_consistent_check）。
+    let f1 = seed_fix_round(&db, run_id, 1).await;
     score_at(
         &db,
         run_id,
@@ -714,7 +717,7 @@ async fn trend_builds_cumulative_score_curves() {
         None,
         gb,
         "fix",
-        None,
+        Some(f1),
         150,
         "tr-a-f1",
         t1,
@@ -766,7 +769,8 @@ async fn data_present_builds_dashboard_payload() {
     };
     cleanup(&db).await;
 
-    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-data").await;
+    // 标题须命中 cleanup 的 `awdp-it-sb-%` 模式，否则残留事件会让幂等键跨运行冲突。
+    let ev = create_event(&db, ParticipantMode::Individual, "awdp-it-sb-data").await;
     let run_id = start_run(&db, ev.id).await;
     let gb = seed_gamebox(&db, "dp").await;
     event_gamebox_repo::attach_gamebox(&db, ev.id, gb, false)
@@ -778,6 +782,16 @@ async fn data_present_builds_dashboard_payload() {
     register_user(&db, ev.id, u_a).await;
     register_user(&db, ev.id, u_b).await;
 
+    // break_count 按 break_repo（攻破记录）；fix_count 按官方 PATCHED 评估。
+    break_repo::record_break(&db, run_id, gb, Some(u_a), None, "flag-da")
+        .await
+        .unwrap();
+    let inst_b = seed_instance(&db, run_id, ev.id, gb, Some(u_b), None).await;
+    // fix 得分必须携带 fix_round_id（awdp_score_events_fix_round_consistent_check）。
+    let round_id = seed_fix_round(&db, run_id, 1).await;
+    seed_official_eval(&db, run_id, inst_b, round_id, AwdpEvaluationStatus::Patched).await;
+
+    // 账本：break/fix 得分（榜单 / 趋势 / 活动动态的数据源）。
     score(
         &db,
         run_id,
@@ -797,7 +811,7 @@ async fn data_present_builds_dashboard_payload() {
         None,
         gb,
         "fix",
-        None,
+        Some(round_id),
         150,
         "dp-b-f1",
     )

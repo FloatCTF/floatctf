@@ -1,6 +1,9 @@
 //! 练习赛事确保与实例清理相关调度处理器。
 
+use std::sync::Arc;
+
 use crate::{
+    core::AppConfig,
     entity::scheduled_tasks,
     infrastructure::{WebDb, WebDocker},
     modules::event::common::domain::practice_event::ensure_practice_jeopardy_event,
@@ -9,7 +12,7 @@ use crate::{
 };
 use async_trait::async_trait;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub struct CleanRunningInstancesHandler {
     pub db: WebDb,
@@ -60,6 +63,8 @@ impl TaskHandler for CleanRunningInstancesHandler {
 
 pub struct CheckPracticeEventHandler {
     pub db: WebDb,
+    pub docker: WebDocker,
+    pub config: Arc<AppConfig>,
 }
 
 #[async_trait]
@@ -96,6 +101,27 @@ impl TaskHandler for CheckPracticeEventHandler {
             awdp_event_id,
             crate::core::system_ids::EVENT_PRACTICE_AWDP_SYSTEM_KEY
         );
+
+        // AWDP 练习 docker 环境 ensure（练习 data 网络 + control 网络 + JudgeServer）：
+        // best-effort——失败仅告警不阻塞启动（周期任务 awdp.practice.judge 会持续重试自愈）。
+        info!(
+            "{} ensuring AWDP practice docker environment (network + judge)",
+            self.task_key()
+        );
+        if let Err(e) =
+            crate::modules::event::awdp::service::practice_judge::ensure_practice_environment(
+                self.db.get_ref(),
+                self.docker.get_ref(),
+                &self.config.awdp,
+                self.config.auth.jwt_secret.expose().as_bytes(),
+            )
+            .await
+        {
+            warn!(
+                "{} ensure AWDP practice docker environment failed (best-effort, awdp.practice.judge will retry): {e}",
+                self.task_key()
+            );
+        }
         Ok(())
     }
 }

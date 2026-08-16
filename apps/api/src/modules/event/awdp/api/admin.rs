@@ -188,6 +188,19 @@ pub async fn finish_awdp_event(
     )
     .await?;
     crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "ended");
+
+    // 赛后清理（best-effort）：停/删赛事 judge 容器 → 删赛事网络 → 释放子网。
+    // 练习（虚拟赛事）不做清理；失败不阻断 finish（下轮 tick / 管理端可重试）。
+    if let Err(e) = crate::modules::event::awdp::service::practice_judge::cleanup_event_network(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        event_id,
+    )
+    .await
+    {
+        tracing::warn!(event_id = %event_id, error = %e, "AWDP event network cleanup failed (best-effort)");
+    }
+
     UniResponse::ok_none().into()
 }
 

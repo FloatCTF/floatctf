@@ -96,8 +96,44 @@ impl TaskHandler for AwdpEvalWorkerHandler {
     }
 }
 
-/// 幂等 seed：插入 awdp 的 2 个 recurring cron 任务（若不存在）。
-/// 注意：旧 `awdp.practice.judge`（sweep push 派发）已随 pull 模型移除（plan §61）。
+/// `awdp.practice.judge`：每 30s 幂等 ensure 练习环境（网络 + JudgeServer）。
+///
+/// 练习是常驻虚拟赛事，judge/网络只在实例启动时惰性创建，无主动 ensure 会失联
+/// （docker 清理/容器被杀后需重启平台才恢复）。本任务承担周期自愈：
+/// `ensure_practice_environment` 幂等（网络已存在复用、judge running+env 匹配跳过），
+/// 失败走 scheduler 既有重试（30s×n backoff）与重启自动复活机制。
+pub struct AwdpPracticeJudgeHandler {
+    pub db: WebDb,
+    pub docker: WebDocker,
+    pub config: Arc<AppConfig>,
+}
+
+#[async_trait]
+impl TaskHandler for AwdpPracticeJudgeHandler {
+    fn task_key(&self) -> TaskKey {
+        TaskKey::AwdpPracticeJudge
+    }
+
+    fn trigger_type(&self) -> &'static str {
+        "cron"
+    }
+
+    async fn run(&self, _task: crate::entity::scheduled_tasks::Model) -> anyhow::Result<()> {
+        crate::modules::event::awdp::service::practice_judge::ensure_practice_environment(
+            self.db.get_ref(),
+            self.docker.get_ref(),
+            &self.config.awdp,
+            self.config.auth.jwt_secret.expose().as_bytes(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(())
+    }
+}
+
+/// 幂等 seed：插入 awdp 的 3 个 recurring cron 任务（若不存在）。
+/// 注意：`awdp.practice.judge` 复用旧 sweep-push 派发任务的 task_key——
+/// 旧实现已随 pull 模型移除（plan §61），现承担「周期 ensure 练习环境」职责。
 pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyhow::Result<()> {
     use crate::entity::scheduled_tasks;
 
@@ -113,6 +149,12 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
             "AWDP Practice 评估 worker",
             "*/3 * * * * *",
             3i64,
+        ),
+        (
+            TaskKey::AwdpPracticeJudge,
+            "AWDP Practice 环境 ensure（网络+JudgeServer）",
+            "*/30 * * * * *",
+            30i64,
         ),
     ];
     for (key, name, cron_expr, every_secs) in specs {

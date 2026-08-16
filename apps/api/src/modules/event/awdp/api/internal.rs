@@ -123,6 +123,7 @@ pub async fn judge_jobs_claim(
         req.capacity,
         ctx.config.awdp.eval_lease_duration_secs,
         ctx.config.awdp.eval_max_attempts,
+        req.event_id,
     )
     .await
     .map_err(AppError::from)?;
@@ -194,6 +195,7 @@ pub async fn resolve_break_flag(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
         ctx.config.auth.jwt_secret.expose().as_bytes(),
+        req.event_id,
         req.source_ip.trim(),
     )
     .await
@@ -219,6 +221,7 @@ pub async fn consume_eval_proof(
     judge_worker::consume_proof(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
+        req.event_id,
         req.token.trim(),
         req.source_ip.trim(),
     )

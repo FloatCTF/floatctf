@@ -25,7 +25,7 @@ use crate::entity::{
 use crate::infrastructure::settings::get_setting;
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    domain::{flag::awdp_flag, judge::PRACTICE_NETWORK_NAME},
+    domain::flag::awdp_flag,
     repo::{break_repo, event_gamebox_repo, instance_repo, run_repo},
 };
 use crate::modules::gamebox::{effective_image_ref_from_gamebox, healthcheck::parse_healthchecks};
@@ -132,20 +132,21 @@ pub async fn start_instance(
         .await
         .map_err(|e| AwdpError::Internal(format!("get NODE_IP: {e}")))?;
 
-    // 2.5 data 网络 + JudgeServer：练习与比赛实例共用 `fctf-awdp-practice` 子网。
+    // 2.5 data 网络 + JudgeServer：练习与比赛实例共用本赛事 data 子网（每赛事独立网络）。
     //    练习实例与 Judge 互访/判定；比赛实例经该网络访问 JudgeServer `/flag`
     //    （SSRF 题 + internal /flag 按 source-IP 解析都依赖该网络与容器）。
-    //    网络必须存在（比赛实例还要 connect）；judge 部署：练习必须成功，
+    //    网络必须存在（实例启动前 ensure）；judge 部署：练习必须成功，
     //    比赛 best-effort（judge 容器缺失只影响 SSRF 取 flag，不阻塞实例启动）。
-    super::practice_judge::ensure_practice_network(docker, awdp_config).await?;
+    let event_network =
+        super::practice_judge::ensure_event_network(db, docker, awdp_config, run.event_id).await?;
     if eg.is_none() {
-        super::practice_judge::deploy_judge(docker, awdp_config, jwt_secret, run.event_id)
+        super::practice_judge::deploy_judge(db, docker, awdp_config, jwt_secret, run.event_id)
             .await
             .map_err(|e| {
                 AwdpError::Docker(format!("默认启用练习 JudgeServer（自动部署）失败: {e}"))
             })?;
     } else if let Err(e) =
-        super::practice_judge::deploy_judge(docker, awdp_config, jwt_secret, run.event_id).await
+        super::practice_judge::deploy_judge(db, docker, awdp_config, jwt_secret, run.event_id).await
     {
         warn!(
             error = %e,
@@ -222,6 +223,7 @@ pub async fn start_instance(
         db,
         docker,
         &runtime,
+        &event_network,
         run_id,
         &instance,
         &ext,
@@ -245,6 +247,7 @@ async fn launch_container(
     db: &DatabaseConnection,
     docker: &Docker,
     runtime: &DockerContainerRuntime,
+    event_network: &str,
     run_id: Uuid,
     instance: &event_instances::Model,
     ext: &awdp_instances::Model,
@@ -336,14 +339,9 @@ async fn launch_container(
         image: image_ref.to_string(),
         env,
         labels,
-        // 练习实例（eg=None）以 data 子网为主网络；
-        // 竞赛实例主网络保持默认 bridge（host 端口发布不变），
-        // 创建后再追加连接 data 子网（judge-server /flag 可达 + source-IP 可解析）。
-        network_name: if eg.is_none() {
-            Some(PRACTICE_NETWORK_NAME.to_string())
-        } else {
-            None
-        },
+        // 练习与竞赛实例统一：主网络 = 本赛事 data 子网（每赛事独立网络；
+        // judge-server /flag 可达 + source-IP 可解析；host 端口发布与网络无关）。
+        network_name: Some(event_network.to_string()),
         fixed_ip: None,
         network_aliases: vec![],
         port_bindings,
@@ -358,29 +356,6 @@ async fn launch_container(
         .create_and_start(spec)
         .await
         .map_err(|e| AwdpError::Docker(format!("start instance container: {e}")))?;
-
-    // 竞赛实例：追加连接 data 子网（DNS alias `judge-server` 可解析、路由可达、
-    // internal /flag 按 source-IP 识别——network_resolve 只查该网络）。
-    // 连接失败：停掉刚创建的容器（auto_remove 容器 stop 后自动移除），避免残留。
-    if eg.is_some() {
-        if let Err(e) = docker
-            .connect_network(
-                PRACTICE_NETWORK_NAME,
-                bollard::network::ConnectNetworkOptions::<String> {
-                    container: handle.container_id.clone(),
-                    ..Default::default()
-                },
-            )
-            .await
-        {
-            let _ = runtime
-                .stop_and_remove(&handle.container_id, fcmc::IMMEDIATE_STOP_TIMEOUT)
-                .await;
-            return Err(AwdpError::Docker(format!(
-                "connect competition instance to data network {PRACTICE_NETWORK_NAME}: {e}"
-            )));
-        }
-    }
 
     let state = runtime
         .inspect_container(&handle.container_id)
@@ -529,10 +504,18 @@ pub async fn reset_instance_unchecked(
     // auto_remove 容器 stop 后由 daemon 异步移除——必须等待消失再同名重建，避免 409。
     remove_and_wait(&runtime, &instance.container_name, 15).await?;
 
+    // 网络名确定性推导（练习固定 / 赛事专属）；网络在实例启动时已 ensure，此处不重建。
+    let event_network =
+        if crate::modules::event::awdp::domain::judge::is_practice_event(run.event_id) {
+            crate::modules::event::awdp::domain::judge::PRACTICE_NETWORK_NAME.to_string()
+        } else {
+            crate::modules::event::awdp::domain::judge::event_network_name(run.event_id)
+        };
     let (instance, _endpoints) = launch_container(
         db,
         docker,
         &runtime,
+        &event_network,
         ext.run_id,
         &instance,
         &ext,

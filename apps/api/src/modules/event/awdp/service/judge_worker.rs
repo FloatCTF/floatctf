@@ -2,7 +2,8 @@
 //!
 //! 职责（plan §12-§18）：
 //! - `claim_jobs`：调用 evaluation_repo::claim_jobs 领取，并为每条 job 解析完整负载
-//!   （instance/run/gamebox/target_ip/healthchecks/脚本），manual 不含 exploit 脚本；
+//!   （instance/run/gamebox/target_ip/healthchecks/脚本）；worker 仅消费 official
+//!   （manual = Test Check 同步流程独占，含 exploit 诊断，不走 worker）；
 //! - `heartbeat`：延长 lease；
 //! - `record_result`：验证 lease + attempt + runtime_generation 后写终态；official+patched
 //!   由平台侧幂等计分（awdp_score_events idempotency_key）；stale 结果拒绝（409）。
@@ -26,6 +27,9 @@ pub struct ClaimRequest {
     pub worker_id: String,
     /// 本次最多领取数量（bounded concurrency）。
     pub capacity: u64,
+    /// 请求所属赛事（赛事专属 JudgeServer 携带自身 EVENT_ID；平台进程内 worker 可省略）。
+    #[serde(default)]
+    pub event_id: Option<Uuid>,
 }
 
 /// 单条 job 负载（仅包含实际评估所需内容；不返回用户隐私/JWT/DB 凭据/无关 GameBox）。
@@ -66,6 +70,8 @@ pub struct HeartbeatRequest {
 /// Break flag 解析请求（JudgeServer `/flag` 转发，source_ip = 真实 TCP peer）。
 #[derive(Debug, Deserialize)]
 pub struct ResolveFlagRequest {
+    /// 请求所属赛事（JudgeServer 携带自身 EVENT_ID；决定解析哪个 data 网络）。
+    pub event_id: Uuid,
     pub source_ip: String,
 }
 
@@ -73,6 +79,8 @@ pub struct ResolveFlagRequest {
 #[derive(Debug, Deserialize)]
 pub struct ConsumeProofRequest {
     pub token: String,
+    /// 请求所属赛事（JudgeServer 携带自身 EVENT_ID；决定解析哪个 data 网络）。
+    pub event_id: Uuid,
     pub source_ip: String,
 }
 
@@ -125,6 +133,7 @@ pub async fn create_proof_for_job(
 pub async fn consume_proof(
     db: &DatabaseConnection,
     docker: &Docker,
+    event_id: Uuid,
     token: &str,
     source_ip: &str,
 ) -> AwdpResult<()> {
@@ -149,9 +158,10 @@ pub async fn consume_proof(
     }
 
     // source IP 必须等于目标实例当前容器 IP（真实网络附着）。
-    let (instance, _ext) = network_resolve::resolve_instance_by_network_ip(db, docker, source_ip)
-        .await
-        .map_err(|_| AwdpError::Forbidden("source ip mismatch".into()))?;
+    let (instance, _ext) =
+        network_resolve::resolve_instance_by_network_ip(db, docker, event_id, source_ip)
+            .await
+            .map_err(|_| AwdpError::Forbidden("source ip mismatch".into()))?;
     if instance.id != proof.target_instance_id {
         return Err(AwdpError::Forbidden("source ip mismatch".into()));
     }
@@ -223,12 +233,22 @@ pub async fn claim_jobs(
     capacity: u64,
     lease_seconds: i64,
     max_attempts: i32,
+    event_id: Option<Uuid>,
 ) -> AwdpResult<ClaimResponse> {
     use crate::modules::event::awdp::repo::patch_repo;
-    // JudgeServer 同时消费 manual + official。
-    let claimed =
-        evaluation_repo::claim_jobs(db, worker_id, capacity, lease_seconds, max_attempts, &[])
-            .await?;
+    // JudgeServer 仅消费 official：manual = Test Check 同步流程独占（HTTP 请求内
+    // 直接执行，含 exploit 诊断）；worker 领取 manual 会与同步路径双写同一行，
+    // 触发 awdp_evaluations_lease_consistency_check 违例。赛事专属 worker 只领本赛事 job。
+    let claimed = evaluation_repo::claim_jobs(
+        db,
+        worker_id,
+        capacity,
+        lease_seconds,
+        max_attempts,
+        &[AwdpEvaluationKind::Official],
+        event_id,
+    )
+    .await?;
 
     let runtime = DockerContainerRuntime::new(docker.clone());
     let mut jobs = Vec::with_capacity(claimed.len());
@@ -306,6 +326,7 @@ pub async fn claim_jobs(
                     crate::modules::event::awdp::domain::judge::JUDGE_DATA_ALIAS
                 ))
             }
+            // worker 只 claim official；manual 由 Test Check 同步流程独占（含 exploit 诊断）。
             AwdpEvaluationKind::Manual => None,
         };
         jobs.push(ClaimJobDto {
@@ -320,14 +341,8 @@ pub async fn claim_jobs(
             target_ip,
             healthchecks,
             judge_script: gamebox.judge_script_content.clone(),
-            // 练习模式（run.gamebox_id 非空）manual Test Check 带 exploit 脚本做诊断展示
-            // （绝不计分，Vulnerable 状态由执行方给出）；竞赛 manual 不带——玩家不能把
-            // official exploit 当 oracle。
-            exploit_script: match (&kind, run.gamebox_id.is_some()) {
-                (AwdpEvaluationKind::Official, _) => gamebox.awdp_exploit_script_content.clone(),
-                (AwdpEvaluationKind::Manual, true) => gamebox.awdp_exploit_script_content.clone(),
-                (AwdpEvaluationKind::Manual, false) => None,
-            },
+            // 仅 official 下发给 worker（manual 的 exploit 由同步 Test Check 路径执行）。
+            exploit_script: gamebox.awdp_exploit_script_content.clone(),
             proof_url,
         });
     }
@@ -487,7 +502,8 @@ mod tests {
 
     #[test]
     fn manual_kind_never_carries_exploit_script() {
-        // 语义由 claim_jobs 的 match 保证；这里直接验证 kind_string 稳定。
+        // worker 只 claim official；manual 由 Test Check 同步流程独占（含 exploit 诊断）。
+        // 这里直接验证 kind_string 稳定。
         assert_eq!(kind_string(&AwdpEvaluationKind::Manual), "manual");
         assert_eq!(kind_string(&AwdpEvaluationKind::Official), "official");
     }

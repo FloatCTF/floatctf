@@ -24,6 +24,7 @@ pub use super::awdp_breaks::Entity as AwdpBreaks;
 pub use super::awdp_evaluation_proofs::Entity as AwdpEvaluationProofs;
 pub use super::awdp_evaluations::Entity as AwdpEvaluations;
 pub use super::awdp_event_gameboxes::Entity as AwdpEventGameboxes;
+pub use super::awdp_event_networks::Entity as AwdpEventNetworks;
 pub use super::awdp_events::Entity as AwdpEvents;
 pub use super::awdp_fix_rounds::Entity as AwdpFixRounds;
 pub use super::awdp_instances::Entity as AwdpInstances;

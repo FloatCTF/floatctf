@@ -3,6 +3,7 @@
 pub mod break_repo;
 pub mod evaluation_repo;
 pub mod event_gamebox_repo;
+pub mod event_network_repo;
 pub mod event_repo;
 pub mod instance_repo;
 pub mod patch_repo;

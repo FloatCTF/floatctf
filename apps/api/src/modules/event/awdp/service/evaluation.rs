@@ -360,16 +360,19 @@ pub async fn worker_round(
     max_attempts: i32,
 ) -> AwdpResult<usize> {
     use crate::entity::sea_orm_active_enums::AwdpEvaluationKind;
-    // 进程内 worker 消费全部 kind（manual + official）：
-    // manual = Test Check（internal healthcheck + judge，不计分）；
-    // official = 官方评估管线。JudgeServer 与进程内 worker 经 lease 互斥竞争。
+    // 进程内 worker 仅消费 official：manual = Test Check 同步流程独占（HTTP 请求内
+    // 直接执行），worker 不得领取 manual——否则与同步路径双写同一行会触发
+    // awdp_evaluations_lease_consistency_check 违例（终态 + lease_token_hash 并存）。
+    // JudgeServer 与进程内 worker 经 lease 互斥竞争。
+    // 进程内 worker 在宿主网络，可达所有赛事网络 → 不按 event 过滤（None）。
     let claimed = evaluation_repo::claim_jobs(
         db,
         worker_id,
         concurrency,
         lease_duration_secs,
         max_attempts,
-        &[],
+        &[AwdpEvaluationKind::Official],
+        None,
     )
     .await?;
     let mut n = 0usize;

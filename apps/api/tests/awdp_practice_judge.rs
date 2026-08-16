@@ -24,7 +24,7 @@ static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
 const IMAGE_ID: &str = "sha256:e8e04fcb779cfbfb64980f5c2c1b29ad507f3a6760e38cb0126335ea7893e70b";
-const JUDGE_IMAGE_REF: &str = "floatctf/awdp-judgeserver:latest";
+const JUDGE_IMAGE_REF: &str = "floatctf/infra/awdp-judgeserver:latest";
 const JWT_SECRET: &[u8] = b"test-platform-secret-0123456789abcdef";
 
 fn db_url() -> String {
@@ -137,9 +137,11 @@ async fn seed_trainable_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> 
 /// 测试用 AWDP 静态配置。
 fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
     floatctf::core::config::AwdpStaticConfig {
-        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
-        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judgeserver_image: "floatctf/infra/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/23".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
+        network_pool: "10.43.0.0/16".to_string(),
+        event_netmask: 24,
         practice_judge_data_host: "judge-server".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,
@@ -177,10 +179,10 @@ async fn practice_judge_deploy_pull_worker_e2e() {
     remove_judge_container(&rt).await;
 
     // 1. deploy（幂等 ×2）。
-    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
-    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
 
@@ -377,7 +379,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
     remove_judge_container(&rt).await;
 
     // 1. 两个网络 ensure。
-    let _ = practice_judge::ensure_practice_network(&docker, &awdp_config())
+    let _ = practice_judge::ensure_event_network(&db, &docker, &awdp_config(), event_id)
         .await
         .unwrap();
     floatctf::modules::event::awdp::service::practice_acl::ensure_control_network(&docker)
@@ -385,7 +387,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
         .unwrap();
 
     // 2. 部署 judge（data + control）。
-    practice_judge::deploy_judge(&docker, &awdp_config(), JWT_SECRET, event_id)
+    practice_judge::deploy_judge(&db, &docker, &awdp_config(), JWT_SECRET, event_id)
         .await
         .unwrap();
 

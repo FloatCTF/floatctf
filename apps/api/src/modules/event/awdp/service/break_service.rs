@@ -10,7 +10,6 @@ use crate::modules::event::awdp::{
     domain::{
         break_idempotency_key,
         flag::{awdp_flag, hash_flag},
-        judge::PRACTICE_NETWORK_NAME,
     },
     repo::{break_repo, run_repo, score_repo},
     service::runtime::Subject,
@@ -29,9 +28,10 @@ pub struct BreakSubmissionResult {
 
 /// 解析 Break flag（GameBox → JudgeServer `/flag` → FloatCTF internal API，plan §8/§9）。
 ///
+/// `event_id`：请求所属赛事（JudgeServer 转发时携带；决定解析哪个 data 网络）。
 /// `source_ip`（真实 TCP peer）是**唯一**身份输入——GameBox 不提供任何身份参数。
 /// 验证链：
-///   1. data 网络 inspect → 找到持有 source_ip 的容器（current physical attachment）；
+///   1. 赛事 data 网络 inspect → 找到持有 source_ip 的容器（current physical attachment）；
 ///   2. 容器 → event_instances（container_name），要求 runtime_state == running；
 ///   3. awdp_instances → run，要求 run.phase == Break（Fix/PreparingFix/Ended 拒绝）；
 ///   4. 用 AWDP 确定性 flag 域派生对应 flag（HMAC 绑定 run×gamebox×subject）。
@@ -41,13 +41,14 @@ pub async fn resolve_break_flag(
     db: &DatabaseConnection,
     docker: &bollard::Docker,
     jwt_secret: &[u8],
+    event_id: Uuid,
     source_ip: &str,
 ) -> AwdpResult<String> {
     use crate::modules::event::awdp::service::network_resolve;
 
     // 1-2. 当前 data 网络附着 → 容器 → 运行中实例（真实 IP 是事实来源）。
     let (instance, ext) =
-        network_resolve::resolve_instance_by_network_ip(db, docker, source_ip).await?;
+        network_resolve::resolve_instance_by_network_ip(db, docker, event_id, source_ip).await?;
 
     // 3. 实例 → run（instance 属于该 run 由 awdp_instances 1:1 保证）。
     let run = run_repo::require_by_id(db, ext.run_id).await?;

@@ -19,7 +19,9 @@ use crate::{
             AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler, AwdTeamUnbanHandler,
         },
     },
-    modules::event::awdp::scheduler::{AwdpEvalWorkerHandler, AwdpTickHandler},
+    modules::event::awdp::scheduler::{
+        AwdpEvalWorkerHandler, AwdpPracticeJudgeHandler, AwdpTickHandler,
+    },
     scheduler::{
         CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
         TaskHandler, TaskScheduler,
@@ -47,7 +49,11 @@ pub async fn build_task_scheduler(
         Arc::new(DockerRuntime::new(docker.get_ref().clone()));
 
     let handlers: Vec<Arc<dyn TaskHandler>> = vec![
-        Arc::new(CheckPracticeEventHandler { db: db.clone() }),
+        Arc::new(CheckPracticeEventHandler {
+            db: db.clone(),
+            docker: docker.clone(),
+            config: config.clone(),
+        }),
         Arc::new(CleanRunningInstancesHandler {
             db: db.clone(),
             docker: docker.clone(),
@@ -104,6 +110,11 @@ pub async fn build_task_scheduler(
             docker: docker.clone(),
             config: config.clone(),
         }),
+        Arc::new(AwdpPracticeJudgeHandler {
+            db: db.clone(),
+            docker: docker.clone(),
+            config: config.clone(),
+        }),
     ];
 
     for handler in handlers {
@@ -115,7 +126,7 @@ pub async fn build_task_scheduler(
     }
 
     scheduler.seed_startup_tasks().await?;
-    // AWDP 引擎：2 个 recurring cron（tick / eval worker），幂等 seed。
+    // AWDP 引擎：3 个 recurring cron（tick / eval worker / practice judge ensure），幂等 seed。
     crate::modules::event::awdp::scheduler::seed_awdp_recurring_tasks(&seed_db).await?;
     scheduler.validate_enabled_task_keys().await?;
     Ok(scheduler)

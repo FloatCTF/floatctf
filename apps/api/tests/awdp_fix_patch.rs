@@ -236,9 +236,11 @@ sys.exit(0 if all(check(ip)["success"] for ip in ips) else 1)
 /// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
 fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
     floatctf::core::config::AwdpStaticConfig {
-        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
-        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judgeserver_image: "floatctf/infra/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/23".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
+        network_pool: "10.43.0.0/16".to_string(),
+        event_netmask: 24,
         practice_judge_data_host: "judge-server".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,

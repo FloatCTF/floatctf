@@ -211,20 +211,34 @@ async fn claim_is_exclusive() {
     let (run, inst, round, _u, _gb) = seed_env(&db, "claim-excl").await;
     let ev = create_official(&db, run, inst, round).await;
 
-    let jobs_a =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 120, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs_a = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        120,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(jobs_a.len(), 1);
     assert_eq!(jobs_a[0].evaluation.id, ev.id);
     assert_eq!(jobs_a[0].attempt, 1);
     assert!(!jobs_a[0].lease_token.is_empty(), "lease token 非空");
 
     // 第二个 worker 领不到（status 已 running）。
-    let jobs_b =
-        evaluation_repo::claim_jobs(&db, WORKER_B, 10, 120, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs_b = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_B,
+        10,
+        120,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert!(jobs_b.is_empty(), "second worker must not claim same lease");
 
     let fresh = eval_by_id(&db, ev.id).await;
@@ -285,14 +299,28 @@ async fn concurrent_claims_distribute_disjoint() {
         create_official(&db, run, iid, rid).await;
     }
 
-    let jobs_a =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
-    let jobs_b =
-        evaluation_repo::claim_jobs(&db, WORKER_B, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs_a = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
+    let jobs_b = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_B,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
 
     let ids_a: Vec<Uuid> = jobs_a.iter().map(|j| j.evaluation.id).collect();
     let ids_b: Vec<Uuid> = jobs_b.iter().map(|j| j.evaluation.id).collect();
@@ -326,10 +354,17 @@ async fn heartbeat_extends_lease_and_rejects_wrong_token() {
     let (run, inst, round, _u, _gb) = seed_env(&db, "hb").await;
     let ev = create_official(&db, run, inst, round).await;
 
-    let jobs =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     let job = &jobs[0];
     let token = job.lease_token.clone();
     let lease_before = eval_by_id(&db, ev.id).await.lease_expires_at.unwrap();
@@ -369,19 +404,33 @@ async fn expired_lease_reclaimed_and_stale_result_rejected() {
     let ev = create_official(&db, run, inst, round).await;
 
     // worker A claim（lease 1s）。
-    let jobs_a =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 1, 5, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs_a = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        1,
+        5,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     let job_a = &jobs_a[0];
     assert_eq!(job_a.attempt, 1);
 
     // 等 lease 过期 → worker B 重领（attempt=2）。
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-    let jobs_b =
-        evaluation_repo::claim_jobs(&db, WORKER_B, 10, 30, 5, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs_b = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_B,
+        10,
+        30,
+        5,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(jobs_b.len(), 1, "过期 lease 必须被回收重领");
     assert_eq!(jobs_b[0].evaluation.id, ev.id, "重领的是同一条评估");
     assert_eq!(jobs_b[0].attempt, 2, "attempt 递增");
@@ -445,10 +494,17 @@ async fn wrong_token_result_rejected() {
     cleanup(&db).await;
     let (run, inst, round, _u, _gb) = seed_env(&db, "wrt").await;
     let ev = create_official(&db, run, inst, round).await;
-    let jobs =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
 
     let out = evaluation_repo::finish_with_lease(
         &db,
@@ -485,10 +541,17 @@ async fn max_attempts_terminal_platform_error() {
     // max_attempts=3：三次 lease 过期 → 三次重领（attempt 1,2,3）→ 第四次回收时终态。
     let mut last_attempt = 0;
     for i in 1..=3 {
-        let jobs =
-            evaluation_repo::claim_jobs(&db, WORKER_A, 10, 1, 3, &[AwdpEvaluationKind::Official])
-                .await
-                .unwrap();
+        let jobs = evaluation_repo::claim_jobs(
+            &db,
+            WORKER_A,
+            10,
+            1,
+            3,
+            &[AwdpEvaluationKind::Official],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(jobs.len(), 1, "第 {i} 次重领应成功");
         last_attempt = jobs[0].attempt;
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
@@ -496,10 +559,17 @@ async fn max_attempts_terminal_platform_error() {
     assert_eq!(last_attempt, 3, "attempt 递增到 3");
 
     // 第 4 次 claim：回收时 attempt>=max → 终态 PLATFORM_ERROR，无 job 返回。
-    let jobs =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert!(jobs.is_empty());
     let fresh = eval_by_id(&db, ev.id).await;
     assert_eq!(
@@ -511,10 +581,17 @@ async fn max_attempts_terminal_platform_error() {
     assert!(fresh.lease_token_hash.is_none());
 
     // 后续 claim 不再返回（终态）。
-    let jobs2 =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs2 = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert!(jobs2.is_empty());
     cleanup(&db).await;
 }
@@ -531,9 +608,17 @@ async fn release_or_fail_retries_then_terminal() {
     let ev = create_official(&db, run, inst, round).await;
 
     // attempt 1 → 失败 → 释放回 pending（attempt 保留）。
-    let j1 = evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-        .await
-        .unwrap();
+    let j1 = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(j1[0].attempt, 1);
     let out = evaluation_repo::release_or_fail(
         &db,
@@ -560,9 +645,17 @@ async fn release_or_fail_retries_then_terminal() {
     );
 
     // attempt 2 → 失败 → 释放。
-    let j2 = evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-        .await
-        .unwrap();
+    let j2 = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(j2[0].attempt, 2);
     let out =
         evaluation_repo::release_or_fail(&db, ev.id, WORKER_A, &j2[0].lease_token, 2, 3, "boom")
@@ -571,9 +664,17 @@ async fn release_or_fail_retries_then_terminal() {
     assert_eq!(out, evaluation_repo::FinishOutcome::Ok);
 
     // attempt 3（=max）→ 失败 → 终态 PLATFORM_ERROR。
-    let j3 = evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-        .await
-        .unwrap();
+    let j3 = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(j3[0].attempt, 3);
     let out =
         evaluation_repo::release_or_fail(&db, ev.id, WORKER_A, &j3[0].lease_token, 3, 3, "boom")
@@ -599,10 +700,17 @@ async fn in_process_worker_only_claims_official() {
         .await
         .unwrap();
 
-    let jobs =
-        evaluation_repo::claim_jobs(&db, WORKER_A, 10, 30, 3, &[AwdpEvaluationKind::Official])
-            .await
-            .unwrap();
+    let jobs = evaluation_repo::claim_jobs(
+        &db,
+        WORKER_A,
+        10,
+        30,
+        3,
+        &[AwdpEvaluationKind::Official],
+        None,
+    )
+    .await
+    .unwrap();
     assert!(jobs.is_empty(), "official-only claim 不得领取 manual");
     let fresh = eval_by_id(&db, manual.id).await;
     assert_eq!(fresh.status, AwdpEvaluationStatus::Pending);

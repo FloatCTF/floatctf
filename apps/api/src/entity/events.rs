@@ -41,6 +41,8 @@ pub enum Relation {
     AwdNetworkAllocations,
     #[sea_orm(has_many = "super::awdp_event_gameboxes::Entity")]
     AwdpEventGameboxes,
+    #[sea_orm(has_one = "super::awdp_event_networks::Entity")]
+    AwdpEventNetworks,
     #[sea_orm(has_one = "super::awdp_events::Entity")]
     AwdpEvents,
     #[sea_orm(has_many = "super::awdp_runs::Entity")]
@@ -82,6 +84,12 @@ impl Related<super::awd_network_allocations::Entity> for Entity {
 impl Related<super::awdp_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AwdpEventGameboxes.def()
+    }
+}
+
+impl Related<super::awdp_event_networks::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpEventNetworks.def()
     }
 }
 

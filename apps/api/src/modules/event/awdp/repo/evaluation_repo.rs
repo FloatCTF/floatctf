@@ -190,6 +190,9 @@ where
 ///
 /// `kinds` 为空 = 不限制（JudgeServer 同时消费 manual + official）；
 /// 平台侧进程内 worker 只传 official（manual 由 Test Check 同步流程独占）。
+/// `event_id` 非 None = 仅领取该赛事（awdp_runs.event_id 过滤）——赛事专属 JudgeServer
+/// 只能访问本赛事 data 网络，绝不能领到别的赛事的 job（target_ip 不可达会误判 service_down）；
+/// None = 不限制（平台进程内 worker，宿主可达所有赛事网络）。
 #[allow(clippy::too_many_arguments)]
 pub async fn claim_jobs(
     db: &DatabaseConnection,
@@ -198,6 +201,7 @@ pub async fn claim_jobs(
     lease_duration_secs: i64,
     max_attempts: i32,
     kinds: &[AwdpEvaluationKind],
+    event_id: Option<Uuid>,
 ) -> AwdpResult<Vec<ClaimedJob>> {
     let txn: DatabaseTransaction = db
         .begin()

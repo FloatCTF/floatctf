@@ -234,9 +234,11 @@ async fn seed_awdp_gamebox(
 /// 测试用 AWDP 静态配置（练习子网 / JudgeServer 镜像等）。
 fn awdp_config() -> floatctf::core::config::AwdpStaticConfig {
     floatctf::core::config::AwdpStaticConfig {
-        practice_judgeserver_image: "floatctf/awdp-judgeserver:latest".to_string(),
-        practice_network_subnet: "10.42.2.0/24".to_string(),
+        practice_judgeserver_image: "floatctf/infra/awdp-judgeserver:latest".to_string(),
+        practice_network_subnet: "10.42.2.0/23".to_string(),
         practice_judge_ip: "10.42.2.2".to_string(),
+        network_pool: "10.43.0.0/16".to_string(),
+        event_netmask: 24,
         practice_judge_data_host: "judge-server".to_string(),
         platform_internal_url: "http://host.docker.internal:9090".to_string(),
         eval_lease_duration_secs: 120,
@@ -947,6 +949,7 @@ async fn break_flag_resolve_by_source_ip() {
         &db,
         &docker,
         JWT_SECRET,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         &container_ip,
     )
     .await
@@ -972,6 +975,7 @@ async fn break_flag_resolve_by_source_ip() {
         &db,
         &docker,
         JWT_SECRET,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         "10.99.99.99",
     )
     .await
@@ -992,6 +996,7 @@ async fn break_flag_resolve_by_source_ip() {
         &db,
         &docker,
         JWT_SECRET,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         &container_ip,
     )
     .await
@@ -1126,6 +1131,7 @@ async fn proof_consume_lifecycle() {
         120,
         3,
         &[],
+        None,
     )
     .await
     .unwrap();
@@ -1147,6 +1153,7 @@ async fn proof_consume_lifecycle() {
     floatctf::modules::event::awdp::service::judge_worker::consume_proof(
         &db,
         &docker,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         &token,
         &container_ip,
     )
@@ -1157,6 +1164,7 @@ async fn proof_consume_lifecycle() {
     let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
         &db,
         &docker,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         &token,
         &container_ip,
     )
@@ -1180,6 +1188,7 @@ async fn proof_consume_lifecycle() {
     let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
         &db,
         &docker,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         &token2,
         "10.99.99.99",
     )
@@ -1194,6 +1203,7 @@ async fn proof_consume_lifecycle() {
     let err = floatctf::modules::event::awdp::service::judge_worker::consume_proof(
         &db,
         &docker,
+        floatctf::core::system_ids::EVENT_PRACTICE_AWDP,
         "bogus-token",
         &container_ip,
     )
@@ -1266,14 +1276,15 @@ async fn competition_instance_resolves_by_network_source_ip() {
         .await
         .unwrap()
         .expect("instance row");
-    let ip = network_resolve::instance_internal_ip(&docker, &inst)
+    let ip = network_resolve::instance_internal_ip(&docker, event_id, &inst)
         .await
         .unwrap();
-    assert!(ip.is_some(), "比赛实例必须附着到 data 网络");
+    assert!(ip.is_some(), "比赛实例必须附着到本赛事 data 网络");
     let source_ip = ip.unwrap();
-    let (found, ext) = network_resolve::resolve_instance_by_network_ip(&db, &docker, &source_ip)
-        .await
-        .expect("resolve by source ip");
+    let (found, ext) =
+        network_resolve::resolve_instance_by_network_ip(&db, &docker, event_id, &source_ip)
+            .await
+            .expect("resolve by source ip");
     assert_eq!(found.id, inst.id);
     assert_eq!(ext.instance_id, inst.id);
 

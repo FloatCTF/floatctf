@@ -55,6 +55,9 @@ use tokio::time::{Duration, Instant};
 struct ClaimRequest {
     worker_id: String,
     capacity: u64,
+    /// 赛事专属 worker：声明所属 event（平台按此过滤 claim，防止跨赛事误领）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +112,8 @@ struct AppState {
     platform_url: String,
     internal_token: String,
     worker_id: String,
+    /// 所属赛事（EVENT_ID env；None = 平台进程内 worker 语义，不按 event 过滤）。
+    event_id: Option<uuid::Uuid>,
     claim_batch: u64,
     concurrency: Arc<Semaphore>,
     poll_interval: Duration,
@@ -732,6 +737,7 @@ async fn claim(state: &AppState, capacity: u64) -> Result<ClaimResponse, String>
     let body = ClaimRequest {
         worker_id: state.worker_id.clone(),
         capacity,
+        event_id: state.event_id,
     };
     let resp = state
         .client
@@ -781,7 +787,10 @@ async fn handle_flag(state: web::Data<AppState>, req: HttpRequest) -> HttpRespon
     }
 
     let url = format!("{}/internal/awdp/flag/resolve", state.platform_url);
-    let body = serde_json::json!({ "source_ip": source_ip });
+    let body = serde_json::json!({
+        "event_id": state.event_id,
+        "source_ip": source_ip
+    });
     match state
         .client
         .post(&url)
@@ -834,7 +843,11 @@ async fn handle_proof(
     }
 
     let url = format!("{}/internal/awdp/proof/consume", state.platform_url);
-    let body = serde_json::json!({ "token": token, "source_ip": source_ip });
+    let body = serde_json::json!({
+        "token": token,
+        "event_id": state.event_id,
+        "source_ip": source_ip
+    });
     match state
         .client
         .post(&url)
@@ -876,6 +889,9 @@ async fn main() -> std::io::Result<()> {
         env::var("PLATFORM_INTERNAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9090".to_string());
     let internal_token = env::var("INTERNAL_TOKEN").expect("INTERNAL_TOKEN must be set");
     let worker_id = env::var("WORKER_ID").unwrap_or_else(|_| "practice-judge-01".to_string());
+    // 赛事专属 worker 必须声明 EVENT_ID（平台按此过滤 claim / 解析 flag / proof）。
+    // 未设置 = 平台进程内 worker 语义（不按 event 过滤）；本服务部署时由平台注入。
+    let event_id: Option<uuid::Uuid> = env::var("EVENT_ID").ok().and_then(|v| v.parse().ok());
     let data_listen = env::var("DATA_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:80".to_string());
     let claim_batch: u64 = env::var("CLAIM_BATCH")
         .unwrap_or_else(|_| "16".to_string())
@@ -913,6 +929,7 @@ async fn main() -> std::io::Result<()> {
         platform_url,
         internal_token,
         worker_id: worker_id.clone(),
+        event_id,
         claim_batch,
         concurrency: Arc::new(Semaphore::new(max_concurrency)),
         poll_interval,
@@ -923,10 +940,11 @@ async fn main() -> std::io::Result<()> {
 
     tracing::info!(
         worker_id = %worker_id,
+        event_id = ?event_id,
         data_listen = %data_listen,
         max_concurrency,
         claim_batch,
-        "FloatCTF AWDP Practice JudgeServer (pull worker) starting"
+        "FloatCTF AWDP JudgeServer (pull worker) starting"
     );
 
     // Pull loop（后台）。

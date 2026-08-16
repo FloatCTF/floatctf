@@ -23,6 +23,7 @@ export * from "./awdp_breaks";
 export * from "./awdp_evaluation_proofs";
 export * from "./awdp_evaluations";
 export * from "./awdp_event_gameboxes";
+export * from "./awdp_event_networks";
 export * from "./awdp_events";
 export * from "./awdp_fix_rounds";
 export * from "./awdp_instances";

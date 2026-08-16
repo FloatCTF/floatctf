@@ -113,6 +113,10 @@ pub struct AwdpStaticConfig {
     pub practice_network_subnet: String,
     /// 练习子网内 JudgeServer 固定 IP。
     pub practice_judge_ip: String,
+    /// 比赛赛事子网分配池（CIDR）：每 AWDP Event 从池中分配一个 `event_netmask` 大小的子网。
+    pub network_pool: String,
+    /// 每赛事子网掩码长度（如 24 → 每赛事 /24；默认 24）。
+    pub event_netmask: i32,
     /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 judge-server）。
     pub practice_judge_data_host: String,
     /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达；
@@ -288,6 +292,10 @@ struct AwdpToml {
     practice_network_subnet: String,
     #[serde(default = "default_practice_judge_ip")]
     practice_judge_ip: String,
+    #[serde(default = "default_network_pool")]
+    network_pool: String,
+    #[serde(default = "default_event_netmask")]
+    event_netmask: i32,
     #[serde(default = "default_practice_judge_data_host")]
     practice_judge_data_host: String,
     #[serde(default = "default_platform_internal_url")]
@@ -304,6 +312,8 @@ impl Default for AwdpToml {
             practice_judgeserver_image: default_practice_judgeserver_image(),
             practice_network_subnet: default_practice_network_subnet(),
             practice_judge_ip: default_practice_judge_ip(),
+            network_pool: default_network_pool(),
+            event_netmask: default_event_netmask(),
             practice_judge_data_host: default_practice_judge_data_host(),
             platform_internal_url: default_platform_internal_url(),
             eval_lease_duration_secs: default_eval_lease_duration_secs(),
@@ -325,15 +335,25 @@ fn default_practice_judge_data_host() -> String {
 }
 
 fn default_practice_judgeserver_image() -> String {
-    "floatctf/awdp-judgeserver:latest".to_string()
+    "floatctf/infra/awdp-judgeserver:latest".to_string()
 }
 
 fn default_practice_network_subnet() -> String {
-    "10.42.2.0/24".to_string()
+    "10.42.2.0/23".to_string()
 }
 
 fn default_practice_judge_ip() -> String {
     "10.42.2.2".to_string()
+}
+
+fn default_network_pool() -> String {
+    // 10.43.0.0/16：与练习固定网络（10.42.2.0/24）、control（10.42.8.0/24）完全错开，
+    // 避免 Docker 报 "Pool overlaps with other one on this address space"。
+    "10.43.0.0/16".to_string()
+}
+
+fn default_event_netmask() -> i32 {
+    24
 }
 
 fn default_platform_internal_url() -> String {
@@ -461,6 +481,8 @@ impl AppConfig {
                 practice_judgeserver_image: file.awdp.practice_judgeserver_image,
                 practice_network_subnet: file.awdp.practice_network_subnet,
                 practice_judge_ip: file.awdp.practice_judge_ip,
+                network_pool: file.awdp.network_pool,
+                event_netmask: file.awdp.event_netmask,
                 practice_judge_data_host: file.awdp.practice_judge_data_host,
                 platform_internal_url: file.awdp.platform_internal_url,
                 eval_lease_duration_secs: file.awdp.eval_lease_duration_secs,

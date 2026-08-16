@@ -26,6 +26,7 @@ pub mod awdp_breaks;
 pub mod awdp_evaluation_proofs;
 pub mod awdp_evaluations;
 pub mod awdp_event_gameboxes;
+pub mod awdp_event_networks;
 pub mod awdp_events;
 pub mod awdp_fix_rounds;
 pub mod awdp_instances;

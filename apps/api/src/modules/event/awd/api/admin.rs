@@ -791,6 +791,7 @@ pub async fn rotate_tokens(
         &network_name,
         ctx.config.awd.flagserver_image.clone(),
         fs_token_str,
+        &ctx.config.awd.platform_internal_url,
     )
     .await?;
     rollout_infra_container(
@@ -803,6 +804,7 @@ pub async fn rotate_tokens(
         &network_name,
         ctx.config.awd.judgeserver_image.clone(),
         js_token_str,
+        &ctx.config.awd.platform_internal_url,
     )
     .await?;
 
@@ -858,6 +860,7 @@ async fn rollout_infra_container(
     network_name: &str,
     image_ref: String,
     token: String,
+    platform_internal_url: &str,
 ) -> UniResult<()> {
     let container_name = format!("fctf-{}-{}", kind, &event_id.to_string()[..8]);
 
@@ -873,11 +876,17 @@ async fn rollout_infra_container(
             image_ref,
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
-            env: vec![
-                format!("EVENT_ID={event_id}"),
-                format!("INTERNAL_TOKEN={token}"),
-                format!("LISTEN_ADDR=0.0.0.0:8080"),
-            ],
+            env: {
+                let mut envs = vec![
+                    format!("EVENT_ID={event_id}"),
+                    format!("INTERNAL_TOKEN={token}"),
+                    format!("LISTEN_ADDR=0.0.0.0:8080"),
+                ];
+                if kind == "judgeserver" {
+                    envs.push(format!("PLATFORM_INTERNAL_URL={platform_internal_url}"));
+                }
+                envs
+            },
             cpu_millis: Some(500),
             memory_bytes: Some(256 * 1024 * 1024),
         })

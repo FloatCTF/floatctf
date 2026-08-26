@@ -102,6 +102,8 @@ pub struct AwdStaticConfig {
     pub network_runtime: String,
     pub flagserver_image: String,
     pub judgeserver_image: String,
+    /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达）。
+    pub platform_internal_url: String,
 }
 
 /// AWDP（含练习）进程静态配置。
@@ -267,6 +269,8 @@ struct AwdToml {
     flagserver_image: String,
     #[serde(default = "default_judgeserver_image")]
     judgeserver_image: String,
+    #[serde(default = "default_platform_internal_url")]
+    platform_internal_url: String,
 }
 
 fn default_network_runtime() -> String {
@@ -280,6 +284,7 @@ impl Default for AwdToml {
             network_runtime: default_network_runtime(),
             flagserver_image: default_flagserver_image(),
             judgeserver_image: default_judgeserver_image(),
+            platform_internal_url: default_platform_internal_url(),
         }
     }
 }
@@ -476,6 +481,7 @@ impl AppConfig {
                 network_runtime: file.awd.network_runtime,
                 flagserver_image: file.awd.flagserver_image,
                 judgeserver_image: file.awd.judgeserver_image,
+                platform_internal_url: file.awd.platform_internal_url,
             },
             awdp: AwdpStaticConfig {
                 practice_judgeserver_image: file.awdp.practice_judgeserver_image,

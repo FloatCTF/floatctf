@@ -96,6 +96,7 @@ pub async fn deploy_event(
             awd_config.flagserver_image.clone(),
             &awd_event.flagserver_token_ciphertext,
             &awd_event.flagserver_token_nonce,
+            &awd_config.platform_internal_url,
         )
         .await?;
         ensure_infra_container(
@@ -110,6 +111,7 @@ pub async fn deploy_event(
             awd_config.judgeserver_image.clone(),
             &awd_event.judgeserver_token_ciphertext,
             &awd_event.judgeserver_token_nonce,
+            &awd_config.platform_internal_url,
         )
         .await?;
 
@@ -247,6 +249,7 @@ async fn ensure_infra_container(
     image_ref: String,
     token_ct: &Option<Vec<u8>>,
     token_nonce: &Option<Vec<u8>>,
+    platform_internal_url: &str,
 ) -> AwdResult<()> {
     let container_name = format!("fctf-{}-{}", kind, &event_id.to_string()[..8]);
     let resource_id = container_name.clone();
@@ -300,11 +303,17 @@ async fn ensure_infra_container(
             image_ref,
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
-            env: vec![
-                format!("EVENT_ID={event_id}"),
-                format!("INTERNAL_TOKEN={token}"),
-                format!("LISTEN_ADDR=0.0.0.0:8080"),
-            ],
+            env: {
+                let mut envs = vec![
+                    format!("EVENT_ID={event_id}"),
+                    format!("INTERNAL_TOKEN={token}"),
+                    format!("LISTEN_ADDR=0.0.0.0:8080"),
+                ];
+                if kind == "judgeserver" {
+                    envs.push(format!("PLATFORM_INTERNAL_URL={platform_internal_url}"));
+                }
+                envs
+            },
             cpu_millis: Some(500),
             memory_bytes: Some(256 * 1024 * 1024),
         })

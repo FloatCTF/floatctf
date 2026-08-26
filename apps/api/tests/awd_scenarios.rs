@@ -14,7 +14,7 @@ use sea_orm::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode};
+use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode, RoundStatus};
 use floatctf::entity::{
     awd_event_networks, awd_events, awd_rounds, events, sea_orm_active_enums,
     sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
@@ -22,9 +22,13 @@ use floatctf::entity::{
 use floatctf::infrastructure::realtime::NoopEventPublisher;
 use floatctf::modules::event::awd::{
     domain::firewall_state::DesiredFirewallState,
-    infrastructure::{firewall::FirewallRuntime, network::NoopNetworkRuntime},
+    infrastructure::{
+        firewall::FirewallRuntime,
+        firewall::NoopFirewallRuntime,
+        network::NoopNetworkRuntime,
+    },
     repo::event_repo,
-    service::round_service,
+    service::{event_service, round_service},
 };
 
 fn db_url() -> String {
@@ -129,23 +133,43 @@ async fn cleanup_event(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
         .filter(floatctf::entity::awd_event_gameboxes::Column::EventId.eq(event_id))
         .exec(db)
         .await;
-    // 全局 gameboxes 清理（safe_name 前缀 gb-；配置随行删除）
-    let _ = floatctf::entity::gameboxes::Entity::delete_many()
-        .filter(floatctf::entity::gameboxes::Column::SafeName.like("gb-%"))
+    let _ = floatctf::entity::awd_event_networks::Entity::delete_many()
+        .filter(floatctf::entity::awd_event_networks::Column::EventId.eq(event_id))
         .exec(db)
         .await;
-    let _ = awd_events::Entity::delete_many()
-        .filter(awd_events::Column::EventId.eq(event_id))
+    let _ = floatctf::entity::awd_events::Entity::delete_by_id(event_id)
         .exec(db)
         .await;
     let _ = events::Entity::delete_many()
         .filter(events::Column::Id.eq(event_id))
         .exec(db)
         .await;
-    let _ = floatctf::entity::scheduled_tasks::Entity::delete_many()
-        .filter(floatctf::entity::scheduled_tasks::Column::GroupId.eq(event_id))
-        .exec(db)
-        .await;
+}
+
+/// 创建最小 Event Network fixture（用于 round recovery 测试）。
+async fn seed_minimal_event_network(db: &sea_orm::DatabaseConnection, event_id: Uuid) {
+    use floatctf::entity::sea_orm_active_enums::AwdNetworkAllocationMode;
+    let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
+    let wg_port = 5_0000 + Uuid::new_v4().as_u128() as i32 % 1000;
+    let net = awd_event_networks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        allocation_mode: Set(AwdNetworkAllocationMode::Automatic),
+        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+        wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
+        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+        flagserver_ip: Set("10.42.0.10".parse().unwrap()),
+        judgeserver_ip: Set("10.42.0.11".parse().unwrap()),
+        wireguard_interface_name: Set(wg_iface),
+        wireguard_listen_port: Set(wg_port),
+        docker_network_name: Set(format!(
+            "fctf-awd-{}",
+            &Uuid::new_v4().simple().to_string()[..8]
+        )),
+        locked_at: Set(None),
+        ..Default::default()
+    };
+    net.insert(db).await.expect("insert awd_event_networks");
 }
 
 /// Scenario A：完整轮次闭环（P5-2，DB 级断言）。
@@ -349,7 +373,7 @@ async fn pause_resume_rebuilds_round_end_task() {
         .expect("consume round end task");
 
     // Resume
-    event_service::resume_event(&db, &network, &firewall, event_id)
+    event_service::resume_event(&db, &network, &firewall, &publisher, event_id)
         .await
         .expect("resume");
 
@@ -836,4 +860,363 @@ async fn load_concurrent_judge_callback_scores_once() {
     let _ = floatctf::entity::users::Entity::delete_by_id(user)
         .exec(db.as_ref())
         .await;
+}
+
+// ── Wave 2.1: Crash-gap recovery tests ──
+
+/// 崩溃间隙恢复：Running + Attack + 无轮次 → Round 1
+#[tokio::test]
+async fn crash_gap_no_rounds_recovers_round_1() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = Uuid::new_v4();
+    let parent = events::ActiveModel {
+        is_virtual: Set(false),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
+        id: Set(event_id),
+        title: Set("awd-crash-gap-none".into()),
+        start_time: Set(chrono::Utc::now().into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(10)).fixed_offset(),
+        )),
+        ..Default::default()
+    };
+    parent.insert(&db).await.expect("insert events");
+
+    let awd = awd_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        event_secret_ciphertext: Set(vec![1u8; 32]),
+        event_secret_nonce: Set(vec![2u8; 24]),
+        status: Set(AwdEventStatus::Running),
+        phase: Set(AwdPhase::Attack),
+        round_count: Set(Some(5)),
+        round_duration_secs: Set(300),
+        configuration_generation: Set(0),
+        ..Default::default()
+    };
+    awd.insert(&db).await.expect("insert awd_events");
+
+    seed_minimal_event_network(&db, event_id).await;
+
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    let restored = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("restore_round_scheduling");
+    assert_eq!(restored, 1, "should recover round 1");
+
+    let r1 = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::RoundNumber.eq(1))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("round 1 should exist");
+    assert_eq!(r1.status, RoundStatus::Active);
+    assert_eq!(r1.phase, AwdPhase::Attack);
+
+    cleanup_event(&db, event_id).await;
+}
+
+/// 崩溃间隙恢复：Round 4 Completed，round_count=10，无活跃轮次 → Round 5
+#[tokio::test]
+async fn crash_gap_mid_round_recovers_next() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = Uuid::new_v4();
+    let parent = events::ActiveModel {
+        is_virtual: Set(false),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
+        id: Set(event_id),
+        title: Set("awd-crash-gap-mid".into()),
+        start_time: Set(chrono::Utc::now().into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(10)).fixed_offset(),
+        )),
+        ..Default::default()
+    };
+    parent.insert(&db).await.expect("insert events");
+
+    let awd = awd_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        event_secret_ciphertext: Set(vec![1u8; 32]),
+        event_secret_nonce: Set(vec![2u8; 24]),
+        status: Set(AwdEventStatus::Running),
+        phase: Set(AwdPhase::Attack),
+        round_count: Set(Some(10)),
+        round_duration_secs: Set(300),
+        configuration_generation: Set(0),
+        ..Default::default()
+    };
+    awd.insert(&db).await.expect("insert awd_events");
+
+    seed_minimal_event_network(&db, event_id).await;
+
+    let r4 = awd_rounds::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_number: Set(4),
+        status: Set(RoundStatus::Completed),
+        phase: Set(AwdPhase::Attack),
+        started_at: Set(chrono::Utc::now().into()),
+        scheduled_end_at: Set(chrono::Utc::now().into()),
+        completed_at: Set(Some(chrono::Utc::now().into())),
+        ..Default::default()
+    };
+    r4.insert(&db).await.expect("insert round 4");
+
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    let restored = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("restore_round_scheduling");
+    assert_eq!(restored, 1, "should recover 1 round");
+
+    let r5 = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::RoundNumber.eq(5))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("round 5 should exist");
+    assert_eq!(r5.status, RoundStatus::Active);
+    assert_eq!(r5.phase, AwdPhase::Attack);
+
+    cleanup_event(&db, event_id).await;
+}
+
+/// 崩溃间隙恢复：最终轮次已完成 → 不启动新轮次
+#[tokio::test]
+async fn crash_gap_final_round_no_recovery() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = Uuid::new_v4();
+    let parent = events::ActiveModel {
+        is_virtual: Set(false),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
+        id: Set(event_id),
+        title: Set("awd-crash-gap-final".into()),
+        start_time: Set(chrono::Utc::now().into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(10)).fixed_offset(),
+        )),
+        ..Default::default()
+    };
+    parent.insert(&db).await.expect("insert events");
+
+    let awd = awd_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        event_secret_ciphertext: Set(vec![1u8; 32]),
+        event_secret_nonce: Set(vec![2u8; 24]),
+        status: Set(AwdEventStatus::Running),
+        phase: Set(AwdPhase::Attack),
+        round_count: Set(Some(5)),
+        round_duration_secs: Set(300),
+        configuration_generation: Set(0),
+        ..Default::default()
+    };
+    awd.insert(&db).await.expect("insert awd_events");
+
+    seed_minimal_event_network(&db, event_id).await;
+
+    let r5 = awd_rounds::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_number: Set(5),
+        status: Set(RoundStatus::Completed),
+        phase: Set(AwdPhase::Attack),
+        started_at: Set(chrono::Utc::now().into()),
+        scheduled_end_at: Set(chrono::Utc::now().into()),
+        completed_at: Set(Some(chrono::Utc::now().into())),
+        ..Default::default()
+    };
+    r5.insert(&db).await.expect("insert round 5");
+
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    let restored = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("restore_round_scheduling");
+    assert_eq!(restored, 0, "should not recover final-settlement");
+
+    let r6 = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::RoundNumber.eq(6))
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(r6.is_none(), "round 6 should not exist");
+
+    cleanup_event(&db, event_id).await;
+}
+
+/// 幂等：重复恢复不创建重复轮次
+#[tokio::test]
+async fn crash_gap_recovery_idempotent() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = Uuid::new_v4();
+    let parent = events::ActiveModel {
+        is_virtual: Set(false),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
+        id: Set(event_id),
+        title: Set("awd-crash-gap-idem".into()),
+        start_time: Set(chrono::Utc::now().into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(10)).fixed_offset(),
+        )),
+        ..Default::default()
+    };
+    parent.insert(&db).await.expect("insert events");
+
+    let awd = awd_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        event_secret_ciphertext: Set(vec![1u8; 32]),
+        event_secret_nonce: Set(vec![2u8; 24]),
+        status: Set(AwdEventStatus::Running),
+        phase: Set(AwdPhase::Attack),
+        round_count: Set(Some(10)),
+        round_duration_secs: Set(300),
+        configuration_generation: Set(0),
+        ..Default::default()
+    };
+    awd.insert(&db).await.expect("insert awd_events");
+
+    seed_minimal_event_network(&db, event_id).await;
+
+    let r3 = awd_rounds::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_number: Set(3),
+        status: Set(RoundStatus::Completed),
+        phase: Set(AwdPhase::Attack),
+        started_at: Set(chrono::Utc::now().into()),
+        scheduled_end_at: Set(chrono::Utc::now().into()),
+        completed_at: Set(Some(chrono::Utc::now().into())),
+        ..Default::default()
+    };
+    r3.insert(&db).await.expect("insert round 3");
+
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    let r1 = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("first restore");
+    assert_eq!(r1, 1, "first restore should create round 4");
+
+    let r2 = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("second restore");
+    assert_eq!(r2, 0, "second restore should be idempotent");
+
+    let rounds = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::RoundNumber.eq(4))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(rounds.len(), 1, "only one round 4 should exist");
+
+    cleanup_event(&db, event_id).await;
+}
+
+/// HardeningEnd 崩溃：Running/Attack + 无轮次 → recovery 启动 Round 1
+#[tokio::test]
+async fn hardening_end_crash_recovery_starts_round_1() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let event_id = Uuid::new_v4();
+    let parent = events::ActiveModel {
+        is_virtual: Set(false),
+        family: Set(EventFamily::Awd),
+        purpose: Set(EventPurpose::Competition),
+        participant_mode: Set(ParticipantMode::Team),
+        system_key: Set(None),
+        id: Set(event_id),
+        title: Set("awd-hardening-crash".into()),
+        start_time: Set(chrono::Utc::now().into()),
+        end_time: Set(Some(
+            (chrono::Utc::now() + chrono::Duration::hours(10)).fixed_offset(),
+        )),
+        ..Default::default()
+    };
+    parent.insert(&db).await.expect("insert events");
+
+    let awd = awd_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        event_secret_ciphertext: Set(vec![1u8; 32]),
+        event_secret_nonce: Set(vec![2u8; 24]),
+        status: Set(AwdEventStatus::Running),
+        phase: Set(AwdPhase::Attack),
+        round_count: Set(Some(5)),
+        round_duration_secs: Set(300),
+        configuration_generation: Set(0),
+        ..Default::default()
+    };
+    awd.insert(&db).await.expect("insert awd_events");
+
+    seed_minimal_event_network(&db, event_id).await;
+
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    let restored = round_service::restore_round_scheduling(
+        &db, event_id, &network, &firewall, &publisher,
+    )
+    .await
+    .expect("restore");
+    assert_eq!(restored, 1, "should recover round 1");
+
+    let r1 = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .filter(awd_rounds::Column::RoundNumber.eq(1))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("round 1 should exist");
+    assert_eq!(r1.status, RoundStatus::Active);
+    assert_eq!(r1.phase, AwdPhase::Attack);
+
+    cleanup_event(&db, event_id).await;
 }

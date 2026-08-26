@@ -29,6 +29,7 @@ pub async fn recover_all(
     network: &dyn AwdNetworkRuntime,
     firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
 ) -> AwdResult<u32> {
     let active_events = event_repo::find_active_events(db)
         .await
@@ -61,6 +62,7 @@ pub async fn recover_all(
             network,
             firewall,
             crypto,
+            publisher,
             event,
             &event_network,
         )
@@ -99,6 +101,7 @@ async fn recover_event(
     network: &dyn AwdNetworkRuntime,
     firewall: &dyn FirewallRuntime,
     crypto: &AwdCrypto,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
     event: &awd_events::Model,
     event_network: &awd_event_networks::Model,
 ) -> AwdResult<u32> {
@@ -267,7 +270,7 @@ async fn recover_event(
     }
 
     // 4b. Attack round 调度恢复
-    let restored_tasks = round_service::restore_round_scheduling(db, event.event_id).await?;
+    let restored_tasks = round_service::restore_round_scheduling(db, event.event_id, network, firewall, publisher).await?;
     if restored_tasks > 0 {
         info!(
             "[Recovery] Event {} restored {} round scheduling task(s)",

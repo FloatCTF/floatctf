@@ -164,6 +164,7 @@ pub async fn run() -> Result<(), BootstrapError> {
             awd_network.as_ref(),
             awd_firewall.as_ref(),
             awd_crypto.as_ref(),
+            publisher.as_ref(),
         )
         .await
         {

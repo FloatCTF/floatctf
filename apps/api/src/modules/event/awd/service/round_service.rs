@@ -12,7 +12,7 @@
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    TransactionTrait,
+    QueryOrder, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -253,8 +253,14 @@ pub async fn start_round(
 ///
 /// 幂等：非 Active 状态 → 直接成功跳过。
 ///
-/// Round N+1 启动不等待 Judge HTTP 响应——Judge 任务创建后
-/// 先启动下一轮（或推送 Judge），确保轮次时钟不受 JudgeServer 响应时间影响。
+/// **执行顺序（关键）**：
+/// 1. COMMIT Round N Completed
+/// 2. 创建 Judge batch（仅 DB）
+/// 3. 若非最终轮：启动 Round N+1（含 Clock 调度）
+/// 4. HTTP 推送 Judge（最后，不影响轮次时钟）
+///
+/// 这样 Round N+1 计时在 JudgeServer HTTP 响应之前就开始，
+/// 确保轮次时钟不受远程 Judge 响应时间影响。
 pub async fn end_round(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
@@ -263,7 +269,7 @@ pub async fn end_round(
     firewall: &dyn FirewallRuntime,
     publisher: &dyn EventPublisher,
 ) -> AwdResult<()> {
-    // ── 事务内：完成轮次 + 创建 Judge ──
+    // ── 事务内：完成轮次 ──
     let txn = db
         .begin()
         .await
@@ -314,20 +320,17 @@ pub async fn end_round(
     info!(
         "[Round] Round {round_id} (number {completed_round_number}) completed for event {event_id}"
     );
-    let _ = publisher
-        .publish(websocket::round_completed(event_id, completed_round_number).into_realtime())
-        .await;
 
-    // ── COMMIT 后：创建 Judge batch + 推送 ──
-    // Judge 创建失败不阻塞轮次推进（best-effort）
-    let judge_result = create_and_dispatch_judge_for_round(db, event_id, round_id).await;
+    // ── 步骤 2：创建 Judge batch（仅 DB，不动 HTTP）──
+    let judge_result = create_judge_batch_for_round(db, event_id, round_id).await;
     if let Err(ref e) = judge_result {
         warn!(
             "[Round] Judge batch creation failed for round {round_id}: {e}"
         );
     }
 
-    // ── 下一轮 ──
+    // ── 步骤 3：下一轮 ──
+    // 在 Judge HTTP 推送之前启动下一轮，确保轮次时钟不受远程响应影响
     if is_final {
         info!(
             "[Round] Final round {completed_round_number} ended — no next round. Event {} remains Running/Attack.",
@@ -339,7 +342,6 @@ pub async fn end_round(
             completed_round_number + 1,
             event_id
         );
-        // 启动下一轮（直接调用，不通过 scheduler）
         if let Err(e) = start_round(
             db,
             network,
@@ -358,23 +360,45 @@ pub async fn end_round(
         }
     }
 
+    // ── 步骤 4：HTTP 推送 Judge（最后，best-effort）──
+    // 此时 Round N+1 时钟已在运行，Judge HTTP 延迟不影响轮次推进
+    if let Ok(batch_id) = &judge_result {
+        if let Err(e) = dispatch_judge_batch_for_round(db, event_id, *batch_id).await {
+            warn!(
+                "[Round] Judge HTTP dispatch failed for batch {batch_id}: {e}"
+            );
+        }
+    }
+
+    // 发布 SSE（best-effort）
+    let _ = publisher
+        .publish(websocket::round_completed(event_id, completed_round_number).into_realtime())
+        .await;
+
     Ok(())
 }
 
-/// 创建 Judge batch 并通过 Push 分发（临时，Wave 3 替换为 Pull+Lease）。
-async fn create_and_dispatch_judge_for_round(
+/// 创建 Judge batch（仅 DB 操作，不涉及 HTTP）。
+/// 返回 batch_id 供后续 dispatch 使用。
+async fn create_judge_batch_for_round(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
     round_id: Uuid,
+) -> AwdResult<Uuid> {
+    judge_service::create_batch(db, event_id, round_id).await
+}
+
+/// HTTP 推送 Judge batch 到 JudgeServer（临时 Push 传输）。
+async fn dispatch_judge_batch_for_round(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+    batch_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    let batch_id = judge_service::create_batch(db, event_id, round_id).await?;
-
-    // Push dispatch（临时）
     let token_ciphertext = awd_event
         .judgeserver_token_ciphertext
         .clone()
@@ -411,67 +435,165 @@ async fn create_and_dispatch_judge_for_round(
 /// 恢复规则：
 /// - Active round：缺 pending `awd.round.end` 任务 → 按 scheduled_end_at 重建；
 /// - Paused round：暂停中，不恢复任务（resume 时重建）。
+/// - 无 Active round 且 Running/Attack：调用 `recover_round_gap` 处理崩溃间隙。
 pub async fn restore_round_scheduling(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn EventPublisher,
 ) -> AwdResult<usize> {
     use crate::entity::sea_orm_active_enums::RoundStatus as RS;
 
-    let Some(round) = awd_rounds::Entity::find()
+    let maybe_round = awd_rounds::Entity::find()
         .filter(awd_rounds::Column::EventId.eq(event_id))
         .filter(awd_rounds::Column::Status.is_in([RS::Active, RS::Paused]))
         .one(db)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-    else {
-        return Ok(0);
-    };
+        .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    let mut restored = 0usize;
-    let task_exists = |key: TaskKey| -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = AwdResult<bool>> + Send + '_>,
-    > {
-        Box::pin(async move {
-            let found = scheduled_tasks::Entity::find()
-                .filter(scheduled_tasks::Column::GroupId.eq(event_id))
-                .filter(scheduled_tasks::Column::TaskKey.eq(key.to_string()))
-                .filter(scheduled_tasks::Column::Status.eq("pending"))
-                .one(db)
+    match maybe_round {
+        Some(round) => match round.status {
+            RS::Active => {
+                restore_round_end_task(db, event_id, round.id, round.scheduled_end_at).await
+            }
+            RS::Paused => {
+                // 暂停中：任务挂起由 resume 重建
+                Ok(0)
+            }
+            _ => Ok(0),
+        },
+        None => {
+            // 无 Active/Paused 轮次 → 检查是否需要恢复崩溃间隙
+            let awd_event = event_repo::find_by_event_id(db, event_id)
                 .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-            Ok(found.is_some())
-        })
-    };
-
-    match round.status {
-        RS::Active => {
-            if !task_exists(TaskKey::AwdRoundEnd).await? {
-                let txn = db
-                    .begin()
-                    .await
-                    .map_err(|e| AwdError::Database(e.to_string()))?;
-                schedule_round_task(
-                    &txn,
-                    event_id,
-                    TaskKey::AwdRoundEnd,
-                    round.scheduled_end_at.fixed_offset(),
-                    Some(round.id),
-                    None,
-                )
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?;
-                txn.commit()
-                    .await
-                    .map_err(|e| AwdError::Database(e.to_string()))?;
-                restored += 1;
+                .map_err(|e| AwdError::Database(e.to_string()))?
+                .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+            if awd_event.status == AwdEventStatus::Running
+                && awd_event.phase == AwdPhase::Attack
+            {
+                recover_round_gap(db, event_id, network, firewall, publisher).await
+            } else {
+                Ok(0)
             }
         }
-        RS::Paused => {
-            // 暂停中：任务挂起由 resume 重建
-        }
-        _ => {}
     }
-    Ok(restored)
+}
+
+/// 恢复单个 RoundEnd 任务。
+async fn restore_round_end_task(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+    round_id: Uuid,
+    scheduled_end_at: chrono::DateTime<chrono::FixedOffset>,
+) -> AwdResult<usize> {
+    let found = scheduled_tasks::Entity::find()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(TaskKey::AwdRoundEnd.to_string()))
+        .filter(scheduled_tasks::Column::Status.eq("pending"))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if found.is_some() {
+        return Ok(0);
+    }
+
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    schedule_round_task(
+        &txn,
+        event_id,
+        TaskKey::AwdRoundEnd,
+        scheduled_end_at.fixed_offset(),
+        Some(round_id),
+        None,
+    )
+    .await
+    .map_err(|e| AwdError::Database(e.to_string()))?;
+    txn.commit()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    Ok(1)
+}
+
+/// 崩溃间隙恢复：Running + Attack + 无活跃轮次。
+///
+/// 四种情况：
+/// - CASE A: 无任何轮次 → Hardening 结束后崩溃，Round 1 尚未创建 → 启动 Round 1
+/// - CASE B: 最高已完成轮次 N < round_count → 崩溃在 Round N 完成与 Round N+1 启动之间 → 启动 Round N+1
+/// - CASE C: 最高已完成轮次 N == round_count → 最终结算条件 → 不启动
+/// - CASE D: 最高轮次 > round_count → 不变量违反 → 记录错误，不操作
+pub async fn recover_round_gap(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn EventPublisher,
+) -> AwdResult<usize> {
+    let awd_event = event_repo::find_by_event_id(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+
+    let round_count = match awd_event.round_count {
+        Some(rc) if rc > 0 => rc,
+        _ => {
+            warn!(
+                "[Recovery] Event {} has no round_count configured — cannot recover round gap",
+                event_id
+            );
+            return Ok(0);
+        }
+    };
+
+    // 查找最高轮次（按 round_number 降序）
+    let highest_round = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .order_by_desc(awd_rounds::Column::RoundNumber)
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    match highest_round {
+        None => {
+            // CASE A: 无任何轮次 → Hardening 结束后崩溃
+            info!(
+                "[Recovery] Event {} Attack + no rounds — starting Round 1 (hardening-end crash recovery)",
+                event_id
+            );
+            start_round(db, network, firewall, publisher, event_id, Some(1)).await?;
+            Ok(1)
+        }
+        Some(round) => {
+            let n = round.round_number;
+            if n > round_count {
+                // CASE D: 不变量违反
+                warn!(
+                    "[Recovery] Event {} highest round {} exceeds round_count {} — invariant violation, no recovery",
+                    event_id, n, round_count
+                );
+                Ok(0)
+            } else if n >= round_count {
+                // CASE C: 最终结算条件
+                info!(
+                    "[Recovery] Event {} final round {} completed, round_count={} — final settlement, no recovery",
+                    event_id, n, round_count
+                );
+                Ok(0)
+            } else {
+                // CASE B: 崩溃间隙 → 启动下一轮
+                let next = n + 1;
+                info!(
+                    "[Recovery] Event {} round {} completed, round_count={} — crash gap, starting round {}",
+                    event_id, n, round_count, next
+                );
+                start_round(db, network, firewall, publisher, event_id, Some(next)).await?;
+                Ok(1)
+            }
+        }
+    }
 }
 
 /// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。

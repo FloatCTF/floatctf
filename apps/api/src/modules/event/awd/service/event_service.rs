@@ -270,6 +270,7 @@ pub async fn resume_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
     firewall: &dyn FirewallRuntime,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
     event_id: Uuid,
 ) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
@@ -423,7 +424,7 @@ pub async fn resume_event(
 
             // 恢复轮次调度任务
             if resume_phase == AwdPhase::Attack {
-                let restored = round_service::restore_round_scheduling(db, event_id).await?;
+                let restored = round_service::restore_round_scheduling(db, event_id, network, firewall, publisher).await?;
                 if restored > 0 {
                     info!(
                         "[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)"

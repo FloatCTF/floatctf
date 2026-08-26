@@ -237,6 +237,7 @@ pub async fn cancel_pending_event_lifecycle_schedules<C: ConnectionTrait + Send>
             TaskKey::AwdEventStart.to_string(),
             TaskKey::AwdAutoPrecheck.to_string(),
             TaskKey::AwdHardeningEnd.to_string(),
+            TaskKey::AwdJudgeBatchDeadline.to_string(),
         ]))
         .filter(scheduled_tasks::Column::Status.eq("pending"))
         .exec(db)
@@ -684,6 +685,121 @@ pub async fn cancel_pending_hardening_end<C: ConnectionTrait + Send>(
         .exec(db)
         .await?;
     Ok(result.rows_affected)
+}
+
+/// Handler: Judge batch absolute deadline — terminalize uncompleted tasks as JudgeError.
+pub struct AwdJudgeBatchDeadlineHandler {
+    pub db: WebDb,
+}
+
+#[async_trait]
+impl TaskHandler for AwdJudgeBatchDeadlineHandler {
+    fn task_key(&self) -> TaskKey {
+        TaskKey::AwdJudgeBatchDeadline
+    }
+
+    fn trigger_type(&self) -> &'static str {
+        "once"
+    }
+
+    async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
+        let payload: serde_json::Value = task.payload.clone().unwrap_or_default();
+        let batch_id: Uuid = serde_json::from_value(
+            payload.get("batch_id").cloned().unwrap_or_default(),
+        )?;
+
+        info!(
+            "[AWD] Judge batch deadline: terminalizing batch {}",
+            batch_id
+        );
+
+        let now = chrono::Utc::now();
+        let count = crate::modules::event::awd::repo::judge_repo::terminalize_batch_deadline(
+            self.db.get_ref(),
+            batch_id,
+            now,
+        )
+        .await?;
+
+        if count > 0 {
+            info!(
+                "[AWD] Batch {}: {} tasks terminalized as JudgeError",
+                batch_id, count
+            );
+        }
+
+        // Update batch completion status
+        let _ = crate::modules::event::awd::repo::judge_repo::maybe_complete_batch(
+            self.db.get_ref(),
+            batch_id,
+        )
+        .await;
+
+        Ok(())
+    }
+}
+
+/// 恢复：确保未完成的 Judge batch 有 deadline 任务。
+pub async fn restore_batch_deadlines<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+) -> Result<usize, sea_orm::DbErr> {
+    use crate::entity::awd_judge_batches;
+    use sea_orm::EntityTrait;
+
+    let batches = awd_judge_batches::Entity::find()
+        .filter(awd_judge_batches::Column::EventId.eq(event_id))
+        .filter(awd_judge_batches::Column::Status.ne("completed"))
+        .all(db)
+        .await?;
+
+    let mut restored = 0usize;
+    for batch in batches {
+        let key = TaskKey::AwdJudgeBatchDeadline.to_string();
+        let existing = scheduled_tasks::Entity::find()
+            .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+            .filter(scheduled_tasks::Column::TaskKey.eq(&key))
+            .filter(scheduled_tasks::Column::Status.eq("pending"))
+            .one(db)
+            .await?;
+        if existing.is_none() {
+            // Get the max deadline from batch tasks
+            let max_deadline = crate::entity::awd_judge_tasks::Entity::find()
+                .filter(crate::entity::awd_judge_tasks::Column::BatchId.eq(batch.id))
+                .order_by_desc(crate::entity::awd_judge_tasks::Column::DeadlineAt)
+                .one(db)
+                .await?
+                .map(|t| t.deadline_at)
+                .unwrap_or_else(|| {
+                    let now: chrono::DateTime<chrono::FixedOffset> = chrono::Utc::now().into();
+                    now
+                });
+
+            let now = chrono::Utc::now();
+            scheduled_tasks::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                group_id: Set(Some(event_id)),
+                task_name: Set(format!("AWD Judge batch deadline {}", batch.id)),
+                description: Set(Some("Recovered batch deadline task".into())),
+                task_key: Set(key),
+                trigger_type: Set("once".into()),
+                status: Set("pending".into()),
+                execute_at: Set(Some(max_deadline)),
+                payload: Set(Some(
+                    serde_json::json!({ "event_id": event_id, "batch_id": batch.id }),
+                )),
+                enabled: Set(true),
+                protected: Set(true),
+                created_at: Set(now.into()),
+                updated_at: Set(now.into()),
+                ..Default::default()
+            }
+            .insert(db)
+            .await?;
+            restored += 1;
+        }
+    }
+    Ok(restored)
 }
 
 /// Handler: 自动解封（P4-7，duration 到期任务）。

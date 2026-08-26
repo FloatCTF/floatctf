@@ -97,7 +97,6 @@ export enum JudgeTaskStatus {
   Up = 'up',
   Down = 'down',
   JudgeError = 'judge_error',
-  JudgeTimeout = 'judge_timeout',
   SkippedResetting = 'skipped_resetting',
   SkippedBanned = 'skipped_banned',
 }

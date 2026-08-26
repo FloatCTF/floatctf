@@ -1,4 +1,4 @@
-//! AWD 内部服务接口（裁判机/探针等）。
+//! AWD 内部服务接口（裁判机/探针等，Wave 3 — Pull Judge）。
 
 use actix_web::web;
 
@@ -31,13 +31,11 @@ pub async fn issue_flag(
     path: web::Path<Uuid>,
     body: web::Json<IssueFlagInternalRequest>,
 ) -> UniResult<FlagIssueResponse> {
-    // Verify the caller is a FlagServer for this event
     let event_id = match auth.principal {
         AwdInternalPrincipal::FlagServer { event_id } => event_id,
         _ => return Err(AppError::Forbidden("Not enough permission".into())),
     };
 
-    // P5-10 限流：internal（每 event 每分钟）
     awd.rate_limiter
         .check(
             ctx.db.get_ref(),
@@ -54,7 +52,6 @@ pub async fn issue_flag(
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
 
-    // Decrypt event-bound secret (AAD = event_id:event_secret) for deterministic flags.
     use crate::modules::event::awd::crypto::AwdCrypto;
     let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
     let secret = crypto
@@ -72,8 +69,8 @@ pub async fn issue_flag(
         ctx.db.get_ref(),
         flag_service::FlagIssueContext {
             event_id,
-            round_id: Uuid::nil(),            // will be resolved by service
-            gamebox_instance_id: Uuid::nil(), // will be resolved by service
+            round_id: Uuid::nil(),
+            gamebox_instance_id: Uuid::nil(),
             source_ip: body.source_ip.clone(),
         },
         &secret,
@@ -89,24 +86,23 @@ pub async fn issue_flag(
     UniResponse::ok(FlagIssueResponse { flag: result.flag }.into()).into()
 }
 
-/// POST /internal/awd/events/{event_id}/judge/callback
-/// 由 JudgeServer 在每个任务完成后调用。
-/// 需要 JudgeServer 令牌。
-#[post("/internal/awd/events/{event_id}/judge/callback")]
-pub async fn judge_callback(
+// ── Wave 3: Judge Pull + Lease 端点 ──
+
+/// POST /internal/awd/events/{event_id}/judge/claim
+/// JudgeServer 轮询认领 Pending 任务。
+#[post("/internal/awd/events/{event_id}/judge/claim")]
+pub async fn judge_claim(
     auth: AwdInternalAuth,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
-    body: web::Json<JudgeCallbackRequest>,
-) -> UniResult<()> {
-    // Verify the caller is a JudgeServer for this event
+    body: web::Json<JudgeClaimRequest>,
+) -> UniResult<JudgeClaimResponse> {
     let event_id = match auth.principal {
         AwdInternalPrincipal::JudgeServer { event_id } => event_id,
         _ => return Err(AppError::Forbidden("Not enough permission".into())),
     };
 
-    // P5-10 限流：internal（每 event 每分钟）
     awd.rate_limiter
         .check(
             ctx.db.get_ref(),
@@ -117,141 +113,299 @@ pub async fn judge_callback(
         .map_err(AppError::from)?;
 
     let _path_event_id = path.into_inner();
-    let cb = body.into_inner();
+    let req = body.into_inner();
 
-    // Find the judge task
-    let task = judge_repo::find_task_by_id(ctx.db.get_ref(), cb.task_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("Judge task not found".into()))?;
-
-    // Verify the task belongs to this event
-    if task.event_id != event_id {
-        return Err(AppError::Forbidden("Not enough permission".into()));
+    let worker_id = req.worker_id.trim().to_string();
+    if worker_id.is_empty() || worker_id.len() > 256 {
+        return Err(AppError::BadRequest("worker_id must be 1-256 chars".into()));
     }
+    let limit = req.limit.unwrap_or(5).min(20).max(1);
 
-    // Don't overwrite terminal states
-    if task.status.is_terminal() {
-        return UniResponse::ok_none().into();
-    }
+    let now = chrono::Utc::now();
+    // 先清理过期任务
+    let _ = judge_repo::terminalize_past_deadline(ctx.db.get_ref(), now).await;
 
-    // 铁律 #8 冻结门禁：事件不在 Running 或 phase 不允许 judge（NetworkError/
-    // Pause/Finished 等）时，任务结果仍记录（避免僵尸重试），但**不写分**。
-    // 注：submit 路径门禁在 flag_service::validate_submission（is_active + phase +
-    // round + ban）；此处补齐 judge 路径，保证冻结期零 judge score。
-    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
-    let frozen = awd_event.status != AwdEventStatus::Running || !awd_event.phase.allows_judge();
-
-    // Parse status from callback
-    let status = match cb.status.as_str() {
-        "up" => JudgeTaskStatus::Up,
-        "down" => JudgeTaskStatus::Down,
-        "judge_error" => JudgeTaskStatus::JudgeError,
-        "judge_timeout" => JudgeTaskStatus::JudgeTimeout,
-        _ => JudgeTaskStatus::JudgeError,
-    };
-
-    let is_up = status.is_up();
-    let is_down = status.is_down();
-
-    // Update task
-    judge_repo::update_task_status(
+    let lease_ttl_secs: i64 = 120;
+    let claimed = judge_repo::claim_tasks(
         ctx.db.get_ref(),
-        cb.task_id,
-        status,
-        cb.exit_code,
-        cb.stdout.as_deref(),
-        cb.stderr.as_deref(),
-        cb.duration_ms,
+        event_id,
+        &worker_id,
+        limit,
+        lease_ttl_secs,
     )
     .await
     .map_err(|e| AppError::Database(e.to_string()))?;
 
-    // If up/down, record score (跳过冻结事件)
-    if (is_up || is_down) && !frozen {
-        // 计分作用域 = EventGameBox（§23/§28）：从 pin Revision 解析 fix/down 分值
-        let eg_id = task
-            .event_gamebox_id
-            .ok_or_else(|| AppError::Internal("judge task lacks event_gamebox_id".into()))?;
-        let resolved =
-            crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
-                ctx.db.get_ref(),
-                eg_id,
-            )
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut tasks = Vec::new();
+    for ct in &claimed {
+        let mut script_content = String::new();
+        let mut script_args_json = None;
+        let mut target_ip = String::new();
+        let mut timeout_secs: i32 = 30;
 
-        let score_type = if is_up {
-            ScoreEventType::JudgeFix
-        } else {
-            ScoreEventType::JudgeDown
-        };
-
-        let delta = if is_up {
-            resolved.event_gamebox.fix_points
-        } else {
-            -resolved.event_gamebox.judge_down_penalty
-        };
-
-        let idempotency_key = cb.callback_id.clone();
-
-        // 记录计分（Phase 0 P0-4：禁止静默吞错）。
-        // 重复回调由 idempotency_key 唯一约束兜底 → 视为幂等成功；
-        // 其他失败显式返回错误，JudgeServer 重试（同 callback_id，P3-9），
-        // 完整的事务化/可重试设计见 Phase 3 P3-8。
-        match score_repo::create_score_event(
-            ctx.db.get_ref(),
-            event_id,
-            Some(task.round_id),
-            task.team_id,
-            score_type,
-            delta,
-            &idempotency_key,
-            None,
-            Some(task.gamebox_instance_id),
-            Some(eg_id),
-            Some("judge check"),
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(e) if is_duplicate_key(&e) => {
-                tracing::debug!(
-                    "[Judge] duplicate score event (callback_id={}) — idempotent skip",
-                    idempotency_key
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    "[Judge] score write failed for task {} callback {}: {}",
-                    cb.task_id,
-                    idempotency_key,
-                    e
-                );
-                return Err(AppError::Internal(format!("score write failed: {e}")));
+        // Resolve execution payload
+        if let Some(eg_id) = ct.event_gamebox_id {
+            if let Ok(resolved) =
+                crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
+                    ctx.db.get_ref(),
+                    eg_id,
+                )
+                .await
+            {
+                script_content = resolved.judge_script_content().unwrap_or("").to_string();
+                if let Some(args) = resolved.judge_args_json() {
+                    if let Ok(arr) = serde_json::from_value::<Vec<String>>(args.clone()) {
+                        script_args_json =
+                            Some(serde_json::to_string(&arr).unwrap_or_default());
+                    }
+                }
+                timeout_secs = resolved
+                    .effective_judge_timeout_secs
+                    .unwrap_or(30);
             }
         }
-    } else if is_up || is_down {
-        // 冻结期间记录但不计分（铁律 #8）：状态/phase = {}/{}。
-        tracing::info!(
-            "[Judge] event {event_id} frozen (status={:?}, phase={:?}): task {} result recorded WITHOUT score",
-            awd_event.status,
-            awd_event.phase,
-            cb.task_id
-        );
+
+        // Look up instance IP
+        use crate::entity::event_gamebox_instances;
+        if let Ok(Some(inst)) = event_gamebox_instances::Entity::find_by_id(
+            ct.gamebox_instance_id,
+        )
+        .one(ctx.db.get_ref())
+        .await
+        {
+            target_ip = inst.gamebox_ip.ip().to_string();
+        }
+
+        tasks.push(ClaimedTaskDto {
+            task_id: ct.task_id,
+            batch_id: ct.batch_id,
+            event_id: ct.event_id,
+            round_id: ct.round_id,
+            gamebox_instance_id: ct.gamebox_instance_id,
+            event_gamebox_id: ct.event_gamebox_id,
+            team_id: ct.team_id,
+            attempt: ct.attempt,
+            lease_token: ct.lease_token.clone(),
+            lease_expires_at: ct.lease_expires_at.into(),
+            deadline_at: ct.deadline_at.into(),
+            script_content,
+            script_args_json,
+            target_ip,
+            timeout_secs,
+        });
     }
 
-    UniResponse::ok_none().into()
+    UniResponse::ok(JudgeClaimResponse { tasks }.into()).into()
 }
 
-/// 判断数据库错误是否为唯一约束冲突（幂等重复回调）。
-/// 不依赖 sqlx 直接依赖：以错误文本中的 constraint code / 关键词判定。
-fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
-    let msg = e.to_string().to_lowercase();
-    msg.contains("23505") || msg.contains("duplicate")
+/// POST /internal/awd/events/{event_id}/judge/tasks/{task_id}/heartbeat
+/// JudgeServer 心跳续租。
+#[post("/internal/awd/events/{event_id}/judge/tasks/{task_id}/heartbeat")]
+pub async fn judge_heartbeat(
+    auth: AwdInternalAuth,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<(Uuid, Uuid)>,
+    body: web::Json<JudgeHeartbeatRequest>,
+) -> UniResult<()> {
+    let event_id = match auth.principal {
+        AwdInternalPrincipal::JudgeServer { event_id } => event_id,
+        _ => return Err(AppError::Forbidden("Not enough permission".into())),
+    };
+
+    let (_path_event_id, task_id) = path.into_inner();
+    let req = body.into_inner();
+
+    let lease_ttl_secs: i64 = 120;
+    let now = chrono::Utc::now();
+    let result = judge_repo::heartbeat_task(
+        ctx.db.get_ref(),
+        task_id,
+        &req.worker_id,
+        req.attempt,
+        &req.lease_token,
+        lease_ttl_secs,
+        now,
+    )
+    .await
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    match result {
+        judge_repo::HeartbeatResult::Ok => UniResponse::ok_none().into(),
+        judge_repo::HeartbeatResult::Stale => {
+            Err(AppError::Conflict("stale lease or attempt".into()))
+        }
+        judge_repo::HeartbeatResult::NotFound => {
+            Err(AppError::NotFound("task not found".into()))
+        }
+    }
+}
+
+/// POST /internal/awd/events/{event_id}/judge/tasks/{task_id}/result
+/// JudgeServer 提交执行结果。
+#[post("/internal/awd/events/{event_id}/judge/tasks/{task_id}/result")]
+pub async fn judge_result(
+    auth: AwdInternalAuth,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<(Uuid, Uuid)>,
+    body: web::Json<JudgeResultRequest>,
+) -> UniResult<()> {
+    let event_id = match auth.principal {
+        AwdInternalPrincipal::JudgeServer { event_id } => event_id,
+        _ => return Err(AppError::Forbidden("Not enough permission".into())),
+    };
+
+    let (_path_event_id, task_id) = path.into_inner();
+    let req = body.into_inner();
+
+    // Look up task for context
+    let task = judge_repo::find_task_by_id(ctx.db.get_ref(), task_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("Judge task not found".into()))?;
+
+    if task.event_id != event_id {
+        return Err(AppError::Forbidden("Task does not belong to event".into()));
+    }
+
+    // Map outcome to status
+    let status = match req.outcome.as_str() {
+        "up" => JudgeTaskStatus::Up,
+        "down" => JudgeTaskStatus::Down,
+        "target_timeout" => JudgeTaskStatus::Down, // target timeout = competition Down
+        "worker_error" => {
+            // Worker error: release back to Pending if retries remain
+            if task.attempt_count < task.max_attempts {
+                let now = chrono::Utc::now();
+                let deadline = task.deadline_at.with_timezone(&chrono::Utc);
+                if now < deadline {
+                    // Release back to Pending
+                    release_task_to_pending(ctx.db.get_ref(), task_id).await
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    return UniResponse::ok_none().into();
+                }
+            }
+            JudgeTaskStatus::JudgeError
+        }
+        _ => return Err(AppError::BadRequest(format!("unknown outcome: {}", req.outcome))),
+    };
+
+    // Submit result
+    let now = chrono::Utc::now();
+    let result = judge_repo::submit_result(
+        ctx.db.get_ref(),
+        task_id,
+        &req.worker_id,
+        req.attempt,
+        &req.lease_token,
+        &req.result_id,
+        status.clone(),
+        req.exit_code,
+        req.stdout.as_deref(),
+        req.stderr.as_deref(),
+        req.duration_ms,
+        now,
+    )
+    .await
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    match result {
+        judge_repo::SubmitResult::Ok | judge_repo::SubmitResult::Idempotent => {
+            // Score if Up/Down and not frozen
+            let is_up = status.is_up();
+            let is_down = status.is_down();
+
+            if is_up || is_down {
+                let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+                    .await
+                    .map_err(|e| AppError::Database(e.to_string()))?
+                    .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+                let frozen =
+                    awd_event.status != AwdEventStatus::Running || !awd_event.phase.allows_judge();
+
+                if !frozen {
+                    if let Some(eg_id) = task.event_gamebox_id {
+                        if let Ok(resolved) = crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
+                            ctx.db.get_ref(),
+                            eg_id,
+                        )
+                        .await
+                        {
+                            let score_type = if is_up {
+                                ScoreEventType::JudgeFix
+                            } else {
+                                ScoreEventType::JudgeDown
+                            };
+                            let delta = if is_up {
+                                resolved.event_gamebox.fix_points
+                            } else {
+                                -resolved.event_gamebox.judge_down_penalty
+                            };
+                            let idempotency_key = req.result_id.clone();
+
+                            match score_repo::create_score_event(
+                                ctx.db.get_ref(),
+                                event_id,
+                                Some(task.round_id),
+                                task.team_id,
+                                score_type,
+                                delta,
+                                &idempotency_key,
+                                None,
+                                Some(task.gamebox_instance_id),
+                                Some(eg_id),
+                                Some("judge check"),
+                            )
+                            .await
+                            {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    let msg = e.to_string().to_lowercase();
+                                    if !(msg.contains("23505") || msg.contains("duplicate")) {
+                                        tracing::error!(
+                                            "[Judge] score write failed for task {}: {}",
+                                            task_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            UniResponse::ok_none().into()
+        }
+        judge_repo::SubmitResult::Stale => {
+            Err(AppError::Conflict("stale lease or attempt".into()))
+        }
+        judge_repo::SubmitResult::NotFound => {
+            Err(AppError::NotFound("task not found".into()))
+        }
+    }
+}
+
+/// 将任务释放回 Pending（清除 lease 字段）。
+async fn release_task_to_pending(
+    db: &sea_orm::DatabaseConnection,
+    task_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+    use crate::entity::awd_judge_tasks;
+    awd_judge_tasks::ActiveModel {
+        id: Set(task_id),
+        status: Set(JudgeTaskStatus::Pending),
+        worker_id: Set(None),
+        lease_token_hash: Set(None),
+        lease_expires_at: Set(None),
+        heartbeat_at: Set(None),
+        claimed_at: Set(None),
+        ..Default::default()
+    }
+    .update(db)
+    .await?;
+    Ok(())
 }
 
 /// GET /internal/awd/events/{event_id}/health

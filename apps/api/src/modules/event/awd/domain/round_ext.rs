@@ -34,7 +34,6 @@ impl JudgeTaskStatusExt for JudgeTaskStatus {
             Self::Up
                 | Self::Down
                 | Self::JudgeError
-                | Self::JudgeTimeout
                 | Self::SkippedResetting
                 | Self::SkippedBanned
         )

@@ -81,6 +81,8 @@ pub fn player_routes(cfg: &mut web::ServiceConfig) {
 /// 最终路径：`/internal/awd/events/...`
 pub fn internal_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(internal::issue_flag)
-        .service(internal::judge_callback)
+        .service(internal::judge_claim)
+        .service(internal::judge_heartbeat)
+        .service(internal::judge_result)
         .service(internal::event_health);
 }

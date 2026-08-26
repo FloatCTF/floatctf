@@ -279,6 +279,20 @@ async fn recover_event(
     }
     recovered += restored_tasks as u32;
 
+    // ── 4c. Judge batch deadline 恢复 ──
+    let restored_batches = crate::modules::event::awd::scheduler::restore_batch_deadlines(
+        db, event.event_id,
+    )
+    .await
+    .map_err(|e| AwdError::Database(e.to_string()))?;
+    if restored_batches > 0 {
+        info!(
+            "[Recovery] Event {} restored {} judge batch deadline task(s)",
+            event.event_id, restored_batches
+        );
+    }
+    recovered += restored_batches as u32;
+
     Ok(recovered)
 }
 

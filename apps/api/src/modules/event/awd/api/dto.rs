@@ -621,3 +621,56 @@ pub struct EventGameBoxDto {
     pub first_bonus: i64,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }
+
+// ── Wave 3: Judge Pull + Lease DTOs ──
+
+#[derive(Debug, Deserialize)]
+pub struct JudgeClaimRequest {
+    pub worker_id: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JudgeClaimResponse {
+    pub tasks: Vec<ClaimedTaskDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaimedTaskDto {
+    pub task_id: Uuid,
+    pub batch_id: Uuid,
+    pub event_id: Uuid,
+    pub round_id: Uuid,
+    pub gamebox_instance_id: Uuid,
+    pub event_gamebox_id: Option<Uuid>,
+    pub team_id: Uuid,
+    pub attempt: i32,
+    pub lease_token: String,
+    pub lease_expires_at: DateTimeWithTimeZone,
+    pub deadline_at: DateTimeWithTimeZone,
+    // Execution payload
+    pub script_content: String,
+    pub script_args_json: Option<String>,
+    pub target_ip: String,
+    pub timeout_secs: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JudgeHeartbeatRequest {
+    pub worker_id: String,
+    pub attempt: i32,
+    pub lease_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JudgeResultRequest {
+    pub worker_id: String,
+    pub attempt: i32,
+    pub lease_token: String,
+    pub result_id: String,
+    pub outcome: String, // "up", "down", "target_timeout", "worker_error"
+    pub exit_code: Option<i32>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub duration_ms: Option<i32>,
+}

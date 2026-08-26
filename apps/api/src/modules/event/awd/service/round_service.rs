@@ -21,14 +21,14 @@ use uuid::Uuid;
 use crate::entity::{
     awd_events, awd_judge_tasks, awd_rounds, scheduled_tasks,
     sea_orm_active_enums::{
-        AwdEventStatus, AwdPhase, JudgeTaskStatus, RoundStatus, ScoreEventType,
+        AwdEventStatus, AwdPhase, RoundStatus,
     },
 };
 use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd::{
     AwdError, AwdResult,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
-    repo::{event_repo, judge_repo, round_repo, score_repo},
+    repo::{event_repo, round_repo},
     service::{firewall_service, judge_service},
     websocket,
 };
@@ -257,10 +257,10 @@ pub async fn start_round(
 /// 1. COMMIT Round N Completed
 /// 2. 创建 Judge batch（仅 DB）
 /// 3. 若非最终轮：启动 Round N+1（含 Clock 调度）
-/// 4. HTTP 推送 Judge（最后，不影响轮次时钟）
+/// 4. 调度 batch deadline 任务（Pull Judge 超时保护）
+/// 5. 发布 SSE
 ///
-/// 这样 Round N+1 计时在 JudgeServer HTTP 响应之前就开始，
-/// 确保轮次时钟不受远程 Judge 响应时间影响。
+/// Round N+1 计时在 Judge 回调之前就开始，确保轮次时钟不受远程 Judge 响应时间影响。
 pub async fn end_round(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
@@ -360,13 +360,23 @@ pub async fn end_round(
         }
     }
 
-    // ── 步骤 4：HTTP 推送 Judge（最后，best-effort）──
-    // 此时 Round N+1 时钟已在运行，Judge HTTP 延迟不影响轮次推进
+    // ── 步骤 4：调度 batch deadline 任务 ──
     if let Ok(batch_id) = &judge_result {
-        if let Err(e) = dispatch_judge_batch_for_round(db, event_id, *batch_id).await {
-            warn!(
-                "[Round] Judge HTTP dispatch failed for batch {batch_id}: {e}"
-            );
+        if let Ok(deadline) = max_task_deadline(db, *batch_id).await {
+            let txn = db
+                .begin()
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+            if let Err(e) =
+                schedule_batch_deadline_task(&txn, event_id, *batch_id, deadline).await
+            {
+                warn!(
+                    "[Round] Failed to schedule batch deadline for batch {batch_id}: {e}"
+                );
+                let _ = txn.rollback().await;
+            } else {
+                let _ = txn.commit().await;
+            }
         }
     }
 
@@ -386,48 +396,6 @@ async fn create_judge_batch_for_round(
     round_id: Uuid,
 ) -> AwdResult<Uuid> {
     judge_service::create_batch(db, event_id, round_id).await
-}
-
-/// HTTP 推送 Judge batch 到 JudgeServer（临时 Push 传输）。
-async fn dispatch_judge_batch_for_round(
-    db: &sea_orm::DatabaseConnection,
-    event_id: Uuid,
-    batch_id: Uuid,
-) -> AwdResult<()> {
-    let awd_event = event_repo::find_by_event_id(db, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
-
-    let token_ciphertext = awd_event
-        .judgeserver_token_ciphertext
-        .clone()
-        .ok_or_else(|| AwdError::NotFound("JudgeServer token not configured".into()))?;
-    let token_nonce = awd_event
-        .judgeserver_token_nonce
-        .clone()
-        .ok_or_else(|| AwdError::NotFound("JudgeServer token nonce not configured".into()))?;
-    let crypto = crate::modules::event::awd::crypto::AwdCrypto::from_config_secret()
-        .map_err(|e| AwdError::Crypto(e.to_string()))?;
-    let token = crypto
-        .decrypt(
-            &crate::modules::event::awd::crypto::EncryptedBlob {
-                ciphertext: token_ciphertext,
-                nonce: token_nonce,
-                key_version: awd_event.key_version,
-            },
-            &crate::modules::event::awd::crypto::AwdCrypto::build_aad(event_id, "internal_token"),
-        )
-        .map_err(|e| AwdError::Crypto(e.to_string()))?;
-    let token = String::from_utf8(token).map_err(|_| AwdError::Crypto("token not utf8".into()))?;
-
-    let event_network =
-        crate::modules::event::awd::repo::event_network_repo::require_by_event_id(db, event_id)
-            .await?;
-    let judgeserver_url = format!("http://{}:8082", event_network.judgeserver_ip.ip());
-    judge_service::dispatch_batch(db, batch_id, &judgeserver_url, &token).await?;
-
-    Ok(())
 }
 
 /// P3-13：重启后恢复当前 round 的调度任务（幂等）。
@@ -596,71 +564,52 @@ pub async fn recover_round_gap(
     }
 }
 
-/// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。
-///
-/// 语义：超时 = 防御方未响应 = 视为 down（-judge_down_penalty）。
-/// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
-pub async fn score_judge_timeouts(
+/// 查询 batch 中所有 task 的最大 deadline_at。
+async fn max_task_deadline(
     db: &sea_orm::DatabaseConnection,
-    round_id: Uuid,
-) -> AwdResult<u64> {
-    let timed_out = awd_judge_tasks::Entity::find()
-        .filter(awd_judge_tasks::Column::RoundId.eq(round_id))
-        .filter(awd_judge_tasks::Column::Status.eq(JudgeTaskStatus::JudgeTimeout))
-        .all(db)
+    batch_id: Uuid,
+) -> AwdResult<chrono::DateTime<chrono::FixedOffset>> {
+    let task = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::BatchId.eq(batch_id))
+        .order_by_desc(awd_judge_tasks::Column::DeadlineAt)
+        .one(db)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("No tasks in batch".into()))?;
+    Ok(task.deadline_at)
+}
 
-    // 收集涉及到的 EventGameBox 分值
-    let mut eg_points: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
-    for t in &timed_out {
-        if let Some(eg_id) = t.event_gamebox_id {
-            if !eg_points.contains_key(&eg_id) {
-                if let Ok(Some(eg)) =
-                    crate::modules::event::awd::repo::event_gamebox_repo::find_event_gamebox_by_id(
-                        db, eg_id,
-                    )
-                    .await
-                {
-                    eg_points.insert(eg_id, eg.judge_down_penalty);
-                }
-            }
-        }
+/// 在事务内创建一次性 batch deadline 任务。
+async fn schedule_batch_deadline_task<C: ConnectionTrait + Send>(
+    txn: &C,
+    event_id: Uuid,
+    batch_id: Uuid,
+    execute_at: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<(), sea_orm::DbErr> {
+    let now = chrono::Utc::now();
+    scheduled_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        group_id: Set(Some(event_id)),
+        task_name: Set(format!("AWD Judge batch deadline {batch_id}")),
+        description: Set(Some(
+            "Judge batch absolute deadline — terminalize uncompleted tasks".into(),
+        )),
+        task_key: Set(TaskKey::AwdJudgeBatchDeadline.to_string()),
+        trigger_type: Set("once".into()),
+        status: Set("pending".into()),
+        execute_at: Set(Some(execute_at)),
+        payload: Set(Some(
+            serde_json::json!({ "event_id": event_id, "batch_id": batch_id }),
+        )),
+        enabled: Set(true),
+        protected: Set(true),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
     }
-
-    let mut scored = 0u64;
-    for t in &timed_out {
-        let eg_id = t.event_gamebox_id;
-        let delta = -eg_points
-            .get(&eg_id.unwrap_or_default())
-            .copied()
-            .unwrap_or(0);
-        let key = format!("judge-timeout:{}", t.id);
-        match score_repo::create_score_event(
-            db,
-            t.event_id,
-            Some(round_id),
-            t.team_id,
-            ScoreEventType::JudgeDown,
-            delta,
-            &key,
-            None,
-            Some(t.gamebox_instance_id),
-            eg_id,
-            Some("judge deadline timeout"),
-        )
-        .await
-        {
-            Ok(_) => scored += 1,
-            Err(e) => {
-                let msg = e.to_string().to_lowercase();
-                if !(msg.contains("23505") || msg.contains("duplicate")) {
-                    return Err(AwdError::Database(e.to_string()));
-                }
-            }
-        }
-    }
-    Ok(scored)
+    .insert(txn)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

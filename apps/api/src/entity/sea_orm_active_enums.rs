@@ -211,8 +211,6 @@ pub enum JudgeTaskStatus {
     Down,
     #[sea_orm(string_value = "judge_error")]
     JudgeError,
-    #[sea_orm(string_value = "judge_timeout")]
-    JudgeTimeout,
     #[sea_orm(string_value = "skipped_resetting")]
     SkippedResetting,
     #[sea_orm(string_value = "skipped_banned")]

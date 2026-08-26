@@ -236,6 +236,7 @@ pub async fn cancel_pending_event_lifecycle_schedules<C: ConnectionTrait + Send>
         .filter(scheduled_tasks::Column::TaskKey.is_in([
             TaskKey::AwdEventStart.to_string(),
             TaskKey::AwdAutoPrecheck.to_string(),
+            TaskKey::AwdHardeningEnd.to_string(),
         ]))
         .filter(scheduled_tasks::Column::Status.eq("pending"))
         .exec(db)
@@ -470,9 +471,12 @@ impl TaskHandler for AwdRoundStartHandler {
     }
 }
 
-/// Handler: End the current AWD round (grace period)——thin 代理 → round_service::end_round。
+/// Handler: End the current AWD round — thin 代理 → round_service::end_round。
 pub struct AwdRoundEndHandler {
     pub db: WebDb,
+    pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
 }
 
 #[async_trait]
@@ -489,7 +493,6 @@ impl TaskHandler for AwdRoundEndHandler {
         let payload: round_service::RoundTaskPayload =
             serde_json::from_value(task.payload.clone().unwrap_or_default())?;
         let event_id = payload.event_id;
-        // end 任务携带 round_id；缺失时按 active round 兜底
         let round_id = match payload.round_id {
             Some(id) => id,
             None => match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
@@ -502,52 +505,185 @@ impl TaskHandler for AwdRoundEndHandler {
         };
 
         info!("[AWD] Ending round {round_id} for event {event_id}");
-        round_service::end_round(self.db.get_ref(), event_id, round_id).await?;
-        Ok(())
-    }
-}
-
-/// Handler: Grace period ends — complete the round（thin 代理 → round_service::grace_end_round）。
-pub struct AwdRoundGraceEndHandler {
-    pub db: WebDb,
-    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
-}
-
-#[async_trait]
-impl TaskHandler for AwdRoundGraceEndHandler {
-    fn task_key(&self) -> TaskKey {
-        TaskKey::AwdRoundGraceEnd
-    }
-
-    fn trigger_type(&self) -> &'static str {
-        "cron"
-    }
-
-    async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let payload: round_service::RoundTaskPayload =
-            serde_json::from_value(task.payload.clone().unwrap_or_default())?;
-        let event_id = payload.event_id;
-        let round_id = match payload.round_id {
-            Some(id) => id,
-            None => match round_repo::find_active_round(self.db.get_ref(), event_id).await? {
-                Some(r) => r.id,
-                None => {
-                    warn!("[AWD] No active round for event {}", event_id);
-                    return Ok(());
-                }
-            },
-        };
-
-        info!("[AWD] Grace period ending for round {round_id} event {event_id}");
-        round_service::grace_end_round(
+        round_service::end_round(
             self.db.get_ref(),
             event_id,
             round_id,
+            self.network.as_ref(),
+            self.firewall.as_ref(),
             self.publisher.as_ref(),
         )
         .await?;
         Ok(())
     }
+}
+
+/// Handler: Hardening 阶段结束 → 进入 Attack + Round 1。
+pub struct AwdHardeningEndHandler {
+    pub db: WebDb,
+    pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
+}
+
+#[async_trait]
+impl TaskHandler for AwdHardeningEndHandler {
+    fn task_key(&self) -> TaskKey {
+        TaskKey::AwdHardeningEnd
+    }
+
+    fn trigger_type(&self) -> &'static str {
+        "once"
+    }
+
+    async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
+        let event_id = event_id_from_task(&task)?;
+        handle_hardening_end(
+            self.db.get_ref(),
+            self.network.as_ref(),
+            self.firewall.as_ref(),
+            self.publisher.as_ref(),
+            event_id,
+        )
+        .await
+    }
+}
+
+/// HardeningEnd 幂等处理器。
+///
+/// 检查 Hardening 截止时间已过 → 转为 Attack → 启动 Round 1。
+/// 重复投递（scheduler retry）不会创建重复 Round 1。
+async fn handle_hardening_end(
+    db: &sea_orm::DatabaseConnection,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
+    event_id: Uuid,
+) -> anyhow::Result<()> {
+    use sea_orm::TransactionTrait;
+
+    let event = event_repo::find_by_event_id(db, event_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("AWD event not found"))?;
+
+    // 幂等：非 Running 或非 Hardening 则跳过
+    if event.status != AwdEventStatus::Running || event.phase != AwdPhase::Hardening {
+        info!(
+            "[AWD] HardeningEnd: event {} status={:?} phase={:?} — stale task, skip",
+            event_id, event.status, event.phase
+        );
+        return Ok(());
+    }
+
+    // 验证截止时间确实已过
+    if let Some(deadline) = event.hardening_ends_at {
+        let now = chrono::Utc::now();
+        if deadline.with_timezone(&chrono::Utc) > now {
+            warn!(
+                "[AWD] HardeningEnd: event {} hardening deadline {} not yet reached (now={}) — early delivery, skip",
+                event_id, deadline, now
+            );
+            return Ok(());
+        }
+    }
+
+    info!(
+        "[AWD] HardeningEnd: event {} → transitioning to Attack",
+        event_id
+    );
+
+    // ── 事务内：phase 切换 + 清除 hardening_ends_at ──
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    // 二次检查（锁内）
+    let ev = event_repo::find_by_event_id(&txn, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+
+    if ev.status != AwdEventStatus::Running || ev.phase != AwdPhase::Hardening {
+        txn.rollback()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        return Ok(());
+    }
+
+    // 更新 phase → Attack，清除 hardening_ends_at
+    event_repo::update_phase(&txn, ev.id, AwdPhase::Attack)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    // 清除 hardening_ends_at
+    use crate::entity::awd_events;
+    use sea_orm::ActiveValue::Set;
+    awd_events::ActiveModel {
+        id: Set(ev.id),
+        hardening_ends_at: Set(None),
+        updated_at: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await
+    .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    // ── COMMIT 后：网络 reconcile + 启动 Round 1 ──
+    let revision = firewall_service::next_network_revision(db).await?;
+    let _ = firewall_service::reconcile_global(db, firewall, revision).await;
+
+    // 启动 Round 1（幂等：如果已存在则返回既有 round）
+    round_service::start_round(db, network, firewall, publisher, event_id, Some(1)).await?;
+
+    Ok(())
+}
+
+/// 调度 Hardening 结束任务（在事务内调用）。
+pub async fn schedule_hardening_end<C: ConnectionTrait + Send>(
+    txn: &C,
+    event_id: Uuid,
+    execute_at: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<(), sea_orm::DbErr> {
+    let now = chrono::Utc::now();
+    let payload = serde_json::json!({ "event_id": event_id });
+    scheduled_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        group_id: Set(Some(event_id)),
+        task_name: Set(format!("AWD HardeningEnd event {event_id}")),
+        description: Set(Some("Hardening stage ends → transition to Attack".into())),
+        task_key: Set(TaskKey::AwdHardeningEnd.to_string()),
+        trigger_type: Set("once".into()),
+        status: Set("pending".into()),
+        execute_at: Set(Some(execute_at)),
+        payload: Set(Some(payload)),
+        enabled: Set(true),
+        protected: Set(true),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(txn)
+    .await?;
+    Ok(())
+}
+
+/// 取消尚未执行的 HardeningEnd 任务（Pause 时使用）。
+pub async fn cancel_pending_hardening_end<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+) -> Result<u64, sea_orm::DbErr> {
+    let result = scheduled_tasks::Entity::delete_many()
+        .filter(scheduled_tasks::Column::GroupId.eq(event_id))
+        .filter(scheduled_tasks::Column::TaskKey.eq(TaskKey::AwdHardeningEnd.to_string()))
+        .filter(scheduled_tasks::Column::Status.eq("pending"))
+        .exec(db)
+        .await?;
+    Ok(result.rows_affected)
 }
 
 /// Handler: 自动解封（P4-7，duration 到期任务）。

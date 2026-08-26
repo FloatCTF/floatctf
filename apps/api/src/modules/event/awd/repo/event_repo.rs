@@ -35,6 +35,10 @@ pub struct TransitionPatch {
     pub clear_verified: bool,
     /// 已验证配置代数（P2-9：Precheck 成功时记录 configuration_generation）。
     pub verified_generation: Option<i64>,
+    /// Hardening 阶段计划结束时间（运行时状态，Wave 2）。
+    /// 设置 `Some(...)` 写入；设置 `None` 不触碰列；需要清空时传 `Some(clear)` 并在
+    /// active_model 中处理。
+    pub hardening_ends_at: Option<Option<chrono::DateTime<chrono::FixedOffset>>>,
 }
 
 impl TransitionPatch {
@@ -168,6 +172,16 @@ impl<'a> AwdEventRepositoryRef<'a> {
 
 // ── Connection-generic helpers (usable inside transactions) ──
 
+/// 查询通用 Event 表（用于获取 start_time/end_time 等调度字段）。
+pub async fn find_generic_event_by_id<C: ConnectionTrait + Send>(
+    db: &C,
+    event_id: Uuid,
+) -> Result<Option<crate::entity::events::Model>, sea_orm::DbErr> {
+    crate::entity::events::Entity::find_by_id(event_id)
+        .one(db)
+        .await
+}
+
 pub async fn find_by_event_id<C: ConnectionTrait + Send>(
     db: &C,
     event_id: Uuid,
@@ -300,6 +314,9 @@ fn active_model_from_patch(
     }
     if let Some(gen_val) = patch.verified_generation {
         active.verified_generation = Set(Some(gen_val));
+    }
+    if let Some(hea) = patch.hardening_ends_at {
+        active.hardening_ends_at = Set(hea);
     }
     active
 }

@@ -54,6 +54,7 @@ pub struct Model {
     pub verified_generation: Option<i64>,
     pub round_count: Option<i32>,
     pub initial_score: i64,
+    pub hardening_ends_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

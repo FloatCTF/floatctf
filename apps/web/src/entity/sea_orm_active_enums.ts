@@ -117,7 +117,6 @@ export enum PrecheckStatus {
 
 export enum RoundStatus {
   Active = 'active',
-  Grace = 'grace',
   Completed = 'completed',
   Paused = 'paused',
 }

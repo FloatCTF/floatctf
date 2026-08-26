@@ -16,7 +16,7 @@ use crate::{
         infrastructure::firewall::FirewallRuntime,
         scheduler::{
             AwdArchiveCleanupHandler, AwdAutoPrecheckHandler, AwdEventStartHandler,
-            AwdRoundEndHandler, AwdRoundGraceEndHandler, AwdRoundStartHandler, AwdTeamUnbanHandler,
+            AwdHardeningEndHandler, AwdRoundEndHandler, AwdRoundStartHandler, AwdTeamUnbanHandler,
         },
     },
     modules::event::awdp::scheduler::{
@@ -81,9 +81,16 @@ pub async fn build_task_scheduler(
             firewall: firewall.clone(),
             publisher: publisher.clone(),
         }),
-        Arc::new(AwdRoundEndHandler { db: db.clone() }),
-        Arc::new(AwdRoundGraceEndHandler {
+        Arc::new(AwdRoundEndHandler {
             db: db.clone(),
+            network: network.clone(),
+            firewall: firewall.clone(),
+            publisher: publisher.clone(),
+        }),
+        Arc::new(AwdHardeningEndHandler {
+            db: db.clone(),
+            network: network.clone(),
+            firewall: firewall.clone(),
             publisher: publisher.clone(),
         }),
         Arc::new(AwdTeamUnbanHandler {

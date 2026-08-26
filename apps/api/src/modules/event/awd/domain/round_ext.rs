@@ -14,8 +14,7 @@ impl RoundStatusExt for RoundStatus {
 
     fn valid_transitions(&self) -> &'static [RoundStatus] {
         match self {
-            Self::Active => &[Self::Grace, Self::Paused, Self::Completed],
-            Self::Grace => &[Self::Completed],
+            Self::Active => &[Self::Paused, Self::Completed],
             Self::Paused => &[Self::Active],
             Self::Completed => &[],
         }

@@ -1,12 +1,12 @@
 //! AWD 故障恢复服务。
 
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, QueryFilter};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_event_networks, awd_events, event_gamebox_instances,
-    sea_orm_active_enums::{AwdEventStatus, GameboxStatus},
+    awd_event_networks, awd_events, event_gamebox_instances, scheduled_tasks,
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus},
 };
 use crate::modules::event::awd::{
     AwdError, AwdResult,
@@ -19,6 +19,7 @@ use crate::modules::event::awd::{
     repo::{event_network_repo, event_repo},
     service::{firewall_service, round_service},
 };
+use crate::scheduler::TaskKey;
 use fcmc::AwdContainerRuntime;
 
 /// 启动时对全部活跃 AWD 赛事执行恢复。
@@ -229,7 +230,43 @@ async fn recover_event(
     .await;
     recovered += 1;
 
-    // ── 4. Round 调度恢复（P3-13）：Active/Grace round 缺任务则按时间重建 ──
+    // ── 4. Round / Hardening 调度恢复 ──
+    // 4a. Hardening phase：确保 HardeningEnd 调度存在
+    if event.phase == AwdPhase::Hardening && event.status == AwdEventStatus::Running {
+        if let Some(deadline) = event.hardening_ends_at {
+            let key = TaskKey::AwdHardeningEnd.to_string();
+            let pending = scheduled_tasks::Entity::find()
+                .filter(scheduled_tasks::Column::GroupId.eq(event.event_id))
+                .filter(scheduled_tasks::Column::TaskKey.eq(&key))
+                .filter(scheduled_tasks::Column::Status.eq("pending"))
+                .one(db)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+            if pending.is_none() {
+                let txn = db
+                    .begin()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                crate::modules::event::awd::scheduler::schedule_hardening_end(
+                    &txn,
+                    event.event_id,
+                    deadline.fixed_offset(),
+                )
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                recovered += 1;
+                info!(
+                    "[Recovery] Event {} restored HardeningEnd schedule",
+                    event.event_id
+                );
+            }
+        }
+    }
+
+    // 4b. Attack round 调度恢复
     let restored_tasks = round_service::restore_round_scheduling(db, event.event_id).await?;
     if restored_tasks > 0 {
         info!(

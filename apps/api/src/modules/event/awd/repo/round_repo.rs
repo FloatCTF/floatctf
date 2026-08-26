@@ -16,7 +16,6 @@ pub async fn find_active_round(
         .filter(awd_rounds::Column::EventId.eq(event_id))
         .filter(awd_rounds::Column::Status.is_in([
             RoundStatus::Active,
-            RoundStatus::Grace,
             RoundStatus::Paused,
         ]))
         .one(db)

@@ -16,7 +16,6 @@ pub struct Model {
     pub phase: AwdPhase,
     pub started_at: DateTimeWithTimeZone,
     pub scheduled_end_at: DateTimeWithTimeZone,
-    pub grace_ends_at: Option<DateTimeWithTimeZone>,
     pub paused_at: Option<DateTimeWithTimeZone>,
     pub remaining_secs: Option<i32>,
     pub completed_at: Option<DateTimeWithTimeZone>,

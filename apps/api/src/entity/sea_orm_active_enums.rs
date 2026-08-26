@@ -248,8 +248,6 @@ pub enum PrecheckStatus {
 pub enum RoundStatus {
     #[sea_orm(string_value = "active")]
     Active,
-    #[sea_orm(string_value = "grace")]
-    Grace,
     #[sea_orm(string_value = "completed")]
     Completed,
     #[sea_orm(string_value = "paused")]

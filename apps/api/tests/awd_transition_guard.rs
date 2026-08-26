@@ -39,6 +39,7 @@ fn base_awd_event(event_id: Uuid, _tag: &str) -> awd_events::ActiveModel {
         event_id: Set(event_id),
         event_secret_ciphertext: Set(vec![1u8; 32]),
         event_secret_nonce: Set(vec![2u8; 24]),
+        round_count: Set(Some(1)),
         ..Default::default()
     }
 }

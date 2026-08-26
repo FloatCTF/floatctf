@@ -36,4 +36,5 @@ export type AwdEvents = {
   verified_generation?: string;
   round_count?: string;
   initial_score: number;
+  hardening_ends_at?: string;
 };

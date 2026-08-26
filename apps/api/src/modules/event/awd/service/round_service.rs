@@ -1,10 +1,14 @@
-//! 轮次生命周期服务（Phase 3 P3-1..P3-6）。
+//! 轮次生命周期服务（Wave 2）。
 //!
-//! 推进流程概览：
+//! 推进流程：
 //! ```text
-//! tick → 结束当前轮 → 开启下一轮
-//!                 → conntrack flush → 派发裁判 → 发布事件
+//! Round N End → Round N Completed
+//!             → 创建 Judge batch/tasks for Round N
+//!             → 若 N < round_count → 直接启动 Round N+1
+//!             → 若 N == round_count → 无下一轮（Running + Attack + 无活跃轮次）
 //! ```
+//!
+//! Judge 与 Round 独立推进：Round N+1 不等待 Round N Judge 完成。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
@@ -30,12 +34,12 @@ use crate::modules::event::awd::{
 };
 use crate::scheduler::TaskKey;
 
-/// Round 任务 payload：end/grace_end 任务带 round_id（幂等键维度）。
+/// Round 任务 payload。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundTaskPayload {
     pub event_id: Uuid,
     pub round_id: Option<Uuid>,
-    /// RoundStart 任务携带期望 round_number（幂等键维度，P3-3 防 retry 双 round）。
+    /// RoundStart 任务携带期望 round_number（幂等键维度）。
     pub round_number: Option<i32>,
 }
 
@@ -49,7 +53,7 @@ pub struct RoundStarted {
     pub created: bool,
 }
 
-/// 在事务内创建一次性 round 任务（end/grace_end/start）。
+/// 在事务内创建一次性 round 任务。
 async fn schedule_round_task<C: ConnectionTrait + Send>(
     txn: &C,
     event_id: Uuid,
@@ -87,9 +91,11 @@ async fn schedule_round_task<C: ConnectionTrait + Send>(
     Ok(())
 }
 
-/// 开始一轮（P3-1/P3-2/P3-3/P3-6）。
+/// 开始一轮 Attack 轮次。
 ///
 /// 幂等：同 (event_id, round_number) 已存在 → 返回既有 round（retry 安全）。
+///
+/// 所有轮次 phase 均为 Attack。Hardening 不再是 Round 1。
 pub async fn start_round(
     db: &sea_orm::DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -98,7 +104,6 @@ pub async fn start_round(
     event_id: Uuid,
     expected_round_number: Option<i32>,
 ) -> AwdResult<RoundStarted> {
-    // ── 事务内：DB 状态变更 ──
     let txn = db
         .begin()
         .await
@@ -123,29 +128,20 @@ pub async fn start_round(
         )));
     }
 
-    // 上一轮残留清理（崩溃恢复场景：active 轮次未 Completed）
-    if let Some(prev) = round_repo::find_active_round(&txn, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-    {
-        info!(
-            "[Round] Completing leftover active round {} for event {}",
-            prev.round_number, event_id
+    if awd_event.phase != AwdPhase::Attack {
+        warn!(
+            "[Round] Event {} phase is {:?} — skip round start",
+            event_id, awd_event.phase
         );
-        let timed_out = judge_repo::timeout_pending_tasks(&txn, prev.id)
+        txn.rollback()
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
-        if timed_out > 0 {
-            warn!("[Round] {timed_out} pending judge tasks timed out");
-            // P3-5：deadline 超时计分（在事务外，读已提交的 JudgeTimeout 状态）
-            score_judge_timeouts(db, prev.id).await?;
-        }
-        round_repo::update_round_status(&txn, prev.id, RoundStatus::Completed)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+        return Err(AwdError::InvalidState(
+            "Cannot start round outside Attack phase".into(),
+        ));
     }
 
-    // round number：任务携带期望值则用之（幂等键维度）；否则 latest + 1（或 1）
+    // round number：任务携带期望值则用之；否则 latest + 1（或 1）
     let round_number = match expected_round_number {
         Some(n) if n >= 1 => n,
         _ => {
@@ -156,7 +152,7 @@ pub async fn start_round(
         }
     };
 
-    // 幂等：同 round_number 已存在 → 直接返回（retry 不重复创建）
+    // 幂等：同 round_number 已存在 → 直接返回
     let existing = awd_rounds::Entity::find()
         .filter(awd_rounds::Column::EventId.eq(event_id))
         .filter(awd_rounds::Column::RoundNumber.eq(round_number))
@@ -175,17 +171,7 @@ pub async fn start_round(
         });
     }
 
-    // phase：round 1 = Hardening，后续 = Attack
-    let phase = if round_number == 1 {
-        AwdPhase::Hardening
-    } else {
-        AwdPhase::Attack
-    };
-
-    // 更新 event phase（守卫 repo 方法：Hardening↔Attack 合法）
-    event_repo::update_phase(&txn, awd_event.id, phase.clone())
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
+    let phase = AwdPhase::Attack;
 
     let now = chrono::Utc::now();
     let round_end = now + chrono::Duration::seconds(awd_event.round_duration_secs as i64);
@@ -214,8 +200,7 @@ pub async fn start_round(
         round.round_number, phase, event_id
     );
 
-    // ── COMMIT 后：网络副作用（横切规则 3）──
-    // phase 切换 = DB desired → 全局 DesiredFirewallState → nftables reconcile（P3-6）
+    // ── COMMIT 后：网络 reconcile ──
     let revision = firewall_service::next_network_revision(db).await?;
     match firewall_service::reconcile_global(db, firewall, revision).await {
         Ok(_) => {
@@ -230,7 +215,6 @@ pub async fn start_round(
                 &event_network.gamebox_cidr.to_string(),
             )
             .await;
-            // P3-7：DB commit 后发布；publish 失败不回滚业务（best-effort）
             let phase_str = format!("{:?}", phase).to_lowercase();
             let _ = publisher
                 .publish(
@@ -246,7 +230,6 @@ pub async fn start_round(
                 .await;
         }
         Err(e) => {
-            // P3-6 Fail Closed：reconcile 失败 → network.policy.failed + 返回错误（调用方置 NetworkError）
             let phase_str = format!("{:?}", phase).to_lowercase();
             let _ = publisher
                 .publish(
@@ -258,15 +241,6 @@ pub async fn start_round(
         }
     }
 
-    // judge batch 分发（P3-2：非致命——round 已提交，judge 分发可重试，
-    // 失败只记录，不让轮次启动因网络抖动回滚）
-    if let Err(e) = dispatch_judge_for_round(db, &awd_event, round.id, event_id).await {
-        warn!(
-            "[Round] judge dispatch failed for round {} event {}: {}",
-            round.id, event_id, e
-        );
-    }
-
     Ok(RoundStarted {
         round_id: round.id,
         round_number: round.round_number,
@@ -275,14 +249,21 @@ pub async fn start_round(
     })
 }
 
-/// RoundEnd：进入 Grace（P3-4）。
+/// RoundEnd：立即完成轮次，创建 Judge 任务，若 N < round_count 立即启动 N+1。
 ///
-/// 幂等：非 Active 状态（已 Grace/Completed）→ 直接成功跳过。
+/// 幂等：非 Active 状态 → 直接成功跳过。
+///
+/// Round N+1 启动不等待 Judge HTTP 响应——Judge 任务创建后
+/// 先启动下一轮（或推送 Judge），确保轮次时钟不受 JudgeServer 响应时间影响。
 pub async fn end_round(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
     round_id: Uuid,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn EventPublisher,
 ) -> AwdResult<()> {
+    // ── 事务内：完成轮次 + 创建 Judge ──
     let txn = db
         .begin()
         .await
@@ -302,7 +283,7 @@ pub async fn end_round(
 
     if round.status != RoundStatus::Active {
         warn!(
-            "[Round] Round {} already {:?} — skip grace",
+            "[Round] Round {} already {:?} — skip",
             round_id, round.status
         );
         txn.rollback()
@@ -311,132 +292,89 @@ pub async fn end_round(
         return Ok(());
     }
 
-    // 超时未回 judge 任务（deadline 强制，P3-5）
-    let timed_out = judge_repo::timeout_pending_tasks(&txn, round_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-    if timed_out > 0 {
-        warn!("[Round] Round {round_id} end: {timed_out} pending judge tasks timed out");
-    }
-
-    // grace 周期
-    let awd_event = event_repo::find_by_event_id(&txn, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
-    let grace_ends_at =
-        chrono::Utc::now() + chrono::Duration::seconds(awd_event.judge_grace_period_secs as i64);
-
-    let mut active: awd_rounds::ActiveModel = awd_rounds::ActiveModel {
-        id: Set(round_id),
-        status: Set(RoundStatus::Grace),
-        grace_ends_at: Set(Some(grace_ends_at.into())),
-        ..Default::default()
-    };
-    active
-        .update(&txn)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    // 插入 GraceEnd 任务
-    schedule_round_task(
-        &txn,
-        event_id,
-        TaskKey::AwdRoundGraceEnd,
-        grace_ends_at.fixed_offset(),
-        Some(round_id),
-        None,
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    txn.commit()
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    info!("[Round] Round {round_id} entered grace until {grace_ends_at}");
-    Ok(())
-}
-
-/// GraceEnd：Complete 当前轮，若赛事仍 Running 则调度下一轮（N+1，P3-1）。
-///
-/// 幂等：非 Grace 状态 → 跳过。
-pub async fn grace_end_round(
-    db: &sea_orm::DatabaseConnection,
-    event_id: Uuid,
-    round_id: Uuid,
-    publisher: &dyn EventPublisher,
-) -> AwdResult<()> {
-    let txn = db
-        .begin()
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-
-    let round = awd_rounds::Entity::find_by_id(round_id)
-        .one(&txn)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("Round not found".into()))?;
-    if round.event_id != event_id {
-        txn.rollback()
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
-        return Err(AwdError::Forbidden("Round belongs to another event".into()));
-    }
-
-    if round.status != RoundStatus::Grace {
-        warn!(
-            "[Round] Round {round_id} not in Grace ({:?}) — skip",
-            round.status
-        );
-        txn.rollback()
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
-        return Ok(());
-    }
-
+    // 完成轮次
     round_repo::update_round_status(&txn, round_id, RoundStatus::Completed)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 若赛事仍 Running → RoundStart(N+1)
     let awd_event = event_repo::find_by_event_id(&txn, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
-    if awd_event.status == AwdEventStatus::Running {
-        schedule_round_task(
-            &txn,
-            event_id,
-            TaskKey::AwdRoundStart,
-            chrono::Utc::now().fixed_offset(),
-            None,
-            Some(round.round_number + 1),
-        )
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?;
-    }
+
+    let round_count = awd_event.round_count;
+    let round_number = round.round_number;
+    let is_final = round_count.map(|rc| round_number >= rc).unwrap_or(false);
 
     txn.commit()
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    let completed_round_number = round.round_number;
-    info!("[Round] Round {round_id} completed for event {event_id}");
-    // P3-7：DB commit 后发布（best-effort）
+    let completed_round_number = round_number;
+    info!(
+        "[Round] Round {round_id} (number {completed_round_number}) completed for event {event_id}"
+    );
     let _ = publisher
         .publish(websocket::round_completed(event_id, completed_round_number).into_realtime())
         .await;
+
+    // ── COMMIT 后：创建 Judge batch + 推送 ──
+    // Judge 创建失败不阻塞轮次推进（best-effort）
+    let judge_result = create_and_dispatch_judge_for_round(db, event_id, round_id).await;
+    if let Err(ref e) = judge_result {
+        warn!(
+            "[Round] Judge batch creation failed for round {round_id}: {e}"
+        );
+    }
+
+    // ── 下一轮 ──
+    if is_final {
+        info!(
+            "[Round] Final round {completed_round_number} ended — no next round. Event {} remains Running/Attack.",
+            event_id
+        );
+    } else {
+        info!(
+            "[Round] Starting round {} immediately for event {}",
+            completed_round_number + 1,
+            event_id
+        );
+        // 启动下一轮（直接调用，不通过 scheduler）
+        if let Err(e) = start_round(
+            db,
+            network,
+            firewall,
+            publisher,
+            event_id,
+            Some(completed_round_number + 1),
+        )
+        .await
+        {
+            warn!(
+                "[Round] Failed to start round {} for event {}: {e}",
+                completed_round_number + 1,
+                event_id
+            );
+        }
+    }
+
     Ok(())
 }
 
-/// 分发 judge batch（沿用原 handler 逻辑）。
-async fn dispatch_judge_for_round(
+/// 创建 Judge batch 并通过 Push 分发（临时，Wave 3 替换为 Pull+Lease）。
+async fn create_and_dispatch_judge_for_round(
     db: &sea_orm::DatabaseConnection,
-    awd_event: &awd_events::Model,
-    round_id: Uuid,
     event_id: Uuid,
+    round_id: Uuid,
 ) -> AwdResult<()> {
+    let awd_event = event_repo::find_by_event_id(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+
+    let batch_id = judge_service::create_batch(db, event_id, round_id).await?;
+
+    // Push dispatch（临时）
     let token_ciphertext = awd_event
         .judgeserver_token_ciphertext
         .clone()
@@ -459,29 +397,20 @@ async fn dispatch_judge_for_round(
         .map_err(|e| AwdError::Crypto(e.to_string()))?;
     let token = String::from_utf8(token).map_err(|_| AwdError::Crypto("token not utf8".into()))?;
 
-    let batch_id = judge_service::create_batch(db, event_id, round_id).await?;
     let event_network =
         crate::modules::event::awd::repo::event_network_repo::require_by_event_id(db, event_id)
             .await?;
     let judgeserver_url = format!("http://{}:8082", event_network.judgeserver_ip.ip());
     judge_service::dispatch_batch(db, batch_id, &judgeserver_url, &token).await?;
+
     Ok(())
 }
 
-/// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。
-///
-/// 语义：超时 = 防御方未响应 = 视为 down（-judge_down_penalty）。
-/// score_event_type 枚举无 JudgeTimeout 变体（避免 enum 迁移），
-/// 用 JudgeDown + reason="judge deadline timeout" 表达，审计可区分。
-/// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
-/// 返回计分的任务数。
 /// P3-13：重启后恢复当前 round 的调度任务（幂等）。
 ///
-/// 场景：历史版本创建的 round 没有 RoundEnd 任务，或崩溃发生在任务窗口内。
 /// 恢复规则：
 /// - Active round：缺 pending `awd.round.end` 任务 → 按 scheduled_end_at 重建；
-/// - Grace round：缺 pending `awd.round.grace_end` 任务 → 按 grace_ends_at 重建；
-/// - Paused round：暂停中，不恢复 end/grace 任务（resume 时重建）。
+/// - Paused round：暂停中，不恢复任务（resume 时重建）。
 pub async fn restore_round_scheduling(
     db: &sea_orm::DatabaseConnection,
     event_id: Uuid,
@@ -490,7 +419,7 @@ pub async fn restore_round_scheduling(
 
     let Some(round) = awd_rounds::Entity::find()
         .filter(awd_rounds::Column::EventId.eq(event_id))
-        .filter(awd_rounds::Column::Status.is_in([RS::Active, RS::Grace, RS::Paused]))
+        .filter(awd_rounds::Column::Status.is_in([RS::Active, RS::Paused]))
         .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
@@ -537,30 +466,6 @@ pub async fn restore_round_scheduling(
                 restored += 1;
             }
         }
-        RS::Grace => {
-            if let Some(grace_end) = round.grace_ends_at {
-                if !task_exists(TaskKey::AwdRoundGraceEnd).await? {
-                    let txn = db
-                        .begin()
-                        .await
-                        .map_err(|e| AwdError::Database(e.to_string()))?;
-                    schedule_round_task(
-                        &txn,
-                        event_id,
-                        TaskKey::AwdRoundGraceEnd,
-                        grace_end.fixed_offset(),
-                        Some(round.id),
-                        None,
-                    )
-                    .await
-                    .map_err(|e| AwdError::Database(e.to_string()))?;
-                    txn.commit()
-                        .await
-                        .map_err(|e| AwdError::Database(e.to_string()))?;
-                    restored += 1;
-                }
-            }
-        }
         RS::Paused => {
             // 暂停中：任务挂起由 resume 重建
         }
@@ -569,6 +474,10 @@ pub async fn restore_round_scheduling(
     Ok(restored)
 }
 
+/// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。
+///
+/// 语义：超时 = 防御方未响应 = 视为 down（-judge_down_penalty）。
+/// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
 pub async fn score_judge_timeouts(
     db: &sea_orm::DatabaseConnection,
     round_id: Uuid,
@@ -580,7 +489,7 @@ pub async fn score_judge_timeouts(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 收集涉及到的 EventGameBox 分值（§23：计分作用域 = EventGameBox）
+    // 收集涉及到的 EventGameBox 分值
     let mut eg_points: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
     for t in &timed_out {
         if let Some(eg_id) = t.event_gamebox_id {
@@ -622,7 +531,6 @@ pub async fn score_judge_timeouts(
         {
             Ok(_) => scored += 1,
             Err(e) => {
-                // 幂等重复（scheduler retry）不视为错误
                 let msg = e.to_string().to_lowercase();
                 if !(msg.contains("23505") || msg.contains("duplicate")) {
                     return Err(AwdError::Database(e.to_string()));

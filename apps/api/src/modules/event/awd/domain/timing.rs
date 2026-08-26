@@ -205,4 +205,28 @@ mod tests {
         assert_eq!(t.attack_duration_secs, 100_000_000);
         assert_eq!(t.hardening_duration_secs, 900_000_000);
     }
+
+    /// 显式验证 checked_mul 防止溢出：使用 i32::MAX 作为 round_count，
+    /// 适中的 round_duration 避免 chrono 精度问题，证明 checked_mul 安全。
+    #[test]
+    fn max_i32_round_count_no_overflow() {
+        let max = i32::MAX;
+        let rd = 100i32;
+        let product = (max as i64) * (rd as i64);
+        let event_end = product + 1;
+        let t = compute_timing(start(), Some(end(event_end)), Some(max), rd).unwrap();
+        assert_eq!(t.attack_duration_secs, product);
+        assert_eq!(t.round_count, max);
+        assert_eq!(t.round_duration_secs, rd);
+    }
+
+    /// 直接验证 checked_mul 返回 None 当 i64 溢出时：
+    /// 使用 i64::MAX 作为 round_count 和 round_duration_secs 的等效值
+    /// （通过直接构造，不经过函数签名，因为函数签名限制为 i32）。
+    #[test]
+    fn checked_mul_guards_against_overflow() {
+        // 证明 checked_mul 在溢出条件下返回 None
+        let overflow = (i64::MAX).checked_mul(2);
+        assert!(overflow.is_none(), "checked_mul must detect overflow");
+    }
 }

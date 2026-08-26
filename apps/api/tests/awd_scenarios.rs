@@ -105,7 +105,7 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
         AwdEventStatus::Verified,
         AwdEventStatus::Running,
         event_repo::TransitionPatch {
-            phase: Some(AwdPhase::Hardening),
+            phase: Some(AwdPhase::Attack),
             started_at: Some(chrono::Utc::now()),
             ..Default::default()
         },
@@ -165,7 +165,7 @@ async fn scenario_a_full_round_loop() {
         .expect("round 1 start");
     assert!(r1.created);
     assert_eq!(r1.round_number, 1);
-    assert_eq!(r1.phase, AwdPhase::Hardening);
+    assert_eq!(r1.phase, AwdPhase::Attack);
 
     // 幂等：重复 start → 同一 round（retry 不重复创建，P3-3）
     // retry 携带相同期望 round_number → 幂等命中（P3-3 防 retry 双 round）
@@ -176,21 +176,10 @@ async fn scenario_a_full_round_loop() {
     assert!(!r1_retry.created);
     assert_eq!(r1_retry.round_id, r1.round_id);
 
-    // Round 1 end → Grace
-    round_service::end_round(&db, event_id, r1.round_id)
+    // Round 1 end → Completed（无 Grace）
+    round_service::end_round(&db, event_id, r1.round_id, &network, &firewall, &publisher)
         .await
         .expect("round 1 end");
-    let round = awd_rounds::Entity::find_by_id(r1.round_id)
-        .one(&db)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(round.grace_ends_at.is_some(), "grace_ends_at written");
-
-    // Grace end → Completed + Round 2 scheduled (N+1)
-    round_service::grace_end_round(&db, event_id, r1.round_id, &publisher)
-        .await
-        .expect("round 1 grace end");
     let round = awd_rounds::Entity::find_by_id(r1.round_id)
         .one(&db)
         .await

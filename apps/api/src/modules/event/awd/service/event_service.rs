@@ -1,22 +1,30 @@
-//! AWD 赛事配置/生命周期服务。
+//! AWD 赛事配置/生命周期服务（Wave 2）。
+//!
+//! Start → Hardening (if duration > 0) → Attack → Round 1..N → Final Settlement
 
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus};
 use crate::modules::event::awd::{
     AwdError, AwdResult,
-    domain::AwdEventStatusExt,
+    domain::{timing::compute_timing, AwdEventStatusExt},
     infrastructure::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, EventNetworkIdentity},
     },
     repo::{event_repo, round_repo},
     service::{firewall_service, round_service},
+    scheduler,
 };
 
-/// 启动 AWD 赛事：校验状态、创建首轮、设置 hardening 阶段与策略。
+/// 启动 AWD 赛事：校验 Precheck、配置代数、计算时间模型。
+///
+/// 若 hardening_duration > 0：进入 Running/Hardening，设置 hardening_ends_at，
+/// 调度 AwdHardeningEnd。不创建 Round 1。
+///
+/// 若 hardening_duration == 0：直接进入 Running/Attack，立即启动 Round 1。
 pub async fn start_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -44,13 +52,12 @@ pub async fn start_event(
         ));
     }
 
-    // P2-11 Start Gate：配置代数必须匹配（配置在验证后变更 → StartBlocked）
+    // P2-11 Start Gate：配置代数必须匹配
     if awd_event
         .verified_generation
         .map(|g| g != awd_event.configuration_generation)
         .unwrap_or(true)
     {
-        // 进入 StartBlocked（状态机合法路径）
         let _ = event_repo::transition_event(
             db,
             awd_event.id,
@@ -65,28 +72,91 @@ pub async fn start_event(
         ));
     }
 
-    // Start with hardening phase + started_at，经状态机唯一入口（Phase 0）
-    event_repo::transition_event(
-        db,
-        awd_event.id,
-        AwdEventStatus::Verified,
-        AwdEventStatus::Running,
-        event_repo::TransitionPatch {
-            phase: Some(AwdPhase::Hardening),
-            started_at: Some(chrono::Utc::now()),
-            ..Default::default()
-        },
-    )
-    .await?;
+    // ── 计算时间模型 ──
+    let generic_event = event_repo::find_generic_event_by_id(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("Generic event not found".into()))?;
 
-    // P3-1：第一轮经 round_service 创建（幂等 find-or-create + 插入 RoundEnd(1) 任务
-    // + COMMIT 后 reconcile + conntrack + judge dispatch）。
-    round_service::start_round(db, network, firewall, publisher, event_id, Some(1)).await?;
+    let timing = compute_timing(
+        generic_event.start_time,
+        generic_event.end_time,
+        awd_event.round_count,
+        awd_event.round_duration_secs,
+    )
+    .map_err(|e| AwdError::InvalidState(format!("Invalid AWD timing: {e}")))?;
+
+    let now = chrono::Utc::now();
+
+    if timing.hardening_duration_secs > 0 {
+        // ── Hardening > 0：进入 Hardening 阶段 ──
+        let hardening_ends_at = now + chrono::Duration::seconds(timing.hardening_duration_secs);
+
+        event_repo::transition_event(
+            db,
+            awd_event.id,
+            AwdEventStatus::Verified,
+            AwdEventStatus::Running,
+            event_repo::TransitionPatch {
+                phase: Some(AwdPhase::Hardening),
+                started_at: Some(now),
+                hardening_ends_at: Some(Some(hardening_ends_at.into())),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        // 调度 HardeningEnd
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        scheduler::schedule_hardening_end(&txn, event_id, hardening_ends_at.fixed_offset())
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        txn.commit()
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+
+        info!(
+            "[Event] Event {} started in Hardening phase (hardening_ends_at={})",
+            event_id, hardening_ends_at
+        );
+
+        // 应用 Hardening 网络策略
+        let revision = firewall_service::next_network_revision(db).await?;
+        let _ = firewall_service::reconcile_global(db, firewall, revision).await;
+    } else {
+        // ── Hardening = 0：直接进入 Attack，启动 Round 1 ──
+        event_repo::transition_event(
+            db,
+            awd_event.id,
+            AwdEventStatus::Verified,
+            AwdEventStatus::Running,
+            event_repo::TransitionPatch {
+                phase: Some(AwdPhase::Attack),
+                started_at: Some(now),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        info!(
+            "[Event] Event {} started directly in Attack phase (hardening=0)",
+            event_id
+        );
+
+        // 应用 Attack 网络策略 + 启动 Round 1
+        let revision = firewall_service::next_network_revision(db).await?;
+        let _ = firewall_service::reconcile_global(db, firewall, revision).await;
+
+        round_service::start_round(db, network, firewall, publisher, event_id, Some(1)).await?;
+    }
 
     Ok(())
 }
 
-/// 暂停赛事：保存轮次剩余时间，网络进入 pause 阶段。
+/// 暂停赛事：保存当前阶段剩余时间，取消定时任务，网络进入 pause 阶段。
 pub async fn pause_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -105,33 +175,59 @@ pub async fn pause_event(
     }
 
     let now = chrono::Utc::now();
-    let remaining = if let Some(round) = round_repo::find_active_round(db, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-    {
-        let remaining = (round.scheduled_end_at.with_timezone(&chrono::Utc) - now)
-            .num_seconds()
-            .max(0) as i32;
+    let remaining: i32;
 
-        round_repo::pause_round(db, round.id, remaining)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
-        remaining
-    } else {
-        0
-    };
+    match awd_event.phase {
+        AwdPhase::Hardening => {
+            // 计算剩余 Hardening 时间
+            remaining = awd_event
+                .hardening_ends_at
+                .map(|h| {
+                    (h.with_timezone(&chrono::Utc) - now)
+                        .num_seconds()
+                        .max(0) as i32
+                })
+                .unwrap_or(0);
 
-    // 状态 + phase + paused_phase + pause_remaining_secs 同事务原子写入（Phase 0）
+            // 取消 pending HardeningEnd 任务
+            let _ = scheduler::cancel_pending_hardening_end(db, event_id).await;
+        }
+        AwdPhase::Attack => {
+            // 暂停活跃轮次
+            if let Some(round) = round_repo::find_active_round(db, event_id)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?
+            {
+                remaining = (round.scheduled_end_at.with_timezone(&chrono::Utc) - now)
+                    .num_seconds()
+                    .max(0) as i32;
+
+                round_repo::pause_round(db, round.id, remaining)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+            } else {
+                remaining = 0;
+            }
+        }
+        _ => {
+            remaining = 0;
+        }
+    }
+
+    // 状态 + phase + paused_phase + pause_remaining_secs 同事务原子写入
+    let mut patch = event_repo::TransitionPatch::paused(awd_event.phase, remaining);
+    // 清除 hardening_ends_at（暂停时不再需要）
+    patch.hardening_ends_at = Some(None);
+
     event_repo::transition_event(
         db,
         awd_event.id,
         AwdEventStatus::Running,
         AwdEventStatus::Paused,
-        event_repo::TransitionPatch::paused(awd_event.phase, remaining),
+        patch,
     )
     .await?;
 
-    // P4-10：pause 网络应用失败 → Fail Closed（NetworkError），不留"Paused 但网络没生效"
     match firewall_service::reconcile_global(
         db,
         firewall,
@@ -169,7 +265,7 @@ pub async fn pause_event(
     }
 }
 
-/// 恢复赛事：还原轮次时间与网络阶段。
+/// 恢复赛事：还原阶段时间与网络阶段。
 pub async fn resume_event(
     db: &DatabaseConnection,
     network: &dyn AwdNetworkRuntime,
@@ -187,48 +283,124 @@ pub async fn resume_event(
         ));
     }
 
-    // Resume the paused round
-    if let Some(round) = round_repo::find_active_round(db, event_id)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-    {
-        let remaining = round
-            .remaining_secs
-            .unwrap_or(awd_event.round_duration_secs);
-        let new_end = chrono::Utc::now() + chrono::Duration::seconds(remaining as i64);
+    let resume_phase = awd_event.paused_phase.unwrap_or(AwdPhase::Hardening);
+    let remaining = awd_event.pause_remaining_secs.unwrap_or(0);
+    let now = chrono::Utc::now();
 
-        let mut active: crate::entity::awd_rounds::ActiveModel =
-            crate::entity::awd_rounds::ActiveModel {
-                id: Set(round.id),
-                status: Set(RoundStatus::Active),
-                scheduled_end_at: Set(new_end.into()),
-                remaining_secs: Set(None),
-                paused_at: Set(None),
-                ..Default::default()
+    match resume_phase {
+        AwdPhase::Hardening => {
+            // 恢复 Hardening
+            let hardening_ends_at = if remaining > 0 {
+                let deadline = now + chrono::Duration::seconds(remaining as i64);
+                Some(deadline)
+            } else {
+                None
             };
-        active
-            .update(db)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+
+            event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Paused,
+                AwdEventStatus::Running,
+                event_repo::TransitionPatch {
+                    phase: Some(AwdPhase::Hardening),
+                    pause_remaining_secs: Some(0),
+                    hardening_ends_at: Some(hardening_ends_at.map(|h| h.into())),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            // 调度新的 HardeningEnd
+            if let Some(deadline) = hardening_ends_at {
+                let txn = db
+                    .begin()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                scheduler::schedule_hardening_end(&txn, event_id, deadline.fixed_offset())
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+            } else {
+                // 剩余时间为 0 → 直接进入 Attack
+                info!(
+                    "[Resume] Hardening remaining=0 for event {} → transitioning to Attack",
+                    event_id
+                );
+                // 直接调用 handle_hardening_end 等效逻辑
+                let txn = db
+                    .begin()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                event_repo::update_phase(&txn, awd_event.id, AwdPhase::Attack)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+                // 清除 hardening_ends_at
+                use crate::entity::awd_events;
+                awd_events::ActiveModel {
+                    id: Set(awd_event.id),
+                    hardening_ends_at: Set(None),
+                    updated_at: Set(chrono::Utc::now().into()),
+                    ..Default::default()
+                }
+                .update(&txn)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+            }
+        }
+        AwdPhase::Attack => {
+            // 恢复活跃轮次
+            if let Some(round) = round_repo::find_active_round(db, event_id)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?
+            {
+                let round_remaining = round
+                    .remaining_secs
+                    .unwrap_or(awd_event.round_duration_secs);
+                let new_end = now + chrono::Duration::seconds(round_remaining as i64);
+
+                let mut active: crate::entity::awd_rounds::ActiveModel =
+                    crate::entity::awd_rounds::ActiveModel {
+                        id: Set(round.id),
+                        status: Set(RoundStatus::Active),
+                        scheduled_end_at: Set(new_end.into()),
+                        remaining_secs: Set(None),
+                        paused_at: Set(None),
+                        ..Default::default()
+                    };
+                active
+                    .update(db)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+            }
+
+            event_repo::transition_event(
+                db,
+                awd_event.id,
+                AwdEventStatus::Paused,
+                AwdEventStatus::Running,
+                event_repo::TransitionPatch {
+                    phase: Some(AwdPhase::Attack),
+                    pause_remaining_secs: Some(0),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
+        _ => {
+            return Err(AwdError::InvalidState(format!(
+                "Cannot resume from phase {:?}",
+                resume_phase
+            )));
+        }
     }
 
-    // Restore the pre-pause phase（paused_phase，Phase 0 P0-1b 迁移），缺省回退 Hardening 而非 Attack
-    let resume_phase = awd_event.paused_phase.unwrap_or(AwdPhase::Hardening);
-
-    // 状态 + phase 同事务原子写入（Phase 0）
-    event_repo::transition_event(
-        db,
-        awd_event.id,
-        AwdEventStatus::Paused,
-        AwdEventStatus::Running,
-        event_repo::TransitionPatch {
-            phase: Some(resume_phase.clone()),
-            pause_remaining_secs: Some(0),
-            ..Default::default()
-        },
-    )
-    .await?;
-
+    // 网络 reconcile
     match firewall_service::reconcile_global(
         db,
         firewall,
@@ -249,16 +421,18 @@ pub async fn resume_event(
             )
             .await;
 
-            // P4-9 修复：暂停期间原 round.end/grace_end 任务已被消费（触发时 round 非
-            // Active/Grace 而幂等跳过）；resume 后必须按新 deadline 重建，否则比赛卡死
-            let restored = round_service::restore_round_scheduling(db, event_id).await?;
-            if restored > 0 {
-                info!("[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)");
+            // 恢复轮次调度任务
+            if resume_phase == AwdPhase::Attack {
+                let restored = round_service::restore_round_scheduling(db, event_id).await?;
+                if restored > 0 {
+                    info!(
+                        "[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)"
+                    );
+                }
             }
             Ok(())
         }
         Err(e) => {
-            // P4-10：resume 网络应用失败 → NetworkError（Running→NetworkError 合法）
             let _ = event_repo::transition_event(
                 db,
                 awd_event.id,
@@ -275,6 +449,9 @@ pub async fn resume_event(
 }
 
 /// 结束赛事：停止轮次与计分，保留数据。
+///
+/// Wave 2 临时行为：直接完成活跃轮次并进入 Finished。
+/// Wave 6 将替换为 Final Settlement 自动完成。
 pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
@@ -287,7 +464,7 @@ pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<
         ));
     }
 
-    // Complete the active round
+    // Complete the active round if any
     if let Some(round) = round_repo::find_active_round(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
@@ -297,7 +474,18 @@ pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<
             .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    // 状态 + finished_at 同事务原子写入（Phase 0）
+    // 清除 hardening_ends_at（如果仍在 Hardening）
+    use crate::entity::awd_events;
+    awd_events::ActiveModel {
+        id: Set(awd_event.id),
+        hardening_ends_at: Set(None),
+        updated_at: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .map_err(|e| AwdError::Database(e.to_string()))?;
+
     event_repo::transition_event(
         db,
         awd_event.id,

@@ -1,7 +1,7 @@
-//! 练习模式计分（check 失败 -50）与 ALL Check 集成测试（DB + Docker gated）。
+//! 练习模式计分（check 失败 -100）与 ALL Check 集成测试（DB + Docker gated）。
 //!
-//! 覆盖（2026-08-14 需求）：
-//!   - 练习 NO_PATCH / VULNERABLE → -50（幂等账本，score_type='fix' 负 delta）；
+//! 覆盖（2026-08-14 需求，2026-08-16 扣分修改为 -100）：
+//!   - 练习 NO_PATCH / VULNERABLE → -100（幂等账本，score_type='fix' 负 delta）；
 //!   - 练习 PATCHED → +fix_round_score（+150）；
 //!   - 练习实例容器命名 `AWDPP-{user8}-{gamebox8}-{run8}`；
 //!   - ALL Check 成功 → 当前轮起剩余回合全部 +150 + 实例停止 + run 直接 Ended；
@@ -337,7 +337,7 @@ async fn run_official_round(
 }
 
 #[tokio::test]
-async fn practice_failures_deduct_50_and_patched_plus_150() {
+async fn practice_failures_deduct_100_and_patched_plus_150() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {
         return;
@@ -355,7 +355,7 @@ async fn practice_failures_deduct_50_and_patched_plus_150() {
     }
     cleanup(&db).await;
 
-    // run A：exploit 恒成功 → NO_PATCH(r1) → VULNERABLE(r2)，应扣 -50 × 2。
+    // run A：exploit 恒成功 → NO_PATCH(r1) → VULNERABLE(r2)，应扣 -100 × 2。
     let user_a = seed_user(&db, "psca").await;
     let gb_a = seed_trainable_gamebox(&db, "psca", JUDGE_ALWAYS_PASS, EXPLOIT_ALWAYS_SUCCESS).await;
     let (run_a, inst_a) = seed_practice_fix_with_instance(&db, &docker, user_a, gb_a, "a").await;
@@ -375,16 +375,16 @@ async fn practice_failures_deduct_50_and_patched_plus_150() {
         assert_eq!(name.len(), "AWDPP-".len() + 8 + 1 + 8 + 1 + 8, "{name}");
     }
 
-    // Round 1：无 patch → NO_PATCH -50。
+    // Round 1：无 patch → NO_PATCH -100。
     open_round(&db, run_a, 1).await;
     let e1 = run_official_round(&db, &docker, run_a, 1).await;
     assert_eq!(e1.status, AwdpEvaluationStatus::NoPatch, "NO_PATCH");
     let s1 = score_repo::my_total(&db, run_a, Some(user_a), None)
         .await
         .unwrap();
-    assert_eq!(s1, -50, "NO_PATCH -50");
+    assert_eq!(s1, -100, "NO_PATCH -100");
 
-    // Round 2：apply patch（exploit 恒成功）→ VULNERABLE -50。
+    // Round 2：apply patch（exploit 恒成功）→ VULNERABLE -100。
     open_round(&db, run_a, 2).await;
     let r = floatctf::modules::event::awdp::service::patch_service::apply_patch(
         &db,
@@ -406,9 +406,9 @@ async fn practice_failures_deduct_50_and_patched_plus_150() {
     let s2 = score_repo::my_total(&db, run_a, Some(user_a), None)
         .await
         .unwrap();
-    assert_eq!(s2, -100, "NO_PATCH(-50) + VULNERABLE(-50)");
+    assert_eq!(s2, -200, "NO_PATCH(-100) + VULNERABLE(-100)");
 
-    // run B：exploit 恒失败 → NO_PATCH(r1) -50 + PATCHED(r2) +150 = 100。
+    // run B：exploit 恒失败 → NO_PATCH(r1) -100 + PATCHED(r2) +150 = 50。
     let user_b = seed_user(&db, "pscb").await;
     let gb_b = seed_trainable_gamebox(&db, "pscb", JUDGE_ALWAYS_PASS, EXPLOIT_ALWAYS_FAIL).await;
     let (run_b, inst_b) = seed_practice_fix_with_instance(&db, &docker, user_b, gb_b, "b").await;
@@ -440,22 +440,22 @@ async fn practice_failures_deduct_50_and_patched_plus_150() {
         .unwrap();
     assert_eq!(
         s2b,
-        row_b.fix_round_score - 50,
-        "PATCHED(+150) + NO_PATCH(-50)"
+        row_b.fix_round_score - 100,
+        "PATCHED(+150) + NO_PATCH(-100)"
     );
 
-    // 账本明细：-50 / -50 / -50 / +150（score_type='fix'，delta 为负合法）。
+    // 账本明细：-100 / -100 / -100 / +150（score_type='fix'，delta 为负合法）。
     let history_a = score_repo::my_history(&db, run_a, Some(user_a), None)
         .await
         .unwrap();
     let deltas_a: Vec<i64> = history_a.iter().map(|s| s.delta).collect();
-    assert_eq!(deltas_a, vec![-50, -50], "{deltas_a:?}");
+    assert_eq!(deltas_a, vec![-100, -100], "{deltas_a:?}");
     let history_b = score_repo::my_history(&db, run_b, Some(user_b), None)
         .await
         .unwrap();
     let mut deltas_b: Vec<i64> = history_b.iter().map(|s| s.delta).collect();
     deltas_b.sort_unstable();
-    let mut want_b = vec![-50, row_b.fix_round_score];
+    let mut want_b = vec![-100, row_b.fix_round_score];
     want_b.sort_unstable();
     assert_eq!(deltas_b, want_b, "{deltas_b:?}");
 
@@ -466,7 +466,7 @@ async fn practice_failures_deduct_50_and_patched_plus_150() {
     let s2_again = score_repo::my_total(&db, run_a, Some(user_a), None)
         .await
         .unwrap();
-    assert_eq!(s2_again, -100, "重复评估不重复扣分");
+    assert_eq!(s2_again, -200, "重复评估不重复扣分");
 
     let _ = runtime::stop_instance(&db, &docker, inst_a, sub_a).await;
     let _ = runtime::stop_instance(&db, &docker, inst_b, sub_b).await;

@@ -126,7 +126,7 @@ export type EventGameBoxDto = {
 	break_points: number;
 	loss_points: number;
 	fix_points: number;
-	down_points: number;
+	judge_down_penalty: number;
 	first_bonus: number;
 	created_at: string;
 };
@@ -495,7 +495,7 @@ export const awdAdminApi = {
 			break_points?: number;
 			loss_points?: number;
 			fix_points?: number;
-			down_points?: number;
+			judge_down_penalty?: number;
 			first_bonus?: number;
 		},
 	): Promise<UniResponse<EventGameBoxDto>> => {
@@ -516,7 +516,7 @@ export const awdAdminApi = {
 			break_points?: number;
 			loss_points?: number;
 			fix_points?: number;
-			down_points?: number;
+			judge_down_penalty?: number;
 			first_bonus?: number;
 		},
 	): Promise<UniResponse<EventGameBoxDto>> => {

@@ -277,8 +277,9 @@ async fn seed_event_gamebox(
         break_points: Set(break_points),
         loss_points: Set(50),
         fix_points: Set(80),
-        down_points: Set(60),
+        judge_down_penalty: Set(60),
         first_bonus: Set(20),
+        attack_score: Set(break_points),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
     }

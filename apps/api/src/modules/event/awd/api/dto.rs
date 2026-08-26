@@ -23,7 +23,9 @@ pub struct AwdEventStatusDto {
     pub event_id: Uuid,
     pub status: String,
     pub phase: String,
+    pub round_count: Option<i32>,
     pub round_duration_secs: i32,
+    pub initial_score: i64,
     pub free_reset_count: i32,
     pub extra_reset_penalty: i64,
     pub reset_protection_secs: i32,
@@ -45,7 +47,9 @@ impl From<awd_events::Model> for AwdEventStatusDto {
             event_id: m.event_id,
             status: snake_str(&m.status),
             phase: snake_str(&m.phase),
+            round_count: m.round_count,
             round_duration_secs: m.round_duration_secs,
+            initial_score: m.initial_score,
             free_reset_count: m.free_reset_count,
             extra_reset_penalty: m.extra_reset_penalty,
             reset_protection_secs: m.reset_protection_secs,
@@ -77,7 +81,9 @@ pub struct CreateAwdEventRequest {
 pub struct AwdEventConfigRequest {
     /// PATCH 乐观锁版本；首次创建可省略。
     pub expected_updated_at: Option<DateTimeWithTimeZone>,
+    pub round_count: Option<i32>,
     pub round_duration_secs: Option<i32>,
+    pub initial_score: Option<i64>,
     pub free_reset_count: Option<i32>,
     pub extra_reset_penalty: Option<i64>,
     pub reset_protection_secs: Option<i32>,
@@ -97,7 +103,9 @@ pub struct AwdEventConfigRequest {
 
 impl AwdEventConfigRequest {
     pub fn has_changes(&self) -> bool {
-        self.round_duration_secs.is_some()
+        self.round_count.is_some()
+            || self.round_duration_secs.is_some()
+            || self.initial_score.is_some()
             || self.free_reset_count.is_some()
             || self.extra_reset_penalty.is_some()
             || self.reset_protection_secs.is_some()
@@ -145,7 +153,9 @@ impl From<AwdEventConfigRequest>
     fn from(value: AwdEventConfigRequest) -> Self {
         Self {
             expected_updated_at: value.expected_updated_at,
+            round_count: value.round_count,
             round_duration_secs: value.round_duration_secs,
+            initial_score: value.initial_score,
             free_reset_count: value.free_reset_count,
             extra_reset_penalty: value.extra_reset_penalty,
             reset_protection_secs: value.reset_protection_secs,
@@ -475,8 +485,8 @@ pub struct AddEventGameBoxRequest {
     pub loss_points: i64,
     #[serde(default = "default_fix_points")]
     pub fix_points: i64,
-    #[serde(default = "default_down_points")]
-    pub down_points: i64,
+    #[serde(default = "default_judge_down_penalty")]
+    pub judge_down_penalty: i64,
     #[serde(default = "default_first_bonus")]
     pub first_bonus: i64,
 }
@@ -490,7 +500,7 @@ fn default_loss_points() -> i64 {
 fn default_fix_points() -> i64 {
     100
 }
-fn default_down_points() -> i64 {
+fn default_judge_down_penalty() -> i64 {
     200
 }
 fn default_first_bonus() -> i64 {
@@ -521,7 +531,7 @@ pub struct UpdateEventGameBoxRequest {
     #[serde(default)]
     pub fix_points: Option<i64>,
     #[serde(default)]
-    pub down_points: Option<i64>,
+    pub judge_down_penalty: Option<i64>,
     #[serde(default)]
     pub first_bonus: Option<i64>,
 }
@@ -606,7 +616,8 @@ pub struct EventGameBoxDto {
     pub break_points: i64,
     pub loss_points: i64,
     pub fix_points: i64,
-    pub down_points: i64,
+    pub judge_down_penalty: i64,
+    pub attack_score: i64,
     pub first_bonus: i64,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }

@@ -130,6 +130,7 @@ export enum ScoreEventType {
   FirstBonus = 'first_bonus',
   ResetPenalty = 'reset_penalty',
   Adjustment = 'adjustment',
+  InitialScore = 'initial_score',
 }
 
 export enum SettingValueType {

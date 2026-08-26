@@ -52,6 +52,8 @@ pub struct Model {
     pub paused_phase: Option<AwdPhase>,
     pub configuration_generation: i64,
     pub verified_generation: Option<i64>,
+    pub round_count: Option<i32>,
+    pub initial_score: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -534,8 +534,9 @@ async fn seed_submission_fixture(
         break_points: Set(100),
         loss_points: Set(50),
         fix_points: Set(80),
-        down_points: Set(60),
+        judge_down_penalty: Set(60),
         first_bonus: Set(first_bonus),
+        attack_score: Set(100),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
     }

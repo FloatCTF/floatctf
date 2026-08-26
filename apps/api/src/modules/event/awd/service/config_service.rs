@@ -33,7 +33,9 @@ pub const DEFAULT_ARCHIVE_RETENTION_HOURS: i32 = 168;
 pub struct AwdEventConfigPatch {
     /// 客户端读取配置时拿到的版本；不一致则拒绝覆盖其他管理员的修改。
     pub expected_updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    pub round_count: Option<i32>,
     pub round_duration_secs: Option<i32>,
+    pub initial_score: Option<i64>,
     pub free_reset_count: Option<i32>,
     pub extra_reset_penalty: Option<i64>,
     pub reset_protection_secs: Option<i32>,
@@ -48,7 +50,15 @@ pub struct AwdEventConfigPatch {
 
 impl AwdEventConfigPatch {
     pub fn validate(&self) -> AwdResult<()> {
+        validate_range("round_count", self.round_count, 1, 10_000)?;
         validate_range("round_duration_secs", self.round_duration_secs, 30, 86_400)?;
+        if let Some(value) = self.initial_score
+            && !(0..=1_000_000_000).contains(&value)
+        {
+            return Err(AwdError::Validation(
+                "initial_score must be between 0 and 1000000000".into(),
+            ));
+        }
         validate_range("free_reset_count", self.free_reset_count, 0, 100)?;
         if let Some(value) = self.extra_reset_penalty
             && !(0..=1_000_000_000).contains(&value)
@@ -104,8 +114,14 @@ impl AwdEventConfigPatch {
     }
 
     fn runtime_changed(&self, current: &awd_events::Model) -> bool {
-        self.round_duration_secs
-            .is_some_and(|v| v != current.round_duration_secs)
+        self.round_count
+            .is_some_and(|v| Some(v) != current.round_count)
+            || self
+                .round_duration_secs
+                .is_some_and(|v| v != current.round_duration_secs)
+            || self
+                .initial_score
+                .is_some_and(|v| v != current.initial_score)
             || self
                 .free_reset_count
                 .is_some_and(|v| v != current.free_reset_count)
@@ -237,8 +253,14 @@ where
             active.verified_revision = Set(None);
             active.verified_generation = Set(None);
         }
+        if let Some(value) = patch.round_count {
+            active.round_count = Set(Some(value));
+        }
         if let Some(value) = patch.round_duration_secs {
             active.round_duration_secs = Set(value);
+        }
+        if let Some(value) = patch.initial_score {
+            active.initial_score = Set(value);
         }
         if let Some(value) = patch.free_reset_count {
             active.free_reset_count = Set(value);

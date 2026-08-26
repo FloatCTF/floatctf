@@ -273,6 +273,8 @@ pub enum ScoreEventType {
     ResetPenalty,
     #[sea_orm(string_value = "adjustment")]
     Adjustment,
+    #[sea_orm(string_value = "initial_score")]
+    InitialScore,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "setting_value_type")]

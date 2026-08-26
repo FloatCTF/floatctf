@@ -29,6 +29,13 @@ pub struct Model {
     pub callback_idempotency_key: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub event_gamebox_id: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub worker_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub lease_token_hash: Option<String>,
+    pub lease_expires_at: Option<DateTimeWithTimeZone>,
+    pub heartbeat_at: Option<DateTimeWithTimeZone>,
+    pub claimed_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

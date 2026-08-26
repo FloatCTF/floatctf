@@ -34,4 +34,6 @@ export type AwdEvents = {
   paused_phase?: AwdPhase;
   configuration_generation: number;
   verified_generation?: string;
+  round_count?: string;
+  initial_score: number;
 };

@@ -23,10 +23,11 @@ pub struct Model {
     pub break_points: i64,
     pub loss_points: i64,
     pub fix_points: i64,
-    pub down_points: i64,
+    pub judge_down_penalty: i64,
     pub first_bonus: i64,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    pub attack_score: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

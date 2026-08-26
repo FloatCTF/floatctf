@@ -470,7 +470,7 @@ async fn dispatch_judge_for_round(
 
 /// P3-5 deadline 强制：给指定 round 中超时（deadline 未回）的 judge 任务计分。
 ///
-/// 语义：超时 = 防御方未响应 = 视为 down（-down_points）。
+/// 语义：超时 = 防御方未响应 = 视为 down（-judge_down_penalty）。
 /// score_event_type 枚举无 JudgeTimeout 变体（避免 enum 迁移），
 /// 用 JudgeDown + reason="judge deadline timeout" 表达，审计可区分。
 /// 幂等键 `judge-timeout:{task_id}`（scheduler retry 不重复计分）。
@@ -591,7 +591,7 @@ pub async fn score_judge_timeouts(
                     )
                     .await
                 {
-                    eg_points.insert(eg_id, eg.down_points);
+                    eg_points.insert(eg_id, eg.judge_down_penalty);
                 }
             }
         }

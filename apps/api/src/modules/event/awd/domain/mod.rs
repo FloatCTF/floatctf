@@ -5,6 +5,7 @@ pub mod firewall_state;
 pub mod flag;
 pub mod network;
 pub mod score;
+pub mod timing;
 
 // Persistence representation of domain state (CLI-generated ActiveEnum).
 pub use crate::entity::sea_orm_active_enums::{

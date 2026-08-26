@@ -483,7 +483,8 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
         break_points: d.event_gamebox.break_points,
         loss_points: d.event_gamebox.loss_points,
         fix_points: d.event_gamebox.fix_points,
-        down_points: d.event_gamebox.down_points,
+        judge_down_penalty: d.event_gamebox.judge_down_penalty,
+        attack_score: d.event_gamebox.attack_score,
         first_bonus: d.event_gamebox.first_bonus,
         created_at: d.event_gamebox.created_at,
     }
@@ -567,7 +568,7 @@ pub async fn add_event_gamebox(
         req.break_points,
         req.loss_points,
         req.fix_points,
-        req.down_points,
+        req.judge_down_penalty,
         req.first_bonus,
     )
     .await
@@ -593,7 +594,8 @@ pub async fn add_event_gamebox(
             break_points: eg.break_points,
             loss_points: eg.loss_points,
             fix_points: eg.fix_points,
-            down_points: eg.down_points,
+            judge_down_penalty: eg.judge_down_penalty,
+            attack_score: eg.attack_score,
             first_bonus: eg.first_bonus,
             created_at: eg.created_at,
         }
@@ -629,7 +631,7 @@ pub async fn update_event_gamebox(
             break_points: req.break_points,
             loss_points: req.loss_points,
             fix_points: req.fix_points,
-            down_points: req.down_points,
+            judge_down_penalty: req.judge_down_penalty,
             first_bonus: req.first_bonus,
         },
     )

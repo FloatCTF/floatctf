@@ -193,7 +193,7 @@ pub async fn judge_callback(
         let delta = if is_up {
             resolved.event_gamebox.fix_points
         } else {
-            -resolved.event_gamebox.down_points
+            -resolved.event_gamebox.judge_down_penalty
         };
 
         let idempotency_key = cb.callback_id.clone();

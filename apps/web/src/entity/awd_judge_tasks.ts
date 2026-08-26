@@ -20,4 +20,9 @@ export type AwdJudgeTasks = {
   callback_idempotency_key?: string;
   created_at: string;
   event_gamebox_id?: string;
+  worker_id?: string;
+  lease_token_hash?: string;
+  lease_expires_at?: string;
+  heartbeat_at?: string;
+  claimed_at?: string;
 };

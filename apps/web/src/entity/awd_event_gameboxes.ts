@@ -14,8 +14,9 @@ export type AwdEventGameboxes = {
   break_points: number;
   loss_points: number;
   fix_points: number;
-  down_points: number;
+  judge_down_penalty: number;
   first_bonus: number;
   created_at: string;
   updated_at: string;
+  attack_score: number;
 };

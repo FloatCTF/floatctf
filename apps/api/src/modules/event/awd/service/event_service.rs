@@ -324,9 +324,11 @@ pub async fn resume_event(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    if awd_event.status != AwdEventStatus::Paused {
+    if awd_event.status != AwdEventStatus::Paused
+        && awd_event.status != AwdEventStatus::NetworkError
+    {
         return Err(AwdError::InvalidState(
-            "Can only resume a paused event".into(),
+            "Can only resume a paused or network-error event".into(),
         ));
     }
 
@@ -347,7 +349,7 @@ pub async fn resume_event(
             event_repo::transition_event(
                 db,
                 awd_event.id,
-                AwdEventStatus::Paused,
+                awd_event.status.clone(),
                 AwdEventStatus::Running,
                 event_repo::TransitionPatch {
                     phase: Some(AwdPhase::Hardening),
@@ -429,7 +431,7 @@ pub async fn resume_event(
             event_repo::transition_event(
                 db,
                 awd_event.id,
-                AwdEventStatus::Paused,
+                awd_event.status.clone(),
                 AwdEventStatus::Running,
                 event_repo::TransitionPatch {
                     phase: Some(AwdPhase::Attack),

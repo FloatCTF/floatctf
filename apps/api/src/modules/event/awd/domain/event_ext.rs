@@ -48,7 +48,7 @@ impl AwdEventStatusExt for AwdEventStatus {
             Self::Running => &[Self::Paused, Self::Finished, Self::NetworkError],
             // P4-10：暂停中网络策略应用失败同样 Fail Closed（不留"Paused 但网络没生效"）
             Self::Paused => &[Self::Running, Self::Finished, Self::NetworkError],
-            Self::NetworkError => &[Self::Paused, Self::Finished],
+            Self::NetworkError => &[Self::Paused, Self::Running, Self::Finished],
             Self::StartBlocked => &[Self::Prechecking, Self::Configuring],
             Self::Finished => &[Self::Archived],
             Self::Archived => &[],

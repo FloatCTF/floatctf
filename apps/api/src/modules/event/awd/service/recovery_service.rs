@@ -301,6 +301,10 @@ async fn recover_event(
 }
 
 /// 处理网络错误：暂停赛事并记录错误态。
+///
+/// Saves current phase + remaining time (same as pause_event) so that
+/// after admin recovery (NetworkError → Paused → Running), the correct
+/// phase and remaining duration are restored.
 pub async fn handle_network_error(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -316,17 +320,60 @@ pub async fn handle_network_error(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    // 状态机唯一入口（Phase 0）：按当前状态发起 NetworkError 转移，
-    // 非法来源（如 Paused→NetworkError 不在转移表）直接拒绝，Fail Closed。
+    let now = chrono::Utc::now();
+    let remaining: i32;
+
+    // Compute remaining time (same logic as pause_event)
+    match awd_event.phase {
+        AwdPhase::Hardening => {
+            remaining = awd_event
+                .hardening_ends_at
+                .map(|h| (h.with_timezone(&chrono::Utc) - now).num_seconds().max(0) as i32)
+                .unwrap_or(0);
+
+            // Cancel pending HardeningEnd task
+            let _ = crate::modules::event::awd::scheduler::cancel_pending_hardening_end(db, event_id).await;
+        }
+        AwdPhase::Attack => {
+            if let Some(round) = crate::modules::event::awd::repo::round_repo::find_active_round(db, event_id)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?
+            {
+                remaining = (round.scheduled_end_at.with_timezone(&chrono::Utc) - now)
+                    .num_seconds()
+                    .max(0) as i32;
+
+                crate::modules::event::awd::repo::round_repo::pause_round(db, round.id, remaining)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?;
+            } else {
+                remaining = 0;
+            }
+        }
+        _ => {
+            remaining = 0;
+        }
+    }
+
+    // Transition to NetworkError, saving paused_phase + remaining time
+    let patch = event_repo::TransitionPatch {
+        phase: Some(AwdPhase::Pause),
+        paused_phase: Some(awd_event.phase),
+        pause_remaining_secs: Some(remaining),
+        hardening_ends_at: Some(None), // clear hardening deadline
+        ..Default::default()
+    };
+
     event_repo::transition_event(
         db,
         awd_event.id,
         awd_event.status.clone(),
         AwdEventStatus::NetworkError,
-        Default::default(),
+        patch,
     )
     .await?;
 
+    // Pause any active round (NetworkError freezes round timers)
     if let Some(round) =
         crate::modules::event::awd::repo::round_repo::find_active_round(db, event_id)
             .await

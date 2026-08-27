@@ -122,11 +122,13 @@ pub async fn judge_claim(
     let limit = req.limit.unwrap_or(5).min(20).max(1);
 
     let now = chrono::Utc::now();
-    // 先清理过期任务
-    let _ = judge_repo::terminalize_past_deadline(ctx.db.get_ref(), now).await;
+    // 先清理过期任务；记录受影响的 event ID 以便后续触发 finalizer
+    let deadline_events = judge_repo::terminalize_past_deadline(ctx.db.get_ref(), now)
+        .await
+        .unwrap_or_default();
 
     let lease_ttl_secs: i64 = 120;
-    let claimed = judge_repo::claim_tasks(
+    let claim_result = judge_repo::claim_tasks(
         ctx.db.get_ref(),
         event_id,
         &worker_id,
@@ -136,8 +138,15 @@ pub async fn judge_claim(
     .await
     .map_err(|e| AppError::Database(e.to_string()))?;
 
+    // Collect all events that had tasks terminalized during cleanup
+    let mut affected_events: std::collections::BTreeSet<Uuid> =
+        deadline_events.into_iter().collect();
+    for eid in &claim_result.terminalized_event_ids {
+        affected_events.insert(*eid);
+    }
+
     let mut tasks = Vec::new();
-    for ct in &claimed {
+    for ct in &claim_result.tasks {
         let mut script_content = String::new();
         let mut script_args_json = None;
         let mut target_ip = String::new();
@@ -190,7 +199,23 @@ pub async fn judge_claim(
         });
     }
 
-    UniResponse::ok(JudgeClaimResponse { tasks }.into()).into()
+    let response: UniResult<JudgeClaimResponse> =
+        UniResponse::ok(JudgeClaimResponse { tasks }.into()).into();
+
+    // After claim completes, attempt finalization for any event that had
+    // tasks terminalized during cleanup (deadline expiration or lease reclaim).
+    for eid in &affected_events {
+        let _ = event_service::maybe_finish_event(
+            ctx.db.get_ref(),
+            awd.network.as_ref(),
+            awd.firewall.as_ref(),
+            awd.publisher.as_ref(),
+            *eid,
+        )
+        .await;
+    }
+
+    response
 }
 
 /// POST /internal/awd/events/{event_id}/judge/tasks/{task_id}/heartbeat

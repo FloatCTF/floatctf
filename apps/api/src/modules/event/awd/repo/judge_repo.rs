@@ -81,10 +81,12 @@ fn now_fixed() -> DateTime<FixedOffset> {
 /// Running 且 lease_expires_at < now：
 /// - 若 attempt_count < max_attempts 且 deadline_at > now → Pending（清除 lease）
 /// - 否则 → JudgeError
+///
+/// Returns the set of event IDs that had at least one task terminalized (JudgeError).
 pub async fn reclaim_expired_leases(
     db: &(impl ConnectionTrait + Send),
     now: DateTime<FixedOffset>,
-) -> Result<u64, sea_orm::DbErr> {
+) -> Result<Vec<Uuid>, sea_orm::DbErr> {
     let expired = awd_judge_tasks::Entity::find()
         .filter(awd_judge_tasks::Column::Status.eq(JudgeTaskStatus::Running))
         .filter(awd_judge_tasks::Column::LeaseExpiresAt.is_not_null())
@@ -92,7 +94,8 @@ pub async fn reclaim_expired_leases(
         .all(db)
         .await?;
 
-    let mut count = 0u64;
+    let mut terminalized_events: std::collections::BTreeSet<Uuid> =
+        std::collections::BTreeSet::new();
     for task in expired {
         let can_retry = task.attempt_count < task.max_attempts
             && task.deadline_at.with_timezone(&Utc) > now.with_timezone(&Utc);
@@ -124,15 +127,22 @@ pub async fn reclaim_expired_leases(
             }
             .update(db)
             .await?;
+            terminalized_events.insert(task.event_id);
         }
-        count += 1;
     }
-    Ok(count)
+    Ok(terminalized_events.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------
 // 认领
 // ---------------------------------------------------------------------------
+
+/// 认领结果：包含认领的任务和回收期间被终端化的 event ID。
+pub struct ClaimResult {
+    pub tasks: Vec<ClaimedTask>,
+    /// 回收期间被终端化（JudgeError）的任务所属的 event ID。
+    pub terminalized_event_ids: Vec<Uuid>,
+}
 
 /// 认领 Pending 任务。
 /// 1. 在事务内回收过期租约
@@ -144,12 +154,12 @@ pub async fn claim_tasks(
     worker_id: &str,
     limit: usize,
     lease_ttl_secs: i64,
-) -> Result<Vec<ClaimedTask>, sea_orm::DbErr> {
+) -> Result<ClaimResult, sea_orm::DbErr> {
     let txn = db.begin().await?;
     let now: DateTime<FixedOffset> = Utc::now().into();
 
     // 步骤 1：回收过期租约
-    reclaim_expired_leases(&txn, now).await?;
+    let terminalized = reclaim_expired_leases(&txn, now).await?;
 
     // 步骤 2：SELECT ... FOR UPDATE SKIP LOCKED
     let rows = awd_judge_tasks::Entity::find()
@@ -206,7 +216,10 @@ pub async fn claim_tasks(
     }
 
     txn.commit().await?;
-    Ok(tasks)
+    Ok(ClaimResult {
+        tasks,
+        terminalized_event_ids: terminalized,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -410,10 +423,11 @@ pub async fn maybe_complete_batch(
 }
 
 /// 全局 deadline 清理：将所有过期的非终态任务标记为 JudgeError。
+/// Returns the set of event IDs that had at least one task terminalized.
 pub async fn terminalize_past_deadline(
     db: &DatabaseConnection,
     now: chrono::DateTime<Utc>,
-) -> Result<u64, sea_orm::DbErr> {
+) -> Result<Vec<Uuid>, sea_orm::DbErr> {
     let now_ts: DateTime<FixedOffset> = now.into();
     let tasks = awd_judge_tasks::Entity::find()
         .filter(
@@ -424,7 +438,8 @@ pub async fn terminalize_past_deadline(
         .all(db)
         .await?;
 
-    let mut count = 0u64;
+    let mut terminalized_events: std::collections::BTreeSet<Uuid> =
+        std::collections::BTreeSet::new();
     for task in tasks {
         awd_judge_tasks::ActiveModel {
             id: Set(task.id),
@@ -439,9 +454,9 @@ pub async fn terminalize_past_deadline(
         }
         .update(db)
         .await?;
-        count += 1;
+        terminalized_events.insert(task.event_id);
     }
-    Ok(count)
+    Ok(terminalized_events.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------

@@ -73,7 +73,7 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, round_count: i3
     };
     awd.insert(db).await.expect("insert awd_events");
 
-    let wg_port = 40000 + (Uuid::new_v4().as_u128() % 55000) as i32;
+    let wg_port = 25000 + (Uuid::new_v4().as_u128() % 60000) as i32;
     let net = awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -609,10 +609,13 @@ async fn pending_task_deadline_terminalizes_to_judge_error_and_finishes() {
     }
 
     // Terminalize past-deadline
-    let count = judge_repo::terminalize_past_deadline(&db, now)
+    let events = judge_repo::terminalize_past_deadline(&db, now)
         .await
         .unwrap();
-    assert!(count > 0, "past-deadline task should be terminalized");
+    assert!(
+        !events.is_empty(),
+        "past-deadline task should be terminalized"
+    );
 
     // Verify task is now JudgeError
     let tasks = awd_judge_tasks::Entity::find()
@@ -1351,4 +1354,525 @@ async fn networkerror_settlement_resume_no_new_round() {
         .unwrap()
         .unwrap();
     assert_eq!(awd.status, AwdEventStatus::Finished);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Lease Reclaim Exhaustion → Finished
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn lease_reclaim_exhausted_last_task_finishes_event() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "lease-reclaim", 2).await;
+    let round2_id = seed_round(&db, event_id, 2, RoundStatus::Completed).await;
+    let (instance_id, team_id) = seed_instance(&db, event_id).await;
+
+    // Create a Running task with expired lease and exhausted attempts
+    let batch = awd_judge_batches::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_id: Set(round2_id),
+        total_tasks: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert batch");
+
+    let past = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let now = chrono::Utc::now();
+    awd_judge_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        batch_id: Set(batch.id),
+        round_id: Set(round2_id),
+        gamebox_instance_id: Set(instance_id),
+        team_id: Set(team_id),
+        status: Set(JudgeTaskStatus::Running),
+        attempt_count: Set(3),
+        max_attempts: Set(3),
+        worker_id: Set(Some("dead-worker".into())),
+        lease_token_hash: Set(Some(judge_repo::hash_lease_token("expired-token"))),
+        lease_expires_at: Set(Some(past.into())),
+        claimed_at: Set(Some(past.into())),
+        heartbeat_at: Set(Some(past.into())),
+        deadline_at: Set((now + chrono::Duration::minutes(5)).into()),
+        created_at: Set(past.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert task");
+
+    // Exercise the production reclaim path
+    let terminalized = judge_repo::reclaim_expired_leases(&db, now.into())
+        .await
+        .unwrap();
+    assert!(
+        !terminalized.is_empty(),
+        "lease reclaim should terminalize exhausted task"
+    );
+    assert!(
+        terminalized.contains(&event_id),
+        "affected event should be reported"
+    );
+
+    // Verify task is JudgeError
+    let tasks = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(tasks[0].status, JudgeTaskStatus::JudgeError);
+
+    // Now finalize — as would happen after claim
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Claim-Time Deadline → Finished
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn claim_deadline_last_task_finishes_event() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "claim-deadline", 2).await;
+    let round2_id = seed_round(&db, event_id, 2, RoundStatus::Completed).await;
+    let (instance_id, team_id) = seed_instance(&db, event_id).await;
+
+    let batch = awd_judge_batches::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_id: Set(round2_id),
+        total_tasks: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert batch");
+
+    let past = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let now = chrono::Utc::now();
+    awd_judge_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        batch_id: Set(batch.id),
+        round_id: Set(round2_id),
+        gamebox_instance_id: Set(instance_id),
+        team_id: Set(team_id),
+        status: Set(JudgeTaskStatus::Pending),
+        attempt_count: Set(0),
+        max_attempts: Set(3),
+        deadline_at: Set(past.into()),
+        created_at: Set(past.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert task");
+
+    let terminalized = judge_repo::terminalize_past_deadline(&db, now)
+        .await
+        .unwrap();
+    assert!(!terminalized.is_empty());
+    assert!(terminalized.contains(&event_id));
+
+    let tasks = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(tasks[0].status, JudgeTaskStatus::JudgeError);
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Real Batch Deadline Handler → Finished
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn real_batch_deadline_handler_finishes_without_worker() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "handler", 2).await;
+    let round2_id = seed_round(&db, event_id, 2, RoundStatus::Completed).await;
+    let (instance_id, team_id) = seed_instance(&db, event_id).await;
+
+    let batch = awd_judge_batches::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_id: Set(round2_id),
+        total_tasks: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert batch");
+
+    let past = chrono::Utc::now() - chrono::Duration::minutes(10);
+    awd_judge_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        batch_id: Set(batch.id),
+        round_id: Set(round2_id),
+        gamebox_instance_id: Set(instance_id),
+        team_id: Set(team_id),
+        status: Set(JudgeTaskStatus::Pending),
+        attempt_count: Set(0),
+        max_attempts: Set(3),
+        deadline_at: Set(past.into()),
+        created_at: Set(past.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert task");
+
+    use floatctf::entity::scheduled_tasks;
+    let task_model = scheduled_tasks::Model {
+        id: Uuid::new_v4(),
+        group_id: Some(event_id),
+        task_name: "test".into(),
+        description: None,
+        task_key: "awd.judge.batch.deadline".into(),
+        trigger_type: "once".into(),
+        status: "pending".into(),
+        execute_at: None,
+        expires_at: None,
+        payload: Some(serde_json::json!({"event_id": event_id, "batch_id": batch.id})),
+        enabled: true,
+        protected: true,
+        attempt_count: 0,
+        last_error: None,
+        error_msg: None,
+        created_at: chrono::Utc::now().into(),
+        updated_at: chrono::Utc::now().into(),
+        last_run_at: None,
+        max_attempts: 3,
+        timeout_secs: None,
+        cron_expr: None,
+        locked_at: None,
+        heartbeat_at: None,
+    };
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+
+    let handler = floatctf::modules::event::awd::scheduler::AwdJudgeBatchDeadlineHandler {
+        db: actix_web::web::Data::new(db.clone()),
+        network: network.clone(),
+        firewall: firewall.clone(),
+        publisher: publisher.clone(),
+    };
+    use floatctf::scheduler::TaskHandler;
+    handler.run(task_model).await.unwrap();
+
+    let tasks = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(tasks[0].status, JudgeTaskStatus::JudgeError);
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Batch Deadline Handler Idempotency
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn batch_deadline_handler_duplicate_is_idempotent() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "handler-idem", 1).await;
+    let round_id = seed_round(&db, event_id, 1, RoundStatus::Completed).await;
+    let (instance_id, team_id) = seed_instance(&db, event_id).await;
+
+    let batch = awd_judge_batches::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_id: Set(round_id),
+        total_tasks: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert batch");
+
+    let past = chrono::Utc::now() - chrono::Duration::minutes(10);
+    awd_judge_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        batch_id: Set(batch.id),
+        round_id: Set(round_id),
+        gamebox_instance_id: Set(instance_id),
+        team_id: Set(team_id),
+        status: Set(JudgeTaskStatus::Pending),
+        attempt_count: Set(0),
+        max_attempts: Set(3),
+        deadline_at: Set(past.into()),
+        created_at: Set(past.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert task");
+
+    use floatctf::entity::scheduled_tasks;
+    let task_model = scheduled_tasks::Model {
+        id: Uuid::new_v4(),
+        group_id: Some(event_id),
+        task_name: "test".into(),
+        description: None,
+        task_key: "awd.judge.batch.deadline".into(),
+        trigger_type: "once".into(),
+        status: "pending".into(),
+        execute_at: None,
+        expires_at: None,
+        payload: Some(serde_json::json!({"event_id": event_id, "batch_id": batch.id})),
+        enabled: true,
+        protected: true,
+        attempt_count: 0,
+        last_error: None,
+        error_msg: None,
+        created_at: chrono::Utc::now().into(),
+        updated_at: chrono::Utc::now().into(),
+        last_run_at: None,
+        max_attempts: 3,
+        timeout_secs: None,
+        cron_expr: None,
+        locked_at: None,
+        heartbeat_at: None,
+    };
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+
+    let handler = floatctf::modules::event::awd::scheduler::AwdJudgeBatchDeadlineHandler {
+        db: actix_web::web::Data::new(db.clone()),
+        network: network.clone(),
+        firewall: firewall.clone(),
+        publisher: publisher.clone(),
+    };
+    use floatctf::scheduler::TaskHandler;
+
+    handler.run(task_model.clone()).await.unwrap();
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    // Second invocation — idempotent
+    handler.run(task_model).await.unwrap();
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    let tasks = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].status, JudgeTaskStatus::JudgeError);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Older-Round Gate + Real Terminalization Path
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn older_round_terminalized_by_real_path_finishes_event() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "older-real", 5).await;
+    let _round5_id = seed_round(&db, event_id, 5, RoundStatus::Completed).await;
+    let round4_id = seed_round(&db, event_id, 4, RoundStatus::Completed).await;
+    let (instance_id, team_id) = seed_instance(&db, event_id).await;
+
+    let batch = awd_judge_batches::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        round_id: Set(round4_id),
+        total_tasks: Set(1),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert batch");
+
+    let past = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let now = chrono::Utc::now();
+    awd_judge_tasks::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        event_id: Set(event_id),
+        batch_id: Set(batch.id),
+        round_id: Set(round4_id),
+        gamebox_instance_id: Set(instance_id),
+        team_id: Set(team_id),
+        status: Set(JudgeTaskStatus::Running),
+        attempt_count: Set(3),
+        max_attempts: Set(3),
+        worker_id: Set(Some("dead-worker".into())),
+        lease_token_hash: Set(Some(judge_repo::hash_lease_token("expired"))),
+        lease_expires_at: Set(Some(past.into())),
+        claimed_at: Set(Some(past.into())),
+        heartbeat_at: Set(Some(past.into())),
+        deadline_at: Set((now + chrono::Duration::minutes(5)).into()),
+        created_at: Set(past.into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("insert task");
+
+    // Should NOT finish — round 4 task is still Running
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Running);
+
+    // Terminalize through the real reclaim path
+    let terminalized = judge_repo::reclaim_expired_leases(&db, now.into())
+        .await
+        .unwrap();
+    assert!(!terminalized.is_empty());
+
+    let tasks = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(tasks[0].status, JudgeTaskStatus::JudgeError);
+
+    // Now should finish
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §Core Backend: Score Freeze After Finished
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn score_freeze_after_real_down_finalization() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "score-freeze2", 1).await;
+    seed_round(&db, event_id, 1, RoundStatus::Completed).await;
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    let score1 =
+        floatctf::modules::event::awd::service::score_service::get_scoreboard(&db, event_id, &[])
+            .await
+            .unwrap();
+
+    let _ = judge_repo::submit_result(
+        &db,
+        Uuid::new_v4(),
+        "stale",
+        1,
+        "token",
+        "rid",
+        JudgeTaskStatus::Down,
+        Some(1),
+        None,
+        None,
+        None,
+        chrono::Utc::now(),
+    )
+    .await;
+
+    let _ = floatctf::modules::event::awd::service::score_service::record_adjustment(
+        &db,
+        event_id,
+        Uuid::new_v4(),
+        100,
+        "test",
+        Uuid::new_v4(),
+    )
+    .await;
+
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let score2 =
+        floatctf::modules::event::awd::service::score_service::get_scoreboard(&db, event_id, &[])
+            .await
+            .unwrap();
+    assert_eq!(score1.len(), score2.len());
+    for (s1, s2) in score1.iter().zip(score2.iter()) {
+        assert_eq!(s1.total_score, s2.total_score);
+    }
 }

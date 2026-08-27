@@ -801,46 +801,6 @@ pub async fn restore_batch_deadlines<C: ConnectionTrait + Send>(
     Ok(restored)
 }
 
-/// Handler: 自动解封（P4-7，duration 到期任务）。
-pub struct AwdTeamUnbanHandler {
-    pub db: WebDb,
-    pub network: Arc<dyn AwdNetworkRuntime>,
-    pub firewall: Arc<dyn FirewallRuntime>,
-    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
-}
-
-#[async_trait]
-impl TaskHandler for AwdTeamUnbanHandler {
-    fn task_key(&self) -> TaskKey {
-        TaskKey::AwdTeamUnban
-    }
-
-    fn trigger_type(&self) -> &'static str {
-        "once"
-    }
-
-    async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let payload: round_service::RoundTaskPayload =
-            serde_json::from_value(task.payload.clone().unwrap_or_default())?;
-        let event_id = payload.event_id;
-        let ban_id = payload
-            .round_id
-            .ok_or_else(|| anyhow::anyhow!("unban task missing ban_id"))?;
-
-        info!("[Ban] Auto-unban task for event {event_id} ban {ban_id}");
-        crate::modules::event::awd::service::ban_service::unban_team_by_ban_id(
-            self.db.get_ref(),
-            self.network.as_ref(),
-            self.firewall.as_ref(),
-            self.publisher.as_ref(),
-            event_id,
-            ban_id,
-        )
-        .await?;
-        Ok(())
-    }
-}
-
 /// 处理器：保留期结束后清理已归档赛事。
 pub struct AwdArchiveCleanupHandler {
     pub db: WebDb,

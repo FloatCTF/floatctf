@@ -1,19 +1,24 @@
 //! AWD GameBox 重置服务。
+//!
+//! Wave 5: Removed reset protection window (spec §19.3).
+//! Added phase-based eligibility, Pause guard, final settlement guard,
+//! and crash-recovery idempotent flow.
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_reset_records, awd_team_networks, event_gamebox_instances,
-    sea_orm_active_enums::{GameboxStatus, ScoreEventType},
+    awd_reset_records, awd_team_networks, event_gamebox_instances, event_instances,
+    sea_orm_active_enums::{AwdPhase, GameboxStatus, ScoreEventType},
 };
 use crate::modules::event::awd::{
     AwdError, AwdResult,
-    domain::{AwdEventStatusExt, GameboxStatusExt},
-    repo::{ban_repo, event_repo, gamebox_repo, score_repo},
+    domain::{AwdEventStatusExt, AwdPhaseExt, GameboxStatusExt},
+    repo::{ban_repo, event_repo, gamebox_repo, round_repo, score_repo},
     service::{gamebox_service, score_service},
 };
 
@@ -49,21 +54,68 @@ pub struct ResetContext {
     pub actor: ResetActor,
 }
 
+/// 检查是否允许 Reset 的规范条件。
+///
+/// Allowed: Running + (Hardening | Attack) + not Paused + not banned + not final settlement.
+/// Forbidden: Paused, Finished, Archived, banned team, final-settlement derived state.
+fn check_reset_eligibility(
+    awd_event: &crate::entity::awd_events::Model,
+    team_id: Uuid,
+    has_active_round: bool,
+    round_count: Option<i32>,
+) -> AwdResult<()> {
+    // 1. Event must be Running (not Paused, not Finished, not Archived)
+    if !awd_event.status.is_active() {
+        return Err(AwdError::Forbidden(
+            "Event is not running (must be Running; Paused/Finished/Archived not allowed)".into(),
+        ));
+    }
+
+    // 2. Pause guard: explicitly reject if Paused
+    if awd_event.phase == AwdPhase::Pause {
+        return Err(AwdError::Forbidden(
+            "Reset is not allowed while the event is Paused".into(),
+        ));
+    }
+
+    // 3. Phase guard: only Hardening or Attack
+    if !matches!(awd_event.phase, AwdPhase::Hardening | AwdPhase::Attack) {
+        return Err(AwdError::Forbidden(format!(
+            "Reset is not allowed in {:?} phase",
+            awd_event.phase
+        )));
+    }
+
+    // 4. Final settlement guard: Running + Attack + no active round
+    //    and final round completed → derived final settlement
+    if awd_event.phase == AwdPhase::Attack && !has_active_round {
+        if let Some(rc) = round_count {
+            if rc > 0 {
+                return Err(AwdError::Forbidden(
+                    "Reset is not allowed during final settlement".into(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// 执行完整 GameBox 重置工作流。
+///
+/// Crash recovery: if the instance is already Resetting, attempt to complete the
+/// in-flight reset before starting a new one. This makes the flow idempotent across
+/// API restarts.
 pub async fn execute_reset(
     db: &DatabaseConnection,
     containers: &dyn fcmc::AwdContainerRuntime,
     ctx: ResetContext,
 ) -> AwdResult<()> {
-    // 1. Verify event is active
+    // 1. Verify event
     let awd_event = event_repo::find_by_event_id(db, ctx.event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
-
-    if !awd_event.status.is_active() {
-        return Err(AwdError::Forbidden("Event is not running".into()));
-    }
 
     // 2. Load instance（先解析真实 team_id，再按 actor 做 ownership 校验）
     // pair：扩展（AWD 领域状态）+ 归一化根（容器实现/代际/名称）。
@@ -93,18 +145,28 @@ pub async fn execute_reset(
         return Err(AwdError::Forbidden("Team is banned".into()));
     }
 
-    // 4. Protection 强制（P4-3）：保护窗口内拒绝（防滥用）
-    let in_protection = instance
-        .reset_protection_until
-        .map(|t| t.with_timezone(&chrono::Utc) > chrono::Utc::now())
-        .unwrap_or(false);
-    if in_protection {
-        return Err(AwdError::Forbidden(
-            "Reset is in protection window; wait for it to expire".into(),
-        ));
+    // 4. Eligibility check (phase, pause, final settlement)
+    let has_active_round = round_repo::find_active_round(db, ctx.event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .is_some();
+    check_reset_eligibility(
+        &awd_event,
+        team_id,
+        has_active_round,
+        awd_event.round_count,
+    )?;
+
+    // 5. Crash recovery: if instance is already Resetting, attempt recovery
+    if instance.status == GameboxStatus::Resetting {
+        warn!(
+            "Instance {} is already Resetting — attempting recovery",
+            ctx.instance_id
+        );
+        return recover_in_flight_reset(db, containers, &awd_event, &instance, &root, team_id).await;
     }
 
-    // 5. 免费次数判定（P4-3）：count < free_reset_count 为免费；其余付费
+    // 6. Free reset count
     let used = team_reset_count(db, ctx.event_id, team_id).await?;
     let is_free = match &ctx.actor {
         ResetActor::Player { .. } => used < awd_event.free_reset_count as i64,
@@ -113,7 +175,7 @@ pub async fn execute_reset(
         }
     };
 
-    // 6. Create reset record
+    // 7. Create reset record
     let reset_record = awd_reset_records::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(ctx.event_id),
@@ -130,32 +192,103 @@ pub async fn execute_reset(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .id;
 
-    // 7. Mark instance as resetting
+    // 8. Mark instance as resetting
     gamebox_repo::update_instance_status(db, ctx.instance_id, GameboxStatus::Resetting)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 8. Set reset protection window
-    let protection_until =
-        chrono::Utc::now() + chrono::Duration::seconds(awd_event.reset_protection_secs as i64);
-    let mut active: event_gamebox_instances::ActiveModel = event_gamebox_instances::ActiveModel {
-        id: Set(ctx.instance_id),
-        reset_protection_until: Set(Some(protection_until.into())),
-        ..Default::default()
-    };
-    active
-        .update(db)
+    // 9. Perform the Docker reset
+    do_docker_reset(db, containers, &awd_event, &instance, &root, &ctx, reset_id, team_id, is_free, None).await
+}
+
+/// Recover an in-flight reset that was interrupted (e.g., API restart).
+///
+/// States:
+/// A. Reset record exists, instance Resetting, old container still there
+///    → Resume: stop old container, create new one
+/// B. Old container already removed, new container not yet created
+///    → Resume: create new container
+/// C. New container created, DB still Resetting
+///    → Complete the DB update
+/// D. Penalty may or may not have been written
+///    → Idempotent penalty via reset:{reset_id} key
+async fn recover_in_flight_reset(
+    db: &DatabaseConnection,
+    containers: &dyn fcmc::AwdContainerRuntime,
+    awd_event: &crate::entity::awd_events::Model,
+    instance: &event_gamebox_instances::Model,
+    root: &event_instances::Model,
+    team_id: Uuid,
+) -> AwdResult<()> {
+    // Find the most recent pending reset record
+    let pending_record = awd_reset_records::Entity::find()
+        .filter(awd_reset_records::Column::GameboxInstanceId.eq(instance.id))
+        .filter(awd_reset_records::Column::Status.eq("pending"))
+        .order_by_desc(awd_reset_records::Column::CreatedAt)
+        .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // 9. Docker reset: stop/remove + recreate with same IP / credential / pinned revision
-    //
-    // §24/§25/§68：Reset 必须使用 Instance → EventGameBox → **pinned** revision，
-    // 即使全局 GameBox 已发布 Revision N+1，本赛事仍按 pin 的 Revision 重建。
+    match pending_record {
+        Some(record) => {
+            info!(
+                "Recovering in-flight reset: reset_id={} instance={}",
+                record.id, instance.id
+            );
+            let ctx = ResetContext {
+                event_id: awd_event.event_id,
+                instance_id: instance.id,
+                team_id,
+                actor: ResetActor::Admin {
+                    admin_id: Uuid::nil(),
+                    charge_team: false,
+                },
+            };
+            do_docker_reset(
+                db, containers, awd_event, instance, root,
+                &ctx, record.id, team_id, record.free_reset,
+                Some(record.id),
+            ).await
+        }
+        None => {
+            // No pending record — instance is Resetting but no record found.
+            // Treat as a fresh reset (boxed to break async recursion).
+            warn!(
+                "Instance {} is Resetting but no pending reset record found — starting fresh reset",
+                instance.id
+            );
+            let ctx = ResetContext {
+                event_id: awd_event.event_id,
+                instance_id: instance.id,
+                team_id,
+                actor: ResetActor::Admin {
+                    admin_id: Uuid::nil(),
+                    charge_team: false,
+                },
+            };
+            Box::pin(execute_reset(db, containers, ctx)).await
+        }
+    }
+}
+
+/// Perform the actual Docker stop/remove + recreate + DB update + penalty.
+#[allow(clippy::too_many_arguments)]
+async fn do_docker_reset(
+    db: &DatabaseConnection,
+    containers: &dyn fcmc::AwdContainerRuntime,
+    awd_event: &crate::entity::awd_events::Model,
+    instance: &event_gamebox_instances::Model,
+    root: &event_instances::Model,
+    ctx: &ResetContext,
+    reset_id: Uuid,
+    team_id: Uuid,
+    is_free: bool,
+    _recovery_record_id: Option<Uuid>,
+) -> AwdResult<()> {
+    // Docker reset: stop/remove + recreate with same IP / credential / pinned revision
     let resolved =
         gamebox_service::resolve_event_gamebox_spec(db, instance.event_gamebox_id).await?;
 
-    // Docker 网络逻辑名来自 Event Network（desired）；实际 ID 属 Observed
     let event_network =
         crate::modules::event::awd::repo::event_network_repo::require_by_event_id(db, ctx.event_id)
             .await?;
@@ -174,11 +307,11 @@ pub async fn execute_reset(
         gamebox_service::decrypt_team_ssh_password(&crypto, ctx.event_id, &team_net).await?;
 
     // logical identity 不变（id / event_gamebox_id / team_id / IP / credential），
-    // runtime_generation + 1（§20/§24；代际存于归一化根）
+    // runtime_generation + 1
     let next_generation = root.runtime_generation + 1;
     let recreate_spec = gamebox_service::build_gamebox_runtime_spec(
         &resolved,
-        &awd_event,
+        awd_event,
         &event_network,
         instance.id,
         instance.event_gamebox_id,
@@ -239,8 +372,7 @@ pub async fn execute_reset(
         }
     }
 
-    // 10. Penalty 时机（P4-4）：重建成功后才扣分（原实现在重建前扣，
-    // 重建失败用户已被扣分却拿不到新容器）
+    // Penalty: only after successful rebuild, idempotent via reset:{reset_id}
     if !is_free {
         let penalty_penalty = awd_event.extra_reset_penalty;
         let idempotency_key = format!("reset:{}", reset_id);
@@ -261,7 +393,7 @@ pub async fn execute_reset(
         .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
-    // 11. Mark reset record as completed
+    // Mark reset record as completed
     let mut reset_active: awd_reset_records::ActiveModel = awd_reset_records::ActiveModel {
         id: Set(reset_id),
         status: Set("completed".to_string()),

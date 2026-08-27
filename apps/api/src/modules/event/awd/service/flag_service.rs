@@ -195,5 +195,15 @@ pub async fn validate_submission(
         return Err(AwdError::Forbidden("Your team is banned".into()));
     }
 
+    // 7. Check victim not banned (spec §23.1: banned target removal)
+    let victim_ban = ban_repo::find_active_ban(db, event_id, victim_team_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if victim_ban.is_some() {
+        return Err(AwdError::Forbidden(
+            "Target team is banned — cannot attack banned teams".into(),
+        ));
+    }
+
     Ok((issue.id, victim_team_id, instance.id))
 }

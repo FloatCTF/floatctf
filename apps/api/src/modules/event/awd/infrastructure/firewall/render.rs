@@ -133,15 +133,22 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
 
     match event.phase {
         AwdPhase::Hardening => {
-            // 1) own-team 放行（精确表达 hardening 隔离；否则跨队阻断无法表达“自己除外”）
+            // 1) own-team accept (Player→own GameBox + GameBox→same Team GameBox)
             for team in &event.teams {
                 out.push_str(&format!(
                     "        # own-team {}: not denied\n",
                     team.team_id
                 ));
+                // Player WG → own Team GameBox subnet
                 out.push_str(&format!(
                     "        ip saddr {} ip daddr {} accept\n",
                     team.wireguard_network.as_str(),
+                    team.gamebox_network.as_str()
+                ));
+                // GameBox → same Team GameBox subnet (spec §26)
+                out.push_str(&format!(
+                    "        ip saddr {} ip daddr {} accept\n",
+                    team.gamebox_network.as_str(),
                     team.gamebox_network.as_str()
                 ));
             }
@@ -150,6 +157,7 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
                 "        ip saddr @{k}_players_v4 ip daddr @{k}_gameboxes_v4 drop\n"
             ));
             // 3) gamebox 全出网阻断（防横向移动 + 公网 + infra）
+            //    own-team accept above already handles same-team GameBox→GameBox
             out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
         }
         AwdPhase::Attack => {

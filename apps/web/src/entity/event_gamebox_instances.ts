@@ -7,7 +7,6 @@ export type EventGameboxInstances = {
   status: GameboxStatus;
   gamebox_ip: string;
   health_status: string;
-  reset_protection_until?: string;
   last_health_check_at?: string;
   created_at: string;
   updated_at: string;

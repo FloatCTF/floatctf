@@ -16,7 +16,6 @@ pub struct Model {
     #[sea_orm(column_type = "custom(\"inet\")")]
     pub gamebox_ip: IpNetwork,
     pub health_status: String,
-    pub reset_protection_until: Option<DateTimeWithTimeZone>,
     pub last_health_check_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,

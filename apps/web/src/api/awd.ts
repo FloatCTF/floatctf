@@ -17,7 +17,6 @@ export type AwdEventStatus = {
 	round_duration_secs: number;
 	free_reset_count: number;
 	extra_reset_penalty: number;
-	reset_protection_secs: number;
 	judge_max_concurrency: number;
 	judge_default_timeout_secs: number;
 	judge_retry_interval_secs: number;
@@ -35,7 +34,6 @@ export type AwdEventConfigInput = {
 	round_duration_secs: number;
 	free_reset_count: number;
 	extra_reset_penalty: number;
-	reset_protection_secs: number;
 	judge_max_concurrency: number;
 	judge_default_timeout_secs: number;
 	judge_retry_interval_secs: number;

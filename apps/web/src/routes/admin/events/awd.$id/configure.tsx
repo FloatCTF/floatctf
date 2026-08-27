@@ -24,7 +24,6 @@ type FormState = {
 	roundDurationSecs: string;
 	freeResetCount: string;
 	extraResetPenalty: string;
-	resetProtectionSecs: string;
 	judgeMaxConcurrency: string;
 	judgeDefaultTimeoutSecs: string;
 	judgeRetryIntervalSecs: string;
@@ -37,7 +36,6 @@ const DEFAULT_FORM: FormState = {
 	roundDurationSecs: "300",
 	freeResetCount: "3",
 	extraResetPenalty: "100",
-	resetProtectionSecs: "120",
 	judgeMaxConcurrency: "10",
 	judgeDefaultTimeoutSecs: "30",
 	judgeRetryIntervalSecs: "5",
@@ -91,7 +89,6 @@ function RouteComponent() {
 			roundDurationSecs: String(config.round_duration_secs),
 			freeResetCount: String(config.free_reset_count),
 			extraResetPenalty: String(config.extra_reset_penalty),
-			resetProtectionSecs: String(config.reset_protection_secs),
 			judgeMaxConcurrency: String(config.judge_max_concurrency),
 			judgeDefaultTimeoutSecs: String(config.judge_default_timeout_secs),
 			judgeRetryIntervalSecs: String(config.judge_retry_interval_secs),
@@ -145,7 +142,6 @@ function RouteComponent() {
 			form.roundDurationSecs,
 			form.freeResetCount,
 			form.extraResetPenalty,
-			form.resetProtectionSecs,
 			form.judgeMaxConcurrency,
 			form.judgeDefaultTimeoutSecs,
 			form.judgeRetryIntervalSecs,
@@ -163,12 +159,11 @@ function RouteComponent() {
 			[fields[0], 30, 86_400, "Round Duration"],
 			[fields[1], 0, 100, "Free Reset Count"],
 			[fields[2], 0, 1_000_000_000, "Extra Reset Penalty"],
-			[fields[3], 0, 86_400, "Reset Protection"],
-			[fields[4], 1, 1_000, "Max Concurrency"],
-			[fields[5], 1, 3_600, "Default Timeout"],
-			[fields[6], 1, 3_600, "Retry Interval"],
-			[fields[7], 0, 3_600, "Grace Period"],
-			[fields[8], 1, 87_600, "Archive Retention"],
+			[fields[3], 1, 1_000, "Max Concurrency"],
+			[fields[4], 1, 3_600, "Default Timeout"],
+			[fields[5], 1, 3_600, "Retry Interval"],
+			[fields[6], 0, 3_600, "Grace Period"],
+			[fields[7], 1, 87_600, "Archive Retention"],
 		];
 		const invalidRange = ranges.find(
 			([value, min, max]) => value < min || value > max,
@@ -184,7 +179,6 @@ function RouteComponent() {
 			roundDurationSecs,
 			freeResetCount,
 			extraResetPenalty,
-			resetProtectionSecs,
 			judgeMaxConcurrency,
 			judgeDefaultTimeoutSecs,
 			judgeRetryIntervalSecs,
@@ -199,7 +193,6 @@ function RouteComponent() {
 			round_duration_secs: roundDurationSecs,
 			free_reset_count: freeResetCount,
 			extra_reset_penalty: extraResetPenalty,
-			reset_protection_secs: resetProtectionSecs,
 			judge_max_concurrency: judgeMaxConcurrency,
 			judge_default_timeout_secs: judgeDefaultTimeoutSecs,
 			judge_retry_interval_secs: judgeRetryIntervalSecs,
@@ -317,15 +310,6 @@ function RouteComponent() {
 						onChange={set("extraResetPenalty")}
 						min={0}
 						max={1_000_000_000}
-						disabled={!editable}
-					/>
-					<NumberField
-						label="Reset Protection"
-						caption="Reset 后保护时间（秒）。"
-						value={form.resetProtectionSecs}
-						onChange={set("resetProtectionSecs")}
-						min={0}
-						max={86400}
 						disabled={!editable}
 					/>
 				</Section>

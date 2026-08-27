@@ -161,34 +161,3 @@ pub async fn unban_team(
     info!("[Ban] Team {team_id} unbanned in event {event_id}");
     Ok(())
 }
-
-/// P4-7 自动解封：按 ban id 解封（scheduler unban 任务用）。
-pub async fn unban_team_by_ban_id(
-    db: &DatabaseConnection,
-    network: &dyn AwdNetworkRuntime,
-    firewall: &dyn FirewallRuntime,
-    publisher: &dyn EventPublisher,
-    event_id: Uuid,
-    ban_id: Uuid,
-) -> AwdResult<()> {
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    let ban = crate::entity::awd_team_bans::Entity::find()
-        .filter(crate::entity::awd_team_bans::Column::Id.eq(ban_id))
-        .one(db)
-        .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("Ban not found".into()))?;
-    if ban.event_id != event_id {
-        return Err(AwdError::Forbidden("Ban belongs to another event".into()));
-    }
-    unban_team(
-        db,
-        network,
-        firewall,
-        publisher,
-        event_id,
-        ban.team_id,
-        None,
-    )
-    .await
-}

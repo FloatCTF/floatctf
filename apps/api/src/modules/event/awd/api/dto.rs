@@ -28,7 +28,6 @@ pub struct AwdEventStatusDto {
     pub initial_score: i64,
     pub free_reset_count: i32,
     pub extra_reset_penalty: i64,
-    pub reset_protection_secs: i32,
     pub judge_max_concurrency: i32,
     pub judge_default_timeout_secs: i32,
     pub judge_retry_interval_secs: i32,
@@ -52,7 +51,6 @@ impl From<awd_events::Model> for AwdEventStatusDto {
             initial_score: m.initial_score,
             free_reset_count: m.free_reset_count,
             extra_reset_penalty: m.extra_reset_penalty,
-            reset_protection_secs: m.reset_protection_secs,
             judge_max_concurrency: m.judge_max_concurrency,
             judge_default_timeout_secs: m.judge_default_timeout_secs,
             judge_retry_interval_secs: m.judge_retry_interval_secs,
@@ -86,7 +84,6 @@ pub struct AwdEventConfigRequest {
     pub initial_score: Option<i64>,
     pub free_reset_count: Option<i32>,
     pub extra_reset_penalty: Option<i64>,
-    pub reset_protection_secs: Option<i32>,
     pub judge_max_concurrency: Option<i32>,
     pub judge_default_timeout_secs: Option<i32>,
     pub judge_retry_interval_secs: Option<i32>,
@@ -108,7 +105,6 @@ impl AwdEventConfigRequest {
             || self.initial_score.is_some()
             || self.free_reset_count.is_some()
             || self.extra_reset_penalty.is_some()
-            || self.reset_protection_secs.is_some()
             || self.judge_max_concurrency.is_some()
             || self.judge_default_timeout_secs.is_some()
             || self.judge_retry_interval_secs.is_some()
@@ -158,7 +154,6 @@ impl From<AwdEventConfigRequest>
             initial_score: value.initial_score,
             free_reset_count: value.free_reset_count,
             extra_reset_penalty: value.extra_reset_penalty,
-            reset_protection_secs: value.reset_protection_secs,
             judge_max_concurrency: value.judge_max_concurrency,
             judge_default_timeout_secs: value.judge_default_timeout_secs,
             judge_retry_interval_secs: value.judge_retry_interval_secs,
@@ -243,9 +238,6 @@ pub struct PrecheckRequest {
 #[derive(Debug, Deserialize)]
 pub struct BanTeamRequest {
     pub reason: Option<String>,
-    /// 封禁时长（秒）；设置后创建自动解封任务（P4-7）。
-    #[serde(default)]
-    pub duration_secs: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

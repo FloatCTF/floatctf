@@ -21,7 +21,6 @@ use crate::modules::event::awd::{
 pub const DEFAULT_ROUND_DURATION_SECS: i32 = 300;
 pub const DEFAULT_FREE_RESET_COUNT: i32 = 3;
 pub const DEFAULT_EXTRA_RESET_PENALTY: i64 = 100;
-pub const DEFAULT_RESET_PROTECTION_SECS: i32 = 120;
 pub const DEFAULT_JUDGE_MAX_CONCURRENCY: i32 = 10;
 pub const DEFAULT_JUDGE_TIMEOUT_SECS: i32 = 30;
 pub const DEFAULT_JUDGE_RETRY_INTERVAL_SECS: i32 = 5;
@@ -38,7 +37,6 @@ pub struct AwdEventConfigPatch {
     pub initial_score: Option<i64>,
     pub free_reset_count: Option<i32>,
     pub extra_reset_penalty: Option<i64>,
-    pub reset_protection_secs: Option<i32>,
     pub judge_max_concurrency: Option<i32>,
     pub judge_default_timeout_secs: Option<i32>,
     pub judge_retry_interval_secs: Option<i32>,
@@ -67,12 +65,6 @@ impl AwdEventConfigPatch {
                 "extra_reset_penalty must be between 0 and 1000000000".into(),
             ));
         }
-        validate_range(
-            "reset_protection_secs",
-            self.reset_protection_secs,
-            0,
-            86_400,
-        )?;
         validate_range(
             "judge_max_concurrency",
             self.judge_max_concurrency,
@@ -128,9 +120,6 @@ impl AwdEventConfigPatch {
             || self
                 .extra_reset_penalty
                 .is_some_and(|v| v != current.extra_reset_penalty)
-            || self
-                .reset_protection_secs
-                .is_some_and(|v| v != current.reset_protection_secs)
             || self
                 .judge_max_concurrency
                 .is_some_and(|v| v != current.judge_max_concurrency)
@@ -267,9 +256,6 @@ where
         }
         if let Some(value) = patch.extra_reset_penalty {
             active.extra_reset_penalty = Set(value);
-        }
-        if let Some(value) = patch.reset_protection_secs {
-            active.reset_protection_secs = Set(value);
         }
         if let Some(value) = patch.judge_max_concurrency {
             active.judge_max_concurrency = Set(value);

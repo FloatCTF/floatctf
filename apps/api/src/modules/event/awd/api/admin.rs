@@ -141,10 +141,6 @@ pub async fn create_awd_event(
             .config
             .extra_reset_penalty
             .unwrap_or(config_service::DEFAULT_EXTRA_RESET_PENALTY)),
-        reset_protection_secs: Set(b
-            .config
-            .reset_protection_secs
-            .unwrap_or(config_service::DEFAULT_RESET_PROTECTION_SECS)),
         judge_max_concurrency: Set(b
             .config
             .judge_max_concurrency
@@ -322,7 +318,7 @@ pub async fn finish_awd_event(
 /// POST /api/admin/events/{event_id}/awd/teams/{team_id}/ban
 ///
 /// P4-5 跨层闭环：DB ban → WG host 挂起（DB 保持 Active）→ banned set reconcile
-/// → conntrack 清理 → publish。duration_secs 设置时创建自动解封任务（P4-7）。
+/// → conntrack 清理 → publish。
 #[post("{event_id}/awd/teams/{team_id}/ban")]
 pub async fn ban_team(
     admin: SuperAdminJwtGuard,
@@ -347,16 +343,6 @@ pub async fn ban_team(
     .await
     .map_err(AppError::from)?;
 
-    // P4-7：duration 到期自动解封任务
-    if let Some(duration_secs) = body.duration_secs {
-        if duration_secs > 0 {
-            let execute_at = chrono::Utc::now() + chrono::Duration::seconds(duration_secs);
-            schedule_team_unban(ctx.db.get_ref(), event_id, ban_id, execute_at)
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
-    }
-
     // P5-11 审计
     awd.audit
         .record(
@@ -370,40 +356,6 @@ pub async fn ban_team(
         .await;
 
     UniResponse::ok(ban_id.into()).into()
-}
-
-/// 创建自动解封一次性任务（P4-7）。
-async fn schedule_team_unban(
-    db: &sea_orm::DatabaseConnection,
-    event_id: Uuid,
-    ban_id: Uuid,
-    execute_at: chrono::DateTime<chrono::Utc>,
-) -> Result<(), sea_orm::DbErr> {
-    use crate::entity::scheduled_tasks;
-    use sea_orm::ActiveValue::Set;
-    let now = chrono::Utc::now();
-    scheduled_tasks::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        group_id: Set(Some(event_id)),
-        task_name: Set(format!("AWD auto-unban ban {ban_id}")),
-        description: Set(Some("automatic unban after ban duration".into())),
-        task_key: Set(crate::scheduler::TaskKey::AwdTeamUnban.to_string()),
-        trigger_type: Set("once".into()),
-        status: Set("pending".into()),
-        execute_at: Set(Some(execute_at.into())),
-        payload: Set(Some(serde_json::json!({
-            "event_id": event_id,
-            "round_id": ban_id,
-        }))),
-        enabled: Set(true),
-        protected: Set(true),
-        created_at: Set(now.into()),
-        updated_at: Set(now.into()),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
-    Ok(())
 }
 
 /// DELETE /api/admin/events/{event_id}/awd/teams/{team_id}/ban

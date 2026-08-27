@@ -34,7 +34,6 @@ pub struct Model {
     pub key_version: i32,
     pub free_reset_count: i32,
     pub extra_reset_penalty: i64,
-    pub reset_protection_secs: i32,
     pub judge_max_concurrency: i32,
     pub judge_default_timeout_secs: i32,
     pub judge_retry_interval_secs: i32,

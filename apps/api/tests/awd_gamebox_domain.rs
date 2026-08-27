@@ -86,7 +86,6 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
         key_version: Set(1),
         free_reset_count: Set(3),
         extra_reset_penalty: Set(100),
-        reset_protection_secs: Set(0),
         judge_max_concurrency: Set(10),
         judge_default_timeout_secs: Set(30),
         judge_retry_interval_secs: Set(5),

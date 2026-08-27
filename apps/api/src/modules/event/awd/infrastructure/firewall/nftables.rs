@@ -252,6 +252,7 @@ mod tests {
                     gamebox_network: IpNet::parse("10.42.1.0/24").unwrap(),
                 }],
                 banned_teams: vec![],
+                is_final_settlement: false,
             }],
         }
     }

@@ -145,51 +145,59 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
         "        ip saddr @{k}_gameboxes_v4 ip daddr @banned_gameboxes_v4 drop\n"
     ));
 
-    match event.phase {
-        AwdPhase::Hardening => {
-            // 1) own-team accept (Player→own GameBox + GameBox→same Team GameBox)
-            for team in &event.teams {
+    // Final settlement: same as Pause (block all player/gamebox traffic).
+    // JudgeServer→GameBox is still allowed because infra IPs are not in
+    // players_v4 or gameboxes_v4 sets.
+    if event.is_final_settlement {
+        out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
+        out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
+    } else {
+        match event.phase {
+            AwdPhase::Hardening => {
+                // 1) own-team accept (Player→own GameBox + GameBox→same Team GameBox)
+                for team in &event.teams {
+                    out.push_str(&format!(
+                        "        # own-team {}: not denied\n",
+                        team.team_id
+                    ));
+                    // Player WG → own Team GameBox subnet
+                    out.push_str(&format!(
+                        "        ip saddr {} ip daddr {} accept\n",
+                        team.wireguard_network.as_str(),
+                        team.gamebox_network.as_str()
+                    ));
+                    // GameBox → same Team GameBox subnet (spec §26)
+                    out.push_str(&format!(
+                        "        ip saddr {} ip daddr {} accept\n",
+                        team.gamebox_network.as_str(),
+                        team.gamebox_network.as_str()
+                    ));
+                }
+                // 2) 其余 player→gamebox（跨队）默认 DROP
                 out.push_str(&format!(
-                    "        # own-team {}: not denied\n",
-                    team.team_id
+                    "        ip saddr @{k}_players_v4 ip daddr @{k}_gameboxes_v4 drop\n"
                 ));
-                // Player WG → own Team GameBox subnet
-                out.push_str(&format!(
-                    "        ip saddr {} ip daddr {} accept\n",
-                    team.wireguard_network.as_str(),
-                    team.gamebox_network.as_str()
-                ));
-                // GameBox → same Team GameBox subnet (spec §26)
-                out.push_str(&format!(
-                    "        ip saddr {} ip daddr {} accept\n",
-                    team.gamebox_network.as_str(),
-                    team.gamebox_network.as_str()
-                ));
+                // 3) gamebox 全出网阻断（防横向移动 + 公网 + infra）
+                //    own-team accept above already handles same-team GameBox→GameBox
+                out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
             }
-            // 2) 其余 player→gamebox（跨队）默认 DROP
-            out.push_str(&format!(
-                "        ip saddr @{k}_players_v4 ip daddr @{k}_gameboxes_v4 drop\n"
-            ));
-            // 3) gamebox 全出网阻断（防横向移动 + 公网 + infra）
-            //    own-team accept above already handles same-team GameBox→GameBox
-            out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
-        }
-        AwdPhase::Attack => {
-            // 攻击阶段：不阻止跨队 player→gamebox
-            // gamebox 出网：允许 gamebox↔gamebox（攻击协同）+ flagserver，其余阻断
-            out.push_str(&format!(
-                "        ip saddr @{k}_gameboxes_v4 ip daddr @{k}_gameboxes_v4 accept\n"
-            ));
-            out.push_str(&format!(
-                "        ip saddr @{k}_gameboxes_v4 ip daddr {} accept\n",
-                event.flagserver_ip
-            ));
-            out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
-        }
-        AwdPhase::Pause => {
-            // 暂停：阻断比赛网络路径（玩家与 GameBox 双向）
-            out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
-            out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
+            AwdPhase::Attack => {
+                // 攻击阶段：不阻止跨队 player→gamebox
+                // gamebox 出网：允许 gamebox↔gamebox（攻击协同）+ flagserver，其余阻断
+                out.push_str(&format!(
+                    "        ip saddr @{k}_gameboxes_v4 ip daddr @{k}_gameboxes_v4 accept\n"
+                ));
+                out.push_str(&format!(
+                    "        ip saddr @{k}_gameboxes_v4 ip daddr {} accept\n",
+                    event.flagserver_ip
+                ));
+                out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
+            }
+            AwdPhase::Pause => {
+                // 暂停：阻断比赛网络路径（玩家与 GameBox 双向）
+                out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
+                out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
+            }
         }
     }
 
@@ -284,6 +292,7 @@ mod tests {
                 },
             ],
             banned_teams: if banned { vec![team_a] } else { vec![] },
+            is_final_settlement: false,
         };
         event.event_key = NftObjectName::event_key(&event.event_id)
             .as_str()
@@ -331,6 +340,22 @@ mod tests {
         let text = render_table(&desired);
         assert!(text.contains("ip saddr @ev_"));
         assert!(text.contains("drop"));
+    }
+
+    #[test]
+    fn render_settlement_blocks_all_game_traffic_like_pause() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_final_settlement = true;
+        let desired = DesiredFirewallState {
+            revision: 8,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Settlement uses Pause-like rules: blocks player/gamebox traffic
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("drop"));
+        // No cross-team accept (unlike Attack)
+        assert!(!text.contains("_gameboxes_v4 ip daddr @ev__gameboxes_v4 accept"));
     }
 
     #[test]

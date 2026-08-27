@@ -10,6 +10,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus, ScoreEventType};
+use crate::entity::{awd_events, awd_rounds};
 use crate::modules::event::awd::{
     AwdError, AwdResult,
     domain::{AwdEventStatusExt, IdempotencyKey, timing::compute_timing},
@@ -17,7 +18,7 @@ use crate::modules::event::awd::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, EventNetworkIdentity},
     },
-    repo::{event_repo, round_repo, score_repo},
+    repo::{event_repo, judge_repo, round_repo, score_repo},
     scheduler,
     service::{firewall_service, round_service},
 };
@@ -498,52 +499,137 @@ pub async fn resume_event(
     }
 }
 
-/// 结束赛事：停止轮次与计分，保留数据。
+/// 结束赛事：必须通过 Final Settlement 自动完成。
 ///
-/// Wave 2 临时行为：直接完成活跃轮次并进入 Finished。
-/// Wave 6 将替换为 Final Settlement 自动完成。
-pub async fn finish_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<()> {
+/// Wave 6：此函数保留为 `maybe_finish_event` 的别名，供 admin 手动 finish 调用。
+/// 实际逻辑委托给 `maybe_finish_event`，确保只能通过完整的 Final Settlement 检查。
+pub async fn finish_event(
+    db: &DatabaseConnection,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
+    event_id: Uuid,
+) -> AwdResult<()> {
+    maybe_finish_event(db, network, firewall, publisher, event_id).await
+}
+
+/// 检查赛事是否处于规范最终结算状态。
+///
+/// 返回 true 当且仅当：
+/// - status == Running
+/// - phase == Attack
+/// - round_count 已配置
+/// - 无 Active/Paused 轮次
+/// - 最高完成轮次 >= round_count 且状态为 Completed
+pub fn is_final_settlement(
+    awd_event: &awd_events::Model,
+    latest_round: Option<&awd_rounds::Model>,
+) -> bool {
+    if awd_event.status != AwdEventStatus::Running {
+        return false;
+    }
+    if awd_event.phase != AwdPhase::Attack {
+        return false;
+    }
+    let Some(round_count) = awd_event.round_count else {
+        return false;
+    };
+    let Some(latest_round) = latest_round else {
+        return false;
+    };
+    if latest_round.round_number < round_count {
+        return false;
+    }
+    if latest_round.status != RoundStatus::Completed {
+        return false;
+    }
+    true
+}
+
+/// 尝试结束赛事：仅当 Final Settlement 完成（所有 Judge 任务终态）时过渡到 Finished。
+///
+/// 幂等：已 Finished → 无操作。
+/// 并发安全：transition_event 使用 CAS 语义，确保只有一个 Finished 过渡。
+pub async fn maybe_finish_event(
+    db: &DatabaseConnection,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn FirewallRuntime,
+    publisher: &dyn crate::infrastructure::realtime::EventPublisher,
+    event_id: Uuid,
+) -> AwdResult<()> {
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
 
-    if !awd_event.status.is_active() {
-        return Err(AwdError::InvalidState(
-            "Can only finish a running or paused event".into(),
-        ));
+    // Already Finished
+    if awd_event.status == AwdEventStatus::Finished {
+        return Ok(());
     }
 
-    // Complete the active round if any
-    if let Some(round) = round_repo::find_active_round(db, event_id)
+    // Must be Running
+    if awd_event.status != AwdEventStatus::Running {
+        return Ok(());
+    }
+
+    // Check canonical final settlement
+    let latest_round = round_repo::find_latest_round(db, event_id)
         .await
-        .map_err(|e| AwdError::Database(e.to_string()))?
-    {
-        round_repo::update_round_status(db, round.id, RoundStatus::Completed)
-            .await
-            .map_err(|e| AwdError::Database(e.to_string()))?;
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if !is_final_settlement(&awd_event, latest_round.as_ref()) {
+        return Ok(());
     }
 
-    // 清除 hardening_ends_at（如果仍在 Hardening）
-    use crate::entity::awd_events;
-    awd_events::ActiveModel {
-        id: Set(awd_event.id),
-        hardening_ends_at: Set(None),
-        updated_at: Set(chrono::Utc::now().into()),
-        ..Default::default()
+    // Check all event Judge tasks are terminal
+    let all_terminal = judge_repo::all_event_judge_tasks_terminal(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    if !all_terminal {
+        return Ok(());
     }
-    .update(db)
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?;
 
+    // Transition to Finished
     event_repo::transition_event(
         db,
         awd_event.id,
-        awd_event.status.clone(),
+        AwdEventStatus::Running,
         AwdEventStatus::Finished,
         event_repo::TransitionPatch::finished(),
     )
     .await?;
+
+    info!("[Event] Event {} transitioned to Finished", event_id);
+
+    // Publish lifecycle event
+    let _ = publisher.publish(
+        crate::modules::event::awd::websocket::AwdEvent::new(
+            "event.finished",
+            event_id,
+            serde_json::json!({}),
+        )
+        .into_realtime(),
+    );
+
+    // Reconcile Finished network policy (Finished events excluded from desired set → rules removed)
+    let _ = firewall_service::reconcile_global(
+        db,
+        firewall,
+        firewall_service::next_network_revision(db).await?,
+    )
+    .await;
+
+    // Flush player connections
+    if let Ok(event_network) =
+        crate::modules::event::awd::repo::event_network_repo::require_by_event_id(db, event_id)
+            .await
+    {
+        firewall_service::flush_event_connections(
+            network,
+            event_id,
+            &event_network.gamebox_cidr.to_string(),
+        )
+        .await;
+    }
 
     Ok(())
 }

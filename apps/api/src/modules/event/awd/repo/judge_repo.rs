@@ -472,6 +472,23 @@ pub async fn find_task_by_id(
     awd_judge_tasks::Entity::find_by_id(id).one(db).await
 }
 
+/// Check if all judge tasks for an event are terminal (no Pending/Running tasks).
+/// Used by maybe_finish_event to determine if the event can transition to Finished.
+pub async fn all_event_judge_tasks_terminal(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+) -> Result<bool, sea_orm::DbErr> {
+    let nonterminal = awd_judge_tasks::Entity::find()
+        .filter(awd_judge_tasks::Column::EventId.eq(event_id))
+        .filter(
+            awd_judge_tasks::Column::Status
+                .is_in([JudgeTaskStatus::Pending, JudgeTaskStatus::Running]),
+        )
+        .all(db)
+        .await?;
+    Ok(nonterminal.is_empty())
+}
+
 pub async fn update_task_status(
     db: &DatabaseConnection,
     id: Uuid,

@@ -19,8 +19,8 @@ use crate::modules::event::awd::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
-    repo::{event_network_repo, event_repo},
-    service::{firewall_service, round_service},
+    repo::{event_network_repo, event_repo, round_repo},
+    service::{event_service, firewall_service, round_service},
 };
 use crate::scheduler::TaskKey;
 use fcmc::AwdContainerRuntime;
@@ -297,6 +297,64 @@ async fn recover_event(
     }
     recovered += restored_batches as u32;
 
+    // ── 5. Final Settlement / Finished recovery ──
+    if event.status == AwdEventStatus::Running && event.phase == AwdPhase::Attack {
+        let active_round = round_repo::find_active_round(db, event.event_id)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
+        if active_round.is_none() {
+            // No active round — could be crash-gap or final settlement
+            let latest = round_repo::find_latest_round(db, event.event_id)
+                .await
+                .map_err(|e| AwdError::Database(e.to_string()))?;
+            let is_final = event_service::is_final_settlement(event, latest.as_ref());
+            if is_final {
+                info!(
+                    "[Recovery] Event {} is in final settlement — attempting finish",
+                    event.event_id
+                );
+                let _ = event_service::maybe_finish_event(
+                    db,
+                    network,
+                    firewall,
+                    publisher,
+                    event.event_id,
+                )
+                .await;
+            }
+            // else: crash-gap — restore_round_scheduling above handled it
+        }
+    }
+
+    if event.status == AwdEventStatus::Finished {
+        // Reconcile Finished lockdown: ensure network is closed
+        info!(
+            "[Recovery] Event {} is Finished — reconciling lockdown",
+            event.event_id
+        );
+        let _ = firewall_service::reconcile_global(
+            db,
+            firewall,
+            firewall_service::next_network_revision(db).await?,
+        )
+        .await;
+        if let Ok(event_network) =
+            crate::modules::event::awd::repo::event_network_repo::require_by_event_id(
+                db,
+                event.event_id,
+            )
+            .await
+        {
+            firewall_service::flush_event_connections(
+                network,
+                event.event_id,
+                &event_network.gamebox_cidr.to_string(),
+            )
+            .await;
+        }
+        recovered += 1;
+    }
+
     Ok(recovered)
 }
 
@@ -332,12 +390,15 @@ pub async fn handle_network_error(
                 .unwrap_or(0);
 
             // Cancel pending HardeningEnd task
-            let _ = crate::modules::event::awd::scheduler::cancel_pending_hardening_end(db, event_id).await;
+            let _ =
+                crate::modules::event::awd::scheduler::cancel_pending_hardening_end(db, event_id)
+                    .await;
         }
         AwdPhase::Attack => {
-            if let Some(round) = crate::modules::event::awd::repo::round_repo::find_active_round(db, event_id)
-                .await
-                .map_err(|e| AwdError::Database(e.to_string()))?
+            if let Some(round) =
+                crate::modules::event::awd::repo::round_repo::find_active_round(db, event_id)
+                    .await
+                    .map_err(|e| AwdError::Database(e.to_string()))?
             {
                 remaining = (round.scheduled_end_at.with_timezone(&chrono::Utc) - now)
                     .num_seconds()

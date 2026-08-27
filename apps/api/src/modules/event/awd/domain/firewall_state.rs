@@ -42,6 +42,10 @@ pub struct DesiredEventPolicy {
     pub teams: Vec<DesiredTeamPolicy>,
     /// 被 ban 的队伍（WG/GameBox 子网进入 banned set）。
     pub banned_teams: Vec<Uuid>,
+    /// 是否处于最终结算期（final round completed, Judge pending, Attack phase）。
+    /// 结算期防火墙 = Pause 规则（阻断全部玩家/GameBox 比赛流量），
+    /// 但 JudgeServer→GameBox 仍可达（infra 不在 player/gamebox set 中）。
+    pub is_final_settlement: bool,
 }
 
 impl DesiredEventPolicy {
@@ -133,6 +137,7 @@ mod tests {
             judgeserver_ip: "10.42.0.11".parse().unwrap(),
             teams: vec![team_a.clone(), team_b.clone()],
             banned_teams: vec![team_a.team_id],
+            is_final_settlement: false,
         };
         let banned = event.banned_subnets();
         assert_eq!(banned, vec!["172.31.1.0/24"]);

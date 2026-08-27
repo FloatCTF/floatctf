@@ -701,6 +701,9 @@ pub async fn cancel_pending_hardening_end<C: ConnectionTrait + Send>(
 /// Handler: Judge batch absolute deadline — terminalize uncompleted tasks as JudgeError.
 pub struct AwdJudgeBatchDeadlineHandler {
     pub db: WebDb,
+    pub network: Arc<dyn AwdNetworkRuntime>,
+    pub firewall: Arc<dyn FirewallRuntime>,
+    pub publisher: Arc<dyn crate::infrastructure::realtime::EventPublisher>,
 }
 
 #[async_trait]
@@ -717,6 +720,8 @@ impl TaskHandler for AwdJudgeBatchDeadlineHandler {
         let payload: serde_json::Value = task.payload.clone().unwrap_or_default();
         let batch_id: Uuid =
             serde_json::from_value(payload.get("batch_id").cloned().unwrap_or_default())?;
+        let event_id: Uuid =
+            serde_json::from_value(payload.get("event_id").cloned().unwrap_or_default())?;
 
         info!(
             "[AWD] Judge batch deadline: terminalizing batch {}",
@@ -742,6 +747,16 @@ impl TaskHandler for AwdJudgeBatchDeadlineHandler {
         let _ = crate::modules::event::awd::repo::judge_repo::maybe_complete_batch(
             self.db.get_ref(),
             batch_id,
+        )
+        .await;
+
+        // After terminalizing, attempt to finish the event if final settlement is complete
+        let _ = crate::modules::event::awd::service::event_service::maybe_finish_event(
+            self.db.get_ref(),
+            self.network.as_ref(),
+            self.firewall.as_ref(),
+            self.publisher.as_ref(),
+            event_id,
         )
         .await;
 

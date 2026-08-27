@@ -7,8 +7,9 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
     modules::event::awd::{
-        repo::{gamebox_repo, round_repo},
-        service::{flag_service, score_service, submission_service},
+        domain::AwdEventStatusExt,
+        repo::{event_repo, gamebox_repo, round_repo},
+        service::{event_service, flag_service, score_service, submission_service},
     },
     modules::event::common::infrastructure::event_repository as repo,
 };
@@ -92,6 +93,35 @@ pub async fn reset_my_gamebox(
     let (event_id, instance_id) = path.into_inner();
     let user = user.into_inner();
 
+    // Guard: Finished events cannot be reset
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "Cannot reset gamebox after event is finished".into(),
+        ));
+    }
+    // Guard: Final settlement (no active round) also blocks reset
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "Cannot reset gamebox during final settlement".into(),
+                ));
+            }
+        }
+    }
+
     // Find user's team for this event (using centralized repository)
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
@@ -139,6 +169,17 @@ pub async fn submit_flag(
 ) -> UniResult<SubmissionResponse> {
     let event_id = path.into_inner();
     let user = user.into_inner();
+
+    // Guard: Finished events cannot accept submissions
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "Cannot submit flag after event is finished".into(),
+        ));
+    }
 
     // P5-10 限流：submit（每用户每分钟）
     awd.rate_limiter
@@ -232,6 +273,34 @@ pub async fn get_ssh_config(
 ) -> UniResult<super::dto::SshAccessResponse> {
     let event_id = path.into_inner();
     let user = user.into_inner();
+
+    // Guard: Finished/Final Settlement blocks SSH access
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "SSH access is disabled after event is finished".into(),
+        ));
+    }
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "SSH access is disabled during final settlement".into(),
+                ));
+            }
+        }
+    }
 
     use crate::entity::event_team_members;
     let membership = event_team_members::Entity::find()
@@ -331,6 +400,34 @@ pub async fn get_wireguard_config(
 ) -> UniResult<super::dto::WireGuardConfigResponse> {
     let event_id = path.into_inner();
     let user = user.into_inner();
+
+    // Guard: Finished/Final Settlement blocks WireGuard access
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "WireGuard access is disabled after event is finished".into(),
+        ));
+    }
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "WireGuard access is disabled during final settlement".into(),
+                ));
+            }
+        }
+    }
 
     use crate::entity::{awd_events, event_team_members};
 

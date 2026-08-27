@@ -26,8 +26,8 @@ use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd::{
     AwdError, AwdResult,
     infrastructure::{firewall::FirewallRuntime, network::AwdNetworkRuntime},
-    repo::{event_repo, round_repo},
-    service::{firewall_service, judge_service},
+    repo::{event_network_repo, event_repo, round_repo},
+    service::{event_service, firewall_service, judge_service},
     websocket,
 };
 use crate::scheduler::TaskKey;
@@ -332,6 +332,30 @@ pub async fn end_round(
             "[Round] Final round {completed_round_number} ended — no next round. Event {} remains Running/Attack.",
             event_id
         );
+
+        // Final settlement: reconcile firewall to closed state (no player access)
+        // and attempt to finish if zero tasks (all skipped/terminal)
+        let _ = firewall_service::reconcile_global(
+            db,
+            firewall,
+            firewall_service::next_network_revision(db).await?,
+        )
+        .await;
+        if let Ok(event_network) =
+            crate::modules::event::awd::repo::event_network_repo::require_by_event_id(db, event_id)
+                .await
+        {
+            firewall_service::flush_event_connections(
+                network,
+                event_id,
+                &event_network.gamebox_cidr.to_string(),
+            )
+            .await;
+        }
+
+        // Attempt to finish if there are no non-terminal Judge tasks
+        // (handles zero-task final batch edge case)
+        let _ = event_service::maybe_finish_event(db, network, firewall, publisher, event_id).await;
     } else {
         info!(
             "[Round] Starting round {} immediately for event {}",

@@ -1,10 +1,11 @@
 //! 全局防火墙期望态协调编排器（Phase 1 P1-10）。
 
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_events, awd_team_bans, awd_team_networks, sea_orm_active_enums::AwdEventStatus,
+    awd_events, awd_rounds, awd_team_bans, awd_team_networks,
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus},
 };
 use crate::modules::event::awd::{
     AwdError, AwdResult,
@@ -90,6 +91,41 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
             });
         }
 
+        // Detect final settlement: Running + Attack + no active round
+        // + highest completed round >= round_count
+        let is_final_settlement = if event.status == AwdEventStatus::Running
+            && event.phase == AwdPhase::Attack
+        {
+            let has_active = awd_rounds::Entity::find()
+                .filter(awd_rounds::Column::EventId.eq(event.event_id))
+                .filter(
+                    awd_rounds::Column::Status.is_in([RoundStatus::Active, RoundStatus::Paused]),
+                )
+                .one(db)
+                .await
+                .map_err(|e| AwdError::Database(format!("load rounds: {e}")))?
+                .is_some();
+            if !has_active {
+                if let Some(round_count) = event.round_count {
+                    let latest = awd_rounds::Entity::find()
+                        .filter(awd_rounds::Column::EventId.eq(event.event_id))
+                        .order_by_desc(awd_rounds::Column::RoundNumber)
+                        .one(db)
+                        .await
+                        .map_err(|e| AwdError::Database(format!("load rounds: {e}")))?;
+                    latest.is_some_and(|r| {
+                        r.round_number >= round_count && r.status == RoundStatus::Completed
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         let flagserver_ip: std::net::Ipv4Addr = event_network
             .flagserver_ip
             .ip()
@@ -125,6 +161,7 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
             judgeserver_ip,
             banned_teams: bans.into_iter().map(|b| b.team_id).collect(),
             teams,
+            is_final_settlement,
         });
     }
 

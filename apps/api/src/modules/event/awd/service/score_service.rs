@@ -3,11 +3,11 @@
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::entity::sea_orm_active_enums::ScoreEventType;
+use crate::entity::sea_orm_active_enums::{AwdEventStatus, ScoreEventType};
 use crate::modules::event::awd::{
     AwdError, AwdResult,
-    domain::{IdempotencyKey, TeamScore},
-    repo::score_repo,
+    domain::{AwdEventStatusExt, IdempotencyKey, TeamScore},
+    repo::{event_repo, score_repo},
 };
 
 /// 从账本聚合得到赛事当前积分榜。
@@ -105,6 +105,17 @@ pub async fn record_adjustment(
     reason: &str,
     created_by: Uuid,
 ) -> AwdResult<()> {
+    // Reject adjustments after Finished (scoreboard is final)
+    let awd_event = event_repo::find_by_event_id(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AwdError::InvalidState(
+            "Cannot adjust score after event is finished".into(),
+        ));
+    }
+
     let key = IdempotencyKey::adjustment(&Uuid::new_v4().to_string());
 
     // Try once; if collision, regenerate UUID once

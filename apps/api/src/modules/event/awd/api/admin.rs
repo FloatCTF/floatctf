@@ -300,16 +300,25 @@ pub async fn resume_awd_event(
 }
 
 /// POST /api/admin/events/{event_id}/awd/finish
+///
+/// Wave 6: 必须通过 Final Settlement 检查；不会绕过 Judge 待处理状态。
 #[post("{event_id}/awd/finish")]
 pub async fn finish_awd_event(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    event_service::finish_event(ctx.db.get_ref(), event_id)
-        .await
-        .map_err(AppError::from)?;
+    event_service::finish_event(
+        ctx.db.get_ref(),
+        awd.network.as_ref(),
+        awd.firewall.as_ref(),
+        awd.publisher.as_ref(),
+        event_id,
+    )
+    .await
+    .map_err(AppError::from)?;
     UniResponse::ok_none().into()
 }
 

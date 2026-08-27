@@ -12,7 +12,7 @@ use crate::{
         api::auth::{AwdInternalAuth, AwdInternalPrincipal},
         domain::{AwdPhaseExt, IdempotencyKey, JudgeTaskStatusExt},
         repo::{ban_repo, event_repo, judge_repo, score_repo},
-        service::flag_service,
+        service::{event_service, flag_service},
     },
 };
 
@@ -309,7 +309,7 @@ pub async fn judge_result(
     .await
     .map_err(|e| AppError::Database(e.to_string()))?;
 
-    match result {
+    let submit_response: UniResult<()> = match result {
         judge_repo::SubmitResult::Ok | judge_repo::SubmitResult::Idempotent => {
             // Score only if Down (§17.1: Up → no score)
             let is_down = status.is_down();
@@ -378,7 +378,21 @@ pub async fn judge_result(
         }
         judge_repo::SubmitResult::Stale => Err(AppError::Conflict("stale lease or attempt".into())),
         judge_repo::SubmitResult::NotFound => Err(AppError::NotFound("task not found".into())),
+    };
+
+    // After any terminal result, attempt to finish the event if final settlement is complete
+    if submit_response.is_ok() {
+        let _ = event_service::maybe_finish_event(
+            ctx.db.get_ref(),
+            awd.network.as_ref(),
+            awd.firewall.as_ref(),
+            awd.publisher.as_ref(),
+            event_id,
+        )
+        .await;
     }
+
+    submit_response
 }
 
 /// 将任务释放回 Pending（清除 lease 字段）。

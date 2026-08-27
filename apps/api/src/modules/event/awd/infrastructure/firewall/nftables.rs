@@ -253,6 +253,7 @@ mod tests {
                 }],
                 banned_teams: vec![],
                 is_final_settlement: false,
+                is_finished: false,
             }],
         }
     }

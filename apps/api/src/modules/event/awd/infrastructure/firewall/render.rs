@@ -148,7 +148,11 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
     // Final settlement: same as Pause (block all player/gamebox traffic).
     // JudgeServer→GameBox is still allowed because infra IPs are not in
     // players_v4 or gameboxes_v4 sets.
-    if event.is_final_settlement {
+    //
+    // Finished: explicit fail-closed DENY-ALL for all player/gamebox competition
+    // traffic. Same rules as settlement/pause. Finished events are kept in the
+    // firewall desired set so their subnets remain owned/managed.
+    if event.is_final_settlement || event.is_finished {
         out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
         out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
     } else {
@@ -293,6 +297,7 @@ mod tests {
             ],
             banned_teams: if banned { vec![team_a] } else { vec![] },
             is_final_settlement: false,
+            is_finished: false,
         };
         event.event_key = NftObjectName::event_key(&event.event_id)
             .as_str()
@@ -356,6 +361,115 @@ mod tests {
         assert!(text.contains("drop"));
         // No cross-team accept (unlike Attack)
         assert!(!text.contains("_gameboxes_v4 ip daddr @ev__gameboxes_v4 accept"));
+    }
+
+    // ── Wave 6.2: Finished firewall policy tests ──
+
+    #[test]
+    fn render_finished_blocks_all_player_gamebox_traffic() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 20,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Finished: Player → any GameBox DENY
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("_players_v4 drop"));
+        assert!(text.contains("_gameboxes_v4 drop"));
+        // No cross-team accept
+        assert!(!text.contains("_gameboxes_v4 ip daddr @ev__gameboxes_v4 accept"));
+        // No own-team accept
+        assert!(!text.contains("ip daddr 10.42.1.0/24 accept"));
+        // No flagserver accept
+        assert!(!text.contains("ip daddr 10.42.0.10 accept"));
+    }
+
+    #[test]
+    fn render_finished_blocks_player_to_own_gamebox() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 21,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Player WG subnet → own GameBox subnet: must NOT have accept
+        assert!(!text.contains("ip saddr 172.31.1.0/24 ip daddr 10.42.1.0/24 accept"));
+        // Player WG subnet → own GameBox subnet: must be dropped
+        assert!(text.contains("_players_v4 drop"));
+    }
+
+    #[test]
+    fn render_finished_blocks_gamebox_to_gamebox() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 22,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // GameBox→GameBox: must NOT have accept
+        assert!(!text.contains("ip saddr 10.42.1.0/24 ip daddr 10.42.1.0/24 accept"));
+        // GameBox source must be dropped
+        assert!(text.contains("_gameboxes_v4 drop"));
+    }
+
+    #[test]
+    fn render_finished_event_subnets_in_managed_state() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 23,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Finished event subnets remain in global managed sets
+        assert!(text.contains("all_gameboxes_v4"));
+        assert!(text.contains("10.42.0.0/16"));
+        // Player WG subnets remain in managed sets
+        assert!(text.contains("player_wg_v4"));
+        assert!(text.contains("172.31.1.0/24"));
+        assert!(text.contains("172.31.2.0/24"));
+        // Per-event sets are still emitted
+        assert!(text.contains("_gameboxes_v4"));
+        assert!(text.contains("_players_v4"));
+        // Event chain is still present
+        assert!(text.contains("chain event_ev_"));
+        assert!(text.contains("jump event_ev_"));
+    }
+
+    #[test]
+    fn render_finished_blocks_player_to_infrastructure() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 24,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Player → infrastructure DENY (common restrictive rules still apply)
+        assert!(text.contains("_players_v4 ip daddr @infrastructure_v4 drop"));
+        // GameBox → infrastructure DENY
+        assert!(text.contains("_gameboxes_v4 ip daddr @infrastructure_v4 drop"));
+    }
+
+    #[test]
+    fn render_finished_does_not_delete_managed_policy() {
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 25,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // The Finished event chain must exist and contain DROP rules
+        assert!(text.contains("chain event_ev_"));
+        assert!(text.contains("drop"));
+        // The event's subnets are still in the managed table
+        assert!(text.contains("10.42.0.0/16"));
+        assert!(text.contains("172.31.1.0/24"));
     }
 
     #[test]

@@ -73,7 +73,7 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, round_count: i3
     };
     awd.insert(db).await.expect("insert awd_events");
 
-    let wg_port = 50000 + (Uuid::new_v4().as_u128() % 40000) as i32;
+    let wg_port = 40000 + (Uuid::new_v4().as_u128() % 55000) as i32;
     let net = awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -1091,4 +1091,264 @@ async fn networkerror_judge_no_score() {
         ),
         "NetworkError must be in firewall desired set"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §6.2: Finished Firewall Desired-State Ownership
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn finished_event_in_firewall_desired_set() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "fin-desired", 1).await;
+    seed_round(&db, event_id, 1, RoundStatus::Completed).await;
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    // Finished must be in firewall desired set
+    assert!(
+        floatctf::modules::event::awd::service::firewall_service::in_firewall_desired_set(
+            &awd.status
+        ),
+        "Finished must be in firewall desired set for fail-closed lockdown"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §6.2: Finished Recovery Reapplies Lockdown
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn finished_recovery_reapplies_lockdown() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "fin-recover", 2).await;
+    let round2_id = seed_round(&db, event_id, 2, RoundStatus::Completed).await;
+    let (instance_id, _team_id) = seed_instance(&db, event_id).await;
+
+    seed_judge_task(
+        &db,
+        event_id,
+        round2_id,
+        instance_id,
+        _team_id,
+        JudgeTaskStatus::Up,
+        1,
+        3,
+    )
+    .await;
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    // Simulate recovery: call maybe_finish_event again (idempotent)
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    // Event remains Finished
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    // Finished is still in firewall desired set after recovery
+    assert!(
+        floatctf::modules::event::awd::service::firewall_service::in_firewall_desired_set(
+            &awd.status
+        ),
+        "Finished must remain in firewall desired set after recovery"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §6.2: Scoreboard Immutability After Finished
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scoreboard_immutable_after_finished() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    let event_id = seed_event(&db, "score-immut", 1).await;
+    seed_round(&db, event_id, 1, RoundStatus::Completed).await;
+
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
+
+    // Snapshot scoreboard
+    let score1 =
+        floatctf::modules::event::awd::service::score_service::get_scoreboard(&db, event_id, &[])
+            .await
+            .unwrap();
+
+    // Stale judge result attempt (no-op since no tasks exist)
+    let _ = judge_repo::submit_result(
+        &db,
+        Uuid::new_v4(),
+        "stale",
+        1,
+        "token",
+        "rid",
+        JudgeTaskStatus::Down,
+        Some(1),
+        None,
+        None,
+        None,
+        chrono::Utc::now(),
+    )
+    .await;
+
+    // Adjustment rejected
+    let _ = floatctf::modules::event::awd::service::score_service::record_adjustment(
+        &db,
+        event_id,
+        Uuid::new_v4(),
+        100,
+        "test",
+        Uuid::new_v4(),
+    )
+    .await;
+
+    // Duplicate finalizer
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+
+    // Scoreboard unchanged
+    let score2 =
+        floatctf::modules::event::awd::service::score_service::get_scoreboard(&db, event_id, &[])
+            .await
+            .unwrap();
+    assert_eq!(score1.len(), score2.len());
+    for (s1, s2) in score1.iter().zip(score2.iter()) {
+        assert_eq!(s1.total_score, s2.total_score);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// §6.2: NetworkError Settlement Resume
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn networkerror_settlement_resume_no_new_round() {
+    let db = connect_or_skip().await;
+    let Some(db) = db else { return };
+
+    // Final settlement: round 3 completed, round_count = 3
+    let event_id = seed_event(&db, "ne-settle", 3).await;
+    seed_round(&db, event_id, 3, RoundStatus::Completed).await;
+
+    // Verify final settlement
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let latest = round_repo::find_latest_round(&db, event_id).await.unwrap();
+    assert!(event_service::is_final_settlement(&awd, latest.as_ref()));
+
+    // Simulate NetworkError during settlement
+    event_repo::transition_event(
+        &db,
+        awd.id,
+        AwdEventStatus::Running,
+        AwdEventStatus::NetworkError,
+        event_repo::TransitionPatch {
+            phase: Some(AwdPhase::Pause),
+            paused_phase: Some(AwdPhase::Attack),
+            pause_remaining_secs: Some(0),
+            hardening_ends_at: Some(None),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::NetworkError);
+
+    // Resume: should return to settlement state, NOT create Round 4
+    let network = Arc::new(NoopNetworkRuntime);
+    let firewall = Arc::new(NoopFirewallRuntime);
+    let publisher = Arc::new(NoopEventPublisher);
+
+    // Resume to Running
+    event_repo::transition_event(
+        &db,
+        awd.id,
+        AwdEventStatus::NetworkError,
+        AwdEventStatus::Running,
+        event_repo::TransitionPatch {
+            phase: Some(AwdPhase::Attack),
+            pause_remaining_secs: Some(0),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // After resume, the event is still in final settlement (no active round)
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let latest = round_repo::find_latest_round(&db, event_id).await.unwrap();
+    assert!(event_service::is_final_settlement(&awd, latest.as_ref()));
+
+    // No Round 4 was created
+    let all_rounds = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(all_rounds.len(), 1, "no new round should be created");
+    assert_eq!(all_rounds[0].round_number, 3);
+
+    // With all tasks terminal, finish should succeed
+    event_service::maybe_finish_event(&db, &*network, &*firewall, &*publisher, event_id)
+        .await
+        .unwrap();
+    let awd = event_repo::find_by_event_id(&db, event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd.status, AwdEventStatus::Finished);
 }

@@ -30,6 +30,7 @@ pub fn in_firewall_desired_set(status: &AwdEventStatus) -> bool {
             | AwdEventStatus::NetworkError
             | AwdEventStatus::StartBlocked
             | AwdEventStatus::DeployFailed
+            | AwdEventStatus::Finished
     )
 }
 
@@ -162,6 +163,7 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
             banned_teams: bans.into_iter().map(|b| b.team_id).collect(),
             teams,
             is_final_settlement,
+            is_finished: event.status == AwdEventStatus::Finished,
         });
     }
 
@@ -272,7 +274,8 @@ mod tests {
         // 终态/未部署不进入
         assert!(!in_firewall_desired_set(&AwdEventStatus::Draft));
         assert!(!in_firewall_desired_set(&AwdEventStatus::Configuring));
-        assert!(!in_firewall_desired_set(&AwdEventStatus::Finished));
+        // Finished 保持在 desired set 中以强制执行 fail-closed 网络锁定
+        assert!(in_firewall_desired_set(&AwdEventStatus::Finished));
         assert!(!in_firewall_desired_set(&AwdEventStatus::Archived));
         assert!(!in_firewall_desired_set(
             &AwdEventStatus::VerificationFailed

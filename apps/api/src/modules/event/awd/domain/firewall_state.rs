@@ -46,6 +46,9 @@ pub struct DesiredEventPolicy {
     /// 结算期防火墙 = Pause 规则（阻断全部玩家/GameBox 比赛流量），
     /// 但 JudgeServer→GameBox 仍可达（infra 不在 player/gamebox set 中）。
     pub is_final_settlement: bool,
+    /// 赛事是否已结束。Finished 事件保持在防火墙 desired set 中，
+    /// 渲染为显式 DENY-ALL 规则，确保 fail-closed 网络锁定。
+    pub is_finished: bool,
 }
 
 impl DesiredEventPolicy {
@@ -138,6 +141,7 @@ mod tests {
             teams: vec![team_a.clone(), team_b.clone()],
             banned_teams: vec![team_a.team_id],
             is_final_settlement: false,
+            is_finished: false,
         };
         let banned = event.banned_subnets();
         assert_eq!(banned, vec!["172.31.1.0/24"]);

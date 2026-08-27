@@ -54,6 +54,11 @@ impl IdempotencyKey {
         format!("reset:{}", reset_id)
     }
 
+    /// Initial score: once per Event × Team (§11).
+    pub fn initial_score(event_id: &str, team_id: &str) -> String {
+        format!("initial-score:{}:{}", event_id, team_id)
+    }
+
     /// Manual adjustment: once per adjustment.
     pub fn adjustment(adjustment_id: &str) -> String {
         format!("adjustment:{}", adjustment_id)

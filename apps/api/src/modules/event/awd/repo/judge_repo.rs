@@ -2,9 +2,8 @@
 
 use chrono::{DateTime, FixedOffset, Utc};
 use sea_orm::{
-    sea_query::LockType,
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -225,10 +224,7 @@ pub async fn heartbeat_task(
     lease_ttl_secs: i64,
     now: chrono::DateTime<Utc>,
 ) -> Result<HeartbeatResult, sea_orm::DbErr> {
-    let Some(task) = awd_judge_tasks::Entity::find_by_id(task_id)
-        .one(db)
-        .await?
-    else {
+    let Some(task) = awd_judge_tasks::Entity::find_by_id(task_id).one(db).await? else {
         return Ok(HeartbeatResult::NotFound);
     };
 
@@ -291,17 +287,12 @@ pub async fn submit_result(
     duration_ms: Option<i32>,
     now: chrono::DateTime<Utc>,
 ) -> Result<SubmitResult, sea_orm::DbErr> {
-    let Some(task) = awd_judge_tasks::Entity::find_by_id(task_id)
-        .one(db)
-        .await?
-    else {
+    let Some(task) = awd_judge_tasks::Entity::find_by_id(task_id).one(db).await? else {
         return Ok(SubmitResult::NotFound);
     };
 
     // 幂等：相同 result_id 已提交
-    if task.callback_idempotency_key.as_deref() == Some(result_id)
-        && task.status.is_terminal()
-    {
+    if task.callback_idempotency_key.as_deref() == Some(result_id) && task.status.is_terminal() {
         return Ok(SubmitResult::Idempotent);
     }
 

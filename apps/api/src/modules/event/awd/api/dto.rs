@@ -479,25 +479,15 @@ pub struct AddEventGameBoxRequest {
     pub host_offset: Option<i16>,
     #[serde(default)]
     pub hidden: bool,
-    #[serde(default = "default_break_points")]
-    pub break_points: i64,
-    #[serde(default = "default_loss_points")]
-    pub loss_points: i64,
-    #[serde(default = "default_fix_points")]
-    pub fix_points: i64,
+    #[serde(default = "default_attack_score")]
+    pub attack_score: i64,
     #[serde(default = "default_judge_down_penalty")]
     pub judge_down_penalty: i64,
     #[serde(default = "default_first_bonus")]
     pub first_bonus: i64,
 }
 
-fn default_break_points() -> i64 {
-    100
-}
-fn default_loss_points() -> i64 {
-    100
-}
-fn default_fix_points() -> i64 {
+fn default_attack_score() -> i64 {
     100
 }
 fn default_judge_down_penalty() -> i64 {
@@ -525,11 +515,7 @@ pub struct UpdateEventGameBoxRequest {
     #[serde(default)]
     pub judge_retry_interval_secs: Option<Option<i32>>,
     #[serde(default)]
-    pub break_points: Option<i64>,
-    #[serde(default)]
-    pub loss_points: Option<i64>,
-    #[serde(default)]
-    pub fix_points: Option<i64>,
+    pub attack_score: Option<i64>,
     #[serde(default)]
     pub judge_down_penalty: Option<i64>,
     #[serde(default)]
@@ -613,11 +599,8 @@ pub struct EventGameBoxDto {
     pub pids_limit: i64,
     pub judge_timeout_secs: Option<i32>,
     pub judge_retry_interval_secs: Option<i32>,
-    pub break_points: i64,
-    pub loss_points: i64,
-    pub fix_points: i64,
-    pub judge_down_penalty: i64,
     pub attack_score: i64,
+    pub judge_down_penalty: i64,
     pub first_bonus: i64,
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
 }

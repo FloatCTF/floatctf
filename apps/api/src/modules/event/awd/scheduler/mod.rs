@@ -704,9 +704,8 @@ impl TaskHandler for AwdJudgeBatchDeadlineHandler {
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         let payload: serde_json::Value = task.payload.clone().unwrap_or_default();
-        let batch_id: Uuid = serde_json::from_value(
-            payload.get("batch_id").cloned().unwrap_or_default(),
-        )?;
+        let batch_id: Uuid =
+            serde_json::from_value(payload.get("batch_id").cloned().unwrap_or_default())?;
 
         info!(
             "[AWD] Judge batch deadline: terminalizing batch {}",

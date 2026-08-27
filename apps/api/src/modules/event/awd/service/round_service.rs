@@ -20,9 +20,7 @@ use uuid::Uuid;
 
 use crate::entity::{
     awd_events, awd_judge_tasks, awd_rounds, scheduled_tasks,
-    sea_orm_active_enums::{
-        AwdEventStatus, AwdPhase, RoundStatus,
-    },
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus},
 };
 use crate::infrastructure::realtime::EventPublisher;
 use crate::modules::event::awd::{
@@ -324,9 +322,7 @@ pub async fn end_round(
     // ── 步骤 2：创建 Judge batch（仅 DB，不动 HTTP）──
     let judge_result = create_judge_batch_for_round(db, event_id, round_id).await;
     if let Err(ref e) = judge_result {
-        warn!(
-            "[Round] Judge batch creation failed for round {round_id}: {e}"
-        );
+        warn!("[Round] Judge batch creation failed for round {round_id}: {e}");
     }
 
     // ── 步骤 3：下一轮 ──
@@ -367,12 +363,9 @@ pub async fn end_round(
                 .begin()
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?;
-            if let Err(e) =
-                schedule_batch_deadline_task(&txn, event_id, *batch_id, deadline).await
+            if let Err(e) = schedule_batch_deadline_task(&txn, event_id, *batch_id, deadline).await
             {
-                warn!(
-                    "[Round] Failed to schedule batch deadline for batch {batch_id}: {e}"
-                );
+                warn!("[Round] Failed to schedule batch deadline for batch {batch_id}: {e}");
                 let _ = txn.rollback().await;
             } else {
                 let _ = txn.commit().await;
@@ -437,9 +430,7 @@ pub async fn restore_round_scheduling(
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?
                 .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
-            if awd_event.status == AwdEventStatus::Running
-                && awd_event.phase == AwdPhase::Attack
-            {
+            if awd_event.status == AwdEventStatus::Running && awd_event.phase == AwdPhase::Attack {
                 recover_round_gap(db, event_id, network, firewall, publisher).await
             } else {
                 Ok(0)

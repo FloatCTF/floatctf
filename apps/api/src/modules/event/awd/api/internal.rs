@@ -155,23 +155,18 @@ pub async fn judge_claim(
                 script_content = resolved.judge_script_content().unwrap_or("").to_string();
                 if let Some(args) = resolved.judge_args_json() {
                     if let Ok(arr) = serde_json::from_value::<Vec<String>>(args.clone()) {
-                        script_args_json =
-                            Some(serde_json::to_string(&arr).unwrap_or_default());
+                        script_args_json = Some(serde_json::to_string(&arr).unwrap_or_default());
                     }
                 }
-                timeout_secs = resolved
-                    .effective_judge_timeout_secs
-                    .unwrap_or(30);
+                timeout_secs = resolved.effective_judge_timeout_secs.unwrap_or(30);
             }
         }
 
         // Look up instance IP
         use crate::entity::event_gamebox_instances;
-        if let Ok(Some(inst)) = event_gamebox_instances::Entity::find_by_id(
-            ct.gamebox_instance_id,
-        )
-        .one(ctx.db.get_ref())
-        .await
+        if let Ok(Some(inst)) = event_gamebox_instances::Entity::find_by_id(ct.gamebox_instance_id)
+            .one(ctx.db.get_ref())
+            .await
         {
             target_ip = inst.gamebox_ip.ip().to_string();
         }
@@ -235,9 +230,7 @@ pub async fn judge_heartbeat(
         judge_repo::HeartbeatResult::Stale => {
             Err(AppError::Conflict("stale lease or attempt".into()))
         }
-        judge_repo::HeartbeatResult::NotFound => {
-            Err(AppError::NotFound("task not found".into()))
-        }
+        judge_repo::HeartbeatResult::NotFound => Err(AppError::NotFound("task not found".into())),
     }
 }
 
@@ -281,14 +274,20 @@ pub async fn judge_result(
                 let deadline = task.deadline_at.with_timezone(&chrono::Utc);
                 if now < deadline {
                     // Release back to Pending
-                    release_task_to_pending(ctx.db.get_ref(), task_id).await
+                    release_task_to_pending(ctx.db.get_ref(), task_id)
+                        .await
                         .map_err(|e| AppError::Database(e.to_string()))?;
                     return UniResponse::ok_none().into();
                 }
             }
             JudgeTaskStatus::JudgeError
         }
-        _ => return Err(AppError::BadRequest(format!("unknown outcome: {}", req.outcome))),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "unknown outcome: {}",
+                req.outcome
+            )));
+        }
     };
 
     // Submit result
@@ -312,11 +311,10 @@ pub async fn judge_result(
 
     match result {
         judge_repo::SubmitResult::Ok | judge_repo::SubmitResult::Idempotent => {
-            // Score if Up/Down and not frozen
-            let is_up = status.is_up();
+            // Score only if Down (§17.1: Up → no score)
             let is_down = status.is_down();
 
-            if is_up || is_down {
+            if is_down {
                 let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
                     .await
                     .map_err(|e| AppError::Database(e.to_string()))?
@@ -332,16 +330,7 @@ pub async fn judge_result(
                         )
                         .await
                         {
-                            let score_type = if is_up {
-                                ScoreEventType::JudgeFix
-                            } else {
-                                ScoreEventType::JudgeDown
-                            };
-                            let delta = if is_up {
-                                resolved.event_gamebox.fix_points
-                            } else {
-                                -resolved.event_gamebox.judge_down_penalty
-                            };
+                            let delta = -resolved.event_gamebox.judge_down_penalty;
                             let idempotency_key = req.result_id.clone();
 
                             match score_repo::create_score_event(
@@ -349,7 +338,7 @@ pub async fn judge_result(
                                 event_id,
                                 Some(task.round_id),
                                 task.team_id,
-                                score_type,
+                                ScoreEventType::JudgeDown,
                                 delta,
                                 &idempotency_key,
                                 None,
@@ -377,12 +366,8 @@ pub async fn judge_result(
 
             UniResponse::ok_none().into()
         }
-        judge_repo::SubmitResult::Stale => {
-            Err(AppError::Conflict("stale lease or attempt".into()))
-        }
-        judge_repo::SubmitResult::NotFound => {
-            Err(AppError::NotFound("task not found".into()))
-        }
+        judge_repo::SubmitResult::Stale => Err(AppError::Conflict("stale lease or attempt".into())),
+        judge_repo::SubmitResult::NotFound => Err(AppError::NotFound("task not found".into())),
     }
 }
 
@@ -391,8 +376,8 @@ async fn release_task_to_pending(
     db: &sea_orm::DatabaseConnection,
     task_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
     use crate::entity::awd_judge_tasks;
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
     awd_judge_tasks::ActiveModel {
         id: Set(task_id),
         status: Set(JudgeTaskStatus::Pending),

@@ -92,9 +92,7 @@ pub async fn create_event_gamebox(
     healthcheck_override_json: Option<serde_json::Value>,
     judge_timeout_secs: Option<i32>,
     judge_retry_interval_secs: Option<i32>,
-    break_points: i64,
-    loss_points: i64,
-    fix_points: i64,
+    attack_score: i64,
     judge_down_penalty: i64,
     first_bonus: i64,
 ) -> Result<awd_event_gameboxes::Model, sea_orm::DbErr> {
@@ -112,12 +110,9 @@ pub async fn create_event_gamebox(
         healthcheck_override_json: Set(healthcheck_override_json),
         judge_timeout_secs: Set(judge_timeout_secs),
         judge_retry_interval_secs: Set(judge_retry_interval_secs),
-        break_points: Set(break_points),
-        loss_points: Set(loss_points),
-        fix_points: Set(fix_points),
+        attack_score: Set(attack_score),
         judge_down_penalty: Set(judge_down_penalty),
         first_bonus: Set(first_bonus),
-        attack_score: Set(break_points),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -136,9 +131,7 @@ pub struct EventGameBoxPatch {
     pub healthcheck_override_json: Option<Option<serde_json::Value>>,
     pub judge_timeout_secs: Option<Option<i32>>,
     pub judge_retry_interval_secs: Option<Option<i32>>,
-    pub break_points: Option<i64>,
-    pub loss_points: Option<i64>,
-    pub fix_points: Option<i64>,
+    pub attack_score: Option<i64>,
     pub judge_down_penalty: Option<i64>,
     pub first_bonus: Option<i64>,
 }
@@ -181,14 +174,8 @@ pub async fn update_event_gamebox(
     if let Some(v) = patch.judge_retry_interval_secs {
         active.judge_retry_interval_secs = Set(v);
     }
-    if let Some(v) = patch.break_points {
-        active.break_points = Set(v);
-    }
-    if let Some(v) = patch.loss_points {
-        active.loss_points = Set(v);
-    }
-    if let Some(v) = patch.fix_points {
-        active.fix_points = Set(v);
+    if let Some(v) = patch.attack_score {
+        active.attack_score = Set(v);
     }
     if let Some(v) = patch.judge_down_penalty {
         active.judge_down_penalty = Set(v);

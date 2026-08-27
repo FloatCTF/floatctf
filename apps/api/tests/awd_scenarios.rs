@@ -14,7 +14,9 @@ use sea_orm::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use floatctf::entity::sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode, RoundStatus};
+use floatctf::entity::sea_orm_active_enums::{
+    EventFamily, EventPurpose, ParticipantMode, RoundStatus,
+};
 use floatctf::entity::{
     awd_event_networks, awd_events, awd_rounds, events, sea_orm_active_enums,
     sea_orm_active_enums::AwdEventStatus, sea_orm_active_enums::AwdPhase,
@@ -23,9 +25,7 @@ use floatctf::infrastructure::realtime::NoopEventPublisher;
 use floatctf::modules::event::awd::{
     domain::firewall_state::DesiredFirewallState,
     infrastructure::{
-        firewall::FirewallRuntime,
-        firewall::NoopFirewallRuntime,
-        network::NoopNetworkRuntime,
+        firewall::FirewallRuntime, firewall::NoopFirewallRuntime, network::NoopNetworkRuntime,
     },
     repo::event_repo,
     service::{event_service, round_service},
@@ -544,12 +544,9 @@ async fn seed_submission_fixture(
         healthcheck_override_json: Set(None),
         judge_timeout_secs: Set(None),
         judge_retry_interval_secs: Set(None),
-        break_points: Set(100),
-        loss_points: Set(50),
-        fix_points: Set(80),
+        attack_score: Set(100),
         judge_down_penalty: Set(60),
         first_bonus: Set(first_bonus),
-        attack_score: Set(100),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
     }
@@ -661,7 +658,7 @@ async fn load_concurrent_same_flag_scores_once() {
         let pub_ = publisher.clone();
         handles.push(tokio::spawn(async move {
             submission_service::process_submission(
-                &db, event_id, round_id, flag_issue, attacker, victim, instance, user, 100, 50, 0,
+                &db, event_id, round_id, flag_issue, attacker, victim, instance, user, 100, 0,
                 template, &*pub_,
             )
             .await
@@ -753,7 +750,6 @@ async fn load_concurrent_first_blood_scores_once() {
         instance,
         user,
         100,
-        50,
         100,
         template,
         &*publisher,
@@ -769,7 +765,6 @@ async fn load_concurrent_first_blood_scores_once() {
         instance,
         user,
         100,
-        50,
         100,
         template,
         &*publisher,
@@ -826,8 +821,8 @@ async fn load_concurrent_judge_callback_scores_once() {
                 event_id,
                 Some(round_id),
                 attacker,
-                ScoreEventType::JudgeFix,
-                80,
+                ScoreEventType::JudgeDown,
+                -60,
                 "callback-retry-test-key",
                 None,
                 None,
@@ -850,11 +845,11 @@ async fn load_concurrent_judge_callback_scores_once() {
         .all(db.as_ref())
         .await
         .unwrap();
-    let judge_fix = events
+    let judge_down = events
         .iter()
-        .filter(|e| e.event_type == ScoreEventType::JudgeFix)
+        .filter(|e| e.event_type == ScoreEventType::JudgeDown)
         .count();
-    assert_eq!(judge_fix, 1, "exactly one score mutation for the callback");
+    assert_eq!(judge_down, 1, "exactly one score mutation for the callback");
 
     cleanup_event(db.as_ref(), event_id).await;
     let _ = floatctf::entity::users::Entity::delete_by_id(user)
@@ -907,11 +902,10 @@ async fn crash_gap_no_rounds_recovers_round_1() {
     let firewall = NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
-    let restored = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("restore_round_scheduling");
+    let restored =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("restore_round_scheduling");
     assert_eq!(restored, 1, "should recover round 1");
 
     let r1 = awd_rounds::Entity::find()
@@ -983,11 +977,10 @@ async fn crash_gap_mid_round_recovers_next() {
     let firewall = NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
-    let restored = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("restore_round_scheduling");
+    let restored =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("restore_round_scheduling");
     assert_eq!(restored, 1, "should recover 1 round");
 
     let r5 = awd_rounds::Entity::find()
@@ -1059,11 +1052,10 @@ async fn crash_gap_final_round_no_recovery() {
     let firewall = NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
-    let restored = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("restore_round_scheduling");
+    let restored =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("restore_round_scheduling");
     assert_eq!(restored, 0, "should not recover final-settlement");
 
     let r6 = awd_rounds::Entity::find()
@@ -1133,18 +1125,16 @@ async fn crash_gap_recovery_idempotent() {
     let firewall = NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
-    let r1 = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("first restore");
+    let r1 =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("first restore");
     assert_eq!(r1, 1, "first restore should create round 4");
 
-    let r2 = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("second restore");
+    let r2 =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("second restore");
     assert_eq!(r2, 0, "second restore should be idempotent");
 
     let rounds = awd_rounds::Entity::find()
@@ -1201,11 +1191,10 @@ async fn hardening_end_crash_recovery_starts_round_1() {
     let firewall = NoopFirewallRuntime;
     let publisher = NoopEventPublisher;
 
-    let restored = round_service::restore_round_scheduling(
-        &db, event_id, &network, &firewall, &publisher,
-    )
-    .await
-    .expect("restore");
+    let restored =
+        round_service::restore_round_scheduling(&db, event_id, &network, &firewall, &publisher)
+            .await
+            .expect("restore");
     assert_eq!(restored, 1, "should recover round 1");
 
     let r1 = awd_rounds::Entity::find()

@@ -11,9 +11,6 @@ export type AwdEventGameboxes = {
   healthcheck_override_json?: string;
   judge_timeout_secs?: string;
   judge_retry_interval_secs?: string;
-  break_points: number;
-  loss_points: number;
-  fix_points: number;
   judge_down_penalty: number;
   first_bonus: number;
   created_at: string;

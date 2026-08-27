@@ -52,9 +52,9 @@ function RouteComponent() {
 			field: "host_offset",
 		},
 		{
-			accessorKey: "break_points",
-			header: "Break Points",
-			field: "break_points",
+			accessorKey: "attack_score",
+			header: "Attack Score",
+			field: "attack_score",
 		},
 		{
 			accessorKey: "enabled",

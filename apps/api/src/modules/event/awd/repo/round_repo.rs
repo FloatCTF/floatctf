@@ -14,10 +14,7 @@ pub async fn find_active_round(
 ) -> Result<Option<awd_rounds::Model>, sea_orm::DbErr> {
     awd_rounds::Entity::find()
         .filter(awd_rounds::Column::EventId.eq(event_id))
-        .filter(awd_rounds::Column::Status.is_in([
-            RoundStatus::Active,
-            RoundStatus::Paused,
-        ]))
+        .filter(awd_rounds::Column::Status.is_in([RoundStatus::Active, RoundStatus::Paused]))
         .one(db)
         .await
 }

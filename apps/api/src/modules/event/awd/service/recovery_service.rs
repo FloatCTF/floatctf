@@ -1,6 +1,9 @@
 //! AWD 故障恢复服务。
 
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    TransactionTrait,
+};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -270,7 +273,9 @@ async fn recover_event(
     }
 
     // 4b. Attack round 调度恢复
-    let restored_tasks = round_service::restore_round_scheduling(db, event.event_id, network, firewall, publisher).await?;
+    let restored_tasks =
+        round_service::restore_round_scheduling(db, event.event_id, network, firewall, publisher)
+            .await?;
     if restored_tasks > 0 {
         info!(
             "[Recovery] Event {} restored {} round scheduling task(s)",
@@ -280,11 +285,10 @@ async fn recover_event(
     recovered += restored_tasks as u32;
 
     // ── 4c. Judge batch deadline 恢复 ──
-    let restored_batches = crate::modules::event::awd::scheduler::restore_batch_deadlines(
-        db, event.event_id,
-    )
-    .await
-    .map_err(|e| AwdError::Database(e.to_string()))?;
+    let restored_batches =
+        crate::modules::event::awd::scheduler::restore_batch_deadlines(db, event.event_id)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
     if restored_batches > 0 {
         info!(
             "[Recovery] Event {} restored {} judge batch deadline task(s)",

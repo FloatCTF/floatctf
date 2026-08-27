@@ -884,7 +884,10 @@ async fn rollout_infra_container(
                 ];
                 if kind == "judgeserver" {
                     envs.push(format!("PLATFORM_INTERNAL_URL={platform_internal_url}"));
-                    envs.push(format!("MAX_CONCURRENT={}", awd_event.judge_max_concurrency));
+                    envs.push(format!(
+                        "MAX_CONCURRENT={}",
+                        awd_event.judge_max_concurrency
+                    ));
                 }
                 envs
             },

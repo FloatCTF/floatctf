@@ -2,21 +2,24 @@
 //!
 //! Start → Hardening (if duration > 0) → Attack → Round 1..N → Final Settlement
 
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    TransactionTrait,
+};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus};
+use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus, ScoreEventType};
 use crate::modules::event::awd::{
     AwdError, AwdResult,
-    domain::{timing::compute_timing, AwdEventStatusExt},
+    domain::{AwdEventStatusExt, IdempotencyKey, timing::compute_timing},
     infrastructure::{
         firewall::FirewallRuntime,
         network::{AwdNetworkRuntime, EventNetworkIdentity},
     },
-    repo::{event_repo, round_repo},
-    service::{firewall_service, round_service},
+    repo::{event_repo, round_repo, score_repo},
     scheduler,
+    service::{firewall_service, round_service},
 };
 
 /// 启动 AWD 赛事：校验 Precheck、配置代数、计算时间模型。
@@ -88,6 +91,9 @@ pub async fn start_event(
 
     let now = chrono::Utc::now();
 
+    // ── 种子初始化分数（§11: 幂等，每 Team 一次） ──
+    seed_initial_scores(db, event_id, awd_event.initial_score).await?;
+
     if timing.hardening_duration_secs > 0 {
         // ── Hardening > 0：进入 Hardening 阶段 ──
         let hardening_ends_at = now + chrono::Duration::seconds(timing.hardening_duration_secs);
@@ -156,6 +162,50 @@ pub async fn start_event(
     Ok(())
 }
 
+/// 为所有参赛队伍创建 InitialScore 账本事件（§11）。
+///
+/// 幂等：每个 Event × Team 恰好一条 InitialScore，通过
+/// `initial-score:{event_id}:{team_id}` 幂等键确保。
+/// 即使 `initial_score == 0` 也写入账本以保留审计轨迹。
+async fn seed_initial_scores(
+    db: &DatabaseConnection,
+    event_id: Uuid,
+    initial_score: i64,
+) -> AwdResult<()> {
+    let teams = crate::entity::event_teams::Entity::find()
+        .filter(crate::entity::event_teams::Column::EventId.eq(event_id))
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
+    for team in &teams {
+        let key = IdempotencyKey::initial_score(&event_id.to_string(), &team.id.to_string());
+        let _ = score_repo::create_score_event_if_absent(
+            db,
+            event_id,
+            None, // not tied to a round
+            team.id,
+            ScoreEventType::InitialScore,
+            initial_score,
+            &key,
+            None,
+            None,
+            None,
+            Some("initial score"),
+        )
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    }
+
+    info!(
+        "[Event] InitialScore seeded for {} teams in event {} (delta={})",
+        teams.len(),
+        event_id,
+        initial_score
+    );
+    Ok(())
+}
+
 /// 暂停赛事：保存当前阶段剩余时间，取消定时任务，网络进入 pause 阶段。
 pub async fn pause_event(
     db: &DatabaseConnection,
@@ -182,11 +232,7 @@ pub async fn pause_event(
             // 计算剩余 Hardening 时间
             remaining = awd_event
                 .hardening_ends_at
-                .map(|h| {
-                    (h.with_timezone(&chrono::Utc) - now)
-                        .num_seconds()
-                        .max(0) as i32
-                })
+                .map(|h| (h.with_timezone(&chrono::Utc) - now).num_seconds().max(0) as i32)
                 .unwrap_or(0);
 
             // 取消 pending HardeningEnd 任务
@@ -424,11 +470,12 @@ pub async fn resume_event(
 
             // 恢复轮次调度任务
             if resume_phase == AwdPhase::Attack {
-                let restored = round_service::restore_round_scheduling(db, event_id, network, firewall, publisher).await?;
+                let restored = round_service::restore_round_scheduling(
+                    db, event_id, network, firewall, publisher,
+                )
+                .await?;
                 if restored > 0 {
-                    info!(
-                        "[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)"
-                    );
+                    info!("[Resume] event {event_id}: rebuilt {restored} round scheduling task(s)");
                 }
             }
             Ok(())

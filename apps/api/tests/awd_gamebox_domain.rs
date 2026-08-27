@@ -257,7 +257,7 @@ async fn seed_event_gamebox(
     event_id: Uuid,
     gamebox_id: Uuid,
     host_offset: i16,
-    break_points: i64,
+    attack_score: i64,
 ) -> Uuid {
     let now = chrono::Utc::now();
     let eg_id = Uuid::new_v4();
@@ -274,12 +274,9 @@ async fn seed_event_gamebox(
         healthcheck_override_json: Set(None),
         judge_timeout_secs: Set(None),
         judge_retry_interval_secs: Set(None),
-        break_points: Set(break_points),
-        loss_points: Set(50),
-        fix_points: Set(80),
+        attack_score: Set(attack_score),
         judge_down_penalty: Set(60),
         first_bonus: Set(20),
-        attack_score: Set(break_points),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
     }
@@ -447,9 +444,9 @@ async fn event_scores_are_independent_per_event() {
         .expect("resolve B");
     assert_eq!(ra.gamebox.id, gb_id);
     assert_eq!(rb.gamebox.id, gb_id, "同 GameBox 被两个 Event 引用");
-    assert_eq!(ra.event_gamebox.break_points, 100);
+    assert_eq!(ra.event_gamebox.attack_score, 100);
     assert_eq!(
-        rb.event_gamebox.break_points, 200,
+        rb.event_gamebox.attack_score, 200,
         "同 GameBox 在不同 Event 计分独立"
     );
     // effective image is pin (image_id LocalOnly style)

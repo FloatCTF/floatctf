@@ -19,6 +19,15 @@ pub async fn get_scoreboard(
     let mut scores = Vec::new();
 
     for (team_id, team_name) in team_names {
+        let initial = score_repo::team_score_for_types(
+            db,
+            event_id,
+            *team_id,
+            &[ScoreEventType::InitialScore],
+        )
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+
         let attack = score_repo::team_score_for_types(
             db,
             event_id,
@@ -28,16 +37,12 @@ pub async fn get_scoreboard(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-        // Defense: SLA fix rewards and down penalties (and victim losses on own boxes).
+        // Defense: down penalties and victim losses on own boxes.
         let defense = score_repo::team_score_for_types(
             db,
             event_id,
             *team_id,
-            &[
-                ScoreEventType::JudgeFix,
-                ScoreEventType::JudgeDown,
-                ScoreEventType::VictimLoss,
-            ],
+            &[ScoreEventType::JudgeDown, ScoreEventType::VictimLoss],
         )
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
@@ -51,7 +56,7 @@ pub async fn get_scoreboard(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-        let total = attack + defense + penalties;
+        let total = initial + attack + defense + penalties;
         scores.push(TeamScore {
             team_id: *team_id,
             team_name: team_name.clone(),

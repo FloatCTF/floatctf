@@ -31,11 +31,7 @@ impl JudgeTaskStatusExt for JudgeTaskStatus {
     fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Up
-                | Self::Down
-                | Self::JudgeError
-                | Self::SkippedResetting
-                | Self::SkippedBanned
+            Self::Up | Self::Down | Self::JudgeError | Self::SkippedResetting | Self::SkippedBanned
         )
     }
 

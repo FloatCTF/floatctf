@@ -35,8 +35,7 @@ pub async fn process_submission(
     victim_team_id: Uuid,
     gamebox_instance_id: Uuid,
     submitted_by_user_id: Uuid,
-    break_points: i64,
-    loss_points: i64,
+    attack_score: i64,
     first_bonus: i64,
     event_gamebox_id: Uuid,
     publisher: &dyn crate::infrastructure::realtime::EventPublisher,
@@ -82,7 +81,7 @@ pub async fn process_submission(
                     }
                 })?;
 
-                // 3. Insert attack score event
+                // 3. Insert attack score event (§10: symmetric, +attack_score)
                 let attack_key = IdempotencyKey::attack(
                     &event_id.to_string(),
                     &round_id.to_string(),
@@ -96,7 +95,7 @@ pub async fn process_submission(
                     Some(round_id),
                     attacker_team_id,
                     ScoreEventType::Attack,
-                    break_points,
+                    attack_score,
                     &attack_key,
                     Some(victim_team_id),
                     Some(gamebox_instance_id),
@@ -113,7 +112,7 @@ pub async fn process_submission(
                     }
                 })?;
 
-                // 4. Insert victim loss score event
+                // 4. Insert victim loss score event (§10: symmetric, -attack_score)
                 let loss_key = IdempotencyKey::victim_loss(
                     &event_id.to_string(),
                     &round_id.to_string(),
@@ -127,7 +126,7 @@ pub async fn process_submission(
                     Some(round_id),
                     victim_team_id,
                     ScoreEventType::VictimLoss,
-                    -loss_points,
+                    -attack_score,
                     &loss_key,
                     Some(attacker_team_id),
                     Some(gamebox_instance_id),
@@ -166,8 +165,8 @@ pub async fn process_submission(
                     AwdError::Database(format!("First blood bonus write failed: {}", e))
                 })?;
                 Ok(SubmissionResult {
-                    attack_score_delta: break_points,
-                    victim_loss_delta: loss_points,
+                    attack_score_delta: attack_score,
+                    victim_loss_delta: attack_score,
                     first_bonus_delta: if was_first_blood { first_bonus } else { 0 },
                     was_first_blood,
                 })
@@ -182,8 +181,8 @@ pub async fn process_submission(
             crate::modules::event::awd::websocket::score_changed(
                 event_id,
                 attacker_team_id,
-                break_points,
-                break_points,
+                attack_score,
+                attack_score,
             )
             .into_realtime(),
         )

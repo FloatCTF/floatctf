@@ -123,9 +123,7 @@ export type EventGameBoxDto = {
 	pids_limit: number;
 	judge_timeout_secs: number | null;
 	judge_retry_interval_secs: number | null;
-	break_points: number;
-	loss_points: number;
-	fix_points: number;
+	attack_score: number;
 	judge_down_penalty: number;
 	first_bonus: number;
 	created_at: string;
@@ -492,9 +490,7 @@ export const awdAdminApi = {
 			gamebox_id: string;
 			host_offset?: number;
 			hidden?: boolean;
-			break_points?: number;
-			loss_points?: number;
-			fix_points?: number;
+			attack_score?: number;
 			judge_down_penalty?: number;
 			first_bonus?: number;
 		},
@@ -513,9 +509,7 @@ export const awdAdminApi = {
 			pids_limit?: number;
 			judge_timeout_secs?: number | null;
 			judge_retry_interval_secs?: number | null;
-			break_points?: number;
-			loss_points?: number;
-			fix_points?: number;
+			attack_score?: number;
 			judge_down_penalty?: number;
 			first_bonus?: number;
 		},

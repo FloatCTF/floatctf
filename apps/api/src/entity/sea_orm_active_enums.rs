@@ -259,8 +259,6 @@ pub enum ScoreEventType {
     Attack,
     #[sea_orm(string_value = "victim_loss")]
     VictimLoss,
-    #[sea_orm(string_value = "judge_fix")]
-    JudgeFix,
     #[sea_orm(string_value = "judge_down")]
     JudgeDown,
     #[sea_orm(string_value = "first_bonus")]

@@ -123,7 +123,6 @@ export enum RoundStatus {
 export enum ScoreEventType {
   Attack = 'attack',
   VictimLoss = 'victim_loss',
-  JudgeFix = 'judge_fix',
   JudgeDown = 'judge_down',
   FirstBonus = 'first_bonus',
   ResetPenalty = 'reset_penalty',

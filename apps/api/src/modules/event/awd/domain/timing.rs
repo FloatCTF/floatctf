@@ -195,13 +195,7 @@ mod tests {
     #[test]
     fn large_values_ok() {
         // Large but valid values
-        let t = compute_timing(
-            start(),
-            Some(end(1_000_000_000i64)),
-            Some(1_000_000),
-            100,
-        )
-        .unwrap();
+        let t = compute_timing(start(), Some(end(1_000_000_000i64)), Some(1_000_000), 100).unwrap();
         assert_eq!(t.attack_duration_secs, 100_000_000);
         assert_eq!(t.hardening_duration_secs, 900_000_000);
     }

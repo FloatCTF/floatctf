@@ -10,7 +10,7 @@ use crate::{
     modules::event::awd::{
         AwdError,
         api::auth::{AwdInternalAuth, AwdInternalPrincipal},
-        domain::{AwdPhaseExt, JudgeTaskStatusExt},
+        domain::{AwdPhaseExt, IdempotencyKey, JudgeTaskStatusExt},
         repo::{event_repo, judge_repo, score_repo},
         service::flag_service,
     },
@@ -331,7 +331,7 @@ pub async fn judge_result(
                         .await
                         {
                             let delta = -resolved.event_gamebox.judge_down_penalty;
-                            let idempotency_key = req.result_id.clone();
+                            let idempotency_key = IdempotencyKey::judge_down(&task_id.to_string());
 
                             match score_repo::create_score_event(
                                 ctx.db.get_ref(),

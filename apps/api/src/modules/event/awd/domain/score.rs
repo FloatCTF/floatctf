@@ -41,12 +41,11 @@ impl IdempotencyKey {
         format!("first-bonus:{}:{}", event_id, event_gamebox_id)
     }
 
-    /// Judge check result: once per task.
-    pub fn judge(event_id: &str, round_id: &str, team_id: &str, instance_id: &str) -> String {
-        format!(
-            "judge:{}:{}:{}:{}",
-            event_id, round_id, team_id, instance_id
-        )
+    /// Judge check result: once per logical task (§17 idempotency).
+    /// Task-scoped: one task → at most one JudgeDown event, regardless of
+    /// attempt number, result_id, worker retry, or lease reclaim.
+    pub fn judge_down(task_id: &str) -> String {
+        format!("judge-down:{}", task_id)
     }
 
     /// Reset penalty: once per reset record.

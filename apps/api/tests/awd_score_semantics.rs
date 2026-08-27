@@ -171,7 +171,7 @@ async fn setup_test(
 
     // Event network
     let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
-    let wg_port = 50000 + (Uuid::new_v4().as_u128() % 10000) as i32;
+    let wg_port = 30000 + (Uuid::new_v4().as_u128() % 60000) as i32;
     awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),

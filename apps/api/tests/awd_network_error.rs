@@ -30,10 +30,7 @@ use floatctf::entity::{
 use floatctf::infrastructure::realtime::NoopEventPublisher;
 use floatctf::modules::event::awd::{
     domain::{AwdEventStatusExt, AwdPhaseExt},
-    infrastructure::{
-        firewall::NoopFirewallRuntime,
-        network::NoopNetworkRuntime,
-    },
+    infrastructure::{firewall::NoopFirewallRuntime, network::NoopNetworkRuntime},
     repo::{event_repo, gamebox_repo, round_repo},
     service::{event_service, recovery_service},
 };
@@ -99,9 +96,15 @@ impl TestFixtures {
             .filter(event_teams::Column::EventId.eq(self.event_id))
             .exec(&self.db)
             .await;
-        let _ = events::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = users::Entity::delete_by_id(self.user_id).exec(&self.db).await;
+        let _ = events::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = users::Entity::delete_by_id(self.user_id)
+            .exec(&self.db)
+            .await;
     }
 }
 
@@ -109,7 +112,12 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     let db = connect_or_skip().await?;
     let event_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
 
     users::ActiveModel {
         id: Set(user_id),
@@ -173,8 +181,13 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     .await
     .ok()?;
 
-    let port: i32 = 52000 + (Uuid::new_v4().as_u128() % 10000) as i32;
-    let net_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let port: i32 = 52000 + (Uuid::new_v4().as_u128() % 40000) as i32;
+    let net_suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
     awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -240,7 +253,12 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
 
     let root_id = Uuid::new_v4();
     let instance_id = Uuid::new_v4();
-    let cnt_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let cnt_suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
 
     event_instances::ActiveModel {
         id: Set(root_id),
@@ -337,10 +355,14 @@ fn network_error_freezes_hardening_remaining_time() {
 
         assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
         assert_eq!(awd_event.paused_phase, Some(AwdPhase::Hardening));
-        assert!(awd_event.pause_remaining_secs.unwrap_or(0) > 0,
-            "Remaining time should be preserved");
-        assert!(awd_event.hardening_ends_at.is_none(),
-            "hardening_ends_at should be cleared");
+        assert!(
+            awd_event.pause_remaining_secs.unwrap_or(0) > 0,
+            "Remaining time should be preserved"
+        );
+        assert!(
+            awd_event.hardening_ends_at.is_none(),
+            "hardening_ends_at should be cleared"
+        );
 
         // Verify phase is Pause (NetworkError uses Pause firewall rules)
         assert_eq!(awd_event.phase, AwdPhase::Pause);
@@ -395,7 +417,10 @@ fn stale_hardening_end_does_not_advance_network_error() {
             .all(&fixtures.db)
             .await
             .unwrap();
-        assert!(rounds.is_empty(), "No rounds should exist during NetworkError");
+        assert!(
+            rounds.is_empty(),
+            "No rounds should exist during NetworkError"
+        );
 
         fixtures.cleanup().await;
     });
@@ -460,10 +485,15 @@ fn network_error_hardening_resume_uses_saved_remaining_time() {
 
         assert_eq!(resumed.status, AwdEventStatus::Running);
         assert_eq!(resumed.phase, AwdPhase::Hardening);
-        assert!(resumed.hardening_ends_at.is_some(),
-            "hardening_ends_at should be rebuilt from saved remaining time");
-        assert_eq!(resumed.pause_remaining_secs, Some(0),
-            "pause_remaining_secs should be cleared after resume");
+        assert!(
+            resumed.hardening_ends_at.is_some(),
+            "hardening_ends_at should be rebuilt from saved remaining time"
+        );
+        assert_eq!(
+            resumed.pause_remaining_secs,
+            Some(0),
+            "pause_remaining_secs should be cleared after resume"
+        );
 
         fixtures.cleanup().await;
     });
@@ -505,8 +535,10 @@ fn network_error_freezes_active_round() {
             .unwrap();
         assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
         assert_eq!(awd_event.paused_phase, Some(AwdPhase::Attack));
-        assert!(awd_event.pause_remaining_secs.unwrap_or(0) > 0,
-            "Remaining time should be preserved");
+        assert!(
+            awd_event.pause_remaining_secs.unwrap_or(0) > 0,
+            "Remaining time should be preserved"
+        );
 
         // Verify round is paused
         let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
@@ -515,8 +547,10 @@ fn network_error_freezes_active_round() {
             .unwrap()
             .unwrap();
         assert_eq!(round.status, RoundStatus::Paused);
-        assert!(round.remaining_secs.unwrap_or(0) > 0,
-            "Round remaining_secs should be preserved");
+        assert!(
+            round.remaining_secs.unwrap_or(0) > 0,
+            "Round remaining_secs should be preserved"
+        );
 
         fixtures.cleanup().await;
     });
@@ -647,9 +681,14 @@ fn network_error_round_resume_uses_saved_remaining_time() {
             .unwrap()
             .unwrap();
         assert_eq!(round.status, RoundStatus::Active);
-        assert!(round.scheduled_end_at.with_timezone(&chrono::Utc) > chrono::Utc::now(), "scheduled_end_at should be set");
-        assert!(round.remaining_secs.is_none(),
-            "remaining_secs should be cleared after resume");
+        assert!(
+            round.scheduled_end_at.with_timezone(&chrono::Utc) > chrono::Utc::now(),
+            "scheduled_end_at should be set"
+        );
+        assert!(
+            round.remaining_secs.is_none(),
+            "remaining_secs should be cleared after resume"
+        );
 
         fixtures.cleanup().await;
     });
@@ -692,13 +731,17 @@ fn network_error_blocks_competition_actions() {
         assert!(!awd_event.status.is_active());
 
         // Verify reset eligibility check rejects NetworkError
-        let reset_result = floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
-            &awd_event,
-            fixtures.team_id,
-            false, // no active round
-            awd_event.round_count,
+        let reset_result =
+            floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
+                &awd_event,
+                fixtures.team_id,
+                false, // no active round
+                awd_event.round_count,
+            );
+        assert!(
+            reset_result.is_err(),
+            "Reset should be rejected during NetworkError"
         );
-        assert!(reset_result.is_err(), "Reset should be rejected during NetworkError");
 
         fixtures.cleanup().await;
     });
@@ -725,17 +768,24 @@ fn individual_gamebox_failure_does_not_freeze_event() {
 
     rt.block_on(async {
         // Mark one GameBox as Missing
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Missing)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Missing,
+        )
+        .await
+        .unwrap();
 
         // Event should still be Running
         let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::Running,
-            "Event should remain Running despite individual GameBox failure");
+        assert_eq!(
+            awd_event.status,
+            AwdEventStatus::Running,
+            "Event should remain Running despite individual GameBox failure"
+        );
 
         // Round should still be Active
         let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
@@ -743,16 +793,22 @@ fn individual_gamebox_failure_does_not_freeze_event() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(round.status, RoundStatus::Active,
-            "Round should remain Active despite individual GameBox failure");
+        assert_eq!(
+            round.status,
+            RoundStatus::Active,
+            "Round should remain Active despite individual GameBox failure"
+        );
 
         // GameBox should NOT be auto-recreated
         let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(inst.status, GameboxStatus::Missing,
-            "GameBox should remain Missing, not auto-recreated");
+        assert_eq!(
+            inst.status,
+            GameboxStatus::Missing,
+            "GameBox should remain Missing, not auto-recreated"
+        );
 
         fixtures.cleanup().await;
     });

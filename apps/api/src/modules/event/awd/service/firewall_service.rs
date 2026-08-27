@@ -114,7 +114,7 @@ pub async fn build_desired_state<C: ConnectionTrait + Send>(
                         .await
                         .map_err(|e| AwdError::Database(format!("load rounds: {e}")))?;
                     latest.is_some_and(|r| {
-                        r.round_number >= round_count && r.status == RoundStatus::Completed
+                        r.round_number == round_count && r.status == RoundStatus::Completed
                     })
                 } else {
                     false

@@ -99,9 +99,15 @@ impl TestFixtures {
             .filter(event_teams::Column::EventId.eq(self.event_id))
             .exec(&self.db)
             .await;
-        let _ = events::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = users::Entity::delete_by_id(self.user_id).exec(&self.db).await;
+        let _ = events::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = users::Entity::delete_by_id(self.user_id)
+            .exec(&self.db)
+            .await;
     }
 }
 
@@ -109,7 +115,12 @@ async fn setup_test() -> Option<TestFixtures> {
     let db = connect_or_skip().await?;
     let event_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
 
     // Create user
     users::ActiveModel {
@@ -169,8 +180,13 @@ async fn setup_test() -> Option<TestFixtures> {
     .ok()?;
 
     // Create event network
-    let port: i32 = 50000 + (Uuid::new_v4().as_u128() % 10000) as i32;
-    let net_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let port: i32 = 50000 + (Uuid::new_v4().as_u128() % 40000) as i32;
+    let net_suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
     awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -249,7 +265,12 @@ async fn setup_test() -> Option<TestFixtures> {
         let root_id = Uuid::new_v4();
         let inst_id = Uuid::new_v4();
         *inst_id_ref = inst_id;
-        let cnt_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+        let cnt_suffix = Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .next()
+            .unwrap()
+            .to_string();
 
         // Root (event_instances)
         event_instances::ActiveModel {
@@ -356,7 +377,10 @@ fn banned_target_flag_issue_rejected() {
         )
         .await;
 
-        assert!(result.is_err(), "Flag issue for banned target should be rejected");
+        assert!(
+            result.is_err(),
+            "Flag issue for banned target should be rejected"
+        );
 
         fixtures.cleanup().await;
     });
@@ -426,7 +450,10 @@ fn banned_victim_submission_rejected() {
         )
         .await;
 
-        assert!(result.is_err(), "Submission against banned victim should be rejected");
+        assert!(
+            result.is_err(),
+            "Submission against banned victim should be rejected"
+        );
 
         fixtures.cleanup().await;
     });
@@ -499,23 +526,36 @@ fn missing_gamebox_not_auto_recreated() {
 
     rt.block_on(async {
         // Mark instance as Missing (simulating container stopped)
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_a_id, GameboxStatus::Missing)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_a_id,
+            GameboxStatus::Missing,
+        )
+        .await
+        .unwrap();
 
         // Verify status is Missing, not auto-recreated
-        let (instance, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_a_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(instance.status, GameboxStatus::Missing, "GameBox should remain Missing, not auto-recreated");
+        let (instance, _root) =
+            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_a_id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            instance.status,
+            GameboxStatus::Missing,
+            "GameBox should remain Missing, not auto-recreated"
+        );
 
         // Event should still be Running (not paused)
         let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::Running, "Event should remain Running despite missing GameBox");
+        assert_eq!(
+            awd_event.status,
+            AwdEventStatus::Running,
+            "Event should remain Running despite missing GameBox"
+        );
 
         fixtures.cleanup().await;
     });
@@ -617,7 +657,10 @@ fn reset_rejected_in_final_settlement() {
             has_active,
             awd_event.round_count,
         );
-        assert!(result.is_err(), "Reset should be rejected during final settlement");
+        assert!(
+            result.is_err(),
+            "Reset should be rejected during final settlement"
+        );
 
         fixtures.cleanup().await;
     });

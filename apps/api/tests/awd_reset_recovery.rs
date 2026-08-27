@@ -89,20 +89,28 @@ impl TestFixtures {
             .filter(event_teams::Column::EventId.eq(self.event_id))
             .exec(&self.db)
             .await;
-        let _ = events::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id).exec(&self.db).await;
-        let _ = users::Entity::delete_by_id(self.user_id).exec(&self.db).await;
+        let _ = events::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+            .exec(&self.db)
+            .await;
+        let _ = users::Entity::delete_by_id(self.user_id)
+            .exec(&self.db)
+            .await;
     }
 }
 
-async fn setup_test(
-    free_reset_count: i32,
-    extra_reset_penalty: i64,
-) -> Option<TestFixtures> {
+async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<TestFixtures> {
     let db = connect_or_skip().await?;
     let event_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
-    let suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
 
     // Create user
     users::ActiveModel {
@@ -159,8 +167,13 @@ async fn setup_test(
     .await
     .ok()?;
 
-    let port: i32 = 51000 + (Uuid::new_v4().as_u128() % 10000) as i32;
-    let net_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let port: i32 = 51000 + (Uuid::new_v4().as_u128() % 40000) as i32;
+    let net_suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
     awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
@@ -227,7 +240,12 @@ async fn setup_test(
     // Create instance
     let root_id = Uuid::new_v4();
     let instance_id = Uuid::new_v4();
-    let cnt_suffix = Uuid::new_v4().to_string().split('-').next().unwrap().to_string();
+    let cnt_suffix = Uuid::new_v4()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string();
     let gamebox_ip = "10.43.1.5/32".to_string();
 
     event_instances::ActiveModel {
@@ -325,9 +343,13 @@ fn reset_recovery_case_a_old_container_exists() {
         .await
         .unwrap();
 
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Resetting)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Resetting,
+        )
+        .await
+        .unwrap();
 
         // Verify instance is Resetting
         let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
@@ -393,9 +415,13 @@ fn reset_recovery_case_b_old_gone_new_missing() {
         .await
         .unwrap();
 
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Resetting)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Resetting,
+        )
+        .await
+        .unwrap();
 
         // Verify state is consistent for recovery
         let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
@@ -457,9 +483,13 @@ fn reset_recovery_case_c_new_exists_db_resetting() {
         .await
         .unwrap();
 
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Resetting)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Resetting,
+        )
+        .await
+        .unwrap();
 
         // Verify state
         let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
@@ -575,10 +605,11 @@ fn reset_preserves_logical_identity() {
 
     rt.block_on(async {
         // Record original identity
-        let (inst_before, root_before) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let (inst_before, root_before) =
+            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+                .await
+                .unwrap()
+                .unwrap();
 
         let original_id = inst_before.id;
         let original_ip = inst_before.gamebox_ip.to_string();
@@ -586,20 +617,32 @@ fn reset_preserves_logical_identity() {
         let original_event_gamebox = inst_before.event_gamebox_id;
 
         // Simulate reset completion (mark as Ready without actual Docker)
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Ready)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Ready,
+        )
+        .await
+        .unwrap();
 
         // Verify identity preserved
-        let (inst_after, _root_after) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let (inst_after, _root_after) =
+            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+                .await
+                .unwrap()
+                .unwrap();
 
         assert_eq!(inst_after.id, original_id, "instance_id preserved");
-        assert_eq!(inst_after.gamebox_ip.to_string(), original_ip, "GameBox IP preserved");
+        assert_eq!(
+            inst_after.gamebox_ip.to_string(),
+            original_ip,
+            "GameBox IP preserved"
+        );
         assert_eq!(inst_after.team_id, original_team, "team_id preserved");
-        assert_eq!(inst_after.event_gamebox_id, original_event_gamebox, "event_gamebox_id preserved");
+        assert_eq!(
+            inst_after.event_gamebox_id, original_event_gamebox,
+            "event_gamebox_id preserved"
+        );
 
         fixtures.cleanup().await;
     });
@@ -626,9 +669,13 @@ fn reset_immediate_eligibility_no_protection() {
 
     rt.block_on(async {
         // Simulate reset just completed
-        gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Ready)
-            .await
-            .unwrap();
+        gamebox_repo::update_instance_status(
+            &fixtures.db,
+            fixtures.instance_id,
+            GameboxStatus::Ready,
+        )
+        .await
+        .unwrap();
 
         // Verify eligibility check passes immediately (no protection window)
         let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
@@ -646,14 +693,21 @@ fn reset_immediate_eligibility_no_protection() {
             has_active,
             awd_event.round_count,
         );
-        assert!(result.is_ok(), "Reset should be eligible immediately after previous reset");
+        assert!(
+            result.is_ok(),
+            "Reset should be eligible immediately after previous reset"
+        );
 
         // Verify no protection timestamp exists
         let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(inst.status, GameboxStatus::Ready, "Instance is Ready, not protected");
+        assert_eq!(
+            inst.status,
+            GameboxStatus::Ready,
+            "Instance is Ready, not protected"
+        );
 
         fixtures.cleanup().await;
     });

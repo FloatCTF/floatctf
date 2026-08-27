@@ -537,7 +537,18 @@ pub fn is_final_settlement(
     let Some(latest_round) = latest_round else {
         return false;
     };
-    if latest_round.round_number < round_count {
+    if latest_round.round_number != round_count {
+        // round_number > round_count is an invariant violation:
+        // the lifecycle should never create more rounds than configured.
+        // We MUST NOT silently classify this as final settlement.
+        if latest_round.round_number > round_count {
+            tracing::error!(
+                "[AWD] Invariant violation: event {} has round_number {} > round_count {}",
+                awd_event.event_id,
+                latest_round.round_number,
+                round_count
+            );
+        }
         return false;
     }
     if latest_round.status != RoundStatus::Completed {
@@ -588,15 +599,23 @@ pub async fn maybe_finish_event(
         return Ok(());
     }
 
-    // Transition to Finished
-    event_repo::transition_event(
+    // Transition to Finished (CAS: only one concurrent caller succeeds)
+    match event_repo::transition_event(
         db,
         awd_event.id,
         AwdEventStatus::Running,
         AwdEventStatus::Finished,
         event_repo::TransitionPatch::finished(),
     )
-    .await?;
+    .await
+    {
+        Ok(()) => {}
+        Err(AwdError::Conflict(_)) | Err(AwdError::InvalidState(_)) => {
+            // Another concurrent call already transitioned — treat as no-op
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    }
 
     info!("[Event] Event {} transitioned to Finished", event_id);
 

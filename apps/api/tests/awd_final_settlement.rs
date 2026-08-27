@@ -69,7 +69,7 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, round_count: i3
 
     // Event Network
     let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
-    let wg_port = 50000 + (Uuid::new_v4().as_u128() % 10000) as i32;
+    let wg_port = 50000 + (Uuid::new_v4().as_u128() % 40000) as i32;
     let net = awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),

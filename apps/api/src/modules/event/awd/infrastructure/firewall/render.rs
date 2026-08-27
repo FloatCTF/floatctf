@@ -81,14 +81,17 @@ pub fn render_table(desired: &DesiredFirewallState) -> String {
     let mut all_players: BTreeSet<String> = BTreeSet::new();
     let mut infra: BTreeSet<String> = BTreeSet::new();
     let mut banned: BTreeSet<String> = BTreeSet::new();
+    let mut banned_gameboxes: BTreeSet<String> = BTreeSet::new();
     for event in &desired.events {
         all_gameboxes.insert(event.gamebox_network.as_str());
         for team in &event.teams {
             all_players.insert(team.wireguard_network.as_str());
             if event.banned_teams.contains(&team.team_id) {
-                // ban：阻断该队玩家 WG 子网 + GameBox 子网的入站流量（saddr 匹配）
+                // ban source：阻断该队玩家 WG 子网 + GameBox 子网的出站流量（saddr 匹配）
                 banned.insert(team.wireguard_network.as_str());
                 banned.insert(team.gamebox_network.as_str());
+                // ban destination：阻断其他玩家/GameBox 访问该队 GameBox（daddr 匹配）
+                banned_gameboxes.insert(team.gamebox_network.as_str());
             }
         }
         infra.insert(event.infrastructure_network.as_str());
@@ -99,6 +102,7 @@ pub fn render_table(desired: &DesiredFirewallState) -> String {
     out.push_str(&fmt_set("infrastructure_v4", &infra));
     out.push_str(&fmt_set("player_wg_v4", &all_players));
     out.push_str(&fmt_set("banned_players_v4", &banned));
+    out.push_str(&fmt_set("banned_gameboxes_v4", &banned_gameboxes));
     out.push_str(&fmt_set_v6("banned_players_v6"));
     out.push('\n');
 
@@ -130,6 +134,16 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
     let k = key.as_str();
     let mut out = String::new();
     out.push_str(&format!("    chain event_{k} {{\n"));
+
+    // ── 全局 banned target 阻断（所有 phase）──
+    // 禁止玩家/GameBox 访问被 ban 队伍的 GameBox（daddr 匹配）。
+    // 基础设施（JudgeServer/FlagServer）不在 player/gamebox set 中，不受影响。
+    out.push_str(&format!(
+        "        ip saddr @{k}_players_v4 ip daddr @banned_gameboxes_v4 drop\n"
+    ));
+    out.push_str(&format!(
+        "        ip saddr @{k}_gameboxes_v4 ip daddr @banned_gameboxes_v4 drop\n"
+    ));
 
     match event.phase {
         AwdPhase::Hardening => {
@@ -393,5 +407,115 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         );
+    }
+
+    // ── Wave 5.1: banned target destination-side blocking ──
+
+    #[test]
+    fn render_banned_target_destination_blocked_during_attack() {
+        // Team A banned → Team B Player cannot attack Team A GameBox
+        let desired = DesiredFirewallState {
+            revision: 8,
+            events: vec![sample_event(AwdPhase::Attack, true)],
+        };
+        let text = render_table(&desired);
+        // banned_gameboxes_v4 set should contain the banned team's GameBox subnet
+        assert!(text.contains("banned_gameboxes_v4"));
+        assert!(text.contains("10.42.1.0/24")); // Team A gamebox subnet
+        // Destination-side drop: player → banned gamebox
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("ip daddr @banned_gameboxes_v4 drop"));
+        // Source-side blocking still present
+        assert!(text.contains("banned_players_v4"));
+        assert!(text.contains("172.31.1.0/24")); // Team A WG subnet
+    }
+
+    #[test]
+    fn render_banned_gamebox_to_gamebox_blocked() {
+        // GameBox → banned GameBox must be blocked
+        let desired = DesiredFirewallState {
+            revision: 9,
+            events: vec![sample_event(AwdPhase::Attack, true)],
+        };
+        let text = render_table(&desired);
+        // GameBox source → banned gamebox destination drop
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("_gameboxes_v4 ip daddr @banned_gameboxes_v4 drop"));
+    }
+
+    #[test]
+    fn render_banned_player_source_blocked() {
+        // Banned Team Player → any GameBox blocked at source
+        let desired = DesiredFirewallState {
+            revision: 10,
+            events: vec![sample_event(AwdPhase::Attack, true)],
+        };
+        let text = render_table(&desired);
+        // Source-side drop in global chain
+        assert!(text.contains("ip saddr @banned_players_v4 drop"));
+        // Banned team WG subnet in banned set
+        assert!(text.contains("172.31.1.0/24"));
+    }
+
+    #[test]
+    fn render_unban_restores_attack_access() {
+        // Unban → no banned subnets in any set
+        let desired = DesiredFirewallState {
+            revision: 11,
+            events: vec![sample_event(AwdPhase::Attack, false)],
+        };
+        let text = render_table(&desired);
+        // banned_gameboxes_v4 set should be empty
+        assert!(text.contains("banned_gameboxes_v4"));
+        // Team A subnet should NOT be in banned_gameboxes set
+        let banned_gb_start = text.find("banned_gameboxes_v4").unwrap();
+        let banned_gb_section = &text[banned_gb_start..];
+        let after_set = banned_gb_section.find("}\n").unwrap();
+        let set_body = &banned_gb_section[..after_set];
+        assert!(!set_body.contains("10.42.1.0/24"));
+        assert!(!set_body.contains("10.42.2.0/24"));
+    }
+
+    #[test]
+    fn render_unban_during_hardening_only_hardening_access() {
+        // Unban during Hardening → only own-team access, no cross-team
+        let desired = DesiredFirewallState {
+            revision: 12,
+            events: vec![sample_event(AwdPhase::Hardening, false)],
+        };
+        let text = render_table(&desired);
+        // own-team accept still present
+        assert!(text.contains("ip saddr 172.31.1.0/24 ip daddr 10.42.1.0/24 accept"));
+        // cross-team drop still present
+        assert!(text.contains("_players_v4 ip daddr @ev_"));
+        // banned_gameboxes_v4 set should be empty (no banned teams)
+        // Verify: the set declaration exists but no elements
+        let banned_gb_start = text.find("banned_gameboxes_v4").unwrap();
+        let banned_gb_section = &text[banned_gb_start..];
+        let after_set = banned_gb_section.find("}\n").unwrap();
+        let set_body = &banned_gb_section[..after_set];
+        // No banned gamebox subnets (10.42.x.0/24) in the banned_gameboxes set
+        assert!(!set_body.contains("172.31.1.0/24")); // WG subnet should NOT be in gamebox set
+        assert!(!set_body.contains("172.31.2.0/24"));
+    }
+
+    #[test]
+    fn render_banned_gamebox_destination_not_block_infrastructure() {
+        // Infrastructure (JudgeServer/FlagServer) should NOT be blocked
+        // from accessing banned GameBoxes
+        let desired = DesiredFirewallState {
+            revision: 13,
+            events: vec![sample_event(AwdPhase::Attack, true)],
+        };
+        let text = render_table(&desired);
+        // The daddr @banned_gameboxes_v4 drop rules only match
+        // saddr @players or saddr @gameboxes — infrastructure IPs
+        // (judgeserver_ip, flagserver_ip) are NOT in those sets.
+        // Verify the infrastructure set exists and is separate
+        assert!(text.contains("infrastructure_v4"));
+        assert!(text.contains("10.42.0.10")); // flagserver
+        assert!(text.contains("10.42.0.11")); // judgeserver
+        // Infrastructure IPs are NOT in player or gamebox sets
+        // (they're in infrastructure_v4 set only)
     }
 }

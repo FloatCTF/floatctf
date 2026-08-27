@@ -505,6 +505,17 @@ impl TaskHandler for AwdRoundEndHandler {
             },
         };
 
+        // NetworkError guard: do not advance rounds while network is in failed state
+        if let Some(ev) = event_repo::find_by_event_id(self.db.get_ref(), event_id).await? {
+            if ev.status == AwdEventStatus::NetworkError {
+                warn!(
+                    "[AWD] Event {} is in NetworkError state, skipping round end",
+                    event_id
+                );
+                return Ok(());
+            }
+        }
+
         info!("[AWD] Ending round {round_id} for event {event_id}");
         round_service::end_round(
             self.db.get_ref(),

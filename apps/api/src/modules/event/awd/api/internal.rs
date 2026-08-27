@@ -11,7 +11,7 @@ use crate::{
         AwdError,
         api::auth::{AwdInternalAuth, AwdInternalPrincipal},
         domain::{AwdPhaseExt, IdempotencyKey, JudgeTaskStatusExt},
-        repo::{event_repo, judge_repo, score_repo},
+        repo::{ban_repo, event_repo, judge_repo, score_repo},
         service::flag_service,
     },
 };
@@ -322,7 +322,17 @@ pub async fn judge_result(
                 let frozen =
                     awd_event.status != AwdEventStatus::Running || !awd_event.phase.allows_judge();
 
-                if !frozen {
+                // Check if team is currently banned (in-flight ban: ban after task creation)
+                let team_banned = if !frozen {
+                    ban_repo::find_active_ban(ctx.db.get_ref(), event_id, task.team_id)
+                        .await
+                        .map_err(|e| AppError::Database(e.to_string()))?
+                        .is_some()
+                } else {
+                    false
+                };
+
+                if !frozen && !team_banned {
                     if let Some(eg_id) = task.event_gamebox_id {
                         if let Ok(resolved) = crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
                             ctx.db.get_ref(),

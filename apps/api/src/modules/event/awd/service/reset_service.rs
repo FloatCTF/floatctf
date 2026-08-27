@@ -58,7 +58,7 @@ pub struct ResetContext {
 ///
 /// Allowed: Running + (Hardening | Attack) + not Paused + not banned + not final settlement.
 /// Forbidden: Paused, Finished, Archived, banned team, final-settlement derived state.
-fn check_reset_eligibility(
+pub fn check_reset_eligibility(
     awd_event: &crate::entity::awd_events::Model,
     team_id: Uuid,
     has_active_round: bool,

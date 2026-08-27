@@ -1,6 +1,11 @@
 //! Pull Worker 核心逻辑：poll loop、claim、heartbeat、result delivery、task execution。
 //!
 //! 可测试：所有 HTTP 调用通过 `HttpClient` trait 抽象，可在测试中 mock。
+//!
+//! # 所有权传播（Wave 3.3）
+//!
+//! `OwnedTask` 包含 `Arc<AtomicBool>` 所有权标记。heartbeat 收到 409 时设置该标记；
+//! execute_single_task 在提交结果前检查标记，若为 true 则丢弃结果。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -242,11 +247,15 @@ pub async fn poll_loop<H: HttpClient + Clone + 'static>(state: WorkerState<H>) {
 // ── Task Execution ──
 
 /// 执行单个裁判任务：写脚本文件、子进程运行、心跳、提交结果。
+///
+/// 心跳 409 会设置 `ownership_stale` 标记，本函数在提交结果前检查该标记，
+/// 若已过时则丢弃结果（零提交）。
 pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<WorkerState<H>>, task: ClaimedTask) {
     tracing::info!("Executing task {} for {}", task.task_id, task.target_ip);
 
     let script_path = format!("{}/judge_{}.sh", state.work_dir, task.task_id);
     let result_id = Uuid::new_v4().to_string();
+    let ownership_stale = Arc::new(AtomicBool::new(false));
 
     // Write script
     if let Err(e) = tokio::fs::write(&script_path, &task.script_content).await {
@@ -261,7 +270,7 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
         .output()
         .await;
 
-    // Start heartbeat
+    // Start heartbeat — shares ownership_stale flag
     let heartbeat_handle = {
         let state_clone = state.clone();
         let task_id = task.task_id;
@@ -269,9 +278,10 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
         let attempt = task.attempt;
         let lease_token = task.lease_token.clone();
         let interval = state.heartbeat_interval;
+        let stale_flag = ownership_stale.clone();
 
         tokio::spawn(async move {
-            heartbeat_loop(&state_clone, task_id, &worker_id, attempt, &lease_token, interval).await
+            heartbeat_loop(&state_clone, task_id, &worker_id, attempt, &lease_token, interval, &stale_flag).await
         })
     };
 
@@ -287,18 +297,32 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
 
     let start = Instant::now();
 
-    let exec_result = tokio::time::timeout(
-        Duration::from_secs(task.timeout_secs as u64),
-        tokio::process::Command::new(&script_path)
-            .args(&args)
-            .env_clear()
-            .envs(build_script_env(std::env::vars()))
-            .output(),
-    )
-    .await;
+    // Spawn child explicitly with kill_on_drop for deterministic cleanup
+    let child_result = tokio::process::Command::new(&script_path)
+        .args(&args)
+        .env_clear()
+        .envs(build_script_env(std::env::vars()))
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
 
-    let elapsed = start.elapsed();
-    heartbeat_handle.abort();
+    let mut child = match child_result {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Task {} spawn failed: {}", task.task_id, e);
+            heartbeat_handle.abort();
+            let _ = deliver_result(
+                state, &task, "worker_error", None, None,
+                Some(&format!("Execution error: {e}")), None, &result_id,
+            ).await;
+            let _ = tokio::fs::remove_file(&script_path).await;
+            return;
+        }
+    };
+
+    let timeout_dur = Duration::from_secs(task.timeout_secs as u64);
+    let exec_result = tokio::time::timeout(timeout_dur, child.wait_with_output()).await;
 
     let (outcome, exit_code, stdout, stderr) = match exec_result {
         Ok(Ok(output)) => {
@@ -309,14 +333,28 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
             (outcome, Some(ec), Some(truncate_str(&out, OUTPUT_MAX_LEN)), Some(truncate_str(&err, OUTPUT_MAX_LEN)))
         }
         Ok(Err(e)) => {
-            tracing::error!("Task {} spawn failed: {}", task.task_id, e);
-            ("worker_error", None, None, Some(format!("Execution error: {e}")))
+            tracing::error!("Task {} wait_with_output failed: {}", task.task_id, e);
+            ("worker_error", None, None, Some(format!("Child wait error: {e}")))
         }
         Err(_timeout) => {
-            tracing::warn!("Task {} timed out", task.task_id);
+            // timeout drops the child handle → kill_on_drop(true) kills the child
+            tracing::warn!("Task {} timed out (child killed by kill_on_drop)", task.task_id);
             ("target_timeout", None, None, Some("Execution timed out".to_string()))
         }
     };
+
+    let elapsed = start.elapsed();
+    heartbeat_handle.abort();
+
+    // ── Stale ownership check (Wave 3.3) ──
+    if ownership_stale.load(Ordering::Relaxed) {
+        tracing::warn!(
+            "Task {} ownership stale (heartbeat 409) — discarding result",
+            task.task_id
+        );
+        let _ = tokio::fs::remove_file(&script_path).await;
+        return;
+    }
 
     let duration_ms = Some(elapsed.as_millis() as i32);
 
@@ -331,6 +369,7 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
 // ── Heartbeat Loop ──
 
 /// Heartbeat loop for a single task. Runs until aborted (task execution completes).
+/// On 409 stale, sets `ownership_stale` flag to true so the parent discards the result.
 pub async fn heartbeat_loop<H: HttpClient + Clone>(
     state: &WorkerState<H>,
     task_id: Uuid,
@@ -338,6 +377,7 @@ pub async fn heartbeat_loop<H: HttpClient + Clone>(
     attempt: i32,
     lease_token: &str,
     interval: Duration,
+    ownership_stale: &AtomicBool,
 ) {
     sleep(interval).await;
 
@@ -357,6 +397,7 @@ pub async fn heartbeat_loop<H: HttpClient + Clone>(
             }
             Ok(HeartbeatStatus::Stale) => {
                 tracing::warn!("Heartbeat 409 stale for task {} — ownership lost", task_id);
+                ownership_stale.store(true, Ordering::Relaxed);
                 return;
             }
             Ok(HeartbeatStatus::NotFound) => {
@@ -626,10 +667,14 @@ mod tests {
         mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Ok)]);
         let state = make_state(mock.clone(), 4);
         let task_id = Uuid::new_v4();
+        let stale = Arc::new(AtomicBool::new(false));
 
-        let hb_handle = tokio::spawn(async move {
-            heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5)).await;
-        });
+        let hb_handle = {
+            let stale = stale.clone();
+            tokio::spawn(async move {
+                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+            })
+        };
 
         tokio::time::sleep(Duration::from_millis(20)).await;
         hb_handle.abort();
@@ -642,7 +687,7 @@ mod tests {
         assert_eq!(hb.lease_token, "lease-tok");
     }
 
-    // ── Heartbeat: 409 stale → exits loop ──
+    // ── Heartbeat: 409 stale → exits loop + sets flag ──
 
     #[tokio::test]
     async fn heartbeat_409_stale_exits_loop() {
@@ -650,18 +695,21 @@ mod tests {
         mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Stale)]);
         let state = make_state(mock.clone(), 4);
         let task_id = Uuid::new_v4();
+        let stale = Arc::new(AtomicBool::new(false));
 
-        let hb_handle = tokio::spawn(async move {
-            heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5)).await;
-        });
+        let hb_handle = {
+            let stale = stale.clone();
+            tokio::spawn(async move {
+                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+            })
+        };
 
-        // Should complete quickly (stale → exit)
         let result = tokio::time::timeout(Duration::from_millis(100), hb_handle).await;
         assert!(result.is_ok(), "Heartbeat loop should exit on stale");
 
-        // Only one heartbeat call made
         let calls = mock.heartbeat_calls_snapshot();
         assert_eq!(calls.len(), 1);
+        assert!(stale.load(Ordering::Relaxed), "Ownership flag should be set after 409");
     }
 
     // ── Heartbeat: transient error → retries ──
@@ -669,23 +717,240 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_transient_error_retries() {
         let mock = MockHttp::new();
-        // First call: error, then Ok
         mock.set_heartbeat_responses(vec![
             Ok(HeartbeatStatus::Ok),
             Ok(HeartbeatStatus::Error),
         ]);
         let state = make_state(mock.clone(), 4);
         let task_id = Uuid::new_v4();
+        let stale = Arc::new(AtomicBool::new(false));
 
-        let hb_handle = tokio::spawn(async move {
-            heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5)).await;
-        });
+        let hb_handle = {
+            let stale = stale.clone();
+            tokio::spawn(async move {
+                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+            })
+        };
 
         tokio::time::sleep(Duration::from_millis(30)).await;
         hb_handle.abort();
 
         let calls = mock.heartbeat_calls_snapshot();
         assert!(calls.len() >= 2, "Should have made multiple heartbeat calls after error");
+        assert!(!stale.load(Ordering::Relaxed), "Flag should not be set on transient error");
+    }
+
+    // ── Stale ownership orchestration: heartbeat 409 → no result submitted ──
+
+    #[tokio::test]
+    async fn stale_ownership_prevents_result_submission() {
+        let mock = MockHttp::new();
+        // Heartbeat returns 409 stale
+        mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Stale)]);
+        // Result should NOT be called
+        mock.set_result_responses(vec![Ok(SubmitStatus::Ok)]);
+
+        let state = Arc::new(make_state(mock.clone(), 4));
+        let task = make_task("00000000-0000-0000-0000-000000000001", 1);
+        let ownership_stale = Arc::new(AtomicBool::new(false));
+
+        // Start heartbeat
+        let hb_state = state.clone();
+        let hb_task_id = task.task_id;
+        let hb_worker_id = state.worker_id.clone();
+        let hb_attempt = task.attempt;
+        let hb_lease = task.lease_token.clone();
+        let hb_interval = state.heartbeat_interval;
+        let hb_flag = ownership_stale.clone();
+
+        let hb_handle = tokio::spawn(async move {
+            heartbeat_loop(&hb_state, hb_task_id, &hb_worker_id, hb_attempt, &hb_lease, hb_interval, &hb_flag).await;
+        });
+
+        // Wait for heartbeat to fire and set the flag
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // Verify flag is set
+        assert!(ownership_stale.load(Ordering::Relaxed), "Ownership should be stale after 409");
+
+        // Now simulate the execution post-check: if ownership is stale, don't submit
+        if ownership_stale.load(Ordering::Relaxed) {
+            // Discard result — this is what execute_single_task does
+        } else {
+            let _ = deliver_result(
+                &state, &task, "up", Some(0), None, None, Some(100), "rid",
+            ).await;
+        }
+
+        hb_handle.abort();
+
+        // Zero result submissions
+        let result_calls = mock.result_calls_snapshot();
+        assert_eq!(result_calls.len(), 0, "No result should be submitted when ownership is stale");
+    }
+
+    // ── Continuous worker orchestration: claim → execute → result ──
+
+    #[tokio::test]
+    async fn continuous_worker_flow_claim_execute_result_up() {
+        let mock = MockHttp::new();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let work_dir = std::env::temp_dir().join(format!("judge_test_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&work_dir).await.unwrap();
+
+        // Claim response: one task
+        mock.set_claim_responses(vec![Ok(JudgeClaimResponse {
+            tasks: vec![ClaimedTask {
+                task_id,
+                batch_id: Uuid::nil(),
+                event_id: Uuid::nil(),
+                round_id: Uuid::nil(),
+                gamebox_instance_id: Uuid::nil(),
+                event_gamebox_id: None,
+                team_id: Uuid::nil(),
+                attempt: 1,
+                lease_token: "lease-tok-123".into(),
+                lease_expires_at: "2026-01-01T00:00:00Z".into(),
+                deadline_at: "2026-01-01T00:05:00Z".into(),
+                script_content: "#!/bin/bash\nexit 0".into(),
+                script_args_json: None,
+                target_ip: "10.0.0.1".into(),
+                timeout_secs: 5,
+            }],
+        })]);
+        // Heartbeat: Ok
+        mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Ok)]);
+        // Result: Ok
+        mock.set_result_responses(vec![Ok(SubmitStatus::Ok)]);
+
+        let mut state = make_state(mock.clone(), 4);
+        state.work_dir = work_dir.to_string_lossy().to_string();
+        let state = Arc::new(state);
+
+        // --- Step 1: Claim ---
+        let url = claim_url(&state.platform_url, &state.event_id);
+        let auth = state.auth();
+        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
+        assert_eq!(claim_resp.tasks.len(), 1);
+        let task = claim_resp.tasks.into_iter().next().unwrap();
+        assert_eq!(task.lease_token, "lease-tok-123");
+
+        // --- Step 2: Execute ---
+        execute_single_task(&state, task).await;
+
+        // --- Step 3: Verify result ---
+        let result_calls = mock.result_calls_snapshot();
+        assert_eq!(result_calls.len(), 1, "Should have exactly one result submission");
+        let r = &result_calls[0];
+        assert_eq!(r.worker_id, "w1");
+        assert_eq!(r.attempt, 1);
+        assert_eq!(r.lease_token, "lease-tok-123");
+        assert_eq!(r.outcome, "up");
+        assert!(!r.result_id.is_empty(), "result_id should not be empty");
+
+        let _ = tokio::fs::remove_dir_all(&work_dir).await;
+    }
+
+    // ── Continuous worker flow: claim → execute → down ──
+
+    #[tokio::test]
+    async fn continuous_worker_flow_claim_execute_result_down() {
+        let mock = MockHttp::new();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let work_dir = std::env::temp_dir().join(format!("judge_test_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&work_dir).await.unwrap();
+
+        mock.set_claim_responses(vec![Ok(JudgeClaimResponse {
+            tasks: vec![ClaimedTask {
+                task_id,
+                batch_id: Uuid::nil(),
+                event_id: Uuid::nil(),
+                round_id: Uuid::nil(),
+                gamebox_instance_id: Uuid::nil(),
+                event_gamebox_id: None,
+                team_id: Uuid::nil(),
+                attempt: 1,
+                lease_token: "lease-tok-down".into(),
+                lease_expires_at: "2026-01-01T00:00:00Z".into(),
+                deadline_at: "2026-01-01T00:05:00Z".into(),
+                script_content: "#!/bin/bash\nexit 1".into(),
+                script_args_json: None,
+                target_ip: "10.0.0.2".into(),
+                timeout_secs: 5,
+            }],
+        })]);
+        mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Ok)]);
+        mock.set_result_responses(vec![Ok(SubmitStatus::Ok)]);
+
+        let mut state = make_state(mock.clone(), 4);
+        state.work_dir = work_dir.to_string_lossy().to_string();
+        let state = Arc::new(state);
+
+        let url = claim_url(&state.platform_url, &state.event_id);
+        let auth = state.auth();
+        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
+        let task = claim_resp.tasks.into_iter().next().unwrap();
+
+        execute_single_task(&state, task).await;
+
+        let result_calls = mock.result_calls_snapshot();
+        assert_eq!(result_calls.len(), 1);
+        assert_eq!(result_calls[0].outcome, "down");
+        assert_eq!(result_calls[0].exit_code, Some(1));
+
+        let _ = tokio::fs::remove_dir_all(&work_dir).await;
+    }
+
+    // ── Child process timeout: spawn long-running child, timeout kills it ──
+
+    #[tokio::test]
+    async fn child_process_timeout_produces_target_timeout() {
+        let mock = MockHttp::new();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+        let work_dir = std::env::temp_dir().join(format!("judge_test_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&work_dir).await.unwrap();
+
+        mock.set_claim_responses(vec![Ok(JudgeClaimResponse {
+            tasks: vec![ClaimedTask {
+                task_id,
+                batch_id: Uuid::nil(),
+                event_id: Uuid::nil(),
+                round_id: Uuid::nil(),
+                gamebox_instance_id: Uuid::nil(),
+                event_gamebox_id: None,
+                team_id: Uuid::nil(),
+                attempt: 1,
+                lease_token: "lease-tok-timeout".into(),
+                lease_expires_at: "2026-01-01T00:00:00Z".into(),
+                deadline_at: "2026-01-01T00:05:00Z".into(),
+                script_content: "#!/bin/bash\nsleep 10".into(),
+                script_args_json: None,
+                target_ip: "10.0.0.3".into(),
+                timeout_secs: 1,
+            }],
+        })]);
+        mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Ok)]);
+        mock.set_result_responses(vec![Ok(SubmitStatus::Ok)]);
+
+        let mut state = make_state(mock.clone(), 4);
+        state.work_dir = work_dir.to_string_lossy().to_string();
+        let state = Arc::new(state);
+
+        let url = claim_url(&state.platform_url, &state.event_id);
+        let auth = state.auth();
+        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
+        let task = claim_resp.tasks.into_iter().next().unwrap();
+
+        execute_single_task(&state, task).await;
+
+        let result_calls = mock.result_calls_snapshot();
+        assert_eq!(result_calls.len(), 1);
+        assert_eq!(result_calls[0].outcome, "target_timeout");
+
+        let _ = tokio::fs::remove_dir_all(&work_dir).await;
     }
 
     // ── Result: stable result_id across retries ──

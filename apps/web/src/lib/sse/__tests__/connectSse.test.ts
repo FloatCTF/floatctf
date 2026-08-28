@@ -451,4 +451,143 @@ describe("connectSse", () => {
 
 		newController.abort();
 	});
+
+	// ── Token lifecycle tests ──
+
+	it("token change after 401 creates new connection with new token", async () => {
+		let currentToken = "old-bad-token";
+		const fetchSpy = createAbortableFetch((_n) => {
+			if (currentToken === "old-bad-token") {
+				return jsonResponse(401, {});
+			}
+			// New token succeeds
+			return sseResponse(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(
+							new TextEncoder().encode("data: ok\n\n"),
+						);
+					},
+				}),
+			);
+		});
+		vi.stubGlobal("fetch", fetchSpy);
+
+		const stateChanges: string[] = [];
+		const controller = new AbortController();
+
+		// First connection with old token
+		const conn = connectSse({
+			url: "/api/events/test/awd/stream",
+			headers: {},
+			signal: controller.signal,
+			getToken: () => currentToken,
+			onEvent: () => {},
+			onStateChange: (s) => stateChanges.push(s.state),
+			initialRetryDelayMs: 100,
+		});
+
+		await vi.advanceTimersByTimeAsync(50);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(stateChanges).toContain("auth_error");
+
+		// Close old connection, change token, create new connection
+		conn.close();
+		currentToken = "new-good-token";
+
+		const newController = new AbortController();
+		const conn2 = connectSse({
+			url: "/api/events/test/awd/stream",
+			headers: {},
+			signal: newController.signal,
+			getToken: () => currentToken,
+			onEvent: () => {},
+			onStateChange: (s) => stateChanges.push(s.state),
+			initialRetryDelayMs: 100,
+		});
+
+		await vi.advanceTimersByTimeAsync(50);
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+		// Verify new token was used
+		const fetchOptions = fetchSpy.mock.calls[1][1] as RequestInit;
+		const headers = fetchOptions.headers as Record<string, string>;
+		expect(headers.Authorization).toBe("Bearer new-good-token");
+
+		expect(stateChanges).toContain("connected");
+
+		conn2.close();
+		newController.abort();
+		controller.abort();
+	});
+
+	it("logout (null token) does not create authenticated connection", async () => {
+		const fetchSpy = createAbortableFetch(
+			() => new Promise<Response>(() => {}),
+		);
+		vi.stubGlobal("fetch", fetchSpy);
+
+		const controller = new AbortController();
+
+		// null token = logged out
+		connectSse({
+			url: "/api/events/test/awd/stream",
+			headers: {},
+			signal: controller.signal,
+			getToken: () => null,
+			onEvent: () => {},
+			initialRetryDelayMs: 100,
+		});
+
+		await vi.advanceTimersByTimeAsync(50);
+
+		// Should still attempt fetch (with no Authorization header)
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const fetchOptions = fetchSpy.mock.calls[0][1] as RequestInit;
+		const headers = fetchOptions.headers as Record<string, string>;
+		// No token → no Authorization header
+		expect(headers.Authorization).toBeUndefined();
+
+		controller.abort();
+	});
+
+	it("same token does not duplicate connections", async () => {
+		const fetchSpy = createAbortableFetch(
+			() => new Promise<Response>(() => {}),
+		);
+		vi.stubGlobal("fetch", fetchSpy);
+
+		const controller1 = new AbortController();
+
+		connectSse({
+			url: "/api/events/test/awd/stream",
+			headers: {},
+			signal: controller1.signal,
+			getToken: () => "same-token",
+			onEvent: () => {},
+		});
+
+		await vi.advanceTimersByTimeAsync(50);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+		// Second connection with same token (simulating React re-render)
+		// Note: in React, the old effect cleanup would abort the first controller
+		controller1.abort();
+		await vi.advanceTimersByTimeAsync(50);
+
+		const controller2 = new AbortController();
+		connectSse({
+			url: "/api/events/test/awd/stream",
+			headers: {},
+			signal: controller2.signal,
+			getToken: () => "same-token",
+			onEvent: () => {},
+		});
+
+		await vi.advanceTimersByTimeAsync(50);
+		// One new fetch for the new connection
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+		controller2.abort();
+	});
 });

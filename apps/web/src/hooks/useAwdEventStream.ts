@@ -15,6 +15,12 @@ import { useAuthStore } from "@/stores/AuthStore";
  *
  * 连接断开时自动重连（指数退避 + 抖动），认证失败 (401/403) 停止重连。
  * 重连后若后端不支持 Last-Event-ID 重放，触发 REST 快照刷新。
+ *
+ * 令牌生命周期：
+ * - 令牌变更 → 旧连接清理，新连接创建
+ * - 令牌变为 null（登出）→ 中止 SSE，回退轮询
+ * - 令牌从 null 变为有效 → 创建 SSE 连接
+ * - 401/403 → auth_error，停止重连；令牌变更后重新尝试
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -42,6 +48,10 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 		preferStream = true,
 		enabled = true,
 	} = options;
+
+	// 订阅令牌变更 — 令牌变化会触发 effect 清理 + 重建
+	const token = useAuthStore((s) => s.token);
+
 	const qc = useQueryClient();
 	const [connectionState, setConnectionState] =
 		useState<SseConnectionState>("idle");
@@ -71,7 +81,6 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 					if (seen.current.size > 2000) seen.current.clear();
 					seen.current.add(data.sequence);
 					if (data.sequence < lastSeq.current) {
-						// 重连回退 → 刷新快照
 						invalidateAwd();
 					}
 					lastSeq.current = Math.max(lastSeq.current, data.sequence);
@@ -79,7 +88,6 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 
 				setLastEvent(data);
 
-				// 比分/轮次/网络变更 → REST 快照刷新
 				if (
 					data.type.startsWith("score.") ||
 					data.type.startsWith("attack.") ||
@@ -100,6 +108,7 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 		[invalidateAwd],
 	);
 
+	// token 在依赖数组中 — 令牌变更时自动清理旧连接并创建新连接
 	useEffect(() => {
 		if (!enabled || !eventId) {
 			connRef.current?.close();
@@ -117,6 +126,18 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 			invalidateAwd();
 		};
 
+		// 无令牌 → 回退轮询（不尝试未认证的 SSE）
+		if (!token) {
+			startPoll();
+			return () => {
+				disposed = true;
+				if (pollTimer) {
+					clearInterval(pollTimer);
+					pollTimer = null;
+				}
+			};
+		}
+
 		if (preferStream) {
 			const controller = new AbortController();
 
@@ -124,7 +145,8 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 				url: `/api/events/${eventId}/awd/stream`,
 				headers: {},
 				signal: controller.signal,
-				getToken: () => useAuthStore.getState().token,
+				// 使用闭包捕获的 token（effect 重建时更新）
+				getToken: () => token,
 				onOpen: () => {
 					if (!disposed) setConnectionState("connected");
 				},
@@ -136,7 +158,6 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 					if (!disposed) {
 						setConnectionState(status.state);
 						if (status.lastError) setLastError(status.lastError);
-						// 认证失败 → 回退轮询
 						if (status.state === "auth_error") {
 							connRef.current?.close();
 							connRef.current = null;
@@ -169,8 +190,9 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 				pollTimer = null;
 			}
 		};
+		// token 在依赖数组中 → 令牌变更触发清理 + 重建
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [eventId, enabled, pollMs, preferStream, handleSseEvent, invalidateAwd]);
+	}, [eventId, enabled, pollMs, preferStream, token, handleSseEvent, invalidateAwd]);
 
 	return {
 		connected: connectionState === "connected",

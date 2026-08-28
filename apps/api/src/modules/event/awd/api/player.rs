@@ -517,6 +517,7 @@ pub async fn get_wireguard_config(
 /// 订阅前校验：
 /// - 认证：Bearer token（UserJwtGuard）
 /// - 授权：用户必须属于该赛事的战队（event_team_members）
+///         或为平台超级管理员（super_admin）
 ///
 /// 断开时自动释放广播订阅者；无遗留 subscriber 泄漏。
 #[get("{event_id}/awd/stream")]
@@ -529,12 +530,23 @@ pub async fn event_stream(
     let event_id = path.into_inner();
     let user = user.into_inner();
 
-    // ── 授权：用户必须属于该赛事 ──
+    // ── 授权：赛事参与者 或 平台超级管理员 ──
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .ok()
         .flatten();
-    if membership.is_none() {
+    let is_admin = if membership.is_some() {
+        true
+    } else {
+        // 非战队成员：检查是否为超级管理员（可查看所有赛事）
+        crate::entity::super_admin::Entity::find_by_id(user.id)
+            .one(ctx.db.get_ref())
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+    };
+    if !is_admin {
         return HttpResponse::Forbidden().finish();
     }
 

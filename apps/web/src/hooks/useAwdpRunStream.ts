@@ -32,6 +32,8 @@ export function useAwdpRunStream({
 	preferStream = true,
 	enabled = true,
 }: UseAwdpRunStreamOptions) {
+	const token = useAuthStore((s) => s.token);
+
 	const [connectionState, setConnectionState] =
 		useState<SseConnectionState>("idle");
 	const [lastError, setLastError] = useState<Error | null>(null);
@@ -84,6 +86,16 @@ export function useAwdpRunStream({
 			}, pollMs);
 		};
 
+		if (!token) {
+			startPolling();
+			return () => {
+				stopped = true;
+				if (pollTimer) {
+					clearInterval(pollTimer);
+				}
+			};
+		}
+
 		if (preferStream) {
 			const controller = new AbortController();
 
@@ -91,7 +103,7 @@ export function useAwdpRunStream({
 				url: `/api/service/awdp/runs/${runId}/stream`,
 				headers: {},
 				signal: controller.signal,
-				getToken: () => useAuthStore.getState().token,
+				getToken: () => token,
 				onOpen: () => {
 					if (!stopped) setConnectionState("connected");
 				},
@@ -133,7 +145,7 @@ export function useAwdpRunStream({
 				clearInterval(pollTimer);
 			}
 		};
-	}, [runId, enabled, preferStream, pollMs, invalidate, onEvent]);
+	}, [runId, enabled, preferStream, pollMs, token, invalidate, onEvent]);
 
 	return {
 		connected: connectionState === "connected",

@@ -35,6 +35,8 @@ export function useAwdpEventStream({
 	preferStream = true,
 	enabled = true,
 }: UseAwdpEventStreamOptions) {
+	const token = useAuthStore((s) => s.token);
+
 	const [connectionState, setConnectionState] =
 		useState<SseConnectionState>("idle");
 	const [lastError, setLastError] = useState<Error | null>(null);
@@ -99,6 +101,20 @@ export function useAwdpEventStream({
 			}, pollMs);
 		};
 
+		if (!token) {
+			startPolling();
+			return () => {
+				stopped = true;
+				if (pollTimer) {
+					clearInterval(pollTimer);
+				}
+				if (invalidateTimerRef.current) {
+					clearTimeout(invalidateTimerRef.current);
+					invalidateTimerRef.current = null;
+				}
+			};
+		}
+
 		if (preferStream) {
 			const controller = new AbortController();
 
@@ -106,7 +122,7 @@ export function useAwdpEventStream({
 				url: `/api/events/${eventId}/awdp/stream`,
 				headers: {},
 				signal: controller.signal,
-				getToken: () => useAuthStore.getState().token,
+				getToken: () => token,
 				onOpen: () => {
 					if (!stopped) setConnectionState("connected");
 				},
@@ -156,7 +172,7 @@ export function useAwdpEventStream({
 				invalidateTimerRef.current = null;
 			}
 		};
-	}, [eventId, enabled, preferStream, pollMs, invalidate, onEvent]);
+	}, [eventId, enabled, preferStream, pollMs, token, invalidate, onEvent]);
 
 	return {
 		connected: connectionState === "connected",

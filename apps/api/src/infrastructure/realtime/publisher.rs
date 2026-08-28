@@ -472,4 +472,154 @@ mod tests {
         let got = rx.recv().await.unwrap();
         assert_eq!(got.event_type, "ping");
     }
+
+    // ── SSE 格式 / 订阅者生命周期测试 ──
+
+    #[test]
+    fn sse_frame_format_is_data_colon_json_newline_newline() {
+        // 验证 SSE 端点输出的帧格式
+        let ev = RealtimeEvent::new(
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            "score.changed",
+            json!({"points": 10}),
+        );
+        let json = serde_json::to_string(&ev).unwrap();
+        let frame = format!("data: {json}\n\n");
+        assert!(frame.starts_with("data: "));
+        assert!(frame.contains("\"type\":\"score.changed\""));
+        assert!(frame.ends_with("\n\n"));
+        // 帧不包含 event: 或 id: 字段（当前后端仅发送 data:）
+        assert!(!frame.starts_with("event:"));
+        assert!(!frame.starts_with("id:"));
+    }
+
+    #[test]
+    fn sse_keepalive_comment_format() {
+        // 验证 keepalive 注释格式（以 : 开头，前端解析器忽略）
+        let keepalive = ": keepalive\n\n";
+        assert!(keepalive.starts_with(':'));
+        assert!(keepalive.ends_with("\n\n"));
+        // 不应包含 data: 前缀
+        assert!(!keepalive.contains("data:"));
+    }
+
+    #[test]
+    fn sse_connected_comment_format() {
+        // 验证初始连接消息格式
+        let connected = ": connected\n\n";
+        assert!(connected.starts_with(':'));
+        assert!(connected.ends_with("\n\n"));
+    }
+
+    #[tokio::test]
+    async fn subscriber_count_reflects_active_receivers() {
+        let hub = BroadcastEventPublisher::new(8);
+        assert_eq!(hub.receiver_count(), 0);
+
+        let rx1 = hub.subscribe();
+        assert_eq!(hub.receiver_count(), 1);
+
+        let rx2 = hub.subscribe();
+        assert_eq!(hub.receiver_count(), 2);
+
+        drop(rx1);
+        // 异步广播 channel 的 receiver_count 在 drop 后立即更新
+        assert_eq!(hub.receiver_count(), 1);
+
+        drop(rx2);
+        assert_eq!(hub.receiver_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn publish_with_no_subscribers_does_not_error() {
+        // fire-and-forget：无订阅者时发布不报错
+        let hub = BroadcastEventPublisher::new(8);
+        // 没有订阅者
+        let result = hub
+            .publish(RealtimeEvent::new(Uuid::nil(), "test", json!({})))
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dropped_subscriber_does_not_receive_new_events() {
+        let hub = BroadcastEventPublisher::new(8);
+        let mut rx = hub.subscribe();
+
+        // 发布第一个事件
+        hub.publish(RealtimeEvent::new(
+            Uuid::nil(),
+            "first",
+            json!({}),
+        ))
+        .await
+        .unwrap();
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got.event_type, "first");
+
+        // 丢弃订阅者
+        drop(rx);
+
+        // 发布第二个事件 — 不应 panic 或阻塞
+        hub.publish(RealtimeEvent::new(
+            Uuid::nil(),
+            "second",
+            json!({}),
+        ))
+        .await
+        .unwrap();
+
+        // 新订阅者只能收到此后的事件
+        let mut rx2 = hub.subscribe();
+        hub.publish(RealtimeEvent::new(
+            Uuid::nil(),
+            "third",
+            json!({}),
+        ))
+        .await
+        .unwrap();
+        let got = rx2.recv().await.unwrap();
+        assert_eq!(got.event_type, "third");
+    }
+
+    #[tokio::test]
+    async fn lagged_subscriber_receives_lagged_error() {
+        let hub = BroadcastEventPublisher::new(2); // 极小容量
+        let mut rx = hub.subscribe();
+
+        // 填满缓冲区
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "e1", json!({})))
+            .await
+            .unwrap();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "e2", json!({})))
+            .await
+            .unwrap();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "e3", json!({})))
+            .await
+            .unwrap();
+
+        // 接收方落后 — 应收到 Lagged 错误
+        let result = rx.recv().await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            tokio::sync::broadcast::error::RecvError::Lagged(_)
+        ));
+    }
+
+    #[test]
+    fn realtime_event_json_contains_required_fields() {
+        let ev = RealtimeEvent::new(
+            Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            "attack.success",
+            json!({"flag": "redacted"}),
+        );
+        let json = serde_json::to_value(&ev).unwrap();
+
+        assert!(json.get("event_id").is_some());
+        assert_eq!(json["type"], "attack.success");
+        assert!(json.get("occurred_at").is_some());
+        assert!(json.get("payload").is_some());
+        // 序列号由 publish 分配，构造时可能为 None
+    }
 }

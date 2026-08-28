@@ -1,11 +1,23 @@
+import {
+	type SseConnection,
+	type SseConnectionState,
+	type SseEvent,
+	connectSse,
+} from "@/lib/sse";
+import { useAuthStore } from "@/stores/AuthStore";
 /**
  * AWD 实时事件流 Hook。
  *
- * 后端暴露 `/api/events/{id}/awd/stream` 时优先 EventSource/SSE。
- * 在接入 WS hub 前回退为 REST 快照轮询。
+ * 使用 fetch-based SSE（`connectSse`）连接 `/api/events/{id}/awd/stream`，
+ * 通过 Authorization: Bearer 头传递认证令牌。
+ *
+ * 原生 EventSource 无法发送自定义请求头，因此本 hook 不再使用 EventSource。
+ *
+ * 连接断开时自动重连（指数退避 + 抖动），认证失败 (401/403) 停止重连。
+ * 重连后若后端不支持 Last-Event-ID 重放，触发 REST 快照刷新。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AwdStreamEvent = {
 	type: string;
@@ -18,7 +30,7 @@ export type UseAwdEventStreamOptions = {
 	eventId: string;
 	/** 流不可用时的 REST 快照间隔（毫秒）。默认 15000。 */
 	pollMs?: number;
-	/** 为 true 时尝试 EventSource。默认 true。 */
+	/** 为 true 时尝试 SSE。默认 true。 */
 	preferStream?: boolean;
 	enabled?: boolean;
 };
@@ -31,99 +43,140 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 		enabled = true,
 	} = options;
 	const qc = useQueryClient();
-	const [connected, setConnected] = useState(false);
+	const [connectionState, setConnectionState] =
+		useState<SseConnectionState>("idle");
 	const [lastEvent, setLastEvent] = useState<AwdStreamEvent | null>(null);
+	const [lastError, setLastError] = useState<Error | null>(null);
 	const lastSeq = useRef<number>(0);
 	const seen = useRef<Set<number>>(new Set());
+	const connRef = useRef<SseConnection | null>(null);
 
-	const invalidateAwd = () => {
+	const invalidateAwd = useCallback(() => {
 		qc.invalidateQueries({ queryKey: ["awd-scores", eventId] });
 		qc.invalidateQueries({ queryKey: ["awd-gameboxes", eventId] });
 		qc.invalidateQueries({ queryKey: ["admin-awd-scores", eventId] });
 		qc.invalidateQueries({ queryKey: ["eventInfo", eventId] });
 		qc.invalidateQueries({ queryKey: ["event", eventId] });
-	};
+	}, [qc, eventId]);
 
-	const handleEvent = (ev: AwdStreamEvent) => {
-		if (typeof ev.sequence === "number") {
-			if (seen.current.has(ev.sequence)) return;
-			// 限制序号去重的内存占用
-			if (seen.current.size > 2000) seen.current.clear();
-			seen.current.add(ev.sequence);
-			if (ev.sequence < lastSeq.current) {
-				// 可能发生重连回退——刷新快照
-				invalidateAwd();
+	const handleSseEvent = useCallback(
+		(ev: SseEvent) => {
+			try {
+				const data = JSON.parse(ev.data) as AwdStreamEvent;
+				if (!data || typeof data !== "object" || !("type" in data)) return;
+
+				// 序列号去重
+				if (typeof data.sequence === "number") {
+					if (seen.current.has(data.sequence)) return;
+					if (seen.current.size > 2000) seen.current.clear();
+					seen.current.add(data.sequence);
+					if (data.sequence < lastSeq.current) {
+						// 重连回退 → 刷新快照
+						invalidateAwd();
+					}
+					lastSeq.current = Math.max(lastSeq.current, data.sequence);
+				}
+
+				setLastEvent(data);
+
+				// 比分/轮次/网络变更 → REST 快照刷新
+				if (
+					data.type.startsWith("score.") ||
+					data.type.startsWith("attack.") ||
+					data.type.startsWith("judge.") ||
+					data.type.startsWith("round.") ||
+					data.type.includes("pause") ||
+					data.type.includes("resume") ||
+					data.type.includes("ban") ||
+					data.type.includes("network") ||
+					data.type.includes("precheck")
+				) {
+					invalidateAwd();
+				}
+			} catch {
+				// 忽略格式错误
 			}
-			lastSeq.current = Math.max(lastSeq.current, ev.sequence);
-		}
-		setLastEvent(ev);
-		// 任意比分/轮次/网络变更 → REST 快照刷新
-		if (
-			ev.type.startsWith("score.") ||
-			ev.type.startsWith("attack.") ||
-			ev.type.startsWith("judge.") ||
-			ev.type.startsWith("round.") ||
-			ev.type.includes("pause") ||
-			ev.type.includes("resume") ||
-			ev.type.includes("ban") ||
-			ev.type.includes("network") ||
-			ev.type.includes("precheck")
-		) {
-			invalidateAwd();
-		}
-	};
+		},
+		[invalidateAwd],
+	);
 
 	useEffect(() => {
-		if (!enabled || !eventId) return;
+		if (!enabled || !eventId) {
+			connRef.current?.close();
+			connRef.current = null;
+			return;
+		}
 
-		let es: EventSource | null = null;
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
-		let closed = false;
+		let disposed = false;
 
 		const startPoll = () => {
-			if (pollTimer || closed) return;
-			setConnected(false);
+			if (pollTimer || disposed) return;
+			setConnectionState("idle");
 			pollTimer = setInterval(invalidateAwd, pollMs);
-			// 回退路径立即拉快照
 			invalidateAwd();
 		};
 
-		if (preferStream && typeof EventSource !== "undefined") {
-			try {
-				// 后端可能尚未暴露；onerror 回退为轮询。
-				es = new EventSource(`/api/events/${eventId}/awd/stream`, {
-					withCredentials: true,
-				});
-				es.onopen = () => {
-					if (!closed) setConnected(true);
-				};
-				es.onmessage = (msg) => {
-					try {
-						const data = JSON.parse(msg.data) as AwdStreamEvent;
-						handleEvent(data);
-					} catch {
-						// 忽略格式错误
+		if (preferStream) {
+			const controller = new AbortController();
+
+			const connection = connectSse({
+				url: `/api/events/${eventId}/awd/stream`,
+				headers: {},
+				signal: controller.signal,
+				getToken: () => useAuthStore.getState().token,
+				onOpen: () => {
+					if (!disposed) setConnectionState("connected");
+				},
+				onEvent: handleSseEvent,
+				onError: (err) => {
+					if (!disposed) setLastError(err);
+				},
+				onStateChange: (status) => {
+					if (!disposed) {
+						setConnectionState(status.state);
+						if (status.lastError) setLastError(status.lastError);
+						// 认证失败 → 回退轮询
+						if (status.state === "auth_error") {
+							connRef.current?.close();
+							connRef.current = null;
+							startPoll();
+						}
 					}
-				};
-				es.onerror = () => {
-					es?.close();
-					es = null;
-					startPoll();
-				};
-			} catch {
-				startPoll();
-			}
-		} else {
-			startPoll();
+				},
+			});
+
+			connRef.current = connection;
+
+			return () => {
+				disposed = true;
+				controller.abort();
+				connection.close();
+				connRef.current = null;
+				if (pollTimer) {
+					clearInterval(pollTimer);
+					pollTimer = null;
+				}
+			};
 		}
 
+		startPoll();
+
 		return () => {
-			closed = true;
-			es?.close();
-			if (pollTimer) clearInterval(pollTimer);
+			disposed = true;
+			if (pollTimer) {
+				clearInterval(pollTimer);
+				pollTimer = null;
+			}
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [eventId, enabled, pollMs, preferStream]);
+	}, [eventId, enabled, pollMs, preferStream, handleSseEvent, invalidateAwd]);
 
-	return { connected, lastEvent, invalidateAwd };
+	return {
+		connected: connectionState === "connected",
+		connectionState,
+		lastEvent,
+		lastError,
+		invalidateAwd,
+	};
 }

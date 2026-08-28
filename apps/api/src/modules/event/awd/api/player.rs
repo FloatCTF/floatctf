@@ -510,57 +510,84 @@ pub async fn get_wireguard_config(
 }
 
 /// GET /api/events/{event_id}/awd/stream
-/// GET /api/events/{event_id}/awd/stream
-/// 来自进程内 `BroadcastEventPublisher` 中枢的 Server-Sent Events。
-/// 客户端按信封中的 `event_id` 过滤；重连 + REST 快照
-/// 由前端负责（`useAwdEventStream`）。
+///
+/// 浏览器认证的 Server-Sent Events 流（fetch + Bearer token）。
+/// 前端通过 `connectSse()` 工具函数连接，不再使用原生 EventSource。
+///
+/// 订阅前校验：
+/// - 认证：Bearer token（UserJwtGuard）
+/// - 授权：用户必须属于该赛事的战队（event_team_members）
+///
+/// 断开时自动释放广播订阅者；无遗留 subscriber 泄漏。
 #[get("{event_id}/awd/stream")]
 pub async fn event_stream(
-    _user: UserJwtGuard,
+    user: UserJwtGuard,
+    ctx: ReqCtx,
     hub: web::Data<crate::infrastructure::realtime::BroadcastEventPublisher>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {
-    use futures_util::stream::unfold;
-
     let event_id = path.into_inner();
-    let rx = hub.subscribe();
+    let user = user.into_inner();
 
-    let body = unfold(
-        (rx, false, event_id),
-        |(mut rx, primed, event_id)| async move {
+    // ── 授权：用户必须属于该赛事 ──
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .ok()
+        .flatten();
+    if membership.is_none() {
+        return HttpResponse::Forbidden().finish();
+    }
+
+    let rx = hub.subscribe();
+    let keepalive_interval = std::time::Duration::from_secs(25);
+
+    let body = futures_util::stream::unfold(
+        (rx, false, event_id, keepalive_interval),
+        |(mut rx, primed, event_id, keepalive_interval)| async move {
             if !primed {
                 return Some((
                     Ok::<_, actix_web::Error>(web::Bytes::from(": connected\n\n")),
-                    (rx, true, event_id),
+                    (rx, true, event_id, keepalive_interval),
                 ));
             }
             loop {
-                match rx.recv().await {
-                    Ok(ev) => {
-                        if ev.event_id != event_id {
-                            continue;
-                        }
-                        match serde_json::to_string(&ev) {
-                            Ok(json) => {
+                tokio::select! {
+                    recv = rx.recv() => {
+                        match recv {
+                            Ok(ev) => {
+                                if ev.event_id != event_id {
+                                    continue;
+                                }
+                                match serde_json::to_string(&ev) {
+                                    Ok(json) => {
+                                        return Some((
+                                            Ok(web::Bytes::from(format!("data: {json}\n\n"))),
+                                            (rx, true, event_id, keepalive_interval),
+                                        ));
+                                    }
+                                    Err(_) => continue,
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                let payload = serde_json::json!({
+                                    "type": "stream.lagged",
+                                    "event_id": event_id,
+                                });
                                 return Some((
-                                    Ok(web::Bytes::from(format!("data: {json}\n\n"))),
-                                    (rx, true, event_id),
+                                    Ok(web::Bytes::from(format!("data: {payload}\n\n"))),
+                                    (rx, true, event_id, keepalive_interval),
                                 ));
                             }
-                            Err(_) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let payload = serde_json::json!({
-                            "type": "stream.lagged",
-                            "event_id": event_id,
-                        });
+                    _ = tokio::time::sleep(keepalive_interval) => {
+                        // SSE comment keepalive — 不是应用事件，前端解析器忽略
                         return Some((
-                            Ok(web::Bytes::from(format!("data: {payload}\n\n"))),
-                            (rx, true, event_id),
+                            Ok(web::Bytes::from(": keepalive\n\n")),
+                            (rx, true, event_id, keepalive_interval),
                         ));
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                 }
             }
         },
@@ -570,5 +597,9 @@ pub async fn event_stream(
         .insert_header((actix_web::http::header::CONTENT_TYPE, "text/event-stream"))
         .insert_header((actix_web::http::header::CACHE_CONTROL, "no-cache"))
         .insert_header((actix_web::http::header::CONNECTION, "keep-alive"))
+        .insert_header((
+            actix_web::http::header::HeaderName::from_static("x-accel-buffering"),
+            actix_web::http::header::HeaderValue::from_static("no"),
+        ))
         .streaming(body)
 }

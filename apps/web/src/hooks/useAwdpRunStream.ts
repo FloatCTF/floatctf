@@ -1,11 +1,16 @@
+import {
+	type SseConnection,
+	type SseConnectionState,
+	type SseEvent,
+	connectSse,
+} from "@/lib/sse";
+import { useAuthStore } from "@/stores/AuthStore";
 import { useQueryClient } from "@tanstack/react-query";
 /**
  * AWDP Practice Run 实时事件流 hook。
  *
- * 与 useAwdpEventStream 同模式：优先 EventSource
- * （`/api/service/awdp/runs/{runId}/stream`），断线回退轮询 invalidate。
- * 命中 `awdp.(score|phase|patch|manual|round|evaluation|instance|run)` 时
- * 批量失效 run 页相关 queryKey（含目录页 active_training）。
+ * 使用 fetch-based SSE 通过 Authorization: Bearer 头传递认证令牌。
+ * 连接 `/api/service/awdp/runs/{runId}/stream`，断线回退轮询 invalidate。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -27,24 +32,33 @@ export function useAwdpRunStream({
 	preferStream = true,
 	enabled = true,
 }: UseAwdpRunStreamOptions) {
-	const [connected, setConnected] = useState(false);
+	const [connectionState, setConnectionState] =
+		useState<SseConnectionState>("idle");
+	const [lastError, setLastError] = useState<Error | null>(null);
 	const lastEventRef = useRef<AwdpStreamEvent | null>(null);
 	const queryClient = useQueryClient();
+	const connRef = useRef<SseConnection | null>(null);
 
 	const invalidate = useCallback(() => {
 		queryClient.invalidateQueries({ queryKey: ["awdp-run", runId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-run-rounds", runId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-run-evals", runId] });
 		queryClient.invalidateQueries({ queryKey: ["awdp-run-scores", runId] });
-		// 目录页 active_training 的 phase/run 会随 run 推进变化。
 		queryClient.invalidateQueries({ queryKey: ["gamebox-catalog"] });
 	}, [queryClient, runId]);
 
 	const onEvent = useCallback(
-		(ev: AwdpStreamEvent) => {
-			lastEventRef.current = ev;
-			if (SNAPSHOT_RE.test(ev.type)) {
-				invalidate();
+		(ev: SseEvent) => {
+			try {
+				const data = JSON.parse(ev.data) as AwdpStreamEvent;
+				if (data && typeof data === "object" && "type" in data) {
+					lastEventRef.current = data;
+					if (SNAPSHOT_RE.test(data.type)) {
+						invalidate();
+					}
+				}
+			} catch {
+				// ignore malformed frames
 			}
 		},
 		[invalidate],
@@ -52,9 +66,10 @@ export function useAwdpRunStream({
 
 	useEffect(() => {
 		if (!enabled || !runId) {
+			connRef.current?.close();
+			connRef.current = null;
 			return;
 		}
-		let es: EventSource | null = null;
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let stopped = false;
 
@@ -69,33 +84,51 @@ export function useAwdpRunStream({
 			}, pollMs);
 		};
 
-		if (preferStream && typeof EventSource !== "undefined") {
-			es = new EventSource(`/api/service/awdp/runs/${runId}/stream`, {
-				withCredentials: true,
-			});
-			es.onopen = () => setConnected(true);
-			es.onerror = () => {
-				setConnected(false);
-				es?.close();
-				startPolling();
-			};
-			es.onmessage = (msg) => {
-				try {
-					const data = JSON.parse(msg.data) as AwdpStreamEvent;
-					if (data && typeof data === "object" && "type" in data) {
-						onEvent(data);
+		if (preferStream) {
+			const controller = new AbortController();
+
+			const connection = connectSse({
+				url: `/api/service/awdp/runs/${runId}/stream`,
+				headers: {},
+				signal: controller.signal,
+				getToken: () => useAuthStore.getState().token,
+				onOpen: () => {
+					if (!stopped) setConnectionState("connected");
+				},
+				onEvent,
+				onError: (err) => {
+					if (!stopped) setLastError(err);
+				},
+				onStateChange: (status) => {
+					if (!stopped) {
+						setConnectionState(status.state);
+						if (status.lastError) setLastError(status.lastError);
+						if (status.state === "auth_error") {
+							connRef.current?.close();
+							connRef.current = null;
+							startPolling();
+						}
 					}
-				} catch {
-					// ignore malformed frames
+				},
+			});
+
+			connRef.current = connection;
+
+			return () => {
+				stopped = true;
+				controller.abort();
+				connection.close();
+				connRef.current = null;
+				if (pollTimer) {
+					clearInterval(pollTimer);
 				}
 			};
-		} else {
-			startPolling();
 		}
+
+		startPolling();
 
 		return () => {
 			stopped = true;
-			es?.close();
 			if (pollTimer) {
 				clearInterval(pollTimer);
 			}
@@ -103,8 +136,10 @@ export function useAwdpRunStream({
 	}, [runId, enabled, preferStream, pollMs, invalidate, onEvent]);
 
 	return {
-		connected,
+		connected: connectionState === "connected",
+		connectionState,
 		lastEvent: lastEventRef.current,
+		lastError,
 		invalidateRun: invalidate,
 	};
 }

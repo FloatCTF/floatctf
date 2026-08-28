@@ -1,7 +1,14 @@
+import {
+	type SseConnection,
+	type SseConnectionState,
+	type SseEvent,
+	connectSse,
+} from "@/lib/sse";
+import { useAuthStore } from "@/stores/AuthStore";
 import { useQueryClient } from "@tanstack/react-query";
 /**
  * AWDP 实时事件流 hook。
- * 与 useAwdEventStream 同模式：优先 EventSource，失败回退轮询（invalidate）。
+ * 使用 fetch-based SSE 通过 Authorization: Bearer 头传递认证令牌。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -28,9 +35,12 @@ export function useAwdpEventStream({
 	preferStream = true,
 	enabled = true,
 }: UseAwdpEventStreamOptions) {
-	const [connected, setConnected] = useState(false);
+	const [connectionState, setConnectionState] =
+		useState<SseConnectionState>("idle");
+	const [lastError, setLastError] = useState<Error | null>(null);
 	const lastEventRef = useRef<AwdpStreamEvent | null>(null);
 	const queryClient = useQueryClient();
+	const connRef = useRef<SseConnection | null>(null);
 	// 事件节流：比赛进行中 score/phase 事件可能密集（多人抢 flag），
 	// 把短窗口内多次 invalidate 合并为一次，避免 refetch 风暴卡住页面。
 	const invalidateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,10 +63,17 @@ export function useAwdpEventStream({
 	}, [queryClient, eventId]);
 
 	const onEvent = useCallback(
-		(ev: AwdpStreamEvent) => {
-			lastEventRef.current = ev;
-			if (SNAPSHOT_RE.test(ev.type)) {
-				invalidate();
+		(ev: SseEvent) => {
+			try {
+				const data = JSON.parse(ev.data) as AwdpStreamEvent;
+				if (data && typeof data === "object" && "type" in data) {
+					lastEventRef.current = data;
+					if (SNAPSHOT_RE.test(data.type)) {
+						invalidate();
+					}
+				}
+			} catch {
+				// ignore malformed frames
 			}
 		},
 		[invalidate],
@@ -64,9 +81,10 @@ export function useAwdpEventStream({
 
 	useEffect(() => {
 		if (!enabled || !eventId) {
+			connRef.current?.close();
+			connRef.current = null;
 			return;
 		}
-		let es: EventSource | null = null;
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let stopped = false;
 
@@ -81,33 +99,55 @@ export function useAwdpEventStream({
 			}, pollMs);
 		};
 
-		if (preferStream && typeof EventSource !== "undefined") {
-			es = new EventSource(`/api/events/${eventId}/awdp/stream`, {
-				withCredentials: true,
-			});
-			es.onopen = () => setConnected(true);
-			es.onerror = () => {
-				setConnected(false);
-				es?.close();
-				startPolling();
-			};
-			es.onmessage = (msg) => {
-				try {
-					const data = JSON.parse(msg.data) as AwdpStreamEvent;
-					if (data && typeof data === "object" && "type" in data) {
-						onEvent(data);
+		if (preferStream) {
+			const controller = new AbortController();
+
+			const connection = connectSse({
+				url: `/api/events/${eventId}/awdp/stream`,
+				headers: {},
+				signal: controller.signal,
+				getToken: () => useAuthStore.getState().token,
+				onOpen: () => {
+					if (!stopped) setConnectionState("connected");
+				},
+				onEvent,
+				onError: (err) => {
+					if (!stopped) setLastError(err);
+				},
+				onStateChange: (status) => {
+					if (!stopped) {
+						setConnectionState(status.state);
+						if (status.lastError) setLastError(status.lastError);
+						if (status.state === "auth_error") {
+							connRef.current?.close();
+							connRef.current = null;
+							startPolling();
+						}
 					}
-				} catch {
-					// ignore malformed frames
+				},
+			});
+
+			connRef.current = connection;
+
+			return () => {
+				stopped = true;
+				controller.abort();
+				connection.close();
+				connRef.current = null;
+				if (pollTimer) {
+					clearInterval(pollTimer);
+				}
+				if (invalidateTimerRef.current) {
+					clearTimeout(invalidateTimerRef.current);
+					invalidateTimerRef.current = null;
 				}
 			};
-		} else {
-			startPolling();
 		}
+
+		startPolling();
 
 		return () => {
 			stopped = true;
-			es?.close();
 			if (pollTimer) {
 				clearInterval(pollTimer);
 			}
@@ -119,8 +159,10 @@ export function useAwdpEventStream({
 	}, [eventId, enabled, preferStream, pollMs, invalidate, onEvent]);
 
 	return {
-		connected,
+		connected: connectionState === "connected",
+		connectionState,
 		lastEvent: lastEventRef.current,
+		lastError,
 		invalidateAwdp: invalidate,
 	};
 }

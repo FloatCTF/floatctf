@@ -26,10 +26,11 @@ function formatDate(iso?: string) {
 }
 
 /** Determine if flag submission is allowed based on AWD state. */
-function flagAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): { allowed: boolean; reason: string } {
+function flagAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean, finalSettlement: boolean): { allowed: boolean; reason: string } {
 	if (banned) return { allowed: false, reason: "Your team is banned." };
 	if (!awdStatus || !awdPhase) return { allowed: false, reason: "AWD not configured." };
 	if (awdStatus === "finished" || awdStatus === "archived") return { allowed: false, reason: "Competition finished." };
+	if (finalSettlement) return { allowed: false, reason: "Final settlement — competition is closed." };
 	if (awdStatus === "paused") return { allowed: false, reason: "Competition paused." };
 	if (awdStatus === "network_error") return { allowed: false, reason: "Infrastructure unavailable." };
 	if (awdPhase === "pause") return { allowed: false, reason: "Competition paused." };
@@ -123,7 +124,7 @@ function RouteComponent() {
 	const isLeaving =
 		quitEventTeamMutation.isPending || joinEventTeamMutation.isPending;
 
-	const flagState = flagAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false);
+	const flagState = flagAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false, awdStatus?.final_settlement ?? false);
 
 	if (isLoading || statusQuery.isLoading) {
 		return <div className="p-4">Loading…</div>;
@@ -309,6 +310,13 @@ function RouteComponent() {
 					{awdStatus && (
 						<section className="p-3 rounded border">
 							<h4 className="font-bold text-sm mb-2">AWD Status</h4>
+							{awdStatus.final_settlement && (
+								<div className="mb-2 p-2 rounded border border-[var(--attention-emphasis)] bg-[var(--attention-subtle)] text-sm">
+									<strong>Final settlement</strong> — The attack phase has ended.
+									Final Judge checks are being settled. The scoreboard may still
+									change until the event reaches Finished.
+								</div>
+							)}
 							<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2 text-sm">
 								<dt className="font-bold text-[var(--fgColor-muted)]">Phase</dt>
 								<dd>{awdStatus.phase}</dd>

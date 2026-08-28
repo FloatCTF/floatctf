@@ -38,6 +38,9 @@ pub struct AwdEventStatusDto {
     pub verified_at: Option<DateTimeWithTimeZone>,
     pub started_at: Option<DateTimeWithTimeZone>,
     pub updated_at: DateTimeWithTimeZone,
+    /// 派生：最终轮次已完成且无活动轮次，Judge 仍在结算中。
+    /// 此时 competition 操作已关闭，但 scoreboard 尚未最终稳定。
+    pub final_settlement: bool,
 }
 
 impl From<awd_events::Model> for AwdEventStatusDto {
@@ -60,6 +63,7 @@ impl From<awd_events::Model> for AwdEventStatusDto {
             verified_at: m.verified_at,
             started_at: m.started_at,
             updated_at: m.updated_at,
+            final_settlement: false, // set by handler after computing from latest round
         }
     }
 }
@@ -74,6 +78,8 @@ pub struct AwdPlayerStatusDto {
     pub round_count: Option<i32>,
     pub banned: bool,
     pub score: Option<i64>,
+    /// 派生：最终轮次已完成且无活动轮次，Judge 仍在结算中。
+    pub final_settlement: bool,
 }
 
 // ── Admin request DTOs ──

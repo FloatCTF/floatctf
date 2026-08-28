@@ -27,6 +27,8 @@ export type AwdEventStatus = {
 	verified_at: string | null;
 	started_at: string | null;
 	updated_at: string;
+	/** Derived: final round completed, Judge still settling. Competition closed. */
+	final_settlement: boolean;
 };
 
 export type AwdEventConfigInput = {
@@ -155,6 +157,8 @@ export type AwdPlayerStatus = {
 	round_count: number | null;
 	banned: boolean;
 	score: number | null;
+	/** Derived: final round completed, Judge still settling. Competition closed. */
+	final_settlement: boolean;
 };
 
 export type WireGuardConfigResponse = {

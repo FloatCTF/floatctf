@@ -47,6 +47,8 @@ export type AwdProgressState = {
 	roundCount: number | null;
 	roundDurationSecs: number;
 	startedAt: string | null;
+	/** Derived: final round completed, Judge still settling. */
+	finalSettlement?: boolean;
 };
 
 function useNow() {
@@ -71,6 +73,7 @@ export function AwdEventProgress({
 	roundCount,
 	roundDurationSecs,
 	startedAt,
+	finalSettlement,
 }: AwdProgressState) {
 	const now = useNow();
 	const started = startedAt ? Date.parse(startedAt) : null;
@@ -81,6 +84,9 @@ export function AwdEventProgress({
 
 	if (status === "finished" || status === "archived") {
 		label = STATUS_LABEL[status] ?? status;
+		progressPct = 0;
+	} else if (finalSettlement) {
+		label = "Final Settlement";
 		progressPct = 0;
 	} else if (status === "network_error") {
 		label = "⚠ Network Error";
@@ -145,6 +151,7 @@ export function adminProgressState(s: AwdEventStatus): AwdProgressState {
 		roundCount: s.round_count,
 		roundDurationSecs: s.round_duration_secs,
 		startedAt: s.started_at,
+		finalSettlement: s.final_settlement,
 	};
 }
 
@@ -159,5 +166,6 @@ export function playerProgressState(s: AwdPlayerStatus): AwdProgressState {
 		roundCount: s.round_count,
 		roundDurationSecs: 0, // player status doesn't expose this
 		startedAt: null,
+		finalSettlement: s.final_settlement,
 	};
 }

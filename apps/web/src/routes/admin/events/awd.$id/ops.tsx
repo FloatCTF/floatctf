@@ -121,6 +121,7 @@ function RouteComponent() {
 
 	const rows = scores.data?.data ?? [];
 	const status = awd?.status ?? "unknown";
+	const isFinalSettlement = awd?.final_settlement ?? false;
 	const isFinished = status === "finished" || status === "archived";
 
 	return (
@@ -132,6 +133,13 @@ function RouteComponent() {
 				<h4 className="font-bold mb-2">Lifecycle</h4>
 
 				{/* Contextual state banner */}
+				{isFinalSettlement && (
+					<InlineMessage variant="warning" className="mb-2">
+						<strong>Final Settlement</strong> — Final Judge checks are being settled.
+						Competition actions are closed. The event will become Finished when all
+						final Judge tasks are terminal and scoring is settled.
+					</InlineMessage>
+				)}
 				{status === "network_error" && (
 					<InlineMessage variant="critical" className="mb-2">
 						<strong>Network Error</strong> — Platform infrastructure failure.
@@ -152,7 +160,7 @@ function RouteComponent() {
 
 				<ButtonGroup>
 					{/* Pre-Running: Deploy, Precheck, Start */}
-					{["draft", "configuring", "deploy_failed"].includes(status) && (
+					{["draft", "configuring", "deploy_failed"].includes(status) && !isFinalSettlement && (
 						<Button
 							variant="primary"
 							disabled={pending}
@@ -161,7 +169,7 @@ function RouteComponent() {
 							Deploy
 						</Button>
 					)}
-					{["deployed", "verification_failed", "configuring", "draft"].includes(status) && (
+					{["deployed", "verification_failed", "configuring", "draft"].includes(status) && !isFinalSettlement && (
 						<Button
 							disabled={pending}
 							onClick={() => precheck.mutate()}
@@ -169,7 +177,7 @@ function RouteComponent() {
 							Precheck
 						</Button>
 					)}
-					{["verified", "start_blocked"].includes(status) && (
+					{["verified", "start_blocked"].includes(status) && !isFinalSettlement && (
 						<Button
 							variant="primary"
 							disabled={pending}
@@ -179,35 +187,18 @@ function RouteComponent() {
 						</Button>
 					)}
 
-					{/* Running: Pause, Finish */}
-					{status === "running" && (
-						<>
-							<Button
-								disabled={pending}
-								onClick={() => pause.mutate()}
-							>
-								Pause
-							</Button>
-							<Button
-								variant="danger"
-								disabled={pending}
-								onClick={async () => {
-									const ok = await confirmDialog({
-										title: "Finish competition?",
-										content:
-											"Competition will end. Final settlement will run asynchronously. Scoreboard will become final. This cannot be undone.",
-										confirmButtonType: "danger",
-									});
-									if (ok) finish.mutate();
-								}}
-							>
-								Finish
-							</Button>
-						</>
+					{/* Running (normal): Pause only — no manual Finish */}
+					{status === "running" && !isFinalSettlement && (
+						<Button
+							disabled={pending}
+							onClick={() => pause.mutate()}
+						>
+							Pause
+						</Button>
 					)}
 
 					{/* Paused: Resume */}
-					{status === "paused" && (
+					{status === "paused" && !isFinalSettlement && (
 						<Button
 							variant="primary"
 							disabled={pending}
@@ -218,7 +209,7 @@ function RouteComponent() {
 					)}
 
 					{/* NetworkError: Resume */}
-					{status === "network_error" && (
+					{status === "network_error" && !isFinalSettlement && (
 						<Button
 							variant="primary"
 							disabled={pending}

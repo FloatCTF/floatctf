@@ -120,6 +120,17 @@ function Overview({ event, awd }: { event: { title: string; start_time?: string;
 				</div>
 			)}
 
+			{/* Final Settlement banner */}
+			{awd.final_settlement && (
+				<div className="mt-3">
+					<InlineMessage variant="warning">
+						<strong>Final Settlement</strong> — Final Judge settlement is in progress.
+						Competition actions are closed. The event will become Finished when all
+						final Judge tasks are terminal and scoring is settled.
+					</InlineMessage>
+				</div>
+			)}
+
 			{/* Paused banner */}
 			{awd.status === "paused" && (
 				<div className="mt-3">

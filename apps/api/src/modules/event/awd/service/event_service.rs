@@ -652,3 +652,131 @@ pub async fn maybe_finish_event(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::sea_orm_active_enums::{AwdEventStatus, AwdPhase, RoundStatus};
+    use sea_orm::prelude::DateTimeWithTimeZone;
+    use uuid::Uuid;
+
+    fn make_awd_event(status: AwdEventStatus, phase: AwdPhase, round_count: Option<i32>) -> awd_events::Model {
+        let now = DateTimeWithTimeZone::default();
+        awd_events::Model {
+            id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            status,
+            phase,
+            round_duration_secs: 300,
+            initial_score: 1000,
+            free_reset_count: 3,
+            extra_reset_penalty: 100,
+            judge_max_concurrency: 10,
+            judge_default_timeout_secs: 30,
+            judge_retry_interval_secs: 5,
+            judge_grace_period_secs: 30,
+            archive_retention_hours: 168,
+            event_secret_ciphertext: vec![],
+            event_secret_nonce: vec![],
+            flagserver_token_ciphertext: None,
+            flagserver_token_nonce: None,
+            judgeserver_token_ciphertext: None,
+            judgeserver_token_nonce: None,
+            wg_server_private_key_ciphertext: None,
+            wg_server_private_key_nonce: None,
+            wg_server_public_key: None,
+            key_version: 1,
+            verified_at: None,
+            verified_revision: None,
+            pause_remaining_secs: None,
+            started_at: None,
+            finished_at: None,
+            created_at: now,
+            updated_at: now,
+            paused_phase: None,
+            configuration_generation: 0,
+            verified_generation: None,
+            round_count,
+            hardening_ends_at: None,
+        }
+    }
+
+    fn make_round(event_id: Uuid, round_number: i32, status: RoundStatus) -> awd_rounds::Model {
+        let now = DateTimeWithTimeZone::default();
+        awd_rounds::Model {
+            id: Uuid::new_v4(),
+            event_id,
+            round_number,
+            phase: AwdPhase::Attack,
+            status,
+            scheduled_end_at: now,
+            paused_at: None,
+            remaining_secs: None,
+            completed_at: None,
+            started_at: now,
+            created_at: now,
+        }
+    }
+
+    #[test]
+    fn normal_attack_active_round_not_final_settlement() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 5, RoundStatus::Active);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn final_round_completed_no_active_round_is_final_settlement() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 10, RoundStatus::Completed);
+        assert!(is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn not_final_settlement_when_round_number_less_than_round_count() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 9, RoundStatus::Completed);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn not_final_settlement_when_not_running() {
+        let event = make_awd_event(AwdEventStatus::Paused, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 10, RoundStatus::Completed);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn not_final_settlement_when_not_attack() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Hardening, Some(10));
+        let round = make_round(event.event_id, 10, RoundStatus::Completed);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn not_final_settlement_when_round_count_missing() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, None);
+        let round = make_round(event.event_id, 10, RoundStatus::Completed);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn not_final_settlement_when_no_round() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, Some(10));
+        assert!(!is_final_settlement(&event, None));
+    }
+
+    #[test]
+    fn finished_is_not_final_settlement() {
+        let event = make_awd_event(AwdEventStatus::Finished, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 10, RoundStatus::Completed);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+
+    #[test]
+    fn active_last_round_is_not_final_settlement() {
+        let event = make_awd_event(AwdEventStatus::Running, AwdPhase::Attack, Some(10));
+        let round = make_round(event.event_id, 10, RoundStatus::Active);
+        assert!(!is_final_settlement(&event, Some(&round)));
+    }
+}

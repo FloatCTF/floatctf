@@ -76,12 +76,6 @@ function RouteComponent() {
             sortBy: true,
         },
         {
-            accessorKey: "team.points",
-            header: "Score",
-            field: "team.points",
-            sortBy: true,
-        },
-        {
             accessorKey: "team.banned",
             header: "Ban",
             field: "team.banned",

@@ -583,6 +583,16 @@ pub async fn get_player_status(
     .await
     .map_err(AppError::from)?;
 
+    // Compute final_settlement from canonical predicate
+    let latest_round = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?;
+    let final_settlement =
+        crate::modules::event::awd::service::event_service::is_final_settlement(
+            &awd,
+            latest_round.as_ref(),
+        );
+
     UniResponse::ok(Some(AwdPlayerStatusDto {
         event_id,
         status: super::dto::snake_str(&awd.status),
@@ -591,6 +601,7 @@ pub async fn get_player_status(
         round_count: awd.round_count,
         banned,
         score: Some(score),
+        final_settlement,
     }))
     .into()
 }

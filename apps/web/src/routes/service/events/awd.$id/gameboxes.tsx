@@ -18,10 +18,11 @@ export const Route = createFileRoute("/service/events/awd/$id/gameboxes")({
 });
 
 /** Determine if reset is allowed based on AWD state. */
-function resetAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): { allowed: boolean; reason: string } {
+function resetAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean, finalSettlement: boolean): { allowed: boolean; reason: string } {
 	if (banned) return { allowed: false, reason: "Team is banned." };
 	if (!awdStatus || !awdPhase) return { allowed: false, reason: "AWD not configured." };
 	if (awdStatus === "finished" || awdStatus === "archived") return { allowed: false, reason: "Competition finished." };
+	if (finalSettlement) return { allowed: false, reason: "Final settlement — competition is closed." };
 	if (awdStatus === "paused") return { allowed: false, reason: "Competition paused." };
 	if (awdStatus === "network_error") return { allowed: false, reason: "Infrastructure unavailable." };
 	if (awdPhase === "pause") return { allowed: false, reason: "Competition paused." };
@@ -67,7 +68,7 @@ function RouteComponent() {
 	});
 
 	const awdStatus = statusQuery.data?.data ?? null;
-	const resetState = resetAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false);
+	const resetState = resetAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false, awdStatus?.final_settlement ?? false);
 
 	const resetMutation = useMutation({
 		mutationFn: (instanceId: string) =>

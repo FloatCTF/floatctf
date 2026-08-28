@@ -36,10 +36,15 @@ pub async fn get_awd_event(
         .await
         .map_err(AppError::from)?;
     let dto = if let Some(model) = m {
-        let mut dto = AwdEventStatusDto::from(model);
+        let mut dto = AwdEventStatusDto::from(model.clone());
         dto.planned_start_at = scheduler::find_event_start_schedule(ctx.db.get_ref(), event_id)
             .await
             .map_err(AppError::from)?;
+        // Compute final_settlement from canonical predicate
+        let latest_round = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(AppError::from)?;
+        dto.final_settlement = event_service::is_final_settlement(&model, latest_round.as_ref());
         Some(dto)
     } else {
         None

@@ -15,10 +15,11 @@ export const Route = createFileRoute("/service/events/awd/$id/wireguard")({
 });
 
 /** Get a human-readable reason why WireGuard is unavailable. */
-function wgUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): string | null {
+function wgUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean, finalSettlement: boolean): string | null {
 	if (banned) return "Team banned — access unavailable.";
 	if (!awdStatus || !awdPhase) return null;
 	if (awdStatus === "finished" || awdStatus === "archived") return "Competition finished — access locked.";
+	if (finalSettlement) return "Final settlement — competition access is closed.";
 	if (awdStatus === "paused") return "Competition paused — access unavailable.";
 	if (awdStatus === "network_error") return "Infrastructure unavailable.";
 	if (awdPhase === "pause") return "Competition paused — access unavailable.";
@@ -66,6 +67,7 @@ function RouteComponent() {
 		awdStatus?.phase,
 		awdStatus?.status,
 		awdStatus?.banned ?? false,
+		awdStatus?.final_settlement ?? false,
 	);
 
 	if (q.isError || !conf) {

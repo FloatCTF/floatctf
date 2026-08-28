@@ -20,10 +20,11 @@ export const Route = createFileRoute("/service/events/awd/$id/ssh")({
 });
 
 /** Get a human-readable reason why SSH is unavailable. */
-function sshUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): string | null {
+function sshUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean, finalSettlement: boolean): string | null {
 	if (banned) return "Team banned — access unavailable.";
 	if (!awdStatus || !awdPhase) return null;
 	if (awdStatus === "finished" || awdStatus === "archived") return "Competition finished — SSH locked.";
+	if (finalSettlement) return "Final settlement — player access is closed.";
 	if (awdStatus === "paused") return "Competition paused — SSH unavailable.";
 	if (awdStatus === "network_error") return "Infrastructure unavailable.";
 	if (awdPhase === "pause") return "Competition paused — SSH unavailable.";
@@ -54,6 +55,7 @@ function RouteComponent() {
 		awdStatus?.phase,
 		awdStatus?.status,
 		awdStatus?.banned ?? false,
+		awdStatus?.final_settlement ?? false,
 	);
 
 	const copy = async (key: string, text: string) => {

@@ -26,7 +26,6 @@ function RouteComponent() {
 		queryClient.invalidateQueries({ queryKey: [subject] });
 	};
 
-	// Enable / Disable 切换（对应 Jeopardy 的 Open/Hide）
 	const toggle = useMutation({
 		mutationFn: (vars: { egId: string; enabled: boolean }) =>
 			adminApi.awd.updateEventGamebox(id, vars.egId, { enabled: vars.enabled }),
@@ -37,14 +36,17 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "gamebox_name",
-			header: "GameBox Name",
+			header: "GameBox",
 			field: "gamebox_name",
 			sortBy: true,
 		},
 		{
-			accessorKey: "gamebox_safe_name",
-			header: "Safe Name",
-			field: "gamebox_safe_name",
+			accessorKey: "gamebox_version",
+			header: "Version",
+			field: "gamebox_version",
+			renderCell: (row: EventGameBoxDto) => (
+				<span>{row.gamebox_version ?? "-"}</span>
+			),
 		},
 		{
 			accessorKey: "host_offset",
@@ -55,6 +57,16 @@ function RouteComponent() {
 			accessorKey: "attack_score",
 			header: "Attack Score",
 			field: "attack_score",
+		},
+		{
+			accessorKey: "judge_down_penalty",
+			header: "Down Penalty",
+			field: "judge_down_penalty",
+		},
+		{
+			accessorKey: "first_bonus",
+			header: "First Blood",
+			field: "first_bonus",
 		},
 		{
 			accessorKey: "enabled",
@@ -107,10 +119,6 @@ function RouteComponent() {
 	);
 }
 
-/**
- * Add GameBox to Event —— 照搬 Jeopardy AddChallengeButton：
- * Dialog 内嵌一个库的 GenericTable，勾选后批量 add（同 Add Event Challenges 交互）。
- */
 function AddGameBoxButton({
 	event_id,
 	refresh_query_key,
@@ -137,8 +145,6 @@ function AddGameBoxButton({
 			if (refresh_query_key) {
 				queryClient.invalidateQueries({ queryKey: [refresh_query_key] });
 			}
-			// 同时刷新弹窗内嵌的 library 选择器（LIB_QUERY_KEY），
-			// 否则刚挂载的 GameBox 在重新打开弹窗时仍可被重复选择。
 			queryClient.invalidateQueries({ queryKey: [LIB_QUERY_KEY] });
 			setIsOpen(false);
 			setUserSelectedRowIds(new Set());
@@ -163,17 +169,8 @@ function AddGameBoxButton({
 
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{
-			accessorKey: "name",
-			header: "Name",
-			field: "name",
-			sortBy: true,
-		},
-		{
-			accessorKey: "safe_name",
-			header: "Safe Name",
-			field: "safe_name",
-		},
+		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
+		{ accessorKey: "safe_name", header: "Safe Name", field: "safe_name" },
 		{
 			accessorKey: "image_ref",
 			header: "Image",

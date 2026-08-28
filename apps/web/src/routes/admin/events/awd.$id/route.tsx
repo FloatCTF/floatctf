@@ -15,6 +15,8 @@ import {
 	EventFamily,
 	type Events,
 } from "@/entity";
+import { useAdminAwdEventStream } from "@/hooks/useAdminAwdEventStream";
+import { AwdEventProgress, adminProgressState } from "@/components/awd/AwdEventProgress";
 import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
 
 export const Route = createFileRoute("/admin/events/awd/$id")({
@@ -42,8 +44,12 @@ function RouteComponent() {
 		queryFn: () => adminApi.awd.getStatus(id),
 	});
 
+	// SSE — 管理端实时事件流
+	const stream = useAdminAwdEventStream({ eventId: id });
+
 	const event = eventQuery.data?.data;
 	const configured = Boolean(statusQuery.data?.data);
+
 	useEffect(() => {
 		if (
 			!event?.is_virtual &&
@@ -78,11 +84,17 @@ function RouteComponent() {
 		return <div>Error loading AWD configuration</div>;
 	}
 
+	const awd = statusQuery.data?.data ?? null;
+
 	return (
 		<div>
 			<h3>
 				{event.title} #{event.id}
 			</h3>
+			{awd && <AwdEventProgress {...adminProgressState(awd)} />}
+			<span className="text-xs opacity-60 ml-2">
+				{stream.connected ? "live" : "poll"}
+			</span>
 			<UnderlineNav aria-label="AWD Event">
 				{event.is_virtual ? (
 					<>
@@ -95,6 +107,11 @@ function RouteComponent() {
 					</>
 				) : (
 					<>
+						{configured && (
+							<RouterNavItem to="/admin/events/awd/$id" params={{ id }}>
+								Overview
+							</RouterNavItem>
+						)}
 						<RouterNavItem to="/admin/events/awd/$id/configure" params={{ id }}>
 							Configure
 						</RouterNavItem>
@@ -107,7 +124,7 @@ function RouteComponent() {
 									Network
 								</RouterNavItem>
 								<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
-									Ops
+									Operations
 								</RouterNavItem>
 								<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
 									Instance

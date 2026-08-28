@@ -7,6 +7,7 @@ import dayjs from "dayjs";
 import { type FormEvent, useState } from "react";
 
 import { serviceApi } from "@/api";
+import { awdPlayerApi } from "@/api/awd";
 import {
 	EVENT_STATUS_LABEL,
 	SubmitWriteup,
@@ -24,6 +25,19 @@ function formatDate(iso?: string) {
 	return dayjs.utc(iso).local().format("YYYY-MM-DD HH:mm:ss");
 }
 
+/** Determine if flag submission is allowed based on AWD state. */
+function flagAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): { allowed: boolean; reason: string } {
+	if (banned) return { allowed: false, reason: "Your team is banned." };
+	if (!awdStatus || !awdPhase) return { allowed: false, reason: "AWD not configured." };
+	if (awdStatus === "finished" || awdStatus === "archived") return { allowed: false, reason: "Competition finished." };
+	if (awdStatus === "paused") return { allowed: false, reason: "Competition paused." };
+	if (awdStatus === "network_error") return { allowed: false, reason: "Infrastructure unavailable." };
+	if (awdPhase === "pause") return { allowed: false, reason: "Competition paused." };
+	if (awdPhase === "hardening") return { allowed: false, reason: "Attack has not started (Hardening)." };
+	if (awdPhase === "attack") return { allowed: true, reason: "" };
+	return { allowed: false, reason: "Flag submission not available." };
+}
+
 function RouteComponent() {
 	const { id } = Route.useParams();
 	const queryClient = useQueryClient();
@@ -33,8 +47,16 @@ function RouteComponent() {
 		queryKey: ["eventInfo", id],
 		queryFn: () => serviceApi.events.get(id),
 	});
+
+	// Player AWD status for state-aware UI
+	const statusQuery = useQuery({
+		queryKey: ["awd-player-status", id],
+		queryFn: () => awdPlayerApi.status(id),
+	});
+
 	const eventData = data?.data;
 	const ev = eventData?.event;
+	const awdStatus = statusQuery.data?.data ?? null;
 
 	const status = computeEventStatus(ev?.start_time ?? "", ev?.end_time ?? "");
 	const showStatusText = EVENT_STATUS_LABEL[status];
@@ -47,6 +69,7 @@ function RouteComponent() {
 		queryClient.invalidateQueries({ queryKey: ["awd-scores", id] });
 		queryClient.invalidateQueries({ queryKey: ["awd-wg", id] });
 		queryClient.invalidateQueries({ queryKey: ["awd-ssh", id] });
+		queryClient.invalidateQueries({ queryKey: ["awd-player-status", id] });
 		queryClient.invalidateQueries({ queryKey: ["announcements", id] });
 	};
 
@@ -93,7 +116,6 @@ function RouteComponent() {
 		onError: (e) => banner.showErrorBanner(e),
 	});
 
-	// Team 表单状态
 	const [teamId, setTeamId] = useState("");
 	const [teamName, setTeamName] = useState("");
 	const [flag, setFlag] = useState("");
@@ -101,7 +123,9 @@ function RouteComponent() {
 	const isLeaving =
 		quitEventTeamMutation.isPending || joinEventTeamMutation.isPending;
 
-	if (isLoading) {
+	const flagState = flagAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false);
+
+	if (isLoading || statusQuery.isLoading) {
 		return <div className="p-4">Loading…</div>;
 	}
 	if (isError) {
@@ -138,9 +162,8 @@ function RouteComponent() {
 			/>
 
 			<div className="flex flex-col gap-3 flex-1 min-w-[320px]">
-				{/* 右侧：操作 */}
 				<div className="flex flex-col gap-3">
-					{/* 队伍区（参考 Jeopardy Team 参赛形态） */}
+					{/* Team section */}
 					<section className="p-3 rounded border flex gap-5">
 						{status !== "upcoming" && joined && (
 							<SubmitWriteup eventId={id} teamId={myTeam?.team.id} />
@@ -174,7 +197,6 @@ function RouteComponent() {
 										</>
 									))}
 								</dl>
-								{/* 已加入未开始 */}
 								{status === "upcoming" && (
 									<Button
 										className="w-28"
@@ -193,7 +215,6 @@ function RouteComponent() {
 								)}
 							</div>
 						)}
-						{/* 未开始未加入 */}
 						{status === "upcoming" && !joined && (
 							<>
 								<form
@@ -252,34 +273,69 @@ function RouteComponent() {
 						)}
 					</section>
 
-					{/* AWD 专属：Flag 提交（仅已加入且进行中） */}
-					{joined && status === "ongoing" && (
+					{/* AWD Flag submission — state-aware */}
+					{joined && (
 						<section className="p-3 rounded border flex flex-col gap-2">
-							<FormControl>
-								<FormControl.Label>Submit Flag</FormControl.Label>
-								<TextInput
-									value={flag}
-									onChange={(e) => setFlag(e.target.value)}
-									placeholder="flag{...}"
-									block
-								/>
-							</FormControl>
-							<Button
-								variant="primary"
-								disabled={!flag || submitFlagMutation.isPending}
-								onClick={() =>
-									submitFlagMutation.mutate({ event_id: id, flag })
-								}
-							>
-								Submit
-							</Button>
+							{flagState.allowed ? (
+								<>
+									<FormControl>
+										<FormControl.Label>Submit Flag</FormControl.Label>
+										<TextInput
+											value={flag}
+											onChange={(e) => setFlag(e.target.value)}
+											placeholder="flag{...}"
+											block
+										/>
+									</FormControl>
+									<Button
+										variant="primary"
+										disabled={!flag || submitFlagMutation.isPending}
+										onClick={() =>
+											submitFlagMutation.mutate({ event_id: id, flag })
+										}
+									>
+										Submit
+									</Button>
+								</>
+							) : (
+								<div className="text-sm text-[var(--fgColor-muted)]">
+									{flagState.reason}
+								</div>
+							)}
+						</section>
+					)}
+
+					{/* AWD Status Info */}
+					{awdStatus && (
+						<section className="p-3 rounded border">
+							<h4 className="font-bold text-sm mb-2">AWD Status</h4>
+							<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2 text-sm">
+								<dt className="font-bold text-[var(--fgColor-muted)]">Phase</dt>
+								<dd>{awdStatus.phase}</dd>
+								<dt className="font-bold text-[var(--fgColor-muted)]">Round</dt>
+								<dd>
+									{awdStatus.current_round != null && awdStatus.round_count != null
+										? `${awdStatus.current_round} / ${awdStatus.round_count}`
+										: "-"}
+								</dd>
+								<dt className="font-bold text-[var(--fgColor-muted)]">Score</dt>
+								<dd className="font-mono">{awdStatus.score ?? "-"}</dd>
+								<dt className="font-bold text-[var(--fgColor-muted)]">Ban</dt>
+								<dd>
+									{awdStatus.banned ? (
+										<Label variant="danger">Banned</Label>
+									) : (
+										<Label variant="default">Active</Label>
+									)}
+								</dd>
+							</dl>
 						</section>
 					)}
 
 					<banner.BannerComponent />
 				</div>
 
-				{/* 事件信息卡 */}
+				{/* Event info card */}
 				<section className="p-3 rounded border">
 					<div className="flex items-center gap-2 mb-2">
 						<Heading as="h2">{ev.title}</Heading>

@@ -1,16 +1,29 @@
 import { CopyIcon, DownloadIcon } from "@primer/octicons-react";
 import { Button, Spinner } from "@primer/react";
+import { InlineMessage } from "@primer/react/experimental";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { serviceApi } from "@/api";
+import { awdPlayerApi } from "@/api/awd";
 import { ServiceRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/service/events/awd/$id/wireguard")({
 	component: RouteComponent,
 	loader: ServiceRouteGuard,
 });
+
+/** Get a human-readable reason why WireGuard is unavailable. */
+function wgUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): string | null {
+	if (banned) return "Team banned — access unavailable.";
+	if (!awdStatus || !awdPhase) return null;
+	if (awdStatus === "finished" || awdStatus === "archived") return "Competition finished — access locked.";
+	if (awdStatus === "paused") return "Competition paused — access unavailable.";
+	if (awdStatus === "network_error") return "Infrastructure unavailable.";
+	if (awdPhase === "pause") return "Competition paused — access unavailable.";
+	return null;
+}
 
 function RouteComponent() {
 	const { id } = Route.useParams();
@@ -19,6 +32,14 @@ function RouteComponent() {
 		queryFn: () => serviceApi.awd.wireguardConfig(id),
 		retry: false,
 	});
+
+	const statusQuery = useQuery({
+		queryKey: ["awd-player-status", id],
+		queryFn: () => awdPlayerApi.status(id),
+		retry: false,
+	});
+
+	const awdStatus = statusQuery.data?.data ?? null;
 	const [copied, setCopied] = useState(false);
 
 	const conf = q.data?.data?.config ?? "";
@@ -39,21 +60,47 @@ function RouteComponent() {
 		setTimeout(() => setCopied(false), 1500);
 	};
 
-	if (q.isLoading) return <Spinner />;
+	if (q.isLoading || statusQuery.isLoading) return <Spinner />;
+
+	const unavailableReason = wgUnavailableReason(
+		awdStatus?.phase,
+		awdStatus?.status,
+		awdStatus?.banned ?? false,
+	);
+
 	if (q.isError || !conf) {
 		return (
 			<div className="flex flex-col gap-2 max-w-xl">
-				<p className="text-sm opacity-80">
-					未获取到 WireGuard 配置。常见原因：
-				</p>
-				<ul className="list-disc pl-6 text-sm opacity-80">
-					<li>未加入队伍（Overview 页先加入队伍）</li>
-					<li>赛事尚未部署（等待管理员 Deploy / Start）</li>
-					<li>
-						WireGuard 私钥仅首次拉取返回；若之前已下载过，
-						需联系管理员轮换密钥才能重新获取
-					</li>
-				</ul>
+				{unavailableReason ? (
+					<InlineMessage variant="warning">
+						{unavailableReason}
+					</InlineMessage>
+				) : (
+					<>
+						<p className="text-sm opacity-80">
+							Unable to retrieve WireGuard configuration. Common reasons:
+						</p>
+						<ul className="list-disc pl-6 text-sm opacity-80">
+							<li>Not joined a team (join on Overview page first)</li>
+							<li>Event not yet deployed (wait for admin to Deploy / Start)</li>
+							<li>
+								Private key is returned only on first fetch; if previously downloaded,
+								contact admin to rotate keys
+							</li>
+						</ul>
+					</>
+				)}
+			</div>
+		);
+	}
+
+	// Show state warning if WG shouldn't be available
+	if (unavailableReason) {
+		return (
+			<div className="flex flex-col gap-2 max-w-xl">
+				<InlineMessage variant="warning">
+					{unavailableReason}
+				</InlineMessage>
 			</div>
 		);
 	}
@@ -72,25 +119,25 @@ function RouteComponent() {
 				</div>
 			</div>
 			<p className="text-xs opacity-70">
-				连接 VPN
-				后才能访问游戏盒内网。私钥仅首次拉取返回，请妥善保存；若丢失需管理员轮换密钥。
+				Connect to VPN to access GameBox internal network. Private key is returned
+				only on first fetch — save it securely. If lost, contact admin to rotate keys.
 			</p>
 			<pre className="p-3 bg-canvas-subtle overflow-auto text-xs rounded">
 				{conf}
 			</pre>
 			<div className="text-sm opacity-80">
-				<p className="font-semibold mb-1">使用方式</p>
+				<p className="font-semibold mb-1">Usage</p>
 				<ul className="list-disc pl-6 flex flex-col gap-1">
 					<li>
-						<strong>Windows / macOS</strong>：安装 WireGuard 客户端 → Import
-						tunnel(s) from file → 选择下载的 .conf
+						<strong>Windows / macOS</strong>: Install WireGuard client → Import
+						tunnel(s) from file → select downloaded .conf
 					</li>
 					<li>
-						<strong>Linux</strong>：{" "}
+						<strong>Linux</strong>:{" "}
 						<code>sudo wg-quick up ./floatctf-awd-{id}.conf</code>
 					</li>
 					<li>
-						<strong>Android / iOS</strong>：官方 WireGuard App 扫码或导入 .conf
+						<strong>Android / iOS</strong>: Official WireGuard app — scan QR or import .conf
 					</li>
 				</ul>
 			</div>

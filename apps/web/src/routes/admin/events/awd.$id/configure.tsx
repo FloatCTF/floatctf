@@ -21,25 +21,27 @@ export const Route = createFileRoute("/admin/events/awd/$id/configure")({
 });
 
 type FormState = {
+	roundCount: string;
 	roundDurationSecs: string;
+	initialScore: string;
 	freeResetCount: string;
 	extraResetPenalty: string;
 	judgeMaxConcurrency: string;
 	judgeDefaultTimeoutSecs: string;
 	judgeRetryIntervalSecs: string;
-	judgeGracePeriodSecs: string;
 	archiveRetentionHours: string;
 	plannedStartAt: string;
 };
 
 const DEFAULT_FORM: FormState = {
+	roundCount: "10",
 	roundDurationSecs: "300",
+	initialScore: "1000",
 	freeResetCount: "3",
 	extraResetPenalty: "100",
 	judgeMaxConcurrency: "10",
 	judgeDefaultTimeoutSecs: "30",
 	judgeRetryIntervalSecs: "5",
-	judgeGracePeriodSecs: "30",
 	archiveRetentionHours: "168",
 	plannedStartAt: "",
 };
@@ -73,7 +75,12 @@ function RouteComponent() {
 		queryKey: ["admin-awd-status", id],
 		queryFn: () => adminApi.awd.getStatus(id),
 	});
+	const eventQuery = useQuery({
+		queryKey: ["event", id],
+		queryFn: () => adminApi.events.get(id),
+	});
 	const config = statusQuery.data?.data ?? null;
+	const event = eventQuery.data?.data;
 
 	useEffect(() => {
 		if (!config) {
@@ -86,13 +93,14 @@ function RouteComponent() {
 		if (loadedVersion.current === config.updated_at) return;
 		if (dirty && loadedVersion.current !== null) return;
 		setForm({
+			roundCount: config.round_count != null ? String(config.round_count) : "10",
 			roundDurationSecs: String(config.round_duration_secs),
+			initialScore: String(config.initial_score),
 			freeResetCount: String(config.free_reset_count),
 			extraResetPenalty: String(config.extra_reset_penalty),
 			judgeMaxConcurrency: String(config.judge_max_concurrency),
 			judgeDefaultTimeoutSecs: String(config.judge_default_timeout_secs),
 			judgeRetryIntervalSecs: String(config.judge_retry_interval_secs),
-			judgeGracePeriodSecs: String(config.judge_grace_period_secs),
 			archiveRetentionHours: String(config.archive_retention_hours),
 			plannedStartAt: toLocalDateTimeInput(config.planned_start_at),
 		});
@@ -119,7 +127,7 @@ function RouteComponent() {
 		},
 	});
 
-	if (statusQuery.isLoading) return <Spinner size="large" />;
+	if (statusQuery.isLoading || eventQuery.isLoading) return <Spinner size="large" />;
 	if (statusQuery.isError) {
 		return <div>Failed to load AWD configuration.</div>;
 	}
@@ -138,32 +146,31 @@ function RouteComponent() {
 			setForm((current) => ({ ...current, [key]: event.target.value }));
 		};
 	const submit = () => {
-		const fields = [
+		const numericFields = [
+			form.roundCount,
 			form.roundDurationSecs,
+			form.initialScore,
 			form.freeResetCount,
 			form.extraResetPenalty,
 			form.judgeMaxConcurrency,
 			form.judgeDefaultTimeoutSecs,
 			form.judgeRetryIntervalSecs,
-			form.judgeGracePeriodSecs,
 			form.archiveRetentionHours,
 		].map(Number);
-		if (fields.some((value) => !Number.isSafeInteger(value))) {
-			banner.showBanner(
-				"critical",
-				"All numeric fields must be valid integers.",
-			);
+		if (numericFields.some((value) => !Number.isSafeInteger(value))) {
+			banner.showBanner("critical", "All numeric fields must be valid integers.");
 			return;
 		}
 		const ranges: Array<[number, number, number, string]> = [
-			[fields[0], 30, 86_400, "Round Duration"],
-			[fields[1], 0, 100, "Free Reset Count"],
-			[fields[2], 0, 1_000_000_000, "Extra Reset Penalty"],
-			[fields[3], 1, 1_000, "Max Concurrency"],
-			[fields[4], 1, 3_600, "Default Timeout"],
-			[fields[5], 1, 3_600, "Retry Interval"],
-			[fields[6], 0, 3_600, "Grace Period"],
-			[fields[7], 1, 87_600, "Archive Retention"],
+			[numericFields[0], 1, 1000, "Round Count"],
+			[numericFields[1], 30, 86_400, "Round Duration"],
+			[numericFields[2], 0, 1_000_000_000, "Initial Score"],
+			[numericFields[3], 0, 100, "Free Reset Count"],
+			[numericFields[4], 0, 1_000_000_000, "Extra Reset Penalty"],
+			[numericFields[5], 1, 1_000, "Max Concurrency"],
+			[numericFields[6], 1, 3_600, "Default Timeout"],
+			[numericFields[7], 1, 3_600, "Retry Interval"],
+			[numericFields[8], 1, 87_600, "Archive Retention"],
 		];
 		const invalidRange = ranges.find(
 			([value, min, max]) => value < min || value > max,
@@ -176,27 +183,29 @@ function RouteComponent() {
 			return;
 		}
 		const [
+			roundCount,
 			roundDurationSecs,
+			initialScore,
 			freeResetCount,
 			extraResetPenalty,
 			judgeMaxConcurrency,
 			judgeDefaultTimeoutSecs,
 			judgeRetryIntervalSecs,
-			judgeGracePeriodSecs,
 			archiveRetentionHours,
-		] = fields;
+		] = numericFields;
 		const payload: AwdEventConfigInput = {
 			expected_updated_at:
 				loadedVersion.current === "unconfigured"
 					? undefined
 					: (loadedVersion.current ?? undefined),
+			round_count: roundCount,
 			round_duration_secs: roundDurationSecs,
+			initial_score: initialScore,
 			free_reset_count: freeResetCount,
 			extra_reset_penalty: extraResetPenalty,
 			judge_max_concurrency: judgeMaxConcurrency,
 			judge_default_timeout_secs: judgeDefaultTimeoutSecs,
 			judge_retry_interval_secs: judgeRetryIntervalSecs,
-			judge_grace_period_secs: judgeGracePeriodSecs,
 			archive_retention_hours: archiveRetentionHours,
 			clear_planned_start: !form.plannedStartAt,
 		};
@@ -217,6 +226,16 @@ function RouteComponent() {
 		save.mutate(payload);
 	};
 
+	// ── Timing preview ──
+	const roundCount = Number.parseInt(form.roundCount, 10) || 0;
+	const roundDur = Number.parseInt(form.roundDurationSecs, 10) || 0;
+	const attackDuration = roundCount * roundDur;
+	const eventStart = event?.start_time ? new Date(event.start_time).getTime() : null;
+	const eventEnd = event?.end_time ? new Date(event.end_time).getTime() : null;
+	const eventDuration = eventStart && eventEnd ? (eventEnd - eventStart) / 1000 : null;
+	const hardeningDuration = eventDuration != null ? eventDuration - attackDuration : null;
+	const timingValid = attackDuration > 0 && eventDuration != null && attackDuration <= eventDuration;
+
 	return (
 		<div className="mt-3" style={{ maxWidth: 920 }}>
 			<banner.BannerComponent className="mb-3" />
@@ -232,8 +251,7 @@ function RouteComponent() {
 					<div>
 						<h3 className="m-0">AWD Configure</h3>
 						<p className="color-fg-muted mb-0 mt-1">
-							首次保存会创建 AWD 配置与内部密钥；之后在这里统一维护轮次、
-							Reset、Judge 和归档参数。
+							Configure rounds, scoring, Reset policy, Judge, and lifecycle parameters.
 						</p>
 					</div>
 					<Label variant={config ? "success" : "accent"}>
@@ -265,15 +283,56 @@ function RouteComponent() {
 							borderRadius: 2,
 						}}
 					>
-						当前状态为 <strong>{config?.status}</strong>，AWD 参数已锁定。
-						请先结束当前运行操作或回到可配置状态。
+						Current status is <strong>{config?.status}</strong> — AWD parameters are locked.
+					</Box>
+				)}
+
+				{/* Timing Preview */}
+				{eventDuration != null && roundCount > 0 && roundDur > 0 && (
+					<Box
+						sx={{
+							mt: 3,
+							p: 3,
+							bg: timingValid ? "success.subtle" : "danger.subtle",
+							borderRadius: 2,
+						}}
+					>
+						<h4 className="mb-2">Timing Preview</h4>
+						<div className="grid grid-cols-2 gap-2 text-sm">
+							<span className="text-[var(--fgColor-muted)]">Event Duration</span>
+							<span className="font-mono">{formatDuration(eventDuration)}</span>
+							<span className="text-[var(--fgColor-muted)]">Attack Duration</span>
+							<span className="font-mono">
+								{roundCount} rounds × {roundDur}s = {formatDuration(attackDuration)}
+							</span>
+							<span className="text-[var(--fgColor-muted)]">Hardening Duration</span>
+							<span className="font-mono">
+								{hardeningDuration != null && hardeningDuration >= 0
+									? formatDuration(hardeningDuration)
+									: "N/A"}
+							</span>
+						</div>
+						{!timingValid && (
+							<p className="text-sm color-fg-danger mt-2">
+								⚠ Attack duration ({roundCount} × {roundDur}s = {formatDuration(attackDuration)}) exceeds event duration ({formatDuration(eventDuration)}). Configuration will be rejected.
+							</p>
+						)}
 					</Box>
 				)}
 
 				<Section title="Match & Schedule">
 					<NumberField
+						label="Round Count"
+						caption="Total number of Attack rounds (1–1000)."
+						value={form.roundCount}
+						onChange={set("roundCount")}
+						min={1}
+						max={1000}
+						disabled={!editable}
+					/>
+					<NumberField
 						label="Round Duration"
-						caption="每轮时长（秒），30–86400。"
+						caption="Seconds per round (30–86400)."
 						value={form.roundDurationSecs}
 						onChange={set("roundDurationSecs")}
 						min={30}
@@ -283,7 +342,7 @@ function RouteComponent() {
 					<FormControl disabled={!editable}>
 						<FormControl.Label>Planned Start</FormControl.Label>
 						<FormControl.Caption>
-							可选；留空表示在 Ops 页面手动 Start。
+							Optional; leave empty for manual Start from Operations.
 						</FormControl.Caption>
 						<TextInput
 							type="datetime-local"
@@ -293,10 +352,22 @@ function RouteComponent() {
 					</FormControl>
 				</Section>
 
+				<Section title="Scoring">
+					<NumberField
+						label="Initial Score"
+						caption="Starting score for each team (0–1,000,000,000)."
+						value={form.initialScore}
+						onChange={set("initialScore")}
+						min={0}
+						max={1_000_000_000}
+						disabled={!editable}
+					/>
+				</Section>
+
 				<Section title="Reset Policy">
 					<NumberField
 						label="Free Reset Count"
-						caption="每队免费 Reset 次数。"
+						caption="Number of free Resets per team."
 						value={form.freeResetCount}
 						onChange={set("freeResetCount")}
 						min={0}
@@ -305,7 +376,7 @@ function RouteComponent() {
 					/>
 					<NumberField
 						label="Extra Reset Penalty"
-						caption="超出免费次数后的扣分。"
+						caption="Score penalty per extra Reset."
 						value={form.extraResetPenalty}
 						onChange={set("extraResetPenalty")}
 						min={0}
@@ -317,7 +388,7 @@ function RouteComponent() {
 				<Section title="Judge Policy">
 					<NumberField
 						label="Max Concurrency"
-						caption="单赛事 Judge 最大并发数。"
+						caption="Maximum concurrent Judge tasks per event."
 						value={form.judgeMaxConcurrency}
 						onChange={set("judgeMaxConcurrency")}
 						min={1}
@@ -326,7 +397,7 @@ function RouteComponent() {
 					/>
 					<NumberField
 						label="Default Timeout"
-						caption="Judge 默认超时（秒）。"
+						caption="Judge default timeout (seconds)."
 						value={form.judgeDefaultTimeoutSecs}
 						onChange={set("judgeDefaultTimeoutSecs")}
 						min={1}
@@ -335,19 +406,10 @@ function RouteComponent() {
 					/>
 					<NumberField
 						label="Retry Interval"
-						caption="Judge 重试间隔（秒）。"
+						caption="Judge retry interval (seconds)."
 						value={form.judgeRetryIntervalSecs}
 						onChange={set("judgeRetryIntervalSecs")}
 						min={1}
-						max={3600}
-						disabled={!editable}
-					/>
-					<NumberField
-						label="Grace Period"
-						caption="Judge 结果宽限期（秒）。"
-						value={form.judgeGracePeriodSecs}
-						onChange={set("judgeGracePeriodSecs")}
-						min={0}
 						max={3600}
 						disabled={!editable}
 					/>
@@ -356,7 +418,7 @@ function RouteComponent() {
 				<Section title="Lifecycle">
 					<NumberField
 						label="Archive Retention"
-						caption="Finished 后保留小时数。"
+						caption="Hours to retain after Finished before auto-archive."
 						value={form.archiveRetentionHours}
 						onChange={set("archiveRetentionHours")}
 						min={1}
@@ -383,6 +445,16 @@ function RouteComponent() {
 			</Box>
 		</div>
 	);
+}
+
+function formatDuration(seconds: number): string {
+	if (seconds < 0) return "invalid";
+	const h = Math.floor(seconds / 3600);
+	const m = Math.floor((seconds % 3600) / 60);
+	const s = seconds % 60;
+	if (h > 0) return `${h}h ${m}m ${s}s`;
+	if (m > 0) return `${m}m ${s}s`;
+	return `${s}s`;
 }
 
 function Section({

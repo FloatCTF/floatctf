@@ -1,5 +1,5 @@
 import type { UniResponse } from "@/api/axios";
-import { Button, Spinner } from "@primer/react";
+import { Button, Label, Spinner, useConfirm } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -7,6 +7,7 @@ import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import type { AxiosError } from "axios";
 
 import { serviceApi } from "@/api";
+import { awdPlayerApi } from "@/api/awd";
 import type { AwdGameBox } from "@/api/awd";
 import { useMsgBanner } from "@/components";
 import { ServiceRouteGuard } from "../../route";
@@ -16,10 +17,41 @@ export const Route = createFileRoute("/service/events/awd/$id/gameboxes")({
 	loader: ServiceRouteGuard,
 });
 
+/** Determine if reset is allowed based on AWD state. */
+function resetAllowed(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): { allowed: boolean; reason: string } {
+	if (banned) return { allowed: false, reason: "Team is banned." };
+	if (!awdStatus || !awdPhase) return { allowed: false, reason: "AWD not configured." };
+	if (awdStatus === "finished" || awdStatus === "archived") return { allowed: false, reason: "Competition finished." };
+	if (awdStatus === "paused") return { allowed: false, reason: "Competition paused." };
+	if (awdStatus === "network_error") return { allowed: false, reason: "Infrastructure unavailable." };
+	if (awdPhase === "pause") return { allowed: false, reason: "Competition paused." };
+	if (awdPhase === "hardening" || awdPhase === "attack") return { allowed: true, reason: "" };
+	return { allowed: false, reason: "Reset not available." };
+}
+
+function statusVariant(s: string): "success" | "danger" | "attention" | "default" {
+	switch (s) {
+		case "running":
+		case "ready":
+			return "success";
+		case "resetting":
+			return "attention";
+		case "missing":
+		case "start_failed":
+		case "reset_failed":
+		case "stopped":
+			return "danger";
+		default:
+			return "default";
+	}
+}
+
 function RouteComponent() {
 	const { id } = Route.useParams();
 	const banner = useMsgBanner();
+	const confirmDialog = useConfirm();
 	const queryClient = useQueryClient();
+
 	const { data, isLoading, isError, error } = useQuery<
 		UniResponse<AwdGameBox[]>,
 		AxiosError<{ message: string }>
@@ -27,6 +59,15 @@ function RouteComponent() {
 		queryKey: ["awd-gameboxes", id],
 		queryFn: () => serviceApi.awd.gameboxes(id),
 	});
+
+	const statusQuery = useQuery({
+		queryKey: ["awd-player-status", id],
+		queryFn: () => awdPlayerApi.status(id),
+		retry: false,
+	});
+
+	const awdStatus = statusQuery.data?.data ?? null;
+	const resetState = resetAllowed(awdStatus?.phase, awdStatus?.status, awdStatus?.banned ?? false);
 
 	const resetMutation = useMutation({
 		mutationFn: (instanceId: string) =>
@@ -58,6 +99,9 @@ function RouteComponent() {
 			accessorKey: "status",
 			header: "Status",
 			field: "status",
+			renderCell: (row: AwdGameBox) => (
+				<Label variant={statusVariant(row.status)}>{row.status}</Label>
+			),
 		},
 		{
 			accessorKey: "health_status",
@@ -71,8 +115,16 @@ function RouteComponent() {
 			renderCell: (row: AwdGameBox) => (
 				<Button
 					variant="invisible"
-					onClick={() => resetMutation.mutate(row.id)}
-					disabled={resetMutation.isPending}
+					onClick={async () => {
+						const ok = await confirmDialog({
+							title: "Reset GameBox?",
+							content:
+								"Reset is destructive: the container will be destroyed and rebuilt from the original image. All your modifications will be lost. This may incur a score penalty if you exceed your free reset quota.",
+							confirmButtonType: "danger",
+						});
+						if (ok) resetMutation.mutate(row.id);
+					}}
+					disabled={!resetState.allowed || resetMutation.isPending}
 				>
 					Reset
 				</Button>
@@ -86,7 +138,7 @@ function RouteComponent() {
 		getCoreRowModel: getCoreRowModel(),
 	});
 
-	if (isLoading) {
+	if (isLoading || statusQuery.isLoading) {
 		return <Spinner size="large" />;
 	}
 	if (isError) {
@@ -94,8 +146,8 @@ function RouteComponent() {
 			<div className="p-4 flex flex-col gap-2">
 				<banner.BannerComponent />
 				<p className="text-sm opacity-80">
-					未获取到游戏盒列表：请先到 Overview 页加入队伍；若已加入且长时间为空，
-					说明赛事尚未部署或你的队伍创建于部署之后（需管理员重新 Deploy）。
+					Unable to load GameBoxes. Join a team on the Overview page first.
+					If already joined and empty, the event may not be deployed yet.
 				</p>
 			</div>
 		);
@@ -104,8 +156,14 @@ function RouteComponent() {
 	return (
 		<div className="m-2">
 			<banner.BannerComponent />
+			{!resetState.allowed && (
+				<p className="text-sm text-[var(--fgColor-muted)] mb-2">
+					Reset unavailable: {resetState.reason}
+				</p>
+			)}
 			<p className="text-sm opacity-80 mb-2">
-				游戏盒通过 SSH 访问（见 SSH 页凭据）；Reset 后实例重建但 IP/凭据不变。
+				GameBoxes are accessed via SSH (see SSH page for credentials). Reset destroys
+				and rebuilds the container from the original image — all modifications are lost.
 			</p>
 			<Table.Container>
 				<DataTable
@@ -117,8 +175,8 @@ function RouteComponent() {
 			</Table.Container>
 			{(data?.data?.length ?? 0) === 0 && (
 				<p className="text-sm opacity-70 mt-2">
-					暂无游戏盒：赛事尚未部署，或你的队伍创建于部署之后（需管理员重新
-					Deploy）。
+					No GameBoxes: event may not be deployed yet, or your team was created
+					after deployment (requires admin to re-deploy).
 				</p>
 			)}
 		</div>

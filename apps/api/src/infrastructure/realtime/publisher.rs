@@ -547,13 +547,9 @@ mod tests {
         let mut rx = hub.subscribe();
 
         // 发布第一个事件
-        hub.publish(RealtimeEvent::new(
-            Uuid::nil(),
-            "first",
-            json!({}),
-        ))
-        .await
-        .unwrap();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "first", json!({})))
+            .await
+            .unwrap();
         let got = rx.recv().await.unwrap();
         assert_eq!(got.event_type, "first");
 
@@ -561,23 +557,15 @@ mod tests {
         drop(rx);
 
         // 发布第二个事件 — 不应 panic 或阻塞
-        hub.publish(RealtimeEvent::new(
-            Uuid::nil(),
-            "second",
-            json!({}),
-        ))
-        .await
-        .unwrap();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "second", json!({})))
+            .await
+            .unwrap();
 
         // 新订阅者只能收到此后的事件
         let mut rx2 = hub.subscribe();
-        hub.publish(RealtimeEvent::new(
-            Uuid::nil(),
-            "third",
-            json!({}),
-        ))
-        .await
-        .unwrap();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "third", json!({})))
+            .await
+            .unwrap();
         let got = rx2.recv().await.unwrap();
         assert_eq!(got.event_type, "third");
     }

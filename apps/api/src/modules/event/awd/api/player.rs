@@ -537,3 +537,60 @@ pub async fn event_stream(
 
     super::stream::build_awd_event_stream(&hub, event_id)
 }
+
+/// GET /api/events/{event_id}/awd/status
+///
+/// 选手端 AWD 赛事状态快照：phase、当前轮次、封禁状态、分数。
+/// 用于选手 Overview 页面初始化与轮询回退。
+#[get("{event_id}/awd/status")]
+pub async fn get_player_status(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdPlayerStatusDto> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::Forbidden("Not a member of this event".into()))?;
+
+    let awd = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::NotFound("AWD event not configured".into()))?;
+
+    let current_round = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?
+        .map(|r| r.round_number);
+
+    let banned = crate::modules::event::awd::repo::ban_repo::find_active_ban(
+        ctx.db.get_ref(),
+        event_id,
+        membership.team_id,
+    )
+    .await
+    .map_err(AppError::from)?
+    .is_some();
+
+    let score = crate::modules::event::awd::repo::score_repo::team_total_score(
+        ctx.db.get_ref(),
+        event_id,
+        membership.team_id,
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    UniResponse::ok(Some(AwdPlayerStatusDto {
+        event_id,
+        status: super::dto::snake_str(&awd.status),
+        phase: super::dto::snake_str(&awd.phase),
+        current_round,
+        round_count: awd.round_count,
+        banned,
+        score: Some(score),
+    }))
+    .into()
+}

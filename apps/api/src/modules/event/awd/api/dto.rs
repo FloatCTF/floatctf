@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::entity::{awd_events, gameboxes};
 
 /// serde snake_case 序列化（AwdEventStatus/AwdPhase 无 Display）。
-fn snake_str<T: serde::Serialize>(v: &T) -> String {
+pub fn snake_str<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_value(v)
         .ok()
         .and_then(|x| x.as_str().map(str::to_owned))
@@ -62,6 +62,18 @@ impl From<awd_events::Model> for AwdEventStatusDto {
             updated_at: m.updated_at,
         }
     }
+}
+
+/// 选手端 AWD 赛事状态快照（GET /api/events/{event_id}/awd/status）。
+#[derive(Debug, Serialize)]
+pub struct AwdPlayerStatusDto {
+    pub event_id: Uuid,
+    pub status: String,
+    pub phase: String,
+    pub current_round: Option<i32>,
+    pub round_count: Option<i32>,
+    pub banned: bool,
+    pub score: Option<i64>,
 }
 
 // ── Admin request DTOs ──

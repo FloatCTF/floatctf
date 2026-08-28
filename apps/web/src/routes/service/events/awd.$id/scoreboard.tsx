@@ -17,14 +17,23 @@ export const Route = createFileRoute("/service/events/awd/$id/scoreboard")({
 
 function RouteComponent() {
 	const { id } = Route.useParams();
+
+	// Get team info to highlight current player's team
+	const { data: eventData } = useQuery({
+		queryKey: ["eventInfo", id],
+		queryFn: () => serviceApi.events.get(id),
+	});
+
 	const { data, isLoading, isError, error } = useQuery<
 		UniResponse<AwdScoreRow[]>,
 		AxiosError<{ message: string }>
 	>({
 		queryKey: ["awd-scores", id],
 		queryFn: () => serviceApi.awd.scores(id),
-		refetchInterval: 30000, // 30 秒自动刷新（轮次推进分数变化）
+		refetchInterval: 30000,
 	});
+
+	const myTeamId = eventData?.data?.team_result?.team.id;
 
 	if (isLoading) {
 		return <Spinner size="large" />;
@@ -33,14 +42,16 @@ function RouteComponent() {
 		return <div>{error.response?.data.message ?? error.message}</div>;
 	}
 
-	return <ScoreBoard data={data?.data ?? []} className="mt-2" />;
+	return <ScoreBoard data={data?.data ?? []} myTeamId={myTeamId} className="mt-2" />;
 }
 
 function ScoreBoard({
 	data,
+	myTeamId,
 	className,
 }: {
 	data: AwdScoreRow[];
+	myTeamId?: string;
 	className?: string;
 }) {
 	const columns = [
@@ -54,17 +65,26 @@ function ScoreBoard({
 			header: "Team",
 			field: "team_name",
 			rowHeader: true,
-			renderCell: (row: AwdScoreRow) => (
-				<div className="flex items-center gap-2">
-					<div
-						className="flex items-center justify-center rounded-full bg-gray-200 text-gray-500 font-medium shrink-0"
-						style={{ width: 24, height: 24, fontSize: 10 }}
-					>
-						{row.team_name?.[0]?.toUpperCase() || "?"}
+			renderCell: (row: AwdScoreRow) => {
+				const isMyTeam = myTeamId && row.team_id === myTeamId;
+				return (
+					<div className="flex items-center gap-2">
+						<div
+							className={`flex items-center justify-center rounded-full font-medium shrink-0 ${
+								isMyTeam
+									? "bg-[var(--accent-emphasis)] text-[var(--fgColor-onEmphasis)]"
+									: "bg-gray-200 text-gray-500"
+							}`}
+							style={{ width: 24, height: 24, fontSize: 10 }}
+						>
+							{row.team_name?.[0]?.toUpperCase() || "?"}
+						</div>
+						<span className={isMyTeam ? "font-semibold" : ""}>
+							{row.team_name}
+						</span>
 					</div>
-					<span>{row.team_name}</span>
-				</div>
-			),
+				);
+			},
 		},
 		{
 			accessorKey: "attack_score",
@@ -96,9 +116,9 @@ function ScoreBoard({
 		<Table.Container className={`${className}`}>
 			<Table.Subtitle id="awd-scoreboard-subtitle">
 				<div className="flex gap-2">
-					<span>Attack: 提交 Flag 获得</span>
-					<span>Defense: 守住己方 GameBox 获得</span>
-					<span>Total: 总分</span>
+					<span>Attack: flags submitted</span>
+					<span>Defense: GameBox defense</span>
+					<span>Total: combined score</span>
 				</div>
 			</Table.Subtitle>
 			<DataTable
@@ -111,7 +131,7 @@ function ScoreBoard({
 				}))}
 			/>
 			{data.length === 0 && (
-				<p className="text-sm opacity-70 p-3">暂无成绩。</p>
+				<p className="text-sm opacity-70 p-3">No scores yet.</p>
 			)}
 		</Table.Container>
 	);

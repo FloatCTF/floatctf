@@ -5,17 +5,30 @@ import {
 	EyeIcon,
 } from "@primer/octicons-react";
 import { Button, Spinner, TextInput } from "@primer/react";
+import { InlineMessage } from "@primer/react/experimental";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { serviceApi } from "@/api";
+import { awdPlayerApi } from "@/api/awd";
 import { ServiceRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/service/events/awd/$id/ssh")({
 	component: RouteComponent,
 	loader: ServiceRouteGuard,
 });
+
+/** Get a human-readable reason why SSH is unavailable. */
+function sshUnavailableReason(awdPhase: string | undefined, awdStatus: string | undefined, banned: boolean): string | null {
+	if (banned) return "Team banned — access unavailable.";
+	if (!awdStatus || !awdPhase) return null;
+	if (awdStatus === "finished" || awdStatus === "archived") return "Competition finished — SSH locked.";
+	if (awdStatus === "paused") return "Competition paused — SSH unavailable.";
+	if (awdStatus === "network_error") return "Infrastructure unavailable.";
+	if (awdPhase === "pause") return "Competition paused — SSH unavailable.";
+	return null;
+}
 
 function RouteComponent() {
 	const { id } = Route.useParams();
@@ -24,10 +37,24 @@ function RouteComponent() {
 		queryFn: () => serviceApi.awd.sshConfig(id),
 		retry: false,
 	});
+
+	const statusQuery = useQuery({
+		queryKey: ["awd-player-status", id],
+		queryFn: () => awdPlayerApi.status(id),
+		retry: false,
+	});
+
+	const awdStatus = statusQuery.data?.data ?? null;
 	const [showPwd, setShowPwd] = useState(false);
 	const [copied, setCopied] = useState<string | null>(null);
 
-	if (q.isLoading) return <Spinner />;
+	if (q.isLoading || statusQuery.isLoading) return <Spinner />;
+
+	const unavailableReason = sshUnavailableReason(
+		awdStatus?.phase,
+		awdStatus?.status,
+		awdStatus?.banned ?? false,
+	);
 
 	const copy = async (key: string, text: string) => {
 		await navigator.clipboard.writeText(text);
@@ -35,21 +62,41 @@ function RouteComponent() {
 		setTimeout(() => setCopied(null), 1500);
 	};
 
-	// 未加入队伍 / 网络未部署时给出引导而非报错。
+	// Error or unavailable
 	if (q.isError || !q.data?.data) {
 		return (
 			<div className="flex flex-col gap-2 max-w-xl">
-				<p className="text-sm opacity-80">
-					SSH 凭据在比赛部署后开放，需要先加入队伍（Overview 页）。
-				</p>
-				<p className="text-sm opacity-80">
-					部署完成后此处会显示团队共享密码与每个游戏盒的连接命令。
-				</p>
+				{unavailableReason ? (
+					<InlineMessage variant="warning">
+						{unavailableReason}
+					</InlineMessage>
+				) : (
+					<>
+						<p className="text-sm opacity-80">
+							SSH credentials are available after deployment. Join a team on the Overview page first.
+						</p>
+						<p className="text-sm opacity-80">
+							Once deployed, team-shared password and connection commands for each GameBox will appear here.
+						</p>
+					</>
+				)}
 			</div>
 		);
 	}
 
 	const ssh = q.data.data;
+
+	// Show state warning if SSH shouldn't be available
+	if (unavailableReason) {
+		return (
+			<div className="flex flex-col gap-2 max-w-xl">
+				<InlineMessage variant="warning">
+					{unavailableReason}
+				</InlineMessage>
+			</div>
+		);
+	}
+
 	const download = () => {
 		const lines = [
 			`FloatCTF AWD SSH Access (event ${id})`,
@@ -79,8 +126,8 @@ function RouteComponent() {
 				</Button>
 			</div>
 			<p className="text-xs opacity-70">
-				一队一密码（团队共享）：所有游戏盒使用相同 SSH 密码；用户名/IP
-				按实例不同。
+				One password per team (shared): all GameBoxes use the same SSH password.
+				Username and IP vary per instance.
 			</p>
 
 			<div className="flex flex-col gap-1">

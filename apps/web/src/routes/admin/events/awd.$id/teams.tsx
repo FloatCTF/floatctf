@@ -1,8 +1,7 @@
-import { CheckIcon } from "@primer/octicons-react";
-import { ActionList, TreeView } from "@primer/react";
+import { ActionList } from "@primer/react";
+import { Label, useConfirm } from "@primer/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment } from "react";
 
 import { adminApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
@@ -34,41 +33,34 @@ function RouteComponent() {
     const subject = `EventTeams-${id}`;
     const queryClient = useQueryClient();
     const banner = useMsgBanner({});
+    const confirmDialog = useConfirm();
+
     const onDone = () => {
         queryClient.invalidateQueries({ queryKey: [subject] });
+        queryClient.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
     };
-    const bannedEventTeam = useMutation({
-        mutationFn: ({ eventId, teamId, body }: {
+
+    const banMutation = useMutation({
+        mutationFn: ({ eventId, teamId }: {
             eventId: string;
             teamId: string;
-            body: { reason?: string; durationSecs?: number };
-        }) => adminApi.awd.banTeam(eventId, teamId, body),
-        onSuccess: onDone,
+        }) => adminApi.awd.banTeam(eventId, teamId, {}),
+        onSuccess: () => {
+            banner.showBanner("success", "Team banned");
+            onDone();
+        },
         onError: banner.showErrorBanner,
     });
 
-    const unbannedEventTeam = useMutation({
+    const unbanMutation = useMutation({
         mutationFn: ({ eventId, teamId }: { eventId: string; teamId: string }) =>
             adminApi.awd.unbanTeam(eventId, teamId),
-        onSuccess: onDone,
+        onSuccess: () => {
+            banner.showBanner("success", "Team unbanned");
+            onDone();
+        },
         onError: banner.showErrorBanner,
     });
-
-    // 封禁：询问时长（秒，留空/0 = 永久；>0 触发 P4-7 自动解封任务）
-    const askBan = (teamId: string) => {
-        const input = window.prompt(
-            "AWD 跨层封禁（WG 挂起 + 防火墙 banned set + 连接清理）\n封禁时长（秒），留空为永久封禁；\n例如：3600 = 1 小时后自动解封",
-        );
-        if (input === null) return; // 取消
-        const n = Number.parseInt(input, 10);
-        bannedEventTeam.mutate({
-            eventId: id,
-            teamId,
-            body: {
-                durationSecs: Number.isFinite(n) && n > 0 ? n : undefined,
-            },
-        });
-    };
 
     const columns = [
         {
@@ -85,17 +77,21 @@ function RouteComponent() {
         },
         {
             accessorKey: "team.points",
-            header: "Points",
+            header: "Score",
             field: "team.points",
             sortBy: true,
         },
         {
             accessorKey: "team.banned",
-            header: "Banned",
+            header: "Ban",
             field: "team.banned",
-            renderCell: (row: TeamResult) => {
-                return <span>{row.team.banned ? <CheckIcon /> : <></>}</span>;
-            },
+            renderCell: (row: TeamResult) => (
+                row.team.banned ? (
+                    <Label variant="danger">Banned</Label>
+                ) : (
+                    <Label variant="default">Active</Label>
+                )
+            ),
             sortBy: true,
         },
         {
@@ -107,34 +103,20 @@ function RouteComponent() {
                     <table className="table-auto w-full border rounded">
                         <thead className="bg-gray-100">
                             <tr>
-                                <th className="px-2 py-1 text-left">
-                                    Username
-                                </th>
-                                <th className="px-2 py-1 text-left">
-                                    Nickname
-                                </th>
+                                <th className="px-2 py-1 text-left">Username</th>
+                                <th className="px-2 py-1 text-left">Nickname</th>
                                 <th className="px-2 py-1 text-left">Role</th>
                                 <th className="px-2 py-1 text-left">Points</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {row.members.map((row) => (
-                                <Fragment key={row.username}>
-                                    <tr className="cursor-pointer hover:bg-gray-50">
-                                        <td className="px-2 py-1">
-                                            {row.username}
-                                        </td>
-                                        <td className="px-2 py-1">
-                                            {row.nickname}
-                                        </td>
-                                        <td className="px-2 py-1">
-                                            {row.role}
-                                        </td>
-                                        <td className="px-2 py-1">
-                                            {row.points}
-                                        </td>
-                                    </tr>
-                                </Fragment>
+                            {row.members.map((member) => (
+                                <tr key={member.username} className="hover:bg-gray-50">
+                                    <td className="px-2 py-1">{member.username}</td>
+                                    <td className="px-2 py-1">{member.nickname}</td>
+                                    <td className="px-2 py-1">{member.role}</td>
+                                    <td className="px-2 py-1">{member.points}</td>
+                                </tr>
                             ))}
                         </tbody>
                     </table>
@@ -157,28 +139,47 @@ function RouteComponent() {
                 {row.team.banned ? (
                     <ActionList.Item
                         variant="default"
-                        onSelect={() => {
-                            unbannedEventTeam.mutate({
-                                eventId: id,
-                                teamId: row.team.id,
+                        onSelect={async () => {
+                            const ok = await confirmDialog({
+                                title: `Unban ${row.team.name}?`,
+                                content: "Team will regain access to competition resources.",
+                                confirmButtonType: "primary",
                             });
+                            if (ok) {
+                                unbanMutation.mutate({
+                                    eventId: id,
+                                    teamId: row.team.id,
+                                });
+                            }
                         }}
                     >
-                        Unbanned
+                        Unban
                     </ActionList.Item>
                 ) : (
                     <ActionList.Item
                         variant="danger"
-                        onSelect={() => {
-                            askBan(row.team.id);
+                        onSelect={async () => {
+                            const ok = await confirmDialog({
+                                title: `Ban ${row.team.name}?`,
+                                content:
+                                    "Team will lose all competition access (SSH, WireGuard, Flag submission, Reset). Ban is permanent until manually unbanned.",
+                                confirmButtonType: "danger",
+                            });
+                            if (ok) {
+                                banMutation.mutate({
+                                    eventId: id,
+                                    teamId: row.team.id,
+                                });
+                            }
                         }}
                     >
-                        Ban (AWD)
+                        Ban
                     </ActionList.Item>
                 )}
             </ActionList>
         );
     };
+
     const filterKeys = ["id", "name", "points", "banned"];
 
     return (

@@ -14,13 +14,14 @@ export type AwdEventStatus = {
 	event_id: string;
 	status: string;
 	phase: string;
+	round_count: number | null;
 	round_duration_secs: number;
+	initial_score: number;
 	free_reset_count: number;
 	extra_reset_penalty: number;
 	judge_max_concurrency: number;
 	judge_default_timeout_secs: number;
 	judge_retry_interval_secs: number;
-	judge_grace_period_secs: number;
 	archive_retention_hours: number;
 	planned_start_at: string | null;
 	verified_at: string | null;
@@ -31,14 +32,15 @@ export type AwdEventStatus = {
 export type AwdEventConfigInput = {
 	/** PATCH 乐观锁版本；首次创建可省略。 */
 	expected_updated_at?: string;
-	round_duration_secs: number;
-	free_reset_count: number;
-	extra_reset_penalty: number;
-	judge_max_concurrency: number;
-	judge_default_timeout_secs: number;
-	judge_retry_interval_secs: number;
-	judge_grace_period_secs: number;
-	archive_retention_hours: number;
+	round_count?: number;
+	round_duration_secs?: number;
+	initial_score?: number;
+	free_reset_count?: number;
+	extra_reset_penalty?: number;
+	judge_max_concurrency?: number;
+	judge_default_timeout_secs?: number;
+	judge_retry_interval_secs?: number;
+	archive_retention_hours?: number;
 	planned_start_at?: string;
 	clear_planned_start?: boolean;
 };
@@ -142,6 +144,17 @@ export type AwdScoreRow = {
 	defense_score: number;
 	total_score: number;
 	rank: number;
+};
+
+/** 选手端 AWD 赛事状态（GET /api/events/{event_id}/awd/status）。 */
+export type AwdPlayerStatus = {
+	event_id: string;
+	status: string;
+	phase: string;
+	current_round: number | null;
+	round_count: number | null;
+	banned: boolean;
+	score: number | null;
 };
 
 export type WireGuardConfigResponse = {
@@ -306,17 +319,16 @@ export const awdAdminApi = {
 		);
 		return res.data;
 	},
-	/** P4-5/P4-6：AWD 跨层封禁（WG suspend + banned set reconcile + conntrack + publish）。 */
+	/** 手动封禁队伍（无定时，需管理员手动解封）。 */
 	banTeam: async (
 		eventId: string,
 		teamId: string,
-		body: { reason?: string; durationSecs?: number },
+		body: { reason?: string },
 	): Promise<UniResponse<string>> => {
 		const res = await admin_api.post(
 			`/events/${eventId}/awd/teams/${teamId}/ban`,
 			{
 				reason: body.reason,
-				duration_secs: body.durationSecs,
 			},
 		);
 		return res.data;
@@ -531,6 +543,13 @@ export const awdAdminApi = {
 
 /** 选手端 AWD 接口（用户 JWT）。 */
 export const awdPlayerApi = {
+	/** 获取 AWD 赛事状态（phase, round, ban state, score）。 */
+	status: async (
+		eventId: string,
+	): Promise<UniResponse<AwdPlayerStatus>> => {
+		const res = await service_api.get(`/events/${eventId}/awd/status`);
+		return res.data;
+	},
 	gameboxes: async (eventId: string): Promise<UniResponse<AwdGameBox[]>> => {
 		const res = await service_api.get(`/events/${eventId}/awd/gameboxes`);
 		return res.data;

@@ -8,3 +8,4 @@ export * from "@/components/Table";
 export * from "@/components/MsgInlineBanner";
 export * from "@/components/FilterBar";
 export * from "@/components/SubmitWriteup";
+export * from "@/components/awd/AwdEventProgress";

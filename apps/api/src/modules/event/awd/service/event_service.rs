@@ -660,7 +660,11 @@ mod tests {
     use sea_orm::prelude::DateTimeWithTimeZone;
     use uuid::Uuid;
 
-    fn make_awd_event(status: AwdEventStatus, phase: AwdPhase, round_count: Option<i32>) -> awd_events::Model {
+    fn make_awd_event(
+        status: AwdEventStatus,
+        phase: AwdPhase,
+        round_count: Option<i32>,
+    ) -> awd_events::Model {
         let now = DateTimeWithTimeZone::default();
         awd_events::Model {
             id: Uuid::new_v4(),

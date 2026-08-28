@@ -7,6 +7,7 @@ pub mod gamebox_admin;
 pub mod internal;
 pub mod network_admin;
 pub mod player;
+pub mod stream;
 
 use actix_web::web;
 
@@ -37,6 +38,7 @@ pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
         .service(admin::get_event_network)
         .service(admin::reallocate_network)
         .service(admin::get_event_scores)
+        .service(admin::admin_event_stream)
         // GameBox 赛事选择（§46 术语：gamebox / revision / event_gamebox）
         .service(gamebox_admin::list_event_gameboxes)
         .service(gamebox_admin::add_event_gamebox)

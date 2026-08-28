@@ -1,6 +1,6 @@
 //! AWD 赛事管理端 HTTP 处理器。
 
-use actix_web::web;
+use actix_web::{HttpResponse, web};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, TransactionTrait,
@@ -985,4 +985,21 @@ pub async fn reallocate_network(
     .await
     .map_err(AppError::from)?;
     UniResponse::ok_none().into()
+}
+
+/// GET /api/admin/events/{event_id}/awd/stream
+///
+/// 管理端 Server-Sent Events 流（fetch + Bearer admin token）。
+/// 认证：SuperAdminJwtGuard（admin token，super_admin 表）。
+/// 授权：所有 SuperAdmin 均可订阅任意赛事（与现有 Admin 端点一致）。
+///
+/// 选手应使用 `/api/events/{event_id}/awd/stream`（UserJwtGuard + 战队成员）。
+#[get("{event_id}/awd/stream")]
+pub async fn admin_event_stream(
+    _admin: SuperAdminJwtGuard,
+    hub: web::Data<crate::infrastructure::realtime::BroadcastEventPublisher>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let event_id = path.into_inner();
+    super::stream::build_awd_event_stream(&hub, event_id)
 }

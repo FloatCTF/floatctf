@@ -625,30 +625,37 @@ mod tests {
 
     // ── SSE 端点授权合约测试 ──
     //
-    // 授权模型（player.rs event_stream / awdp player.rs event_stream）：
-    //   1. 赛事战队成员（find_user_team_membership）→ ALLOW
-    //   2. 平台超级管理员（super_admin 表查找）→ ALLOW
-    //   3. 其他认证用户 → 403
+    // 授权模型（Phase 7.2 — 分离认证域）：
+    //
+    // 选手路由 GET /api/events/{id}/awd/stream：
+    //   - 认证：UserJwtGuard（users 表）
+    //   - 授权：find_user_team_membership(event_id, user_id) → Some
+    //   - 拒绝：其他用户 → 403
+    //
+    // 管理路由 GET /api/admin/events/{id}/awd/stream：
+    //   - 认证：SuperAdminJwtGuard（super_admin 表）
+    //   - 授权：所有 SuperAdmin 均可订阅任意赛事
+    //   - SuperAdmin 不需要 users 记录
     //
     // HTTP 完整测试因 AppState 引导复杂度暂不可行（见
     // chore/awd-core-backend-http-acceptance-report.md）。
-    // 以下测试验证 super_admin 实体可正常查询（授权查找的基础依赖）。
+    // 以下测试验证基础实体可正常查询。
 
     #[tokio::test]
-    #[ignore = "requires database — verify super_admin entity lookup works"]
-    async fn super_admin_entity_can_be_looked_up_by_id() {
-        // 验证 super_admin::Entity::find_by_id 可正常编译和调用
-        // 此测试需要数据库，日常跳过；CI 中可启用。
+    #[ignore = "requires database — verify entity lookups compile"]
+    async fn entity_lookups_compile() {
+        // 验证 super_admin 和 event_team_members 实体可正常引用
         let _ = crate::entity::super_admin::Entity::find();
+        let _ = crate::entity::event_team_members::Entity::find();
     }
 
     #[test]
-    fn sse_auth_admin_bypass_contract() {
-        // 文档化授权决策：
-        // - 超级管理员可通过 super_admin::Entity::find_by_id(user.id) 检查
-        // - 若 user.id 存在于 super_admin 表 → 允许订阅任意赛事 SSE
-        // - 此检查在 team membership 检查之后（先检查更常见的路径）
-        let admin_id = Uuid::nil();
-        let _ = admin_id; // 编译期验证 super_admin 实体可引用
+    fn sse_auth_separate_domains_contract() {
+        // 文档化授权决策（Phase 7.2）：
+        // - 选手路由：UserJwtGuard → 仅检查 event_team_members
+        // - 管理路由：SuperAdminJwtGuard → 无需额外检查
+        // - SuperAdmin 不需要 users 记录 — 使用独立的 admin token
+        let _admin_id = Uuid::nil();
+        let _user_id = Uuid::nil();
     }
 }

@@ -1161,24 +1161,14 @@ pub async fn run_stream(
 
     let run_id = path.into_inner();
     let user = user.into_inner();
-    // 可见性：run 属主 或 平台超级管理员
+    // 可见性：只对 run 属主开放。
     let owned = run_repo::find_by_id(ctx.db.get_ref(), run_id)
         .await
         .ok()
         .flatten()
         .map(|r| r.owner_user_id == Some(user.id))
         .unwrap_or(false);
-    let is_admin = if owned {
-        true
-    } else {
-        crate::entity::super_admin::Entity::find_by_id(user.id)
-            .one(ctx.db.get_ref())
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-    };
-    if !is_admin {
+    if !owned {
         return actix_web::HttpResponse::Forbidden().finish();
     }
     let rx = hub.subscribe();

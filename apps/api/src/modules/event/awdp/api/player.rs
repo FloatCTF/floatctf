@@ -608,7 +608,7 @@ pub async fn get_scoreboard_detail(
 /// 订阅前校验：
 /// - 认证：Bearer token（UserJwtGuard）
 /// - 授权：用户必须属于该赛事（Team 模式需 team membership，
-///         Individual 模式需 event participant），或为平台超级管理员
+///         Individual 模式需 event participant）
 #[get("{event_id}/awdp/stream")]
 pub async fn event_stream(
     user: UserJwtGuard,
@@ -621,7 +621,7 @@ pub async fn event_stream(
     let event_id = path.into_inner();
     let user = user.into_inner();
 
-    // ── 授权：赛事参与者 或 平台超级管理员 ──
+    // ── 授权：赛事参与者 ──
     let event = match events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await
@@ -630,36 +630,26 @@ pub async fn event_stream(
         _ => return actix_web::HttpResponse::NotFound().finish(),
     };
 
-    // 先检查是否为超级管理员（可查看所有赛事）
-    let is_admin = crate::entity::super_admin::Entity::find_by_id(user.id)
-        .one(ctx.db.get_ref())
+    if event.participant_mode == ParticipantMode::Team {
+        let membership = crate::modules::event::common::infrastructure::event_repository::find_user_team_membership(
+            ctx.db.get_ref(), event_id, user.id,
+        )
         .await
         .ok()
-        .flatten()
-        .is_some();
-
-    if !is_admin {
-        if event.participant_mode == ParticipantMode::Team {
-            let membership = crate::modules::event::common::infrastructure::event_repository::find_user_team_membership(
-                ctx.db.get_ref(), event_id, user.id,
-            )
-            .await
-            .ok()
-            .flatten();
-            if membership.is_none() {
-                return actix_web::HttpResponse::Forbidden().finish();
-            }
-        } else {
-            let ok = crate::modules::event::awdp::service::authorization::require_event_participant(
-                ctx.db.get_ref(),
-                event_id,
-                user.id,
-            )
-            .await
-            .is_ok();
-            if !ok {
-                return actix_web::HttpResponse::Forbidden().finish();
-            }
+        .flatten();
+        if membership.is_none() {
+            return actix_web::HttpResponse::Forbidden().finish();
+        }
+    } else {
+        let ok = crate::modules::event::awdp::service::authorization::require_event_participant(
+            ctx.db.get_ref(),
+            event_id,
+            user.id,
+        )
+        .await
+        .is_ok();
+        if !ok {
+            return actix_web::HttpResponse::Forbidden().finish();
         }
     }
 

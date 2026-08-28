@@ -1,0 +1,5 @@
+FROM alpine:3.20
+COPY bin/awd_judgeserver /usr/local/bin/awd_judgeserver
+ENV LISTEN_ADDR=0.0.0.0:8080
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/awd_judgeserver"]

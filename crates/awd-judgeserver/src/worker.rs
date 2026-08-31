@@ -110,7 +110,10 @@ impl HttpClient for RealHttpClient {
             return Err(format!("HTTP {status}: {body}"));
         }
 
-        resp.json().await.map_err(|e| format!("deserialize: {e}"))
+        resp.json::<crate::protocol::ApiEnvelope<JudgeClaimResponse>>()
+            .await
+            .map(|env| env.data)
+            .map_err(|e| format!("deserialize: {e}"))
     }
 
     async fn send_heartbeat(
@@ -250,7 +253,10 @@ pub async fn poll_loop<H: HttpClient + Clone + 'static>(state: WorkerState<H>) {
 ///
 /// 心跳 409 会设置 `ownership_stale` 标记，本函数在提交结果前检查该标记，
 /// 若已过时则丢弃结果（零提交）。
-pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<WorkerState<H>>, task: ClaimedTask) {
+pub async fn execute_single_task<H: HttpClient + Clone + 'static>(
+    state: &Arc<WorkerState<H>>,
+    task: ClaimedTask,
+) {
     tracing::info!("Executing task {} for {}", task.task_id, task.target_ip);
 
     let script_path = format!("{}/judge_{}.sh", state.work_dir, task.task_id);
@@ -261,7 +267,17 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
     if let Err(e) = tokio::fs::write(&script_path, &task.script_content).await {
         tracing::error!("Failed to write script {}: {}", script_path, e);
         let err_msg = format!("Script write error: {e}");
-        let _ = deliver_result(state, &task, "worker_error", None, None, Some(&err_msg), None, &result_id).await;
+        let _ = deliver_result(
+            state,
+            &task,
+            "worker_error",
+            None,
+            None,
+            Some(&err_msg),
+            None,
+            &result_id,
+        )
+        .await;
         return;
     }
 
@@ -281,7 +297,16 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
         let stale_flag = ownership_stale.clone();
 
         tokio::spawn(async move {
-            heartbeat_loop(&state_clone, task_id, &worker_id, attempt, &lease_token, interval, &stale_flag).await
+            heartbeat_loop(
+                &state_clone,
+                task_id,
+                &worker_id,
+                attempt,
+                &lease_token,
+                interval,
+                &stale_flag,
+            )
+            .await
         })
     };
 
@@ -297,11 +322,15 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
 
     let start = Instant::now();
 
-    // Spawn child explicitly with kill_on_drop for deterministic cleanup
+    // Spawn child explicitly with kill_on_drop for deterministic cleanup.
+    // 脚本 env 白名单之外显式注入 TARGET_IP（真实主机 E2E 发现：脚本常用
+    // `$TARGET_IP` 约定而非 script_args_json 参数，缺少该变量时脚本以空目标执行）。
+    let mut script_env = build_script_env(std::env::vars());
+    script_env.push(("TARGET_IP".to_string(), task.target_ip.clone()));
     let child_result = tokio::process::Command::new(&script_path)
         .args(&args)
         .env_clear()
-        .envs(build_script_env(std::env::vars()))
+        .envs(script_env)
         .kill_on_drop(true)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -313,9 +342,16 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
             tracing::error!("Task {} spawn failed: {}", task.task_id, e);
             heartbeat_handle.abort();
             let _ = deliver_result(
-                state, &task, "worker_error", None, None,
-                Some(&format!("Execution error: {e}")), None, &result_id,
-            ).await;
+                state,
+                &task,
+                "worker_error",
+                None,
+                None,
+                Some(&format!("Execution error: {e}")),
+                None,
+                &result_id,
+            )
+            .await;
             let _ = tokio::fs::remove_file(&script_path).await;
             return;
         }
@@ -330,16 +366,34 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
             let out = String::from_utf8_lossy(&output.stdout).to_string();
             let err = String::from_utf8_lossy(&output.stderr).to_string();
             let outcome = outcome::exit_code_to_outcome(ec);
-            (outcome, Some(ec), Some(truncate_str(&out, OUTPUT_MAX_LEN)), Some(truncate_str(&err, OUTPUT_MAX_LEN)))
+            (
+                outcome,
+                Some(ec),
+                Some(truncate_str(&out, OUTPUT_MAX_LEN)),
+                Some(truncate_str(&err, OUTPUT_MAX_LEN)),
+            )
         }
         Ok(Err(e)) => {
             tracing::error!("Task {} wait_with_output failed: {}", task.task_id, e);
-            ("worker_error", None, None, Some(format!("Child wait error: {e}")))
+            (
+                "worker_error",
+                None,
+                None,
+                Some(format!("Child wait error: {e}")),
+            )
         }
         Err(_timeout) => {
             // timeout drops the child handle → kill_on_drop(true) kills the child
-            tracing::warn!("Task {} timed out (child killed by kill_on_drop)", task.task_id);
-            ("target_timeout", None, None, Some("Execution timed out".to_string()))
+            tracing::warn!(
+                "Task {} timed out (child killed by kill_on_drop)",
+                task.task_id
+            );
+            (
+                "target_timeout",
+                None,
+                None,
+                Some("Execution timed out".to_string()),
+            )
         }
     };
 
@@ -359,9 +413,16 @@ pub async fn execute_single_task<H: HttpClient + Clone + 'static>(state: &Arc<Wo
     let duration_ms = Some(elapsed.as_millis() as i32);
 
     let _ = deliver_result(
-        state, &task, outcome, exit_code,
-        stdout.as_deref(), stderr.as_deref(), duration_ms, &result_id,
-    ).await;
+        state,
+        &task,
+        outcome,
+        exit_code,
+        stdout.as_deref(),
+        stderr.as_deref(),
+        duration_ms,
+        &result_id,
+    )
+    .await;
 
     let _ = tokio::fs::remove_file(&script_path).await;
 }
@@ -438,7 +499,10 @@ pub async fn deliver_result<H: HttpClient + Clone>(
             let delay = Duration::from_secs(RESULT_RETRY_DELAYS_SECS[attempt - 2]);
             tracing::warn!(
                 "Result for task {} failed, retrying in {}s (attempt {}/{})",
-                task.task_id, delay.as_secs(), attempt, RESULT_MAX_ATTEMPTS
+                task.task_id,
+                delay.as_secs(),
+                attempt,
+                RESULT_MAX_ATTEMPTS
             );
             sleep(delay).await;
         }
@@ -470,16 +534,32 @@ pub async fn deliver_result<H: HttpClient + Clone>(
             }
             Ok(SubmitStatus::Error) => {
                 last_error = "HTTP error".to_string();
-                tracing::warn!("Result HTTP error for task {} (attempt {}/{})", task.task_id, attempt, RESULT_MAX_ATTEMPTS);
+                tracing::warn!(
+                    "Result HTTP error for task {} (attempt {}/{})",
+                    task.task_id,
+                    attempt,
+                    RESULT_MAX_ATTEMPTS
+                );
             }
             Err(e) => {
                 last_error = format!("network error: {}", e);
-                tracing::warn!("Result network error for task {}: {} (attempt {}/{})", task.task_id, e, attempt, RESULT_MAX_ATTEMPTS);
+                tracing::warn!(
+                    "Result network error for task {}: {} (attempt {}/{})",
+                    task.task_id,
+                    e,
+                    attempt,
+                    RESULT_MAX_ATTEMPTS
+                );
             }
         }
     }
 
-    tracing::error!("Result permanently failed for task {} after {} attempts: {}", task.task_id, RESULT_MAX_ATTEMPTS, last_error);
+    tracing::error!(
+        "Result permanently failed for task {} after {} attempts: {}",
+        task.task_id,
+        RESULT_MAX_ATTEMPTS,
+        last_error
+    );
     Err(last_error)
 }
 
@@ -548,19 +628,46 @@ mod tests {
 
     #[async_trait::async_trait]
     impl HttpClient for MockHttp {
-        async fn claim_tasks(&self, _url: &str, _auth: &str, _body: &JudgeClaimRequest) -> Result<JudgeClaimResponse, String> {
+        async fn claim_tasks(
+            &self,
+            _url: &str,
+            _auth: &str,
+            _body: &JudgeClaimRequest,
+        ) -> Result<JudgeClaimResponse, String> {
             *self.claim_call_count.lock().unwrap() += 1;
-            self.claim_responses.lock().unwrap().pop().unwrap_or(Ok(JudgeClaimResponse { tasks: vec![] }))
+            self.claim_responses
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or(Ok(JudgeClaimResponse { tasks: vec![] }))
         }
 
-        async fn send_heartbeat(&self, _url: &str, _auth: &str, body: &JudgeHeartbeatRequest) -> Result<HeartbeatStatus, String> {
+        async fn send_heartbeat(
+            &self,
+            _url: &str,
+            _auth: &str,
+            body: &JudgeHeartbeatRequest,
+        ) -> Result<HeartbeatStatus, String> {
             self.heartbeat_calls.lock().unwrap().push(body.clone());
-            self.heartbeat_responses.lock().unwrap().pop().unwrap_or(Ok(HeartbeatStatus::Ok))
+            self.heartbeat_responses
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or(Ok(HeartbeatStatus::Ok))
         }
 
-        async fn submit_result(&self, _url: &str, _auth: &str, body: &JudgeResultRequest) -> Result<SubmitStatus, String> {
+        async fn submit_result(
+            &self,
+            _url: &str,
+            _auth: &str,
+            body: &JudgeResultRequest,
+        ) -> Result<SubmitStatus, String> {
             self.result_calls.lock().unwrap().push(body.clone());
-            self.result_responses.lock().unwrap().pop().unwrap_or(Ok(SubmitStatus::Ok))
+            self.result_responses
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or(Ok(SubmitStatus::Ok))
         }
     }
 
@@ -672,7 +779,16 @@ mod tests {
         let hb_handle = {
             let stale = stale.clone();
             tokio::spawn(async move {
-                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+                heartbeat_loop(
+                    &state,
+                    task_id,
+                    "w1",
+                    1,
+                    "lease-tok",
+                    Duration::from_millis(5),
+                    &stale,
+                )
+                .await;
             })
         };
 
@@ -700,7 +816,16 @@ mod tests {
         let hb_handle = {
             let stale = stale.clone();
             tokio::spawn(async move {
-                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+                heartbeat_loop(
+                    &state,
+                    task_id,
+                    "w1",
+                    1,
+                    "lease-tok",
+                    Duration::from_millis(5),
+                    &stale,
+                )
+                .await;
             })
         };
 
@@ -709,7 +834,10 @@ mod tests {
 
         let calls = mock.heartbeat_calls_snapshot();
         assert_eq!(calls.len(), 1);
-        assert!(stale.load(Ordering::Relaxed), "Ownership flag should be set after 409");
+        assert!(
+            stale.load(Ordering::Relaxed),
+            "Ownership flag should be set after 409"
+        );
     }
 
     // ── Heartbeat: transient error → retries ──
@@ -717,10 +845,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_transient_error_retries() {
         let mock = MockHttp::new();
-        mock.set_heartbeat_responses(vec![
-            Ok(HeartbeatStatus::Ok),
-            Ok(HeartbeatStatus::Error),
-        ]);
+        mock.set_heartbeat_responses(vec![Ok(HeartbeatStatus::Ok), Ok(HeartbeatStatus::Error)]);
         let state = make_state(mock.clone(), 4);
         let task_id = Uuid::new_v4();
         let stale = Arc::new(AtomicBool::new(false));
@@ -728,7 +853,16 @@ mod tests {
         let hb_handle = {
             let stale = stale.clone();
             tokio::spawn(async move {
-                heartbeat_loop(&state, task_id, "w1", 1, "lease-tok", Duration::from_millis(5), &stale).await;
+                heartbeat_loop(
+                    &state,
+                    task_id,
+                    "w1",
+                    1,
+                    "lease-tok",
+                    Duration::from_millis(5),
+                    &stale,
+                )
+                .await;
             })
         };
 
@@ -736,8 +870,14 @@ mod tests {
         hb_handle.abort();
 
         let calls = mock.heartbeat_calls_snapshot();
-        assert!(calls.len() >= 2, "Should have made multiple heartbeat calls after error");
-        assert!(!stale.load(Ordering::Relaxed), "Flag should not be set on transient error");
+        assert!(
+            calls.len() >= 2,
+            "Should have made multiple heartbeat calls after error"
+        );
+        assert!(
+            !stale.load(Ordering::Relaxed),
+            "Flag should not be set on transient error"
+        );
     }
 
     // ── Stale ownership orchestration: heartbeat 409 → no result submitted ──
@@ -764,29 +904,44 @@ mod tests {
         let hb_flag = ownership_stale.clone();
 
         let hb_handle = tokio::spawn(async move {
-            heartbeat_loop(&hb_state, hb_task_id, &hb_worker_id, hb_attempt, &hb_lease, hb_interval, &hb_flag).await;
+            heartbeat_loop(
+                &hb_state,
+                hb_task_id,
+                &hb_worker_id,
+                hb_attempt,
+                &hb_lease,
+                hb_interval,
+                &hb_flag,
+            )
+            .await;
         });
 
         // Wait for heartbeat to fire and set the flag
         tokio::time::sleep(Duration::from_millis(30)).await;
 
         // Verify flag is set
-        assert!(ownership_stale.load(Ordering::Relaxed), "Ownership should be stale after 409");
+        assert!(
+            ownership_stale.load(Ordering::Relaxed),
+            "Ownership should be stale after 409"
+        );
 
         // Now simulate the execution post-check: if ownership is stale, don't submit
         if ownership_stale.load(Ordering::Relaxed) {
             // Discard result — this is what execute_single_task does
         } else {
-            let _ = deliver_result(
-                &state, &task, "up", Some(0), None, None, Some(100), "rid",
-            ).await;
+            let _ =
+                deliver_result(&state, &task, "up", Some(0), None, None, Some(100), "rid").await;
         }
 
         hb_handle.abort();
 
         // Zero result submissions
         let result_calls = mock.result_calls_snapshot();
-        assert_eq!(result_calls.len(), 0, "No result should be submitted when ownership is stale");
+        assert_eq!(
+            result_calls.len(),
+            0,
+            "No result should be submitted when ownership is stale"
+        );
     }
 
     // ── Continuous worker orchestration: claim → execute → result ──
@@ -830,7 +985,10 @@ mod tests {
         // --- Step 1: Claim ---
         let url = claim_url(&state.platform_url, &state.event_id);
         let auth = state.auth();
-        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let body = JudgeClaimRequest {
+            worker_id: state.worker_id.clone(),
+            limit: 4,
+        };
         let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
         assert_eq!(claim_resp.tasks.len(), 1);
         let task = claim_resp.tasks.into_iter().next().unwrap();
@@ -841,7 +999,11 @@ mod tests {
 
         // --- Step 3: Verify result ---
         let result_calls = mock.result_calls_snapshot();
-        assert_eq!(result_calls.len(), 1, "Should have exactly one result submission");
+        assert_eq!(
+            result_calls.len(),
+            1,
+            "Should have exactly one result submission"
+        );
         let r = &result_calls[0];
         assert_eq!(r.worker_id, "w1");
         assert_eq!(r.attempt, 1);
@@ -889,7 +1051,10 @@ mod tests {
 
         let url = claim_url(&state.platform_url, &state.event_id);
         let auth = state.auth();
-        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let body = JudgeClaimRequest {
+            worker_id: state.worker_id.clone(),
+            limit: 4,
+        };
         let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
         let task = claim_resp.tasks.into_iter().next().unwrap();
 
@@ -940,7 +1105,10 @@ mod tests {
 
         let url = claim_url(&state.platform_url, &state.event_id);
         let auth = state.auth();
-        let body = JudgeClaimRequest { worker_id: state.worker_id.clone(), limit: 4 };
+        let body = JudgeClaimRequest {
+            worker_id: state.worker_id.clone(),
+            limit: 4,
+        };
         let claim_resp = state.http.claim_tasks(&url, &auth, &body).await.unwrap();
         let task = claim_resp.tasks.into_iter().next().unwrap();
 
@@ -968,8 +1136,16 @@ mod tests {
         let task = make_task("00000000-0000-0000-0000-000000000001", 1);
 
         let result = deliver_result(
-            &state, &task, "up", Some(0), Some("ok"), None, Some(100), "my-stable-result-id",
-        ).await;
+            &state,
+            &task,
+            "up",
+            Some(0),
+            Some("ok"),
+            None,
+            Some(100),
+            "my-stable-result-id",
+        )
+        .await;
 
         assert!(result.is_ok());
         let calls = mock.result_calls_snapshot();
@@ -989,9 +1165,8 @@ mod tests {
         let state = make_state(mock.clone(), 4);
         let task = make_task("00000000-0000-0000-0000-000000000001", 1);
 
-        let result = deliver_result(
-            &state, &task, "up", Some(0), None, None, Some(100), "rid",
-        ).await;
+        let result =
+            deliver_result(&state, &task, "up", Some(0), None, None, Some(100), "rid").await;
 
         assert!(result.is_err());
         let calls = mock.result_calls_snapshot();
@@ -1007,9 +1182,8 @@ mod tests {
         let state = make_state(mock.clone(), 4);
         let task = make_task("00000000-0000-0000-0000-000000000001", 1);
 
-        let result = deliver_result(
-            &state, &task, "up", Some(0), None, None, Some(100), "rid",
-        ).await;
+        let result =
+            deliver_result(&state, &task, "up", Some(0), None, None, Some(100), "rid").await;
 
         assert!(result.is_err());
         let calls = mock.result_calls_snapshot();
@@ -1025,9 +1199,8 @@ mod tests {
         let state = make_state(mock.clone(), 4);
         let task = make_task("00000000-0000-0000-0000-000000000001", 1);
 
-        let result = deliver_result(
-            &state, &task, "up", Some(0), None, None, Some(100), "rid",
-        ).await;
+        let result =
+            deliver_result(&state, &task, "up", Some(0), None, None, Some(100), "rid").await;
 
         assert!(result.is_ok());
         let calls = mock.result_calls_snapshot();
@@ -1049,9 +1222,8 @@ mod tests {
         let state = make_state(mock.clone(), 4);
         let task = make_task("00000000-0000-0000-0000-000000000001", 1);
 
-        let result = deliver_result(
-            &state, &task, "up", Some(0), None, None, Some(100), "rid",
-        ).await;
+        let result =
+            deliver_result(&state, &task, "up", Some(0), None, None, Some(100), "rid").await;
 
         assert!(result.is_err());
         let calls = mock.result_calls_snapshot();

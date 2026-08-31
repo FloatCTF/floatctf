@@ -86,11 +86,24 @@ pub mod wireguard_cmd {
         private_key: &str,
         listen_port: u16,
     ) -> anyhow::Result<()> {
+        // CommandRunner 不提供 stdin：私钥必须经临时文件传入（/dev/stdin 读到 EOF，
+        // 接口永远拿不到私钥 → 玩家无法握手，真实主机实测）。文件在 run() 期间
+        // 由本作用域持有的 NamedTempFile 保证存在。
+        use std::io::Write;
+        let mut key_file = tempfile::NamedTempFile::new()?;
+        key_file.write_all(private_key.as_bytes())?;
+        key_file.write_all(b"\n")?;
+        key_file.flush()?;
+        let key_path = key_file
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("WG key path not utf8"))?
+            .to_string();
         let args = vec![
             "set".to_string(),
             iface.to_string(),
             "private-key".to_string(),
-            "/dev/stdin".to_string(),
+            key_path,
             "listen-port".to_string(),
             listen_port.to_string(),
         ];

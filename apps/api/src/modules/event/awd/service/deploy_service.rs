@@ -221,12 +221,23 @@ async fn ensure_docker_network(
     }
 
     info!("[Deploy] Creating Docker network for event {}", event_id);
+    // Linux bridge ifname 上限 15 字符：docker 网络名（`fctf-awd-<8hex>`，17 字符）不能直接
+    // 用作 `com.docker.network.bridge.name`（否则 dockerd 报 "numerical result out of range"）。
+    let bridge_name = format!("fctfawd{}", &event_id.simple().to_string()[..8]); // 15 字符
+    // internal 必须为 false：`docker network create --internal` 会让 dockerd 在
+    // `table ip filter` DOCKER-INTERNAL（priority 0）注入两条 DROP（saddr/daddr 非
+    // 本网段禁止进出 bridge）。其中 `ip saddr != <cidr> oifname <bridge> drop` 是
+    // terminal verdict，会在 FloatCTF 链（priority 1）之前直接丢弃玩家 WG 流量——
+    // 玩家永远无法访问 GameBox（真实主机实测：WG 隧道 SYN 被 DOCKER-INTERNAL 吞掉，
+    // GameBox 收不到任何包）。隔离矩阵（§26/§27：GameBox→Internet/Host DENY、
+    // 玩家→infra DENY 等）全部由 FloatCTF forward 链承担，internal 不提供额外语义。
     let handle = containers
         .create_event_network(EventNetworkSpec {
             event_id,
             network_name: net_name.clone(),
             subnet_cidr: event_network.gamebox_cidr.to_string(),
-            internal: true,
+            internal: false,
+            bridge_name: Some(bridge_name),
         })
         .await
         .map_err(|e| AwdError::Docker(e.to_string()))?;
@@ -304,13 +315,16 @@ async fn ensure_infra_container(
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
             env: {
+                // flagserver 与 judgeserver 都通过 PLATFORM_INTERNAL_URL 回调平台
+                // （flagserver 需要它来 issue flag / judgeserver 需要它来 claim 任务）；
+                // 缺失时 flagserver 回退到 127.0.0.1:8080 → 容器内 503（真实主机实测）。
                 let mut envs = vec![
                     format!("EVENT_ID={event_id}"),
                     format!("INTERNAL_TOKEN={token}"),
                     format!("LISTEN_ADDR=0.0.0.0:8080"),
+                    format!("PLATFORM_INTERNAL_URL={platform_internal_url}"),
                 ];
                 if kind == "judgeserver" {
-                    envs.push(format!("PLATFORM_INTERNAL_URL={platform_internal_url}"));
                     envs.push(format!(
                         "MAX_CONCURRENT={}",
                         awd_event.judge_max_concurrency
@@ -324,12 +338,14 @@ async fn ensure_infra_container(
         .await
         .map_err(|e| AwdError::Docker(e.to_string()))?;
 
+    // resource_id 记录容器名（与 ensure_infra_container 的 DB 追踪查找、token rotate
+    // 端点 update_many 的约定一致）；容器 ID 存入 resource_name 作审计。
     record_resource(
         db,
         event_id,
         kind,
-        &handle.container_id,
-        Some(&container_name),
+        &container_name,
+        Some(&handle.container_id),
     )
     .await?;
     info!("[Deploy] {} created as {}", kind, handle.container_id);

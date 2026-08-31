@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::modules::event::awd::{
     AwdError, AwdResult,
@@ -35,6 +36,47 @@ impl NftablesFirewallRuntime {
     pub fn new() -> Self {
         Self {
             runner: Arc::new(RealCommandRunner),
+        }
+    }
+
+    /// 确保同桥容器流量经过 netfilter（AWD 隔离依赖 FORWARD 链看到同桥流量）。
+    ///
+    /// 未加载 br_netfilter 时，同一 docker 网络内（同桥）的容器流量是纯 L2 交换，
+    /// 完全不经过 FORWARD 链 —— FloatCTF 的 DROP/ACCEPT 规则对同桥流量全部失效
+    /// （真实主机实测：跨队 GameBox 在 Hardening 期可达）。本方法幂等启用
+    /// `br_netfilter` + `bridge-nf-call-{ip,ip6}tables=1`。
+    ///
+    /// best-effort：失败仅告警，不 fail reconcile（规则仍对跨网段/L3 流量生效）。
+    async fn ensure_bridge_netfilter(&self) {
+        let _ = self
+            .runner
+            .run("modprobe", &["br_netfilter".to_string()])
+            .await;
+        let _ = self
+            .runner
+            .run(
+                "sysctl",
+                &[
+                    "-w".to_string(),
+                    "net.bridge.bridge-nf-call-iptables=1".to_string(),
+                ],
+            )
+            .await;
+        let _ = self
+            .runner
+            .run(
+                "sysctl",
+                &[
+                    "-w".to_string(),
+                    "net.bridge.bridge-nf-call-ip6tables=1".to_string(),
+                ],
+            )
+            .await;
+        match std::fs::read_to_string("/proc/sys/net/bridge/bridge-nf-call-iptables") {
+            Ok(v) if v.trim() == "1" => {}
+            _ => warn!(
+                "bridge-nf not effective: same-bridge container traffic bypasses the FloatCTF firewall"
+            ),
         }
     }
 
@@ -143,6 +185,9 @@ impl FirewallRuntime for NftablesFirewallRuntime {
                 applied: true,
             });
         }
+
+        // 0.5 同桥流量必须经过 netfilter，否则同 docker 网络内的规则全部失效。
+        self.ensure_bridge_netfilter().await;
 
         // 1. render 完整 table（整个 floatctf_awd 内容）
         let ruleset = render::render_table(desired);

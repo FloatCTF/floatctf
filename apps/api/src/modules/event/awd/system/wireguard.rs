@@ -7,7 +7,20 @@ use crate::modules::event::awd::{
     AwdError, AwdResult,
     system::command::{CommandRunner, wireguard_cmd},
 };
+use std::io::Write;
 use tracing::info;
+
+/// 把私钥写入临时文件（`wg set private-key` 读取文件路径；CommandRunner 不提供 stdin，
+/// 传 `/dev/stdin` 会读到 EOF → 接口永远拿不到私钥 → 玩家无法握手。真实主机实测
+/// `wg show <iface> public-key` 为 (none)）。返回临时文件路径，文件在返回后由调用方
+/// 持有的 `NamedTempFile` 生命周期保护（命令执行期间文件必须存在）。
+fn write_wg_key_file(private_key: &str) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut f = tempfile::NamedTempFile::new()?;
+    f.write_all(private_key.as_bytes())?;
+    f.write_all(b"\n")?;
+    f.flush()?;
+    Ok(f)
+}
 
 /// 使用给定私钥与监听端口创建 WireGuard 接口。
 pub async fn create_interface(
@@ -33,6 +46,13 @@ pub async fn create_interface(
         .map_err(|e| AwdError::Network(format!("Failed to create WG interface: {}", e)))?;
 
     // Set private key and listen port
+    let key_file = write_wg_key_file(private_key)
+        .map_err(|e| AwdError::Network(format!("Failed to write WG key file: {e}")))?;
+    let key_path = key_file
+        .path()
+        .to_str()
+        .ok_or_else(|| AwdError::Network("WG key path not utf8".into()))?
+        .to_string();
     runner
         .run(
             "wg",
@@ -40,7 +60,7 @@ pub async fn create_interface(
                 "set".to_string(),
                 iface.to_string(),
                 "private-key".to_string(),
-                "/dev/stdin".to_string(),
+                key_path,
                 "listen-port".to_string(),
                 listen_port.to_string(),
             ],

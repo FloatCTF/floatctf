@@ -227,6 +227,12 @@ pub async fn find_event_start_schedule<C: ConnectionTrait + Send>(
 }
 
 /// 手动 Start 成功后取消尚未被 worker 领取的定时开赛/自动预检任务。
+///
+/// 只取消"会再次触发 Start"的任务（定时开赛 + 自动预检）。**不得**包含
+/// AwdHardeningEnd / AwdJudgeBatchDeadline：Start 事务内刚创建的 HardeningEnd
+/// 任务此时仍是 pending，若一并删除，赛事会永远停留在 Hardening（真实主机实测，
+/// 手动 Start 后 4 分钟无 Round 1）。Round 的 batch deadline 同理属于进行中的
+/// 生命周期调度，不能在这里清掉。
 pub async fn cancel_pending_event_lifecycle_schedules<C: ConnectionTrait + Send>(
     db: &C,
     event_id: Uuid,
@@ -236,8 +242,6 @@ pub async fn cancel_pending_event_lifecycle_schedules<C: ConnectionTrait + Send>
         .filter(scheduled_tasks::Column::TaskKey.is_in([
             TaskKey::AwdEventStart.to_string(),
             TaskKey::AwdAutoPrecheck.to_string(),
-            TaskKey::AwdHardeningEnd.to_string(),
-            TaskKey::AwdJudgeBatchDeadline.to_string(),
         ]))
         .filter(scheduled_tasks::Column::Status.eq("pending"))
         .exec(db)

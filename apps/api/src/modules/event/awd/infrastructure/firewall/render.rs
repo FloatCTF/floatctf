@@ -94,9 +94,10 @@ pub fn render_table(desired: &DesiredFirewallState) -> String {
                 banned_gameboxes.insert(team.gamebox_network.as_str());
             }
         }
+        // infrastructure_v4：仅收录基础设施子网（`flags interval` 集合中 CIDR 与其
+        // 包含的单 IP 不能共存，nft 报 "conflicting intervals"）。FlagServer/JudgeServer
+        // 与网关固定落在该子网内（offset 2/3 与 .1），子网即精确覆盖。
         infra.insert(event.infrastructure_network.as_str());
-        infra.insert(event.flagserver_ip.to_string());
-        infra.insert(event.judgeserver_ip.to_string());
     }
     out.push_str(&fmt_set("all_gameboxes_v4", &all_gameboxes));
     out.push_str(&fmt_set("infrastructure_v4", &infra));
@@ -156,6 +157,15 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
         out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
         out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
     } else {
+        // 回程流量放行（conntrack established/related）：方向性矩阵（§26/§27）
+        // 是 stateless 的，Player→GameBox 的 TCP 三次握手响应（GameBox→Player）
+        // 会被下方 `ip saddr @gameboxes drop` 吞掉，玩家永远无法完成连接（真实
+        // 主机实测：WG 隧道 SYN 可达，SYN-ACK 被 rule drop）。
+        // 只允许在存在方向性 ALLOW 的 phase（Hardening/Attack）放行已建立回程；
+        // Pause/Final Settlement/Finished 必须全阻断（含已建立连接），不放行。
+        if matches!(event.phase, AwdPhase::Hardening | AwdPhase::Attack) {
+            out.push_str("        ct state established,related accept\n");
+        }
         match event.phase {
             AwdPhase::Hardening => {
                 // 1) own-team accept (Player→own GameBox + GameBox→same Team GameBox)
@@ -321,6 +331,42 @@ mod tests {
         assert!(text.contains("ip saddr @ev_"));
         // 无 O(N²)：不出现 Team A → Team B 的单条规则
         assert!(!text.contains("172.31.1.0/24 ip daddr 10.42.2.0/24"));
+    }
+
+    #[test]
+    fn render_emits_return_path_ct_rule_in_hardening_and_attack() {
+        // 方向性矩阵是 stateless 的：Player→GameBox 三次握手的回程（GameBox→Player）
+        // 必须由 conntrack established/related 放行，否则连接永远无法完成。
+        for phase in [AwdPhase::Hardening, AwdPhase::Attack] {
+            let text = render_table(&DesiredFirewallState {
+                revision: 1,
+                events: vec![sample_event(phase.clone(), false)],
+            });
+            assert!(
+                text.contains("ct state established,related accept"),
+                "{phase:?} must allow return traffic"
+            );
+        }
+        // Pause / Final Settlement / Finished：全阻断，不得放行已建立连接。
+        let pause = render_table(&DesiredFirewallState {
+            revision: 2,
+            events: vec![sample_event(AwdPhase::Pause, false)],
+        });
+        assert!(!pause.contains("ct state established,related accept"));
+        let mut settled = sample_event(AwdPhase::Attack, false);
+        settled.is_final_settlement = true;
+        let settled_text = render_table(&DesiredFirewallState {
+            revision: 3,
+            events: vec![settled],
+        });
+        assert!(!settled_text.contains("ct state established,related accept"));
+        let mut finished = sample_event(AwdPhase::Attack, false);
+        finished.is_finished = true;
+        let finished_text = render_table(&DesiredFirewallState {
+            revision: 4,
+            events: vec![finished],
+        });
+        assert!(!finished_text.contains("ct state established,related accept"));
     }
 
     #[test]
@@ -650,11 +696,8 @@ mod tests {
         // The daddr @banned_gameboxes_v4 drop rules only match
         // saddr @players or saddr @gameboxes — infrastructure IPs
         // (judgeserver_ip, flagserver_ip) are NOT in those sets.
-        // Verify the infrastructure set exists and is separate
+        // Verify the infrastructure set exists and covers the infra subnet
         assert!(text.contains("infrastructure_v4"));
-        assert!(text.contains("10.42.0.10")); // flagserver
-        assert!(text.contains("10.42.0.11")); // judgeserver
-        // Infrastructure IPs are NOT in player or gamebox sets
-        // (they're in infrastructure_v4 set only)
+        assert!(text.contains("elements = { 10.42.0.0/24 }")); // subnet covers .1 gateway/.2 flagserver/.3 judgeserver
     }
 }

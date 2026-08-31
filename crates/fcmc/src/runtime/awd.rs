@@ -20,6 +20,9 @@ pub struct EventNetworkSpec {
     pub network_name: String,
     pub subnet_cidr: String,
     pub internal: bool,
+    /// Host-side Linux bridge ifname（≤15 字符；网络名可更长，Linux ifname 有 15 字符上限）。
+    /// None 时回退用 network_name（仅当 network_name ≤15 字符时可用）。
+    pub bridge_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,12 +160,16 @@ impl AwdContainerRuntime for DockerRuntime {
         use super::{ContainerRuntime, DockerContainerRuntime, NetworkSpec};
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        let bridge = spec
+            .bridge_name
+            .clone()
+            .unwrap_or_else(|| spec.network_name.clone());
         let handle = rt
             .create_network(NetworkSpec {
                 name: spec.network_name.clone(),
                 subnet_cidr: spec.subnet_cidr,
                 internal: spec.internal,
-                bridge_name: Some(spec.network_name.clone()),
+                bridge_name: Some(bridge),
                 check_duplicate: true,
             })
             .await?;

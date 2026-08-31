@@ -19,6 +19,16 @@ pub struct JudgeClaimResponse {
     pub tasks: Vec<ClaimedTask>,
 }
 
+/// 平台统一响应信封（与 API 端 `UniResponse` 对齐）：
+/// `{"code":0,"message":"OK","data":{...},"meta":null}`。
+/// JudgeServer 的 claim 响应被包裹在此信封中，解析时必须先剥掉信封。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiEnvelope<T> {
+    pub code: i32,
+    pub message: String,
+    pub data: T,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClaimedTask {
     pub task_id: Uuid,
@@ -74,7 +84,10 @@ pub struct JudgeResultRequest {
 // ── URL builders ──
 
 pub fn claim_url(platform_url: &str, event_id: &str) -> String {
-    format!("{}/internal/awd/events/{}/judge/claim", platform_url, event_id)
+    format!(
+        "{}/internal/awd/events/{}/judge/claim",
+        platform_url, event_id
+    )
 }
 
 pub fn heartbeat_url(platform_url: &str, event_id: &str, task_id: &Uuid) -> String {
@@ -117,44 +130,62 @@ mod tests {
 
     #[test]
     fn claim_response_deserializes_all_fields() {
+        // 平台返回 UniResponse 信封：{"code":0,"message":"OK","data":{"tasks":[...]}}
         let json = r###"{
-            "tasks": [{
-                "task_id": "00000000-0000-0000-0000-000000000001",
-                "batch_id": "00000000-0000-0000-0000-000000000002",
-                "event_id": "00000000-0000-0000-0000-000000000003",
-                "round_id": "00000000-0000-0000-0000-000000000004",
-                "gamebox_instance_id": "00000000-0000-0000-0000-000000000005",
-                "event_gamebox_id": null,
-                "team_id": "00000000-0000-0000-0000-000000000006",
-                "attempt": 1,
-                "lease_token": "abc123",
-                "lease_expires_at": "2026-01-01T00:00:00Z",
-                "deadline_at": "2026-01-01T00:05:00Z",
-                "script_content": "#!/bin/bash\necho ok",
-                "script_args_json": "[\"check\",\"{target_ip}\"]",
-                "target_ip": "10.0.0.1",
-                "timeout_secs": 30
-            }]
+            "code": 0,
+            "message": "OK",
+            "data": {
+                "tasks": [{
+                    "task_id": "00000000-0000-0000-0000-000000000001",
+                    "batch_id": "00000000-0000-0000-0000-000000000002",
+                    "event_id": "00000000-0000-0000-0000-000000000003",
+                    "round_id": "00000000-0000-0000-0000-000000000004",
+                    "gamebox_instance_id": "00000000-0000-0000-0000-000000000005",
+                    "event_gamebox_id": null,
+                    "team_id": "00000000-0000-0000-0000-000000000006",
+                    "attempt": 1,
+                    "lease_token": "abc123",
+                    "lease_expires_at": "2026-01-01T00:00:00Z",
+                    "deadline_at": "2026-01-01T00:05:00Z",
+                    "script_content": "#!/bin/bash\necho ok",
+                    "script_args_json": "[\"check\",\"{target_ip}\"]",
+                    "target_ip": "10.0.0.1",
+                    "timeout_secs": 30
+                }]
+            },
+            "meta": null
         }"###;
-        let resp: JudgeClaimResponse = serde_json::from_str(json).unwrap();
+        let resp: JudgeClaimResponse =
+            serde_json::from_str::<ApiEnvelope<JudgeClaimResponse>>(json)
+                .unwrap()
+                .data;
         assert_eq!(resp.tasks.len(), 1);
         let t = &resp.tasks[0];
-        assert_eq!(t.task_id.to_string(), "00000000-0000-0000-0000-000000000001");
+        assert_eq!(
+            t.task_id.to_string(),
+            "00000000-0000-0000-0000-000000000001"
+        );
         assert_eq!(t.attempt, 1);
         assert_eq!(t.lease_token, "abc123");
         assert_eq!(t.script_content, "#!/bin/bash\necho ok");
-        assert_eq!(t.script_args_json.as_deref(), Some("[\"check\",\"{target_ip}\"]"));
+        assert_eq!(
+            t.script_args_json.as_deref(),
+            Some("[\"check\",\"{target_ip}\"]")
+        );
         assert_eq!(t.target_ip, "10.0.0.1");
         assert_eq!(t.timeout_secs, 30);
     }
 
     #[test]
     fn claim_response_deserializes_multiple_tasks() {
-        let json = r###"{"tasks":[
+        let json = r###"{"code":0,"message":"OK","data":{"tasks":[
             {"task_id":"00000000-0000-0000-0000-000000000001","batch_id":"00000000-0000-0000-0000-000000000002","event_id":"00000000-0000-0000-0000-000000000003","round_id":"00000000-0000-0000-0000-000000000004","gamebox_instance_id":"00000000-0000-0000-0000-000000000005","event_gamebox_id":null,"team_id":"00000000-0000-0000-0000-000000000006","attempt":1,"lease_token":"tok1","lease_expires_at":"2026-01-01T00:00:00Z","deadline_at":"2026-01-01T00:05:00Z","script_content":"echo 1","script_args_json":null,"target_ip":"10.0.0.1","timeout_secs":30},
             {"task_id":"00000000-0000-0000-0000-000000000007","batch_id":"00000000-0000-0000-0000-000000000008","event_id":"00000000-0000-0000-0000-000000000003","round_id":"00000000-0000-0000-0000-000000000004","gamebox_instance_id":"00000000-0000-0000-0000-000000000009","event_gamebox_id":null,"team_id":"00000000-0000-0000-0000-00000000000a","attempt":2,"lease_token":"tok2","lease_expires_at":"2026-01-01T00:00:00Z","deadline_at":"2026-01-01T00:05:00Z","script_content":"echo 2","script_args_json":null,"target_ip":"10.0.0.2","timeout_secs":30}
-        ]}"###;
-        let resp: JudgeClaimResponse = serde_json::from_str(json).unwrap();
+        ]},"meta":null}"###;
+        let resp: JudgeClaimResponse =
+            serde_json::from_str::<ApiEnvelope<JudgeClaimResponse>>(json)
+                .unwrap()
+                .data;
         assert_eq!(resp.tasks.len(), 2);
         assert_eq!(resp.tasks[0].lease_token, "tok1");
         assert_eq!(resp.tasks[1].lease_token, "tok2");
@@ -261,30 +292,38 @@ mod tests {
 
     #[test]
     fn api_claim_response_roundtrips_to_judgeserver() {
-        // Simulate API serializing a ClaimResponse (using the API's DTO shape)
+        // Simulate API serializing a ClaimResponse wrapped in the UniResponse envelope
         let api_json = serde_json::json!({
-            "tasks": [{
-                "task_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "batch_id": "11111111-2222-3333-4444-555555555555",
-                "event_id": "66666666-7777-8888-9999-000000000000",
-                "round_id": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
-                "gamebox_instance_id": "cccccccc-1111-2222-3333-dddddddddddd",
-                "event_gamebox_id": null,
-                "team_id": "eeeeeeee-1111-2222-3333-ffffffffffff",
-                "attempt": 1,
-                "lease_token": "fa3c8e1b2d4a5f6c7e8d9a0b1c2d3e4f",
-                "lease_expires_at": "2026-08-26T12:00:00Z",
-                "deadline_at": "2026-08-26T12:05:00Z",
-                "script_content": "#!/bin/bash\ncurl -sf http://{target_ip}:8080/health",
-                "script_args_json": "[\"check\",\"{target_ip}\"]",
-                "target_ip": "10.42.1.100",
-                "timeout_secs": 30
-            }]
+            "code": 0,
+            "message": "OK",
+            "data": {
+                "tasks": [{
+                    "task_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "batch_id": "11111111-2222-3333-4444-555555555555",
+                    "event_id": "66666666-7777-8888-9999-000000000000",
+                    "round_id": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+                    "gamebox_instance_id": "cccccccc-1111-2222-3333-dddddddddddd",
+                    "event_gamebox_id": null,
+                    "team_id": "eeeeeeee-1111-2222-3333-ffffffffffff",
+                    "attempt": 1,
+                    "lease_token": "fa3c8e1b2d4a5f6c7e8d9a0b1c2d3e4f",
+                    "lease_expires_at": "2026-08-26T12:00:00Z",
+                    "deadline_at": "2026-08-26T12:05:00Z",
+                    "script_content": "#!/bin/bash\ncurl -sf http://{target_ip}:8080/health",
+                    "script_args_json": "[\"check\",\"{target_ip}\"]",
+                    "target_ip": "10.42.1.100",
+                    "timeout_secs": 30
+                }]
+            },
+            "meta": null
         });
         let api_json_str = serde_json::to_string(&api_json).unwrap();
 
         // JudgeServer deserializes it
-        let resp: JudgeClaimResponse = serde_json::from_str(&api_json_str).unwrap();
+        let resp: JudgeClaimResponse =
+            serde_json::from_str::<ApiEnvelope<JudgeClaimResponse>>(&api_json_str)
+                .unwrap()
+                .data;
         assert_eq!(resp.tasks.len(), 1);
         let t = &resp.tasks[0];
         assert_eq!(t.lease_token, "fa3c8e1b2d4a5f6c7e8d9a0b1c2d3e4f");
@@ -311,7 +350,12 @@ mod tests {
         assert_eq!(parsed["attempt"], 2);
         assert_eq!(parsed["lease_token"], "hex-lease-token");
         // Verify no extra fields leaked
-        let keys: Vec<&str> = parsed.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        let keys: Vec<&str> = parsed
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
         assert_eq!(keys.len(), 3);
     }
 

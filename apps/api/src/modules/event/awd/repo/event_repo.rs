@@ -323,17 +323,21 @@ fn active_model_from_patch(
 
 /// 配置代数 +1（P2-9/P2-10）：所有影响 runtime 的配置写入口调用。
 /// 不改变状态；仅递增 configuration_generation（会使 verified_generation 失配 → StartBlocked）。
+///
+/// 注意：`awd_events` 的 PK 是自生成 `id`，`event_id` 是唯一的父赛事引用列；
+/// 本函数按 `event_id` 定位、按 PK `id` 更新（调用方一律传入父赛事 UUID）。
 pub async fn touch_configuration<C: ConnectionTrait + Send>(
     db: &C,
     id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
-    let event = awd_events::Entity::find_by_id(id)
+    let event = awd_events::Entity::find()
+        .filter(awd_events::Column::EventId.eq(id))
         .one(db)
         .await?
         .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
     let next = event.configuration_generation + 1;
     let active: awd_events::ActiveModel = awd_events::ActiveModel {
-        id: Set(id),
+        id: Set(event.id),
         configuration_generation: Set(next),
         updated_at: Set(chrono::Utc::now().into()),
         ..Default::default()

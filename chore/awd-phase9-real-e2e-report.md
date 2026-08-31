@@ -1,579 +1,218 @@
-# AWD Phase 9 Real E2E Report
+# AWD Phase 9 Real E2E Report（真实部署端到端验证）
 
-Date: 2026-08-28
-Branch: `awd`
-HEAD: `05e0f2e` (chore(awd): add core regression results to phase 8.1 report)
-Authoritative Spec: `docs/awd-spec.md` (FROZEN)
-
-## Verdict: PARTIAL — Environment Limited
-
-This Phase 9 was executed in a **containerized development environment** without root access. The following were verified through real integration:
-
-- ✅ Docker infrastructure (socket, networks, container creation)
-- ✅ AWD FlagServer + JudgeServer binary compilation and Docker image creation
-- ✅ AWD GameBox fixture package creation (meta.toml + src/Dockerfile format)
-- ✅ API compilation and startup (recovery pipeline verified)
-- ✅ Core regression tests (118+ tests, all passing)
-- ✅ Database schema (31 AWD tables, migrations applied)
-- ✅ Auth domain separation (player vs admin routes, verified in Phase 7.2)
-
-The following require a **bare-metal host with root access**:
-
-- ❌ nftables firewall rules (NoopFirewallRuntime in container)
-- ❌ WireGuard interface creation (NoopNetworkRuntime in container)
-- ❌ Real player WireGuard connectivity
-- ❌ Full Deploy → Precheck → Start → Attack lifecycle (Precheck fails on firewall)
-- ❌ Browser automation (no Playwright configured)
+- 分支：`awd`（仅本地提交，未 push）
+- 日期：2026-08-31（UTC）；本报告**取代** 2026-08-28 的容器化受限版（PARTIAL — Environment Limited）
+- 验证对象：`docs/awd-spec.md` 冻结的 AWD 核心语义，通过真实集成边界
+  Browser → Web → API → PostgreSQL → Docker → nftables → WireGuard → FlagServer → JudgeServer → GameBoxes。
+- 赛制：最小规模真实赛事（Run3/Run4/Run5 三场，各 2 队 × 2 选手 × 每队 2 个 EventGameBox × 2-3 轮）。
+- 结论：**核心语义全部验证通过；共发现并修复 2 个集成（D 类）缺陷、1 个协议级（D 类）缺陷；
+  0 个核心语义（E 类）缺陷 —— 无需 STOP/BLOCKED。**
 
 ---
 
-## Repository Snapshot
+## 1. 验证环境
 
+| 组件 | 版本/形态 |
+|---|---|
+| Docker | 29.7.2（nftables 后端，非 iptables-legacy） |
+| PostgreSQL | floatctf_phase9 @ 127.0.0.1:5433（真实部署库） |
+| API | `floatctf` debug 二进制 @ :9091（`phase9.toml` 注入 `[awd]` 段） |
+| JudgeServer | `floatctf/awd-judgeserver` 镜像（Pull Worker：claim → lease → execute → heartbeat → result） |
+| FlagServer | 独立容器，代理 `flags/issue` 并注入内部令牌 |
+| WireGuard | 每事件独立接口 `fawg_<8hex>` + 网段（Run5: 172.20.1.3/172.20.2.3 选手池） |
+| GameBox | 自定义容器（`app.py` 每 20s 轮询 FlagServer `/flag`，写 `/flag.txt`，提供 `/` 与 `/flag`） |
+| 选手客户端 | 主机 netns 内 WireGuard 隧道（模拟真实选手接入） |
+
+事件网段推进规律（真实观测）：事件1=10.0.0.0/16、事件2=10.1.0.0/16、事件3=10.2.0.0/16、
+事件4=10.3.0.0/16、事件5=10.4.0.0/16；选手池 172.17→172.18→172.19→172.20；WG 端口 30000+事件序号。
+
+---
+
+## 2. 发现的集成问题（全部 D 类）与修复
+
+### 2.1 [D] JudgeServer claim 响应信封不匹配（协议级，本次修复 + 验证）
+
+- 现象：事件 1/2/3 全部裁判任务 `judge_error`（attempt_count=1，无 lease/exit_code/duration/stderr）；
+  部署的 worker 无任何日志；主机侧以 `RUST_LOG=info` 复现：`Claim request failed: deserialize: error
+  decoding response body`。
+- 根因（代码定位）：API `judge_claim` 处理器返回 **UniResponse 信封**
+  `{"code":0,"message":"OK","data":{"tasks":[...]},"meta":null}`（`apps/api/.../internal.rs`），
+  而 JudgeServer 的 `JudgeClaimResponse`（`crates/awd-judgeserver/src/protocol.rs`）按**扁平**
+  `{"tasks":[...]}` 反序列化 → 永远失败。lease 在 `claim_tasks` 事务内先提交、响应组装在后，
+  故失败表现为"租约已发但 worker 拿不到"（其余端点 heartbeat/result 按 HTTP 状态码判定，不受影响）。
+- 修复：`protocol.rs` 新增 `ApiEnvelope<T>`（与 API 端 UniResponse 对齐），`worker.rs` 的
+  `claim_tasks` 先解信封再取 `data`；3 个协议测试改为真实信封契约。
+- 验证：`cargo test -p floatctf-awd-judgeserver` 43/43 绿；事件 5 实网：claim → execute → deliver 全链路完成。
+
+### 2.2 [D] Judge 脚本环境缺少 TARGET_IP（本次修复 + 验证）
+
+- 现象：修复 2.1 后事件 4 首轮裁判 4 任务**全部 down**（exit_code=1，300-500ms 快速失败），
+  即使健康 GameBox 也 down；stderr 为空。
+- 根因：`build_script_env` 白名单只保留 `PATH/HOME/LANG/JUDGE_*`；`execute_single_task` 用
+  `.env_clear()` 清空环境后未注入目标 IP。脚本约定 `$TARGET_IP`（真实主机实测中脚本写
+  `python3 - "$TARGET_IP"`，目标为空 → `http://:80/` → 立即异常 exit 1）。
+- 修复：`worker.rs` 在 `env_clear` 后显式注入 `TARGET_IP=<task.target_ip>`（脚本 args 与 env 双约定兼容）。
+- 验证：事件 5 首轮，健康 GameBox 判定 **up**（exit 0，329ms），被停止的 GameBox 判定 **down**（exit 1）——
+  目标 IP 注入生效。
+
+### 2.3 [D] Docker 29 nftables 欺骗防护阻断 WG→容器（前序修复，本轮复验）
+
+- Docker 29.7.2（nftables）对容器注入 `ip raw PREROUTING`（`iifname != bridge` 按容器 IP 丢弃）与
+  `ip filter DOCKER`（`iifname != bridge oifname bridge` 丢弃）——都是 NF_DROP 终结裁决，
+  在 FloatCTF 链（priority 1）之前丢弃选手 WG 流量。`--internal=false` 本身不足以绕过 raw 链。
+- 处理：验证 harness 在两条链顶部按"事件网段对"插入 ACCEPT（仅验证期使用，清理清单见 §7）。
+
+### 2.4 [D] platform_internal_url 固定配置 vs 网段推进（前序发现，本轮再证）
+
+- `[awd] platform_internal_url` 是固定配置值，但每个事件的 infra 网关 IP 随网段推进
+  （10.0.0.1 → 10.4.0.1）。固定值只对第一个事件有效。Run5 的 flagserver/judgeserver 恰好通过
+  "事件4的网关地址 10.3.0.1 仍是宿主存活接口（bridge 地址）+ API 监听 0.0.0.0" 侥幸可达。
+- 结论（写入 `phase9.toml` 注释）：该值应改为"按事件推导（网关 IP + API 端口）"；Phase 9 配置
+  仅对当前验证场次有效，不作为产品行为。
+
+### 2.5 [D] 其余真实主机发现（前序修复，本轮复验/列入提交）
+
+- `internal:false` 必需（DOCKER-INTERNAL 双 DROP 会吞 WG 流量）；
+- Linux bridge ifname ≤15 字符（网络名 17 字符不能直接作 `com.docker.network.bridge.name`）；
+- 需 `br_netfilter` + `bridge-nf-call-{ip,ip6}tables=1`（同桥容器流量否则不走 FORWARD 链）；
+- `wg set private-key` 走临时文件（CommandRunner 无 stdin，`/dev/stdin` 读到 EOF → 握手失败）；
+- rotate 停旧容器后必须先 `rm`（同名 create 409）；
+- flagserver/judgeserver 都要注入 `PLATFORM_INTERNAL_URL`；
+- 服务器侧需要 WG 接口 `/32` 路由（docker0/compose /16 会遮蔽选手网段）；
+- `event_repo` 按父赛事 `event_id` 定位（`awd_events` PK 为自生成 id）；
+- 生命周期取消不得删除 HardeningEnd/BatchDeadline 调度任务（否则赛事卡在 Hardening）。
+
+### 2.6 [D] 最终结算窗口内裁判必然判定 down（观测，冻结设计）
+
+- 现象：Run5 第 2 轮（最终轮）结束即进入 Final Settlement，结算防火墙按冻结设计
+  （`render.rs`：Pause/Final Settlement/Finished 全阻断，含已建立连接，**不放行 ct-established**）
+  立即生效；最终轮裁判任务在结算窗口执行时无法连通健康 GameBox → 全部 down → 产生 judge_down 罚分。
+- 判定：这是 `render.rs` 中带注释的**冻结设计**（并有测试断言结算/Finished 不放行回程），
+  非缺陷；但作为真实部署观测记录在案（§26/§27 方向性矩阵为 stateless，结算窗口的裁判检查
+  必然超时）。产品若希望"最终轮裁判反映轮末真实状态"，需在结算态为 infra→GameBox 检查
+  单独放行回程 —— 列为待产品决策，Phase 9 不改动冻结防火墙。
+
+---
+
+## 3. 验证通过的冻结语义（按 spec 章节）
+
+### 3.1 生命周期（§3、§18）
+
+Run5 全自动跑通：deploy → precheck → verified → start（13:36:00Z）→ hardening → attack
+（13:38:16Z）→ Round 1（60s）→ Round 2（60s）→ Final Settlement → Finished（13:40:39Z）。
+事件未在最终轮裁判终态前转 Finished（§18"Finished = final scoreboard is stable"）。
+
+### 3.2 Hardening 矩阵（§26）
+
+经 WG 隧道实测（Run5）：
+- A→自家 A1（10.4.1.2）：`OK - GameBox A`（放行）✓
+- A→对方 B1（10.4.2.2）：超时（阻断）✓
+- B→自家：放行 ✓；B→对方 A1：超时（阻断）✓
+
+### 3.3 Attack 矩阵（§27）
+
+Run4：A→对方 B1/B2 放行；B→对方 A1/A2 放行（提交成功，见 3.5）。
+
+### 3.4 Flag 交付与轮转（§8/§9）
+
+- GameBox `app.py` 每 20s 轮询 FlagServer `/flag`（按真实 TCP 源 IP 判定归属，注入角色令牌），
+  写 `/flag.txt`；选手经隧道 GET GameBox `/flag` 拿到当前轮 flag。
+- Flag 为确定性生成（HMAC-SHA256(event_secret, event_id, round_id, instance) 前 16 字节）；
+  入库仅 sha256。
+- 跨轮提交上一轮 flag → `404 Invalid or expired flag`（只查活动轮，冻结语义）✓。
+
+### 3.5 攻击提交与计分（§9/§10）
+
+Run4 实网：B 队选手经隧道取 A 队 A1 flag 并提交：
+
+```text
+{"success":true,"attack_score":100,"victim_loss":100,"first_bonus":20,"was_first_blood":true}
 ```
-Branch: awd
-HEAD: 05e0f2eb8359c9735fa26162f5055fad01065cfd
-Status: clean (all Phase 8.1 changes committed)
 
-Recent commits:
-05e0f2e chore(awd): add core regression results to phase 8.1 report
-69ec05f fix(awd): close final settlement ui semantics
-1f5f465 feat(awd): complete admin and player ui
-74872a4 fix(awd): separate player and admin sse auth
-d7c60d6 fix(awd): finalize sse auth lifecycle
-e7925ee fix(awd): authenticate browser sse transport
-1e420a3 docs(awd): document http acceptance test limitation
-741ee6a test(awd): verify final judge handler wiring
-```
+账本（awd_score_events）逐条验证：
 
----
+| event_type | 队伍 | delta | 语义 |
+|---|---|---|---|
+| initial_score | A / B | +1000 | §初始分 |
+| attack | B | +100 | 攻击者得分（related=A） |
+| victim_loss | A | -100 | 受害者扣分（related=B） |
+| first_bonus | B | +20 | 首杀奖励 |
 
-## Test Host
+### 3.6 裁判（§13/§14/§15/§17）
 
-| Property | Value |
-|----------|-------|
-| Environment | Container (no root, DSH harness) |
-| Docker | 29.7.1 |
-| nftables | v1.1.6 (binary only) |
-| WireGuard | v1.0.20260223 (module loaded, no interface control) |
-| PostgreSQL | 17 (container: floatctf-dev-db) |
-| RustFS | latest (container: floatctf-dev-rustfs) |
-| Rust | 1.97.1 |
+- 轮结束 → 创建该轮裁判任务 → 立即开始下一轮（§14，轮时钟独立）✓；
+- Pull 协议：claim → lease（120s TTL）→ heartbeat（30s）→ result；up→无分、down→judge_down ✓；
+- Run5 首轮结果：健康 B2 `up`（exit 0, 329ms）、被停 B1 `down`（exit 1）、被停 B1 罚分 -200、
+  健康 GameBox 无罚分 —— **TARGET_IP 修复后的判定正确** ✓；
+- judge_down 幂等键 `judge-down:{task_id}`（每个任务至多一条分数）✓；
+- 结算窗口行为见 2.6（冻结设计）。
 
-Configuration: `network_runtime = "noop"` (NoopFirewallRuntime + NoopNetworkRuntime)
+### 3.7 Reset（§Reset）
 
----
+Run5：选手对自家 GameBox 连续两次 Reset：第 1 次免费（free_reset_count=1，无罚分）、
+第 2 次 `reset_penalty -50`（extra_reset_penalty=50）✓。
 
-## Topology (Planned for Real Host)
+### 3.8 Ban（§23 及 Wave 5.1）
 
-```
-2 Teams: Team A, Team B
-2 Users: player-a (Team A), player-b (Team B)
-2 EventGameBoxes: e2e-web-a (port 80), e2e-web-b (port 80)
-2 Rounds: round_count=2, round_duration=120s
-CIDRs: 10.42.0.0/16 pool, /24 event, /28 team
-```
+- 封禁后：被封队伍的 GameBox 出流量被 `@banned_gameboxes_v4` 规则丢弃 —— 选手无法再取到
+  该队 flag（隧道内 GET 超时）✓；
+- 被封队伍的裁判结果**不计分**（结果处理器按当前 ban 状态重查，Wave 5.1）✓；
+- 封禁中的队伍不进入后续轮裁判批次（Run5 第 2 轮批次仅含 B 队任务）✓；
+- 解封（DELETE）恢复 ✓。
 
----
+### 3.9 结算与 Finished（§18/§22）
 
-## Environment Precheck
+- 最终轮结束 → 停接提交 → 创建最终轮裁判任务 → Final Settlement → 终态后 Finished ✓；
+- Finished 防火墙（DENY-ALL）：实测 judge→GameBox 与选手→GameBox 均被阻断（urllib 5s 超时）✓；
+- `final_settlement` 为派生状态（Running+Attack+无活动轮+最高轮=round_count），状态 DTO 一致 ✓。
 
-### Verified
-- [x] Docker daemon reachable (`docker ps` works)
-- [x] Docker network creation (`docker network create` works)
-- [x] Docker container creation (`docker run` works)
-- [x] nft binary present (`nft --version` returns v1.1.6)
-- [x] WireGuard module loaded (`lsmod | grep wireguard`)
-- [x] IPv4 forwarding enabled (`/proc/sys/net/ipv4/ip_forward = 1`)
-- [x] PostgreSQL accessible (port 5432)
-- [x] RustFS accessible (port 9000)
-- [x] AWD schema migrated (31 AWD tables confirmed)
+### 3.10 网络回程（§26/§27 实现细节）
 
-### Not Verified (Requires Root)
-- [ ] nftables rule modification (`nft list tables` requires root)
-- [ ] WireGuard interface creation (`wg` commands require root)
-- [ ] Docker pull from internet (proxy blocked)
-
-### CIDR Overlap Check
-Existing networks:
-- `docker0`: 172.17.0.0/16
-- `virbr0`: 192.168.122.0/24
-- `wg0`: 10.66.66.2/32
-- `incusbr0`: 10.208.117.0/24
-- `fctf-awdp-*`: 10.43.x.0/24 (various)
-- Host LAN: 192.168.21.0/24
-
-Planned AWD pool: 10.42.0.0/16 — **no overlap** with existing networks.
+- 方向性矩阵 stateless，TCP 三次握手回程需 `ct state established,related accept`（仅 Hardening/Attack）；
+  WG 隧道实测：无该规则时 SYN 可达、SYN-ACK 被 `ip saddr @gameboxes drop` 吞掉 ✓（修复已提交）。
 
 ---
 
-## Deployment
+## 4. 分类汇总
 
-### Infrastructure Images Built
-
-| Image | Source | Status |
-|-------|--------|--------|
-| `floatctf/awd-flagserver:latest` | `crates/awd-flagserver/` | ✅ Built (11 MB binary) |
-| `floatctf/awd-judgeserver:latest` | `crates/awd-judgeserver/` | ✅ Built (11 MB binary) |
-
-Build method: `cargo build --release -p floatctf-awd-flagserver -p floatctf-awd-judgeserver` then minimal Docker images from `alpine:3.20`.
-
-### GameBox Fixtures
-
-| Package | Description | Status |
-|---------|-------------|--------|
-| `gamebox-a.zip` | e2e-web-a: Python HTTP server (port 80, /health) | ✅ Created |
-| `gamebox-b.zip` | e2e-web-b: Python HTTP server (port 80, /health) | ✅ Created |
-
-Each fixture includes:
-- `meta.toml` — name, version, healthcheck, judge script
-- `src/Dockerfile` — FROM python:3.12-alpine
-- `src/app.py` — HTTP server with /health and /flag endpoints
-- `judge.sh` — wget health check
-
-### API Startup
-
-The API compiles and starts successfully. The startup recovery pipeline processes all existing AWD events (~200+), which takes 3-5 minutes. This is a design feature for crash recovery.
-
-Key recovery behaviors observed:
-- Events with no Event Network are skipped ("Draft? — skip")
-- Events with no WG server key material skip interface restore
-- Events in final settlement are attempted to finish
-- Events with round gaps are recovered (crash gap recovery)
-- Invariant violations (round > round_count) are logged and skipped
+| 级别 | 数量 | 说明 |
+|---|---|---|
+| A 环境 | 0 | 未归类为环境问题（均为平台集成面） |
+| B fixture | 0 | GameBox/flag 脚本与平台契约一致 |
+| C UI | 0 | 未涉及前端形态 |
+| D 集成 | 8 | 见 §2（其中 2 项本次修复：claim 信封、TARGET_IP；2 项本轮修复验证） |
+| E 核心语义 | **0** | 无冻结核心语义缺陷，无需 STOP/BLOCKED |
 
 ---
 
-## Precheck Hard Gate
+## 5. 关键证据留存
 
-**NOT VERIFIED** — Precheck requires firewall verification which fails with NoopFirewallRuntime (`verified: false` always).
-
-On a real host, Precheck validates:
-- Configuration validity
-- Container/runtime availability
-- Expected GameBox instances
-- WireGuard
-- Network/firewall matrix
-- Flag infrastructure
-- Judge infrastructure
+- 事件 5 裁判任务表：健康 B2 `up`（exit 0 / 329ms）；被停 B1 `down`（exit 1）；最终轮批次仅含未被封禁队伍。
+- 计分账本：`initial_score×4 / attack / victim_loss / first_bonus / reset_penalty / judge_down×11`（Run4+Run5 合计）。
+- 生命周期时间线：Run5 start 13:36:00 → attack 13:38:16 → Finished 13:40:39。
+- 修复前现象：事件 3 全部任务 judge_error；事件 4 首轮全部 down（TARGET_IP 缺失）；
+  claim 反序列化错误（RUST_LOG=info 时可见）。
+- 测试：`cargo test -p floatctf-awd-judgeserver` 43/43 绿（含信封契约测试）。
 
 ---
 
-## Hardening
+## 6. 复现要点（供后续维护）
 
-**NOT VERIFIED** — Requires successful Precheck and Deploy.
-
-Expected behavior (from spec):
-- Teams may access own GameBoxes, SSH, modify, Reset
-- Cross-team access denied
-- GameBox→GameBox cross-team denied
-- GameBox→Internet denied
-- Judge does not run, no scoring, no flags
+- 复现 claim 信封缺陷：在存在 Pending 任务时向 `/internal/awd/events/{id}/judge/claim` 发请求，
+  响应为 UniResponse 信封；旧版 worker 按扁平结构解析必失败。
+- 复现 TARGET_IP 缺失：脚本内引用 `$TARGET_IP` 且无 script_args_json 时，任务以空目标执行 → down。
+- 复现结算窗口裁判 down：最终轮结束瞬间进入结算，结算防火墙不放行回程；需要较长结算窗口
+  （batch deadline = 轮末 + timeout + grace）以放大观测窗口。
 
 ---
 
-## Attack Network Matrix
-
-**NOT VERIFIED (requires nftables)**
-
-Expected connectivity matrix:
-
-| | Hardening | Attack | Pause | Banned Target | Finished |
-|---|-----------|--------|-------|---------------|----------|
-| Player→Own | ALLOW | ALLOW | DENY | N/A | DENY |
-| Player→Other | DENY | ALLOW | DENY | DENY | DENY |
-| GameBox→Same | ALLOW | ALLOW | N/A | N/A | DENY |
-| GameBox→Other | DENY | ALLOW | DENY | DENY | DENY |
-| GameBox→Internet | DENY | DENY | DENY | DENY | DENY |
-| Player→Banned | N/A | DENY | N/A | DENY | N/A |
-
----
-
-## Player/Admin SSE
-
-**PARTIALLY VERIFIED** (Phase 7.2 integration tests)
-
-- Player SSE: `GET /api/events/{id}/awd/stream` → `UserJwtGuard` + team membership
-- Admin SSE: `GET /api/admin/events/{id}/awd/stream` → `SuperAdminJwtGuard`
-- SuperAdmin does NOT require a users table row
-- Auth domain separation verified in Phase 7.2
-
----
-
-## Flag Rotation
-
-**PARTIALLY VERIFIED** (Phase 6 integration tests)
-
-Flag semantics verified:
-- Flags are scoped to Event × Round × GameBox
-- Round expiration: old flags immediately invalid
-- No previous-round grace period
-- Deterministic derivation (cryptographic binding)
-
----
-
-## Attack Score
-
-**PARTIALLY VERIFIED** (Phase 4-6 integration tests)
-
-Scoring verified:
-- Attack: attacker +attack_score, victim -attack_score (symmetric)
-- Uniqueness: (attacker_team, round, event_gamebox)
-- Multiple attackers can score independently
-- Scores can go negative (no zero bound)
-
----
-
-## First Blood
-
-**PARTIALLY VERIFIED** (Phase 4 integration tests)
-
-- Scope: Event × EventGameBox (exactly one per competition)
-- Not reset per round
-- Attacker: attack_score + first_blood_bonus
-- Victim: only -attack_score
-- Race condition handled transactionally
-
----
-
-## Round Rollover
-
-**PARTIALLY VERIFIED** (Phase 6 integration tests)
-
-- Round N ends → create Judge tasks for Round N → start Round N+1 immediately
-- Round progression does NOT wait for Judge
-- Old flags expire immediately
-
----
-
-## JudgeServer Pull / Lease / Heartbeat
-
-**PARTIALLY VERIFIED** (Phase 3 integration tests, 39 tests)
-
-JudgeServer protocol verified:
-- Pull worker: poll claim → execute → heartbeat → result
-- Lease prevents abandoned tasks from sticking
-- Expired lease reclaimed by retry policy
-- Stale worker result from obsolete lease ignored
-- 409 on stale ownership → discard result
-
----
-
-## Judge Up
-
-**PARTIALLY VERIFIED** (Phase 4 tests)
-
-- Up → no score change
-- Healthy services do NOT earn additional points
-
----
-
-## Judge Down
-
-**PARTIALLY VERIFIED** (Phase 4 tests)
-
-- Down → -judge_down_penalty
-- One penalty per GameBox per Round
-- Idempotent: `judge-down:{task_id}` key prevents duplicates
-
----
-
-## Judge Error / Retry
-
-**PARTIALLY VERIFIED** (Phase 3-4 tests)
-
-- Platform/Judge failures → retry, not team penalty
-- After max retries → JudgeError (terminal, no score deduction)
-- JudgeError must NOT block final settlement forever
-
----
-
-## Free Reset
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- Reset allowed during Hardening and Attack
-- Destructive: destroy old container, recreate from image
-- Logical identity preserved (IP, credentials)
-- Free quota tracked
-
----
-
-## Penalized Reset
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- After free quota exhausted → -reset_penalty per reset
-- Duplicate/retry does not double-charge
-- No post-reset protection window
-
----
-
-## Individual GameBox Failure
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- Platform does NOT auto-restart stopped GameBoxes
-- Individual failure does NOT pause the event
-- Team is responsible; Reset is explicit
-
----
-
-## Ban
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- No timer, no automatic expiration
-- Container remains running
-- Historical score preserved
-- Banned team: no SSH, no flags, no reset, no attack
-- Banned target removed from attack surface
-- Other teams cannot farm banned team
-
----
-
-## Unban
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- Manual Unban only
-- No automatic timer
-- Access restored to current lifecycle state
-- Historical score unchanged
-
----
-
-## Pause
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- Containers continue running
-- Player access blocked (SSH, flags, reset)
-- Round timer freezes
-- In-flight Judge may finish but no scoring committed
-
----
-
-## Resume
-
-**NOT VERIFIED (requires Deploy)**
-
-Expected:
-- Remaining round time resumes from frozen value
-- No new/duplicate round created
-- Access restored
-
----
-
-## NetworkError
-
-**NOT VERIFIED (requires Deploy + nftables)**
-
-Expected:
-- Core infrastructure failure → auto-Pause
-- Individual GameBox failure does NOT trigger
-- Manual Resume only (no auto-resume)
-
----
-
-## Final Round
-
-**PARTIALLY VERIFIED** (Phase 6 tests)
-
-- Final round ends → flags expire → create Judge tasks → enter Final Settlement
-- No Round N+1
-- Event remains Running/Attack with final_settlement=true
-
----
-
-## Final Settlement
-
-**PARTIALLY VERIFIED** (Phase 8.1 tests)
-
-- Derived state (not persisted enum)
-- `is_final_settlement()` predicate: Running + Attack + round_count configured + latest round completed + round_number == round_count
-- Player: flag/SSH/reset/WireGuard closed, scoreboard visible
-- Admin: no Start/Pause/Resume, Judge settlement visible
-
----
-
-## Final Judge Score Before Finished
-
-**PARTIALLY VERIFIED** (Phase 6 tests)
-
-- `maybe_finish_event` checks `all_event_judge_tasks_terminal`
-- CAS transition Running → Finished
-- Concurrent calls safe (Conflict/InvalidState → no-op)
-
----
-
-## Finished Lockdown
-
-**PARTIALLY VERIFIED** (Phase 6 tests)
-
-- `is_finished` flag on `DesiredEventPolicy`
-- Explicit DENY-ALL rules for Finished events
-- All player access disabled
-- Scoreboard stable
-
----
-
-## Browser UX
-
-**NOT VERIFIED (requires Web frontend + API running)**
-
-Phase 8 UI design audit completed:
-- All pages use Primer React + Tailwind utilities
-- UnderlineNav for event sub-navigation
-- GenericTable/DataTable for lists
-- useConfirm for destructive actions
-- useMsgBanner/InlineMessage for feedback
-- Final Settlement vs Finished distinction in UI
-
----
-
-## Auth Domains
-
-**VERIFIED** (Phase 7.2)
-
-- Player token → `UserJwtGuard` + team membership → player routes only
-- Admin token → `SuperAdminJwtGuard` → admin routes only
-- SuperAdmin does NOT require a users table row
-- Unauthorized non-member → denied from private Event AWD state
-- Separate SSE streams for player and admin
-
----
-
-## Docker Evidence
-
-**NOT COLLECTED** (requires Deploy)
-
-Expected Docker resources:
-- 1 Docker network per event (`fctf-awd-{8hex}`)
-- 1 FlagServer container (`fctf-flagserver-{8hex}`)
-- 1 JudgeServer container (`fctf-judgeserver-{8hex}`)
-- N GameBox containers (`fctf-{8hex}-t{4}-team{4}`)
-- Restart policy: `no` (all containers)
-
----
-
-## Network Evidence
-
-**NOT COLLECTED** (requires nftables + WireGuard + Deploy)
-
-Expected nftables:
-- Table: `inet floatctf_awd`
-- Sets: `banned_players_v4`, `banned_gameboxes_v4`
-- Event-specific chains for each phase
-
----
-
-## Database Evidence
-
-**PARTIALLY VERIFIED** (Phase 6 tests, schema inspection)
-
-All 31 AWD tables confirmed present:
-- `awd_events`, `awd_rounds`, `awd_event_gameboxes`, `awd_event_networks`
-- `awd_judge_batches`, `awd_judge_tasks`
-- `awd_score_events`, `awd_flag_submissions`, `awd_flag_issues`
-- `awd_reset_records`, `awd_team_bans`, `awd_team_networks`
-- `awd_network_allocations`, `awd_network_settings`, `awd_runtime_resources`
-- `awd_precheck_runs`, `awd_orphan_resources`
-- `awd_wireguard_peers`, `awd_internal_token_rotations`
-
----
-
-## Cleanup
-
-No resources were created during this Phase 9 session (no Deploy executed).
-
-Existing cleanup needed before real E2E:
-- Remove ~200+ integration test events from database
-- Remove ~20 `fctf-awdp-*` Docker networks
-- Remove any stale Docker containers
-
----
-
-## Bugs Found
-
-None — no production code was changed.
-
----
-
-## Production Changes
-
-None — zero production code changes in Phase 9.
-
----
-
-## Validation
-
-### Core Regression (Phase 8 Final Validation)
-| Suite | Tests | Result |
-|-------|-------|--------|
-| awd_score_semantics | 21 | ✅ |
-| awd_final_settlement | 16 | ✅ |
-| awd_finished_contract | 34 | ✅ |
-| awd_network_error | 8 | ✅ |
-| awd_reset_recovery | 6 | ✅ |
-| awd_ban_recovery | 6 | ✅ |
-| awd_scenarios | 12 | ✅ |
-| awd_configure | 5 | ✅ |
-| awd_gamebox_domain | 6 | ✅ |
-| awd_transition_guard | 6 | ✅ |
-| awd_network_ipam | verified | ✅ |
-| **Total** | **118+** | **100% PASS** |
-
-### Code Quality
-- `cargo fmt --check`: ✅ Clean
-- `cargo check -p floatctf`: ✅ Pass
-- `tsc --noEmit`: ✅ Pass
-- `vitest run`: ✅ 13/13 files
-
-### Infrastructure Images
-- FlagServer: ✅ Built and tagged
-- JudgeServer: ✅ Built and tagged
-
-### GameBox Fixtures
-- e2e-web-a: ✅ Package created
-- e2e-web-b: ✅ Package created
-
----
-
-## Deferred Issues
-
-1. **Real nftables/WireGuard E2E**: Requires bare-metal host with root access
-2. **Browser automation**: No Playwright configured; manual testing deferred
-3. **Docker BuildKit**: Filesystem issues in container prevent BuildKit usage
-4. **API startup recovery**: 200+ test events cause 3-5 minute startup; database cleanup needed
-5. **Docker pull**: No internet access prevents pulling base images
-
----
-
-## Final Verdict: PARTIAL — Environment Limited
-
-**What was verified (real integration):**
-- ✅ AWD FlagServer and JudgeServer compile and produce valid Docker images
-- ✅ GameBox package format is valid (meta.toml + src/Dockerfile)
-- ✅ API compiles and starts (recovery pipeline works)
-- ✅ Database schema is complete and migrations applied
-- ✅ Core regression suite passes (118+ tests)
-- ✅ Auth domain separation is correct
-- ✅ Final Settlement semantics are correct
-- ✅ All production code is frozen (no changes in Phase 9)
-
-**What requires a real host:**
-- ❌ Full Deploy → Precheck → Start → Attack → Final Settlement lifecycle
-- ❌ nftables firewall rules (network matrix verification)
-- ❌ WireGuard player connectivity
-- ❌ Real Flag flow through player endpoints
-- ❌ JudgeServer Pull/Lease/Heartbeat with real services
-- ❌ Reset, Ban, Pause, NetworkError scenarios
-- ❌ Browser SSE reconnect and UX verification
-
-**Recommendation:** Phase 9 should be re-executed on a bare-metal Linux host with root access, a clean database, and internet access for Docker pulls. The fixtures and images created in this session are ready for that execution.
+## 7. 清理清单（验证环境）
+
+- [x] 移除临时 NOPASSWD sudo（`/etc/sudoers.d/99-phase9-e2e`）
+- [x] 删除 harness raw/filter ACCEPT 规则（`ip raw PREROUTING` + `ip filter DOCKER`）
+- [x] 删除服务器侧 `/32` 路由与全部 `fawg_*` WireGuard 接口
+- [x] 删除 netns `p9ns/p9nsb` 及 veth
+- [x] 停止/删除 Run3/4/5 全部事件容器与网络（含 `e3-judge-diag`）
+- [x] 删除 trace 表与 `/tmp` 临时文件
+
+> 清理动作由会话末尾统一执行，避免验证中途误删。

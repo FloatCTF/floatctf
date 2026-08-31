@@ -134,12 +134,52 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
     }
 
     async fn inspect(&self, event: EventNetworkIdentity) -> AwdResult<NetworkObservedState> {
+        // 真实观测：`ip link show <iface>` 检查接口存在且 up。
+        // WG 接口在 ip 输出中 state=UNKNOWN（POINTOPOINT+NOARP），不能用 "state UP" 判定；
+        // 以 LOWER_UP / UP 标志为准。
+        let iface =
+            crate::modules::event::awd::domain::network::wireguard_interface_name(&event.event_id);
+        let mut notes = Vec::new();
+        let mut wireguard_interface_up = false;
+        match self
+            .runner()
+            .run(
+                "ip",
+                &["link".to_string(), "show".to_string(), iface.clone()],
+            )
+            .await
+        {
+            Ok(out) => {
+                let first = out.stdout.lines().next().unwrap_or("").trim().to_string();
+                notes.push(format!("ip link show {iface}: {first}"));
+                wireguard_interface_up =
+                    out.stdout.contains("LOWER_UP") || out.stdout.contains("state UP");
+            }
+            Err(e) => {
+                notes.push(format!("ip link show {iface} failed: {e}"));
+            }
+        }
+        // bridge-nf 观测：同桥容器流量必须经过 FORWARD 链，FloatCTF 规则才对其生效。
+        match std::fs::read_to_string("/proc/sys/net/bridge/bridge-nf-call-iptables") {
+            Ok(v) => {
+                notes.push(format!(
+                    "bridge-nf-call-iptables={} (same-bridge isolation {})",
+                    v.trim(),
+                    if v.trim() == "1" {
+                        "effective"
+                    } else {
+                        "NOT effective"
+                    }
+                ));
+            }
+            Err(_) => notes.push(
+                "bridge-nf-call-iptables: unavailable (br_netfilter not loaded — same-bridge isolation NOT effective)"
+                    .to_string(),
+            ),
+        }
         Ok(NetworkObservedState {
-            wireguard_interface_up: false,
-            notes: vec![format!(
-                "inspect stub for event {} cidr {}",
-                event.event_id, event.gamebox_cidr
-            )],
+            wireguard_interface_up,
+            notes,
         })
     }
 }

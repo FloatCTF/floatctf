@@ -150,12 +150,7 @@ pub async fn execute_reset(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
         .is_some();
-    check_reset_eligibility(
-        &awd_event,
-        team_id,
-        has_active_round,
-        awd_event.round_count,
-    )?;
+    check_reset_eligibility(&awd_event, team_id, has_active_round, awd_event.round_count)?;
 
     // 5. Crash recovery: if instance is already Resetting, attempt recovery
     if instance.status == GameboxStatus::Resetting {
@@ -163,7 +158,8 @@ pub async fn execute_reset(
             "Instance {} is already Resetting — attempting recovery",
             ctx.instance_id
         );
-        return recover_in_flight_reset(db, containers, &awd_event, &instance, &root, team_id).await;
+        return recover_in_flight_reset(db, containers, &awd_event, &instance, &root, team_id)
+            .await;
     }
 
     // 6. Free reset count
@@ -198,7 +194,10 @@ pub async fn execute_reset(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     // 9. Perform the Docker reset
-    do_docker_reset(db, containers, &awd_event, &instance, &root, &ctx, reset_id, team_id, is_free, None).await
+    do_docker_reset(
+        db, containers, &awd_event, &instance, &root, &ctx, reset_id, team_id, is_free, None,
+    )
+    .await
 }
 
 /// Recover an in-flight reset that was interrupted (e.g., API restart).
@@ -245,10 +244,18 @@ async fn recover_in_flight_reset(
                 },
             };
             do_docker_reset(
-                db, containers, awd_event, instance, root,
-                &ctx, record.id, team_id, record.free_reset,
+                db,
+                containers,
+                awd_event,
+                instance,
+                root,
+                &ctx,
+                record.id,
+                team_id,
+                record.free_reset,
                 Some(record.id),
-            ).await
+            )
+            .await
         }
         None => {
             // No pending record — instance is Resetting but no record found.

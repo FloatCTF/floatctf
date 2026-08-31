@@ -834,6 +834,11 @@ async fn rollout_infra_container(
         // 容器不存在也继续 create（幂等 rollout）
         tracing::info!("[Rotate] stop {}: {}", container_name, e);
     }
+    // stop 后必须移除旧容器：docker 不允许同名 create，即使旧容器已停止
+    // （真实主机实测 409 Conflict：rotate 时 judgeserver rollout 失败）。
+    if let Err(e) = containers.remove_container(&container_name).await {
+        tracing::info!("[Rotate] rm {}: {}", container_name, e);
+    }
 
     containers
         .create_infrastructure_container(fcmc::InfrastructureContainerSpec {
@@ -843,13 +848,15 @@ async fn rollout_infra_container(
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
             env: {
+                // flagserver 与 judgeserver 都需要 PLATFORM_INTERNAL_URL 回调平台
+                // （与 deploy_service 保持一致；flagserver 缺失时回退 127.0.0.1:8080 → 503）。
                 let mut envs = vec![
                     format!("EVENT_ID={event_id}"),
                     format!("INTERNAL_TOKEN={token}"),
                     format!("LISTEN_ADDR=0.0.0.0:8080"),
+                    format!("PLATFORM_INTERNAL_URL={platform_internal_url}"),
                 ];
                 if kind == "judgeserver" {
-                    envs.push(format!("PLATFORM_INTERNAL_URL={platform_internal_url}"));
                     envs.push(format!(
                         "MAX_CONCURRENT={}",
                         awd_event.judge_max_concurrency

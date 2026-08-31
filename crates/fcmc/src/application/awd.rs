@@ -42,6 +42,7 @@ impl AwdApp {
                 network_name,
                 subnet_cidr,
                 internal,
+                bridge_name: None,
             })
             .await
             .context("Failed to create event network")?;

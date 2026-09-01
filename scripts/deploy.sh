@@ -204,7 +204,10 @@ prepare_configs() {
     render "$CONFIG_TMPL" "$FCTF_ROOT/config/floatctf.toml"
     render "$NGINX_TMPL" "$FCTF_ROOT/config/nginx/nginx.conf"
 
-    # 权限：config 属 root:floatctf 640（含密钥），nginx.conf root:floatctf 640
+    # 权限：config 目录 root:floatctf 750（floatctf 组需遍历读取），
+    # 配置文件 root:floatctf 640（含密钥）。
+    run_priv chown root:"$FCTF_USER" "$FCTF_ROOT/config" "$FCTF_ROOT/config/nginx"
+    run_priv chmod 750 "$FCTF_ROOT/config" "$FCTF_ROOT/config/nginx"
     run_priv chown root:"$FCTF_USER" "$FCTF_ROOT/config/floatctf.toml" "$FCTF_ROOT/config/nginx/nginx.conf"
     run_priv chmod 640 "$FCTF_ROOT/config/floatctf.toml" "$FCTF_ROOT/config/nginx/nginx.conf"
     run_priv mkdir -p "$FCTF_ROOT/config/nginx/keys"

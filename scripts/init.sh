@@ -253,8 +253,8 @@ check_user_layout() {
     for d in bin web config/nginx data/postgres data/rustfs logs/api logs/nginx logs/rustfs runtime gameboxes; do
         mkdir -p "$FCTF_ROOT/$d"
     done
-    # 归属拆分：config/ 属 root（含密钥，640）；运行数据属 floatctf。
-    # 不整体 chown $FCTF_ROOT——config/ 必须保持 root 专属。
+    # 归属拆分：config/ 属 root:floatctf（floatctf 组需遍历读取密钥文件，API 以
+    # floatctf 用户运行）；运行数据属 floatctf。不整体 chown $FCTF_ROOT。
     if [ "$CHECK_ONLY" != "1" ]; then
         # 顶层 /home/floatctf 必须可被 floatctf 遍历（历史脏数据可能残留错误属主，
         # 如孤儿 uid 700 —— 真实主机实测），统一归 root:floatctf 750。
@@ -266,7 +266,7 @@ check_user_layout() {
             chown -R "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/$run_dir" >/dev/null 2>&1 \
                 || warn "chown $FCTF_ROOT/$run_dir 需要 root（请以 sudo 运行）"
         done
-        chown root:root "$FCTF_ROOT/config" "$FCTF_ROOT/config/nginx" >/dev/null 2>&1 \
+        chown root:"$FCTF_USER" "$FCTF_ROOT/config" "$FCTF_ROOT/config/nginx" >/dev/null 2>&1 \
             || warn "chown config/ 需要 root"
         chmod 750 "$FCTF_ROOT/config" >/dev/null 2>&1 || true
     fi

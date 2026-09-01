@@ -119,22 +119,31 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let disposed = false;
 
-		const startPoll = () => {
+		// ── REST 轮询回退（SSE 不可用时保证权威状态持续更新）──
+		// Phase 9.2 A1：非 connected 状态（connecting/reconnecting/error/
+		// auth_error）一律启动轮询；connected 恢复后立即停止轮询。
+		// 断线期间页面不冻结（REST 快照持续更新）；SSE 恢复后恰好一条
+		// SSE 通道生效、无重复事件处理。
+		const stopPoll = () => {
+			if (pollTimer) {
+				clearInterval(pollTimer);
+				pollTimer = null;
+			}
+		};
+
+		const ensurePoll = () => {
 			if (pollTimer || disposed) return;
-			setConnectionState("idle");
 			pollTimer = setInterval(invalidateAwd, pollMs);
 			invalidateAwd();
 		};
 
 		// 无令牌 → 回退轮询（不尝试未认证的 SSE）
 		if (!token) {
-			startPoll();
+			setConnectionState("idle");
+			ensurePoll();
 			return () => {
 				disposed = true;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-					pollTimer = null;
-				}
+				stopPoll();
 			};
 		}
 
@@ -158,10 +167,16 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 					if (!disposed) {
 						setConnectionState(status.state);
 						if (status.lastError) setLastError(status.lastError);
+						// 断线回退：非 connected → 轮询；恢复 → 停轮询。
+						if (status.state === "connected") {
+							stopPoll();
+						} else {
+							ensurePoll();
+						}
 						if (status.state === "auth_error") {
 							connRef.current?.close();
 							connRef.current = null;
-							startPoll();
+							ensurePoll();
 						}
 					}
 				},
@@ -174,21 +189,16 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 				controller.abort();
 				connection.close();
 				connRef.current = null;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-					pollTimer = null;
-				}
+				stopPoll();
 			};
 		}
 
-		startPoll();
+		setConnectionState("idle");
+		ensurePoll();
 
 		return () => {
 			disposed = true;
-			if (pollTimer) {
-				clearInterval(pollTimer);
-				pollTimer = null;
-			}
+			stopPoll();
 		};
 		// token 在依赖数组中 → 令牌变更触发清理 + 重建
 		// eslint-disable-next-line react-hooks/exhaustive-deps

@@ -90,7 +90,16 @@ export function useAwdpEventStream({
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let stopped = false;
 
-		const startPolling = () => {
+		// ── REST 轮询回退（SSE 不可用时保证权威状态持续更新）──
+		// Phase 9.2 A1：非 connected 状态一律启动轮询；connected 恢复后停止。
+		const stopPolling = () => {
+			if (pollTimer) {
+				clearInterval(pollTimer);
+				pollTimer = null;
+			}
+		};
+
+		const ensurePolling = () => {
 			if (stopped || pollTimer) {
 				return;
 			}
@@ -102,12 +111,10 @@ export function useAwdpEventStream({
 		};
 
 		if (!token) {
-			startPolling();
+			ensurePolling();
 			return () => {
 				stopped = true;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-				}
+				stopPolling();
 				if (invalidateTimerRef.current) {
 					clearTimeout(invalidateTimerRef.current);
 					invalidateTimerRef.current = null;
@@ -134,10 +141,16 @@ export function useAwdpEventStream({
 					if (!stopped) {
 						setConnectionState(status.state);
 						if (status.lastError) setLastError(status.lastError);
+						// 断线回退：非 connected → 轮询；恢复 → 停轮询。
+						if (status.state === "connected") {
+							stopPolling();
+						} else {
+							ensurePolling();
+						}
 						if (status.state === "auth_error") {
 							connRef.current?.close();
 							connRef.current = null;
-							startPolling();
+							ensurePolling();
 						}
 					}
 				},
@@ -150,9 +163,7 @@ export function useAwdpEventStream({
 				controller.abort();
 				connection.close();
 				connRef.current = null;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-				}
+				stopPolling();
 				if (invalidateTimerRef.current) {
 					clearTimeout(invalidateTimerRef.current);
 					invalidateTimerRef.current = null;
@@ -160,13 +171,11 @@ export function useAwdpEventStream({
 			};
 		}
 
-		startPolling();
+		ensurePolling();
 
 		return () => {
 			stopped = true;
-			if (pollTimer) {
-				clearInterval(pollTimer);
-			}
+			stopPolling();
 			if (invalidateTimerRef.current) {
 				clearTimeout(invalidateTimerRef.current);
 				invalidateTimerRef.current = null;

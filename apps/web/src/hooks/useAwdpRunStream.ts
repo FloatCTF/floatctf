@@ -75,7 +75,16 @@ export function useAwdpRunStream({
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let stopped = false;
 
-		const startPolling = () => {
+		// ── REST 轮询回退（SSE 不可用时保证权威状态持续更新）──
+		// Phase 9.2 A1：非 connected 状态一律启动轮询；connected 恢复后停止。
+		const stopPolling = () => {
+			if (pollTimer) {
+				clearInterval(pollTimer);
+				pollTimer = null;
+			}
+		};
+
+		const ensurePolling = () => {
 			if (stopped || pollTimer) {
 				return;
 			}
@@ -87,12 +96,10 @@ export function useAwdpRunStream({
 		};
 
 		if (!token) {
-			startPolling();
+			ensurePolling();
 			return () => {
 				stopped = true;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-				}
+				stopPolling();
 			};
 		}
 
@@ -115,10 +122,16 @@ export function useAwdpRunStream({
 					if (!stopped) {
 						setConnectionState(status.state);
 						if (status.lastError) setLastError(status.lastError);
+						// 断线回退：非 connected → 轮询；恢复 → 停轮询。
+						if (status.state === "connected") {
+							stopPolling();
+						} else {
+							ensurePolling();
+						}
 						if (status.state === "auth_error") {
 							connRef.current?.close();
 							connRef.current = null;
-							startPolling();
+							ensurePolling();
 						}
 					}
 				},
@@ -131,19 +144,15 @@ export function useAwdpRunStream({
 				controller.abort();
 				connection.close();
 				connRef.current = null;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-				}
+				stopPolling();
 			};
 		}
 
-		startPolling();
+		ensurePolling();
 
 		return () => {
 			stopped = true;
-			if (pollTimer) {
-				clearInterval(pollTimer);
-			}
+			stopPolling();
 		};
 	}, [runId, enabled, preferStream, pollMs, token, invalidate, onEvent]);
 

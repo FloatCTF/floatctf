@@ -106,22 +106,28 @@ export function useAdminAwdEventStream(options: UseAdminAwdEventStreamOptions) {
 		let pollTimer: ReturnType<typeof setInterval> | null = null;
 		let disposed = false;
 
-		const startPoll = () => {
+		// ── REST 轮询回退（SSE 不可用时保证权威状态持续更新）──
+		// Phase 9.2 A1：非 connected 状态一律启动轮询；connected 恢复后停止。
+		const stopPoll = () => {
+			if (pollTimer) {
+				clearInterval(pollTimer);
+				pollTimer = null;
+			}
+		};
+
+		const ensurePoll = () => {
 			if (pollTimer || disposed) return;
-			setConnectionState("idle");
 			pollTimer = setInterval(invalidateAwd, pollMs);
 			invalidateAwd();
 		};
 
 		// 无管理端令牌 → 回退轮询
 		if (!adminToken) {
-			startPoll();
+			setConnectionState("idle");
+			ensurePoll();
 			return () => {
 				disposed = true;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-					pollTimer = null;
-				}
+				stopPoll();
 			};
 		}
 
@@ -144,10 +150,16 @@ export function useAdminAwdEventStream(options: UseAdminAwdEventStreamOptions) {
 					if (!disposed) {
 						setConnectionState(status.state);
 						if (status.lastError) setLastError(status.lastError);
+						// 断线回退：非 connected → 轮询；恢复 → 停轮询。
+						if (status.state === "connected") {
+							stopPoll();
+						} else {
+							ensurePoll();
+						}
 						if (status.state === "auth_error") {
 							connRef.current?.close();
 							connRef.current = null;
-							startPoll();
+							ensurePoll();
 						}
 					}
 				},
@@ -160,21 +172,16 @@ export function useAdminAwdEventStream(options: UseAdminAwdEventStreamOptions) {
 				controller.abort();
 				connection.close();
 				connRef.current = null;
-				if (pollTimer) {
-					clearInterval(pollTimer);
-					pollTimer = null;
-				}
+				stopPoll();
 			};
 		}
 
-		startPoll();
+		setConnectionState("idle");
+		ensurePoll();
 
 		return () => {
 			disposed = true;
-			if (pollTimer) {
-				clearInterval(pollTimer);
-				pollTimer = null;
-			}
+			stopPoll();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [eventId, enabled, pollMs, preferStream, adminToken, handleSseEvent, invalidateAwd]);

@@ -150,29 +150,51 @@ check_wireguard() {
     ok "WireGuard 可用（临时接口 $TMP_WG_IFACE 已创建，退出时清理）"
 }
 
-# IPv4 转发：读取当前值；--check 只报告，默认模式写 1（幂等）。
+# IPv4 转发：读取当前值；--check 只报告，默认模式写 1（幂等）并持久化。
+SYSCTL_FILE="/etc/sysctl.d/99-floatctf.conf"
+MODULES_FILE="/etc/modules-load.d/floatctf-br-netfilter.conf"
+
+persist_sysctl() {
+    local key="$1" value="$2"
+    if [ ! -f "$SYSCTL_FILE" ] || ! grep -qE "^${key}\s*=\s*${value}\s*$" "$SYSCTL_FILE"; then
+        mkdir -p /etc/sysctl.d
+        printf '%s=%s\n' "$key" "$value" >> "$SYSCTL_FILE"
+        ok "已持久化 $key=$value → $SYSCTL_FILE"
+    fi
+}
+
 check_ip_forward() {
     local v
     v=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo "?")
     if [ "$v" = "1" ]; then
         ok "net.ipv4.ip_forward=1"
-        return
-    fi
-    if [ "$CHECK_ONLY" = "1" ]; then
+    elif [ "$CHECK_ONLY" = "1" ]; then
         warn "net.ipv4.ip_forward=$v（应为 1；--check 不写状态）"
         return
+    else
+        sysctl -w net.ipv4.ip_forward=1 >/dev/null
+        ok "net.ipv4.ip_forward 已设为 1"
     fi
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null
-    ok "net.ipv4.ip_forward 已设为 1"
+    [ "$CHECK_ONLY" = "1" ] || persist_sysctl "net.ipv4.ip_forward" "1"
 }
 
 # br_netfilter：同桥容器流量必须经过 FORWARD 链，FloatCTF 隔离才生效
 # （Phase 9 真实主机实测；nftables.rs reconcile 时 best-effort，生产由 init 预检）。
+# 持久化：模块 → /etc/modules-load.d/floatctf-br-netfilter.conf，
+#         内核参数 → /etc/sysctl.d/99-floatctf.conf（重启后仍生效）。
 check_bridge_netfilter() {
+    local loaded=1
     if ! modprobe br_netfilter 2>/dev/null; then
         warn "modprobe br_netfilter 失败（内核未含该模块？同桥隔离将不生效）"
-        return
+        loaded=0
     fi
+    [ "$CHECK_ONLY" = "1" ] || [ "$loaded" = "0" ] || {
+        if [ ! -f "$MODULES_FILE" ] || ! grep -qE '^br_netfilter\s*$' "$MODULES_FILE"; then
+            mkdir -p /etc/modules-load.d
+            printf 'br_netfilter\n' >> "$MODULES_FILE"
+            ok "已持久化模块 br_netfilter → $MODULES_FILE"
+        fi
+    }
     local ok_bridge=1
     local k
     for k in net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables; do
@@ -184,13 +206,14 @@ check_bridge_netfilter() {
                 ok_bridge=0
             else
                 sysctl -w "$k=1" >/dev/null || { warn "无法写入 $k"; ok_bridge=0; }
+                persist_sysctl "$k" "1"
             fi
         fi
     done
     [ "$ok_bridge" = "1" ] && ok "br_netfilter + bridge-nf-call-{ip,ip6}tables=1"
 }
 
-# floatctf 服务用户 + /home/floatctf 布局。
+# floatctf 服务用户 + docker 组 + /home/floatctf 布局 + 完成标记。
 check_user_layout() {
     if ! id "$FCTF_USER" >/dev/null 2>&1; then
         if [ "$CHECK_ONLY" = "1" ]; then
@@ -202,15 +225,57 @@ check_user_layout() {
     else
         ok "服务用户 $FCTF_USER 存在"
     fi
+
+    # docker 组：floatctf 需要操作容器（AWD 运行时 + 基础设施）。
+    if getent group docker >/dev/null 2>&1; then
+        if id -nG "$FCTF_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+            ok "$FCTF_USER 已在 docker 组"
+        elif [ "$CHECK_ONLY" = "1" ]; then
+            warn "$FCTF_USER 不在 docker 组（--check 不修改）"
+        else
+            usermod -aG docker "$FCTF_USER"
+            ok "已把 $FCTF_USER 加入 docker 组"
+        fi
+    else
+        warn "宿主无 docker 组（docker 未安装？后续 API 无法操作容器）"
+    fi
+    # 用 runuser 验证 docker 组真实生效（不依赖当前 shell 的组缓存）。
+    if id "$FCTF_USER" >/dev/null 2>&1 && getent group docker >/dev/null 2>&1 \
+        && [ "$CHECK_ONLY" != "1" ] && id -nG "$FCTF_USER" | tr ' ' '\n' | grep -qx docker; then
+        if runuser -u "$FCTF_USER" -- docker info >/dev/null 2>&1; then
+            ok "runuser 验证：$FCTF_USER 可访问 docker daemon"
+        else
+            warn "runuser 验证失败：$FCTF_USER 无法访问 docker daemon（daemon 未就绪或 socket 权限）"
+        fi
+    fi
+
     local d
-    for d in bin web config/nginx data/postgres logs/api logs/nginx runtime gameboxes; do
+    for d in bin web config/nginx data/postgres data/rustfs logs/api logs/nginx logs/rustfs runtime gameboxes; do
         mkdir -p "$FCTF_ROOT/$d"
     done
-    # 归属：floatctf 用户可读写运行数据；目录本身保持 755。
-    if ! chown -R "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT" >/dev/null 2>&1; then
-        warn "chown $FCTF_ROOT 需要 root（请以 sudo 运行）"
+    # 归属拆分：config/ 属 root（含密钥，640）；运行数据属 floatctf。
+    # 不整体 chown $FCTF_ROOT——config/ 必须保持 root 专属。
+    if [ "$CHECK_ONLY" != "1" ]; then
+        local run_dir
+        for run_dir in bin web data logs runtime gameboxes; do
+            chown -R "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/$run_dir" >/dev/null 2>&1 \
+                || warn "chown $FCTF_ROOT/$run_dir 需要 root（请以 sudo 运行）"
+        done
+        chown root:root "$FCTF_ROOT/config" "$FCTF_ROOT/config/nginx" >/dev/null 2>&1 \
+            || warn "chown config/ 需要 root"
+        chmod 750 "$FCTF_ROOT/config" >/dev/null 2>&1 || true
     fi
-    ok "布局就绪: $FCTF_ROOT/{bin,web,config/nginx,data/postgres,logs/{api,nginx},runtime,gameboxes}"
+    ok "布局就绪: $FCTF_ROOT/{bin,web,config/nginx,data/{postgres,rustfs},logs/{api,nginx,rustfs},runtime,gameboxes}"
+
+    # 完成标记：全部检查通过后写入；已存在则幂等（重跑只复检）。
+    if [ "$CHECK_ONLY" != "1" ] && [ ! -f "$FCTF_ROOT/.initialized" ]; then
+        printf 'FloatCTF host initialized at %s by %s\n' "$(date -Is 2>/dev/null || date)" "${SUDO_USER:-root}" \
+            > "$FCTF_ROOT/.initialized"
+        chown "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/.initialized"
+        ok "完成标记已写入 $FCTF_ROOT/.initialized"
+    elif [ -f "$FCTF_ROOT/.initialized" ]; then
+        ok "检测到 $FCTF_ROOT/.initialized（主机已初始化，幂等跳过主体写入）"
+    fi
 }
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────

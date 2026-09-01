@@ -1,0 +1,19 @@
+# FloatCTF infrastructure (postgres/rustfs/nginx containers) — Phase 10.6.
+# 就绪语义：`docker compose up -d --wait` —— 所有服务 healthcheck 通过才算 ready，
+# 而不是"已启动"。floatctf-api.service After 本单元，保证 DB/RustFS/nginx 真正就绪。
+[Unit]
+Description=FloatCTF infrastructure containers (postgres, rustfs, nginx)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/floatctf
+ExecStart=/usr/bin/docker compose -f /home/floatctf/compose.yml up -d --wait
+ExecStop=/usr/bin/docker compose -f /home/floatctf/compose.yml down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=floatctf.target

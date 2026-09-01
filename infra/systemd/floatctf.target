@@ -1,0 +1,8 @@
+# FloatCTF 服务聚合目标 — Phase 10.6。
+[Unit]
+Description=FloatCTF platform (infra + api)
+Requires=floatctf-infra.service floatctf-api.service
+After=floatctf-infra.service floatctf-api.service
+
+[Install]
+WantedBy=multi-user.target

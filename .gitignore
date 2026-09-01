@@ -8,6 +8,7 @@ dist/
 /app
 /tmp
 /chore
+/.mnemon
 /HANDOFF.md
 /var
 /.codegraph/

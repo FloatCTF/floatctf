@@ -146,15 +146,32 @@ fn render_event_chain(event: &DesiredEventPolicy, key: &NftObjectName) -> String
         "        ip saddr @{k}_gameboxes_v4 ip daddr @banned_gameboxes_v4 drop\n"
     ));
 
-    // Final settlement: same as Pause (block all player/gamebox traffic).
-    // JudgeServer→GameBox is still allowed because infra IPs are not in
-    // players_v4 or gameboxes_v4 sets.
-    //
-    // Finished: explicit fail-closed DENY-ALL for all player/gamebox competition
-    // traffic. Same rules as settlement/pause. Finished events are kept in the
-    // firewall desired set so their subnets remain owned/managed.
-    if event.is_final_settlement || event.is_finished {
+    // ── Final Settlement（派生状态 is_final_settlement，spec §18/§28）──
+    // 玩家竞争访问关闭（Player→GameBox DENY），但最终轮 Judge 任务仍必须能评估
+    // GameBox 服务状态：JudgeServer→GameBox ALLOW + 回程（established/related）
+    // ALLOW。只放行 infra→gamebox 与 gamebox→judge 回程，不重开任何玩家/GameBox
+    // 比赛流量（含已建立连接——与 Pause 一致，防止玩家长连接在结算期存活）。
+    if event.is_final_settlement {
         out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
+        out.push_str(&format!(
+            "        ip saddr {} ip daddr @{k}_gameboxes_v4 accept\n",
+            event.judgeserver_ip
+        ));
+        out.push_str(&format!(
+            "        ip saddr @{k}_gameboxes_v4 ip daddr {} ct state established,related accept\n",
+            event.judgeserver_ip
+        ));
+        out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
+    } else if event.is_finished {
+        // ── Finished：显式 fail-closed DENY-ALL ──
+        // 玩家、GameBox、JudgeServer 全部阻断（JudgeServer→GameBox DENY——
+        // 结算已完成，Judge 不再需要评估）。Finished 事件保留在防火墙 desired set
+        // 中，其子网保持 managed。
+        out.push_str(&format!("        ip saddr @{k}_players_v4 drop\n"));
+        out.push_str(&format!(
+            "        ip saddr {} ip daddr @{k}_gameboxes_v4 drop\n",
+            event.judgeserver_ip
+        ));
         out.push_str(&format!("        ip saddr @{k}_gameboxes_v4 drop\n"));
     } else {
         // 回程流量放行（conntrack established/related）：方向性矩阵（§26/§27）
@@ -347,19 +364,23 @@ mod tests {
                 "{phase:?} must allow return traffic"
             );
         }
-        // Pause / Final Settlement / Finished：全阻断，不得放行已建立连接。
+        // Pause：全阻断，不得放行已建立连接。
         let pause = render_table(&DesiredFirewallState {
             revision: 2,
             events: vec![sample_event(AwdPhase::Pause, false)],
         });
-        assert!(!pause.contains("ct state established,related accept"));
+        assert!(!pause.contains("\n        ct state established,related accept"));
+        // Final Settlement：无 blanket 回程放行（玩家/GameBox 已建立连接不得存活），
+        // 但存在 judge-scoped 回程放行（JudgeServer→GameBox 服务检查所需）。
         let mut settled = sample_event(AwdPhase::Attack, false);
         settled.is_final_settlement = true;
         let settled_text = render_table(&DesiredFirewallState {
             revision: 3,
             events: vec![settled],
         });
-        assert!(!settled_text.contains("ct state established,related accept"));
+        assert!(!settled_text.contains("\n        ct state established,related accept"));
+        assert!(settled_text.contains("ip daddr 10.42.0.11 ct state established,related accept"));
+        // Finished：无任何回程放行（含 judge-scoped）。
         let mut finished = sample_event(AwdPhase::Attack, false);
         finished.is_finished = true;
         let finished_text = render_table(&DesiredFirewallState {
@@ -367,6 +388,57 @@ mod tests {
             events: vec![finished],
         });
         assert!(!finished_text.contains("ct state established,related accept"));
+    }
+
+    #[test]
+    fn render_final_settlement_allows_judge_blocks_player() {
+        // 最终结算：玩家被阻断，JudgeServer→GameBox 及其回程被放行。
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_final_settlement = true;
+        let desired = DesiredFirewallState {
+            revision: 31,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // Player→GameBox：DENY
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("_players_v4 drop"));
+        // JudgeServer→GameBox：ALLOW（新连接）
+        assert!(text.contains("ip saddr 10.42.0.11 ip daddr @ev_"));
+        assert!(text.contains("_gameboxes_v4 accept"));
+        // GameBox→JudgeServer 回程：仅 established/related ALLOW
+        assert!(text.contains("ip saddr @ev_"));
+        assert!(text.contains("ip daddr 10.42.0.11 ct state established,related accept"));
+        // 无 blanket 回程放行（玩家/GameBox 已建立连接必须被切断）
+        assert!(!text.contains("\n        ct state established,related accept"));
+        // GameBox→GameBox：DENY（不得重开比赛流量）
+        assert!(!text.contains("ip saddr 10.42.1.0/24 ip daddr 10.42.1.0/24 accept"));
+        // GameBox→FlagServer：DENY（比赛流量关闭）
+        assert!(!text.contains("ip daddr 10.42.0.10 accept"));
+        // 无玩家→自己的 accept
+        assert!(!text.contains("ip saddr 172.31.1.0/24 ip daddr 10.42.1.0/24 accept"));
+    }
+
+    #[test]
+    fn render_finished_blocks_judge_to_gamebox() {
+        // Finished：JudgeServer→GameBox 显式 DENY，无任何回程放行。
+        let mut event = sample_event(AwdPhase::Attack, false);
+        event.is_finished = true;
+        let desired = DesiredFirewallState {
+            revision: 32,
+            events: vec![event],
+        };
+        let text = render_table(&desired);
+        // 玩家阻断
+        assert!(text.contains("_players_v4 drop"));
+        // JudgeServer→GameBox 显式 DENY
+        assert!(text.contains("ip saddr 10.42.0.11 ip daddr @ev_"));
+        assert!(text.contains("_gameboxes_v4 drop"));
+        // 无任何 judge/gamebox accept 规则、无任何 ct 回程放行
+        assert!(!text.contains("_gameboxes_v4 accept"));
+        assert!(!text.contains("ct state established,related"));
+        // GameBox 出网阻断
+        assert!(text.contains("_gameboxes_v4 drop"));
     }
 
     #[test]

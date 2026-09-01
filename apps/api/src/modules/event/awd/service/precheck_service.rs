@@ -255,6 +255,46 @@ pub async fn run_precheck(
     errors.extend(fw_report.errors.clone());
     notes.extend(fw_report.notes.clone());
 
+    // ── Check 10.5: Docker 29 反欺骗放行规则存在（Phase 9.1）──
+    // deploy 时已按赛事作用域插入（raw PREROUTING + DOCKER-USER ACCEPT）；
+    // dockerd 重启会重建其 iptables 表导致规则丢失 → 预检必须能发现并提示
+    // 重新部署修复（fail-closed：缺失则 precheck 失败，不允许带病开赛）。
+    let docker_forward_missing =
+        crate::modules::event::awd::infrastructure::firewall::DockerForwardRuntime::new()
+            .check_access(
+                &crate::modules::event::awd::infrastructure::firewall::DockerForwardAccessSpec {
+                    wg_interface: event_network.wireguard_interface_name.clone(),
+                    bridge_name: crate::modules::event::awd::domain::network::docker_bridge_name(
+                        &event_id,
+                    ),
+                    gamebox_cidr: event_network.gamebox_cidr.to_string(),
+                },
+            )
+            .await;
+    match docker_forward_missing {
+        Ok(missing) if missing.is_empty() => {
+            notes.push((
+                "docker_forward".to_string(),
+                "Docker 29 anti-spoof bypass rules present (raw PREROUTING + DOCKER-USER)".into(),
+            ));
+        }
+        Ok(missing) => {
+            errors.push((
+                "docker_forward".to_string(),
+                format!(
+                    "Docker 29 anti-spoof bypass rules missing ({}); re-run deploy to restore",
+                    missing.join(", ")
+                ),
+            ));
+        }
+        Err(e) => {
+            notes.push((
+                "docker_forward".to_string(),
+                format!("check skipped (iptables unavailable): {e}"),
+            ));
+        }
+    }
+
     // ── Check 11: 网络矩阵验证（P2-6）──
     // 真实包流 probe（方案 A：挂起玩家 peers；方案 B：canary namespace/container）由
     // Phase 5 E2E 承接（§5.10：不给真实玩家提前攻击窗口）。本阶段做 desired-state

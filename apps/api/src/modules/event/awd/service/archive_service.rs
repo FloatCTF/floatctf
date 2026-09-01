@@ -109,6 +109,23 @@ pub async fn archive_event(
         .as_ref()
         .map(|n| n.wireguard_interface_name.clone())
         .unwrap_or_default();
+
+    // 3.5 Remove Docker 29 anti-spoof bypass rules（Phase 9.1，幂等还原；
+    // 必须在桥/接口删除前移除——规则按接口名匹配，不依赖接口存在）。
+    if let Some(net) = event_network.as_ref() {
+        crate::modules::event::awd::infrastructure::firewall::DockerForwardRuntime::new()
+            .remove_access(
+                &crate::modules::event::awd::infrastructure::firewall::DockerForwardAccessSpec {
+                    wg_interface: net.wireguard_interface_name.clone(),
+                    bridge_name: crate::modules::event::awd::domain::network::docker_bridge_name(
+                        &event_id,
+                    ),
+                    gamebox_cidr: net.gamebox_cidr.to_string(),
+                },
+            )
+            .await;
+    }
+
     if let Err(e) = network.remove_wireguard(&wg_iface).await {
         // Host may fail if iface never existed; surface as network error for Host,
         // Noop never fails. We still continue cleanup of Docker network.

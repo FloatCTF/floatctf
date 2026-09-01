@@ -743,6 +743,14 @@ pub async fn rotate_tokens(
     .await
     .map_err(AppError::from)?;
     let network_name = event_network.docker_network_name.clone();
+    // Phase 9.1：rotate 重建容器时同样注入本赛事派生端点（旧事件桥被清理后
+    // 固定 platform_internal_url 失效，报告 §2.4）。
+    let internal_platform_url =
+        crate::modules::event::awd::domain::network::derive_event_internal_platform_url(
+            &ctx.config.awd.platform_internal_url,
+            &event_network.infrastructure_subnet.to_string(),
+        )
+        .map_err(AppError::from)?;
     let fs_token_str =
         String::from_utf8(fs_token).map_err(|_| AppError::Internal("token not utf8".into()))?;
     let js_token_str =
@@ -757,7 +765,7 @@ pub async fn rotate_tokens(
         &network_name,
         ctx.config.awd.flagserver_image.clone(),
         fs_token_str,
-        &ctx.config.awd.platform_internal_url,
+        &internal_platform_url,
     )
     .await?;
     rollout_infra_container(
@@ -770,7 +778,7 @@ pub async fn rotate_tokens(
         &network_name,
         ctx.config.awd.judgeserver_image.clone(),
         js_token_str,
-        &ctx.config.awd.platform_internal_url,
+        &internal_platform_url,
     )
     .await?;
 

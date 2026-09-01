@@ -1,9 +1,11 @@
 //! 防火墙运行时抽象（Phase 1 P1-3）。
 
+pub mod docker_forward;
 pub mod env;
 pub mod nftables;
 pub mod render;
 
+pub use docker_forward::{DockerForwardAccessSpec, DockerForwardRuntime};
 pub use env::HostFirewallEnvironment;
 pub use nftables::NftablesFirewallRuntime;
 pub use render::{NftObjectName, ObservedFirewallState, TABLE_NAME};

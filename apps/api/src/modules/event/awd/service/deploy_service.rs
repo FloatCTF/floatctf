@@ -18,7 +18,7 @@ use crate::modules::event::awd::{
     crypto::{AwdCrypto, EncryptedBlob},
     domain::{AwdEventStatusExt, Ipv4Cidr, instance_ip_for_offset},
     infrastructure::{
-        firewall::FirewallRuntime,
+        firewall::{DockerForwardAccessSpec, DockerForwardRuntime, FirewallRuntime},
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
     repo::{event_gamebox_repo, event_network_repo, event_repo, gamebox_repo},
@@ -79,6 +79,15 @@ pub async fn deploy_event(
         let event_network = event_network_repo::require_by_event_id(db, event_id).await?;
         event_network_service::lock(db, event_id).await?;
 
+        // 0.5 每赛事内部平台端点（Phase 9.1，spec 授权）：固定 platform_internal_url
+        // 只对首个事件有效（网关随网段推进）。派生 = 事件 infra 网关 + 模板端口，
+        // 注入本赛事的 FlagServer/JudgeServer（不依赖旧事件桥存活）。
+        let internal_platform_url =
+            crate::modules::event::awd::domain::network::derive_event_internal_platform_url(
+                &awd_config.platform_internal_url,
+                &event_network.infrastructure_subnet.to_string(),
+            )?;
+
         // 1. Docker network（Desired name 来自 Event Network；Observed ID 进 runtime resources）
         let (docker_network_id, docker_network_name) =
             ensure_docker_network(db, containers, &event_network, event_id).await?;
@@ -96,7 +105,7 @@ pub async fn deploy_event(
             awd_config.flagserver_image.clone(),
             &awd_event.flagserver_token_ciphertext,
             &awd_event.flagserver_token_nonce,
-            &awd_config.platform_internal_url,
+            &internal_platform_url,
         )
         .await?;
         ensure_infra_container(
@@ -111,7 +120,7 @@ pub async fn deploy_event(
             awd_config.judgeserver_image.clone(),
             &awd_event.judgeserver_token_ciphertext,
             &awd_event.judgeserver_token_nonce,
-            &awd_config.platform_internal_url,
+            &internal_platform_url,
         )
         .await?;
 
@@ -140,6 +149,23 @@ pub async fn deploy_event(
         )
         .await?;
 
+        // ── 6.5 Docker 29 nftables 反欺骗兼容（Phase 9.1，product fix）──
+        // 玩家经 WG（`fawg_<8hex>`，非桥接口）→ 事件桥 → GameBox 的流量会被 Docker 29
+        // 的 `ip raw PREROUTING` 反欺骗 drop 与 `ip filter DOCKER` drop 吞掉（terminal，
+        // 先于 FloatCTF forward priority 1 执行；真实主机实测 + 复现，报告 §2.3/§2.6）。
+        // 这里按赛事作用域幂等放行（raw 链首 ACCEPT + DOCKER-USER ACCEPT），
+        // 隔离矩阵仍由 FloatCTF forward 链执行；archive 时 remove（幂等还原）。
+        let docker_forward = DockerForwardRuntime::new();
+        docker_forward
+            .ensure_access(&DockerForwardAccessSpec {
+                wg_interface: event_network.wireguard_interface_name.clone(),
+                bridge_name: crate::modules::event::awd::domain::network::docker_bridge_name(
+                    &event_id,
+                ),
+                gamebox_cidr: event_network.gamebox_cidr.to_string(),
+            })
+            .await?;
+
         // ── 7. Hardening firewall（全局 desired-state reconcile，Phase 1 P1-10）──
         firewall_service::reconcile_global(
             db,
@@ -157,7 +183,6 @@ pub async fn deploy_event(
             Default::default(),
         )
         .await?;
-
         info!("[Deploy] Event {} fully deployed", event_id);
         Ok(())
     }

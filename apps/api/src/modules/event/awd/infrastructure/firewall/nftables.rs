@@ -312,6 +312,14 @@ mod tests {
     #[async_trait]
     impl CommandRunner for FakeNftRunner {
         async fn run(&self, program: &str, args: &[String]) -> anyhow::Result<CommandOutput> {
+            // best-effort br_netfilter ensure（26ab9c4 引入）：modprobe/sysctl 恒成功
+            if program == "modprobe" || program == "sysctl" {
+                return Ok(CommandOutput {
+                    exit_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
             assert_eq!(program, "nft");
             if args.first().map(|s| s.as_str()) == Some("list") {
                 let out = self.store.lock().unwrap().clone().unwrap_or_default();

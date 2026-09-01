@@ -322,6 +322,62 @@ pub fn docker_network_name(event_id: &uuid::Uuid) -> String {
     format!("fctf-awd-{}", &event_id.simple().to_string()[..8])
 }
 
+/// Docker 桥接口名：deterministic，≤ Linux 15 字符上限（§45，dockerd 直接使用
+/// `com.docker.network.bridge.name`；17 字符的网络逻辑名不能直接用作桥名）。
+/// 形如 `fctfawd<8hex>`（15 字符）。DockerForwardAccessSpec.bridge_name 同源。
+pub fn docker_bridge_name(event_id: &uuid::Uuid) -> String {
+    format!("fctfawd{}", &event_id.simple().to_string()[..8])
+}
+
+/// 派生赛事内部平台端点（Phase 9.1，spec 授权：event infra gateway + 配置端口）。
+///
+/// `base` 是平台 internal API 端点**模板**（`scheme://host:port`）；host 被替换为
+/// 本赛事的 infra 网关（`infrastructure_subnet` 首地址 = docker bridge gateway，
+/// 宿主桥绑定该 IP，API 需监听 0.0.0.0 或在桥地址上）。
+///
+/// 为什么必须派生：固定 `platform_internal_url` 对网段推进的多赛事无效——每个事件
+/// 的 gamebox 子网不同（10.0.0.0/16 → 10.1.0.0/16 → …），网关随之推进；旧事件的桥
+/// 网关被清理后固定 URL 立即失效（真实部署集成发现，报告 §2.4）。此函数保证
+/// FlagServer/JudgeServer 的 `PLATFORM_INTERNAL_URL` 始终指向本赛事实际可达地址。
+pub fn derive_event_internal_platform_url(
+    base: &str,
+    infrastructure_subnet: &str,
+) -> crate::modules::event::awd::AwdResult<String> {
+    let gateway = Ipv4Cidr::parse(infrastructure_subnet)
+        .map_err(|e| {
+            crate::modules::event::awd::AwdError::Validation(format!(
+                "infrastructure_subnet {infrastructure_subnet}: {e}"
+            ))
+        })?
+        .nth_host(0)
+        .ok_or_else(|| {
+            crate::modules::event::awd::AwdError::Validation(format!(
+                "no host address in infra subnet {infrastructure_subnet}"
+            ))
+        })?;
+    let (scheme, port) = parse_platform_url_base(base);
+    Ok(format!("{scheme}://{gateway}:{port}"))
+}
+
+/// 从模板 URL 解析 scheme 与端口（host 会被派生替换，不读取）。
+/// 模板缺失（空）或未显式端口时回退 `http` / `8080`（config 默认 listen port）。
+fn parse_platform_url_base(base: &str) -> (String, u16) {
+    let trimmed = base.trim();
+    if trimmed.is_empty() {
+        return ("http".to_string(), 8080);
+    }
+    let (scheme, rest) = match trimmed.split_once("://") {
+        Some((s, r)) => (s.to_string(), r),
+        None => ("http".to_string(), trimmed),
+    };
+    let authority = rest.split(['/', '?']).next().unwrap_or(rest);
+    let port = authority
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.parse::<u16>().ok())
+        .unwrap_or(8080);
+    (scheme, port)
+}
+
 /// Team 子网分配器（§36/§38/§39，纯逻辑）：
 /// - 已有分配永远优先复用（持久化 subnet 为事实）；
 /// - 新 Team 取第一个空闲 slot（index 0 = infra 保留）；
@@ -472,6 +528,42 @@ mod tests {
     fn test_parse_invalid_cidr_rejected() {
         assert!(Ipv4Cidr::parse("not-a-cidr").is_err());
         assert!(Ipv4Cidr::parse("10.0.0.0/33").is_err());
+    }
+
+    #[test]
+    fn derive_internal_url_replaces_host_with_event_gateway() {
+        // 模板 10.3.0.1:9091 → 事件 5 网关 10.4.0.1（infra 子网首地址），端口保留
+        let url =
+            derive_event_internal_platform_url("http://10.3.0.1:9091", "10.4.0.0/24").unwrap();
+        assert_eq!(url, "http://10.4.0.1:9091");
+    }
+
+    #[test]
+    fn derive_internal_url_defaults_when_template_empty() {
+        let url = derive_event_internal_platform_url("", "10.5.0.0/24").unwrap();
+        assert_eq!(url, "http://10.5.0.1:8080");
+    }
+
+    #[test]
+    fn derive_internal_url_keeps_scheme_and_default_port() {
+        let url =
+            derive_event_internal_platform_url("https://api.example.com", "10.6.0.0/24").unwrap();
+        assert_eq!(url, "https://10.6.0.1:8080");
+    }
+
+    #[test]
+    fn derive_internal_url_invalid_subnet_rejected() {
+        assert!(derive_event_internal_platform_url("http://x:9091", "garbage").is_err());
+    }
+
+    #[test]
+    fn derive_internal_url_is_event_specific() {
+        // 同一模板 → 不同赛事不同网关（多赛事并发的验收基础）
+        let e1 = derive_event_internal_platform_url("http://10.0.0.1:9091", "10.7.0.0/24").unwrap();
+        let e2 = derive_event_internal_platform_url("http://10.0.0.1:9091", "10.8.0.0/24").unwrap();
+        assert_eq!(e1, "http://10.7.0.1:9091");
+        assert_eq!(e2, "http://10.8.0.1:9091");
+        assert_ne!(e1, e2);
     }
 
     #[test]

@@ -102,7 +102,10 @@ pub struct AwdStaticConfig {
     pub network_runtime: String,
     pub flagserver_image: String,
     pub judgeserver_image: String,
-    /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达）。
+    /// JudgeServer/FlagServer 访问 FloatCTF internal API 的端点**模板**（容器视角，
+    /// `scheme://host:port`）。Phase 9.1 起 host 会被替换为各赛事 infra 网关
+    /// （`derive_event_internal_platform_url`，spec 授权）——固定 host 对网段推进的
+    /// 多赛事无效（旧事件桥网关被清理后失效）。模板只提供 scheme + 端口。
     pub platform_internal_url: String,
 }
 

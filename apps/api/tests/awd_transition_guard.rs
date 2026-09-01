@@ -370,9 +370,11 @@ async fn configuration_generation_gates_start() {
         .expect("start must pass when verified_generation == configuration_generation");
 
     // 用例 2：touch_configuration 后失配 → StartBlocked（AWD_CONFIG_CHANGED）
+    // touch_configuration 按父赛事 event_id 定位（见 event_repo.rs 契约注释），
+    // 传入 awd2.id（自生成 PK）会 RecordNotFound。
     let (_eid2, awd2) = seed_event(&db, "gen2").await;
     to_verified(&db, awd2.id).await;
-    event_repo::touch_configuration(&db, awd2.id)
+    event_repo::touch_configuration(&db, _eid2)
         .await
         .expect("touch_configuration");
     let err = event_service::start_event(&db, &network, &firewall, &publisher, _eid2)

@@ -391,6 +391,7 @@ pub fn build_realtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::EntityTrait;
     use serde_json::json;
 
     #[tokio::test]
@@ -572,19 +573,15 @@ mod tests {
 
     #[tokio::test]
     async fn lagged_subscriber_receives_lagged_error() {
-        let hub = BroadcastEventPublisher::new(2); // 极小容量
+        let hub = BroadcastEventPublisher::new(2); // 极小容量（实现强制下限 16）
         let mut rx = hub.subscribe();
 
-        // 填满缓冲区
-        hub.publish(RealtimeEvent::new(Uuid::nil(), "e1", json!({})))
-            .await
-            .unwrap();
-        hub.publish(RealtimeEvent::new(Uuid::nil(), "e2", json!({})))
-            .await
-            .unwrap();
-        hub.publish(RealtimeEvent::new(Uuid::nil(), "e3", json!({})))
-            .await
-            .unwrap();
+        // 填满缓冲区：capacity.max(16) —— 需超过 16 个事件才能让订阅者落后
+        for i in 0..20 {
+            hub.publish(RealtimeEvent::new(Uuid::nil(), format!("e{i}"), json!({})))
+                .await
+                .unwrap();
+        }
 
         // 接收方落后 — 应收到 Lagged 错误
         let result = rx.recv().await;

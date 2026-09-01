@@ -43,8 +43,9 @@ pub struct DesiredEventPolicy {
     /// 被 ban 的队伍（WG/GameBox 子网进入 banned set）。
     pub banned_teams: Vec<Uuid>,
     /// 是否处于最终结算期（final round completed, Judge pending, Attack phase）。
-    /// 结算期防火墙 = Pause 规则（阻断全部玩家/GameBox 比赛流量），
-    /// 但 JudgeServer→GameBox 仍可达（infra 不在 player/gamebox set 中）。
+    /// 结算期防火墙 = Pause 规则 + 仅有的基础设施例外：
+    /// JudgeServer→GameBox 及其回程放行（spec §18/§28，render.rs 显式渲染），
+    /// 玩家/GameBox 比赛流量（含已建立连接）全阻断。
     pub is_final_settlement: bool,
     /// 赛事是否已结束。Finished 事件保持在防火墙 desired set 中，
     /// 渲染为显式 DENY-ALL 规则，确保 fail-closed 网络锁定。

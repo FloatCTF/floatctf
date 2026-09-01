@@ -361,3 +361,84 @@ Finished**（§18"Finished = final scoreboard is stable"）→ Finished 防火�
    Final Settlement 横幅与"competition is closed."选手态、Finished 稳定计分板。
 
 新增发现均为 D 类（无核心语义阻塞，无 STOP/BLOCKED），列表见 §8.6。
+
+---
+
+## Phase 9.2 Production Polish
+
+本阶段把 §8.6 记录的 D 类新发现中与 AWD 运行语义相关的三项（A1 SSE 重连、A2 网段分配
+感知 Docker 网络、A3 失败部署释放网络锁）从"待修复/绕过"升级为**已实现 + 真实环境验收**，
+并正式封存 AWD 实现（SEALED）。
+
+### 9.1 代码改动（本阶段提交）
+
+| 项 | 提交 | 内容 |
+|---|---|---|
+| A1 | `6a16954` | 前端 SSE 重连：`connectSse`（fetch + Bearer + 指数退避/抖动、Last-Event-ID、401/403 停连）；四个流 Hook `stopPoll/ensurePoll` —— 非 connected 一律轮询、恢复后停轮询 |
+| A2 | `1a2d091` | 分配器感知外部占用：`AwdContainerRuntime::list_docker_network_cidrs()` + `AwdNetworkRuntime::list_host_route_cidrs()`（trait 默认空实现，mock 不变）；`collect_external_reserved_cidrs` 排序去重、失败即闭（Docker/Network 错误）；手动分配与外部重叠 → `NetworkOverlap` |
+| A3 | `6736833` | deploy 失败（仅 Deploying→DeployFailed 成功后）调用 `unlock` 释放 `locked_at`；`ensure_docker_network` 校验子网，失配删除重建；新增 `unlock: Some(true)` patch 语义 |
+
+单元/集成门禁：lib 299 项、`awd_network_ipam` 10/10、`awd_scenarios` 12/12、
+`awd_gamebox_domain` 6/6、`awd_final_settlement` 16/16、`awd_finished_contract` 34/34、
+`awd_score_semantics` 21/21、`awd_transition_guard` 5/5、`awd_ban_recovery` 6/6、
+`awd_network_error` 8/8、`awd_reset_recovery` 6/6 全绿；前端 `tsc --noEmit`、
+`vitest src/lib/sse src/hooks`（3 文件）、`vite build` 全绿。
+（注：多 DB 门控集成测试并发跑偶发互相干扰为**既有 flake**，单跑全绿；已 stash 验证非本次回归。）
+
+### 9.2 A1 真实浏览器 SSE 重连验收（PASS）
+
+在真实主机浏览器（经 dev nginx 7780 → API 9090 + web dev 3000）上，选手页与管理员页
+同开，两页均显示 **live**（SSE 已连接）：
+
+1. **断开**：停 nginx → 两页 SSE 流断；选手页指示变 **poll**（轮询回退启动），管理员页
+   数据请求失败显示错误态（服务恢复前属预期）。
+2. **断线期间服务端变更**：直接更新赛事标题 `A1-Acceptance-SSE → A1-Acceptance-SSE-RECOVERED`。
+3. **恢复**：重启 nginx + API，**不做任何手动刷新**：
+   - 选手页：指示 **poll → live**（SSE 自动重连），标题自动变为
+     `A1-Acceptance-SSE-RECOVERED`；
+   - 管理员页：从错误态恢复完整页面，指示 **live**，标题同步更新。
+4. 再次重复一轮（标题 → `-RECOVERED-2`）两页同样自愈，无刷新。
+
+结论：A1 **PASS** —— fetch 型 SSE 断线后真实重连，断线期间服务端状态变化能无刷新回传
+选手/管理员两端。验收数据与测试资源（测试赛事/用户/战队）随后全部清理。
+
+### 9.3 A2 真实 Docker 网段占用感知验收（PASS）
+
+阶段 9 DB（phase9，host runtime）：已分配 gamebox 10.0–10.8/10.10/10.11（10.9 被平台
+常驻 `fctf-px-net` Docker 网络占用，DB 无记录）。在 10.12.0.0/16 新建 Docker 网络
+（DB 亦无记录）作为外部占用，经管理员 API 自动分配新 AWD 赛事：
+
+- 结果：**10.13.0.0/16** —— 正确跳过 10.9（fctf-px-net）、10.12（本次新造 Docker 网络）
+  两个 DB 未记录的占用。
+- 手动指定与外部重叠 → `NetworkOverlap` 拒绝。
+- 测试 Docker 网络与赛事事后删除，phase9 库恢复 11 finished 赛事原状。
+
+结论：A2 **PASS** —— 分配器真实感知 Docker 网络 CIDR（bollard `list_networks`）与宿主机
+路由（`ip route`），`fctf-px-net` 不再依赖 DB 记录。
+
+### 9.4 A3 真实失败部署解锁验收（PASS）
+
+同一 phase9 环境，用指向不存在 flagserver 镜像的 API 实例（同库、9092）对已分配赛事部署：
+
+1. 部署拉镜像 404 → 事务内 **Deploying → DeployFailed**，`locked_at` 自动释放
+   （此前需 DB 清锁）；
+2. 官方重试路径全 API：`PATCH /awd`（DeployFailed → Configuring，`expected_updated_at`
+   乐观锁）→ `POST /awd/network/reallocate` 成功 → 网段 10.13 → **10.14**（跳过旧网段 +
+   外部 10.12 Docker 网络）；
+3. 遗留 docker 网络（旧 10.13.0.0/16）在换网段后重部署被 `ensure_docker_network`
+   **子网失配自动删除重建**为 10.14.0.0/16（随后因本测试以非 root 跑 API、iptables
+   无权限而再入 DeployFailed —— 属宿主权限限制非代码缺陷，且再次验证解锁幂等）。
+
+结论：A3 **PASS** —— 失败部署不再永久锁网段，官方 API 路径完整重试，无需人工改库。
+
+### 9.5 验收矩阵与封存
+
+| 验收项 | 结果 |
+|---|---|
+| SSE 重连（选手页 + 管理员页，无刷新自愈） | **PASS** |
+| 网段分配感知 Docker 网络（跳过 fctf-px-net + 新造网络） | **PASS** |
+| 失败部署释放网络锁 + 官方 API 重试 | **PASS** |
+| 全部既有集成/单元门禁 | **PASS**（既有 flake 除外，非回归） |
+
+AWD 实现正式**封存（SEALED）**：AWD 全链路（结算、防火墙、网络分配、部署解锁、SSE 重连）
+在真实主机验收通过，新增发现均已闭环。

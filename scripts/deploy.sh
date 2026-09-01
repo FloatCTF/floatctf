@@ -336,6 +336,33 @@ start_api() {
     die "API 60s 内未监听 $api_port（journalctl -u floatctf-api 查看日志）"
 }
 
+# ── 7. 安装独立卸载脚本（每次成功部署都同步最新版本）──────────────────────────
+install_uninstall() {
+    info "── 安装独立卸载脚本 → $FCTF_ROOT/uninstall.sh ──"
+    if [ "$DRY_RUN" = "1" ]; then
+        ok "dry-run：跳过 uninstall.sh 安装"
+        return
+    fi
+    local src="$REPO_ROOT/scripts/uninstall.sh"
+    [ -f "$src" ] || die "缺少卸载脚本源码: $src"
+    # 原子/分阶段安装：先装到临时路径 → bash -n 校验 → 再 install 最终路径。
+    # 服务用户 floatctf 不应能静默替换特权卸载逻辑：属主 root:floatctf，模式 0750。
+    local tmp="$FCTF_ROOT/.uninstall.tmp.$$"
+    run_priv install -m 0750 "$src" "$tmp" || die "安装 uninstall.sh 临时副本失败"
+    if ! run_priv bash -n "$tmp" 2>/dev/null; then
+        run_priv rm -f "$tmp" 2>/dev/null || true
+        die "uninstall.sh 语法校验失败（bash -n），未安装"
+    fi
+    run_priv install -m 0750 "$tmp" "$FCTF_ROOT/uninstall.sh" || {
+        run_priv rm -f "$tmp" 2>/dev/null || true
+        die "安装 uninstall.sh 失败"
+    }
+    run_priv rm -f "$tmp" 2>/dev/null || true
+    run_priv chown root:"$FCTF_USER" "$FCTF_ROOT/uninstall.sh"
+    run_priv chmod 0750 "$FCTF_ROOT/uninstall.sh"
+    ok "$FCTF_ROOT/uninstall.sh 已安装（root:$FCTF_USER 0750；重部署会更新到最新版本）"
+}
+
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 main() {
     info "FloatCTF deploy $VERSION → $FCTF_ROOT（release: $RELEASE_DIR）"
@@ -347,6 +374,7 @@ main() {
     migrate_db
     install_systemd
     start_api
+    install_uninstall
     ok "部署完成：$FCTF_ROOT"
 }
 

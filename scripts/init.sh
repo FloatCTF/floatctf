@@ -256,6 +256,11 @@ check_user_layout() {
     # 归属拆分：config/ 属 root（含密钥，640）；运行数据属 floatctf。
     # 不整体 chown $FCTF_ROOT——config/ 必须保持 root 专属。
     if [ "$CHECK_ONLY" != "1" ]; then
+        # 顶层 /home/floatctf 必须可被 floatctf 遍历（历史脏数据可能残留错误属主，
+        # 如孤儿 uid 700 —— 真实主机实测），统一归 root:floatctf 750。
+        chown root:"$FCTF_USER" "$FCTF_ROOT" >/dev/null 2>&1 \
+            || warn "chown $FCTF_ROOT 需要 root（请以 sudo 运行）"
+        chmod 750 "$FCTF_ROOT" >/dev/null 2>&1 || true
         local run_dir
         for run_dir in bin web data logs runtime gameboxes; do
             chown -R "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/$run_dir" >/dev/null 2>&1 \

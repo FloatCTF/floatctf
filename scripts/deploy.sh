@@ -244,9 +244,22 @@ stage_release() {
     run_priv chown "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/runtime"
     # 容器专用目录属主：rustfs 容器以 uid 10001（镜像内置用户）运行，postgres 以
     # uid 999 运行；这些 bind-mount 目录必须归对应容器 uid，而非 floatctf（否则 EACCES）。
-    # postgres 数据目录仅首次（空）或未初始化时设 999:999，避免破坏既有数据。
+    # postgres：若数据文件属主不是 999（例如上一次误归 floatctf），需先停容器再修正
+    # （避免对运行中 DB 改属主）。仅当数据存在且非 999 时处理。
     run_priv chown -R 10001:10001 "$FCTF_ROOT/data/rustfs" "$FCTF_ROOT/logs/rustfs" 2>/dev/null || true
-    if [ -z "$(ls -A "$FCTF_ROOT/data/postgres" 2>/dev/null)" ]; then
+    local pg_mismatch=0
+    if [ -e "$FCTF_ROOT/data/postgres/PG_VERSION" ]; then
+        local pg_owner
+        pg_owner=$(run_priv stat -c '%u' "$FCTF_ROOT/data/postgres/PG_VERSION" 2>/dev/null || echo "999")
+        [ "$pg_owner" = "999" ] || pg_mismatch=1
+    fi
+    if [ "$pg_mismatch" = "1" ]; then
+        warn "postgres 数据属主非 999（实际 $(run_priv stat -c '%u' "$FCTF_ROOT/data/postgres/PG_VERSION" 2>/dev/null)）；停容器后修正"
+        run_priv docker stop floatctf-postgres >/dev/null 2>&1 || true
+        run_priv chown -R 999:999 "$FCTF_ROOT/data/postgres"
+        run_priv docker start floatctf-postgres >/dev/null 2>&1 || true
+        ok "postgres 数据属主已修正为 999"
+    elif [ -z "$(ls -A "$FCTF_ROOT/data/postgres" 2>/dev/null)" ]; then
         run_priv chown -R 999:999 "$FCTF_ROOT/data/postgres" 2>/dev/null || true
     fi
     ok "产物装配完成（bin/floatctf + web/ + compose.yml + 容器目录属主）"

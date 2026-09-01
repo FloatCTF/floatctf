@@ -34,6 +34,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [项目仓库](#项目仓库)
 - [架构说明](#架构说明)
 - [环境要求](#环境要求)
+- [生产安装与部署](#生产安装与部署)
 - [环境初始化](#环境初始化)
 - [快速开始](#快速开始)
   - [1. 克隆项目](#1-克隆项目)
@@ -53,6 +54,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [服务说明](#服务说明)
 - [常用命令](#常用命令)
 - [常用开发命令](#常用开发命令)
+- [运维速查](#运维速查)
 - [AI 开发手册](#ai-开发手册)
 - [故障排查](#故障排查)
 - [许可证](#许可证)
@@ -89,19 +91,72 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 
 ## 架构说明
 
-平台由 4 个核心服务组成：
+生产部署是「原生进程 + Docker 容器」的混合架构：
 
-| 服务              | 镜像              | 说明                   |
-| ----------------- | ----------------- | ---------------------- |
-| `floatctf-db`     | PostgreSQL 17     | 数据库                 |
-| `floatctf-rustfs` | rustfs/rustfs     | S3 兼容对象存储        |
-| `floatctf-nginx`  | Nginx 1.26        | 反向代理和静态文件服务 |
-| `floatctf-api`    | Alpine + floatctf | 后端 API（开发模式由 `mise run dev:api` 直接运行 Rust 进程，不启动容器） |
+```
+Browser
+  ↓
+nginx（容器，network_mode: host）
+  ↓
+FloatCTF API（原生 systemd 进程）
+  ├── PostgreSQL（容器）
+  ├── RustFS（容器）
+  └── AWD Runtime（GameBox / FlagServer / JudgeServer + nftables + WireGuard）
+```
+
+systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程）：
+
+| 单元 | 内容 |
+| ----- | ---- |
+| `floatctf-api.service` | 原生 API 进程 |
+| `floatctf-infra.service` | postgres / rustfs / nginx 容器（`--wait` 就绪） |
+| `floatctf.target` | 聚合目标 |
+
+> 开发模式仍可全部容器化运行（`mise run infra:up` + `dev:api`/`dev:web`），见「快速开始」。
 
 ## 环境要求
 
-- Docker 和 Docker Compose
-- 约 10GB 可用磁盘空间
+**生产部署**（见 [INSTALL.md](./INSTALL.md)）：
+
+- systemd Linux（Arch 已完整真实验证）
+- Docker + Docker Compose
+- nftables、WireGuard（wireguard-tools）、iproute2
+- IPv4 转发 + `br_netfilter`（`init.sh` 自动检查/持久化）
+
+**开发环境**：Docker 与 Docker Compose、约 10GB 可用磁盘空间。
+
+## 生产安装与部署
+
+> 完整权威指南见 **[INSTALL.md](./INSTALL.md)**。以下是极简入口。
+
+**全新主机**：
+
+```bash
+sudo ./scripts/init.sh     # 主机初始化（一次性，root）：docker/nftables/WG/转发/br_netfilter/用户/布局
+./scripts/deploy.sh        # 首次部署（构建产物 → infra → 迁移 → systemd → API）
+systemctl status floatctf.target
+```
+
+**升级 / 重部署**（保留数据与密钥）：
+
+```bash
+git pull
+./scripts/deploy.sh
+```
+
+**卸载**：
+
+```bash
+sudo /home/floatctf/uninstall.sh          # 安全卸载（保留 PG/RustFS 数据、config、secrets）
+sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认 PURGE FLOATCTF）
+```
+
+`deploy.sh` 每次成功部署都会把 `scripts/uninstall.sh` 安装到
+`/home/floatctf/uninstall.sh`（root:floatctf 0750）。`scripts/clean.sh` 可清理源码
+签出里的再生构建产物（`./scripts/clean.sh [--all]`）。
+
+> 现代部署请使用 `init.sh` / `build-release.sh` / `deploy.sh` / `clean.sh` /
+> `uninstall.sh`。`scripts/legacy/install.sh` 仅为历史遗留，不再是安装路径。
 
 ## 环境初始化
 
@@ -218,7 +273,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — Docker Compose 编排全部服务，支持快速迁移与标准化部署
+- **一键部署** — `scripts/deploy.sh` 全流程部署（precheck → 构建 → infra → 迁移 → systemd → API）；`init.sh` 一次性准备主机；`clean.sh`/`uninstall.sh` 完善生命周期
 
 ## 目录结构
 
@@ -231,9 +286,10 @@ floatctf/
 │   ├── fcmc/            # 共享 Rust crate / CLI
 │   ├── awd-flagserver/  # AWD FlagServer 独立服务
 │   └── awd-judgeserver/ # AWD JudgeServer 独立服务
-├── infra/               # Compose 与 Nginx 配置
-├── scripts/             # 仓库级开发与检查脚本
+├── infra/               # Compose / Nginx / systemd / Docker 配置
+├── scripts/             # 生命周期脚本：init / build-release / deploy / clean / uninstall
 ├── docs/                # 项目文档
+├── INSTALL.md           # 生产安装与运维权威指南
 ├── app/                 # 运行时数据（日志、上传、题目文件，git 忽略）
 ├── Cargo.toml           # Rust workspace
 ├── Cargo.lock           # 唯一 Rust lockfile
@@ -245,11 +301,20 @@ floatctf/
 
 ## 服务说明
 
+**生产部署**（systemd，`/home/floatctf`）：
+
+| 单元 | 内容 | 端口（默认，可经 `.env` 覆盖） |
+| ----- | ---- | ---- |
+| `floatctf-infra.service` | postgres / rustfs / nginx 容器 | PG 5433 / RustFS 9000,9001 / HTTP 80,443 |
+| `floatctf-api.service` | 原生 API 进程 | API 9090 |
+
+**开发模式**（`mise run infra:up` / `dev:api` / `dev:web`）：
+
 | 服务              | 镜像              | 端口         | 说明                                                                             |
 | ----------------- | ----------------- | ------------ | -------------------------------------------------------------------------------- |
-| `floatctf-db`     | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
-| `floatctf-rustfs` | rustfs/rustfs     | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
-| `floatctf-nginx`  | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
+| `floatctf-dev-db` | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
+| `floatctf-dev-rustfs` | rustfs/rustfs | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
+| `floatctf-dev-nginx` | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
 | `floatctf-api`    | 本地 cargo 进程   | 9090         | 后端 API（开发模式），连接 PostgreSQL 和 RustFS                                  |
 
 ## 常用命令
@@ -292,6 +357,22 @@ mise run build         # 构建 Rust 与 Web
 ```
 
 数据库迁移是显式操作：新建见 `mise run db:migration:new`，合并见 `mise run db:migration:merge`，并将生成的 SQL 手动应用到数据库（见上文「3. 启动开发环境」）。
+
+## 运维速查
+
+生产环境生命周期命令（完整指南见 [INSTALL.md](./INSTALL.md)）：
+
+```bash
+systemctl status floatctf.target        # 平台整体状态
+sudo systemctl restart floatctf-api     # 重启 API
+sudo systemctl restart floatctf-infra   # 重启 infra 容器
+journalctl -fu floatctf-api             # 查看 API 日志
+
+sudo /home/floatctf/uninstall.sh        # 安全卸载（保留数据/密钥）
+sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认）
+```
+
+清理源码构建产物：`./scripts/clean.sh`（`--all` 额外清理依赖与开发运行时数据）。
 
 ## AI 开发手册
 

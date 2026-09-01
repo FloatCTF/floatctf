@@ -946,6 +946,7 @@ pub async fn get_event_network(
 pub async fn update_network(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<super::dto::NetworkUpdateRequest>,
 ) -> UniResult<()> {
@@ -967,6 +968,14 @@ pub async fn update_network(
         return UniResponse::ok_none().into();
     }
 
+    // Phase 10 A2：采集宿主外部占用（Docker 网络子网 + 路由），分配器必须避让。
+    let external_reserved = event_network_service::collect_external_reserved_cidrs(
+        awd.containers.as_ref(),
+        awd.network.as_ref(),
+    )
+    .await
+    .map_err(AppError::from)?;
+
     let b = body.into_inner();
     let is_manual = b.gamebox_cidr.is_some() || b.wireguard_cidr.is_some();
     if is_manual {
@@ -978,11 +987,12 @@ pub async fn update_network(
                 wireguard_cidr: b.wireguard_cidr.unwrap_or_default(),
                 wireguard_listen_port: b.wireguard_listen_port,
             },
+            &external_reserved,
         )
         .await
         .map_err(AppError::from)?;
     } else {
-        event_network_service::allocate_automatic(ctx.db.get_ref(), event_id)
+        event_network_service::allocate_automatic(ctx.db.get_ref(), event_id, &external_reserved)
             .await
             .map_err(AppError::from)?;
     }
@@ -995,12 +1005,21 @@ pub async fn update_network(
 pub async fn reallocate_network(
     _admin: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
+    // Phase 10 A2：reallocate 同样避让宿主外部占用
+    let external_reserved = crate::modules::event::awd::service::event_network_service::collect_external_reserved_cidrs(
+        awd.containers.as_ref(),
+        awd.network.as_ref(),
+    )
+    .await
+    .map_err(AppError::from)?;
     crate::modules::event::awd::service::event_network_service::reallocate(
         ctx.db.get_ref(),
         event_id,
+        &external_reserved,
     )
     .await
     .map_err(AppError::from)?;

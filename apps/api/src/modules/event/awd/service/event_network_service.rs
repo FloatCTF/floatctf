@@ -17,10 +17,52 @@ use super::super::domain::network::{
     InfraHostPolicy, Ipv4Cidr, NetworkPool, WireGuardPortRange, docker_network_name,
     wireguard_interface_name,
 };
+use super::super::infrastructure::network::AwdNetworkRuntime;
 use super::super::repo::{event_network_repo, network_allocation_repo, network_settings_repo};
+use fcmc::AwdContainerRuntime;
 
 /// pg_advisory_xact_lock 固定 key：分配给 AWD 网络分配器（任意稳定常数）。
 const ALLOCATOR_LOCK_KEY: i64 = 0x41_57_44_4e_45_54; // "AW DNET" 风格魔数
+
+/// 收集宿主外部保留网段（Phase 10 A2）——Docker 网络子网 + 宿主路由。
+///
+/// 分配器**必须**考虑这些占用：不能假设「FloatCTF 库里没有 = 空闲」。
+/// 纯读操作（bollard list_networks / `ip -o route show`），绝不改动任何资源；
+/// 返回去重、排序的确定性快照，供分配器在事务外使用。
+pub async fn collect_external_reserved_cidrs(
+    containers: &dyn AwdContainerRuntime,
+    network: &dyn AwdNetworkRuntime,
+) -> AwdResult2<Vec<Ipv4Cidr>> {
+    let mut out: Vec<Ipv4Cidr> = Vec::new();
+
+    // 1. Docker 网络子网（含 FloatCTF 持久基础设施网络与活跃 Event 网络）。
+    //    失败即 fail-closed：无法确认宿主占用时不允许分配。
+    let docker_cidrs = containers
+        .list_docker_network_cidrs()
+        .await
+        .map_err(|e| AwdError::Docker(format!("list docker network subnets: {e}")))?;
+    for s in docker_cidrs {
+        if let Ok(c) = Ipv4Cidr::parse(&s) {
+            out.push(c);
+        }
+    }
+
+    // 2. 宿主路由（非 Docker 占用：libvirt/incus/VPN/手工路由）。
+    let route_cidrs = network
+        .list_host_route_cidrs()
+        .await
+        .map_err(|e| AwdError::Network(format!("list host routes: {e}")))?;
+    for r in route_cidrs {
+        if let Ok(c) = Ipv4Cidr::parse(&r) {
+            out.push(c);
+        }
+    }
+
+    // 确定性：按字符串排序 + 去重（Ipv4Cidr 无 Ord；to_string 排序稳定）。
+    out.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    out.dedup();
+    Ok(out)
+}
 
 /// 手动分配请求（§24）：GameBox/WG CIDR 必须合法且全局不重叠；
 /// 允许指定 pool 外网段（§92，UI 提示 outside configured pool）。
@@ -32,9 +74,14 @@ pub struct ManualNetworkRequest {
 
 /// 自动分配（automatic，§23）：从平台池枚举第一个空闲 event 级子网。
 /// 幂等：已存在未锁定分配时直接返回现有（不重复分配）。
+///
+/// `external_reserved`：宿主外部占用（Docker 网络子网 + 路由）——即使 FloatCTF
+/// 库中没有记录也必须避让（Phase 10 A2）。调用方先 `collect_external_reserved_cidrs`
+/// 采集确定性快照再传入；本函数在事务内只读使用，不改动外部资源。
 pub async fn allocate_automatic(
     db: &DatabaseConnection,
     event_id: uuid::Uuid,
+    external_reserved: &[Ipv4Cidr],
 ) -> AwdResult2<crate::entity::awd_event_networks::Model> {
     let awd = event_network_repo::find_awd_event(db, event_id).await?;
     assert_network_editable(&awd.status)?;
@@ -47,6 +94,9 @@ pub async fn allocate_automatic(
         }
         return Ok(existing); // 幂等：已分配未锁定
     }
+
+    // 闭包为 'static async：外部保留网段必须转为 owned（Ipv4Cidr: Clone）。
+    let external_reserved = external_reserved.to_vec();
 
     run_allocator_tx(db, event_id, move |txn, settings| {
         Box::pin(async move {
@@ -64,8 +114,10 @@ pub async fn allocate_automatic(
             let active = network_allocation_repo::list_active(txn).await?;
             let used_ports = list_used_ports(txn).await?;
 
-            let gb_cidr = first_free_event_subnet(&gb_pool, &active, "gamebox")?;
-            let wg_cidr = first_free_event_subnet(&wg_pool, &active, "wireguard")?;
+            let gb_cidr =
+                first_free_event_subnet(&gb_pool, &active, &external_reserved, "gamebox")?;
+            let wg_cidr =
+                first_free_event_subnet(&wg_pool, &active, &external_reserved, "wireguard")?;
             let port = allocate_port(
                 WireGuardPortRange::new(
                     settings.wireguard_port_min as u16,
@@ -90,10 +142,12 @@ pub async fn allocate_automatic(
 }
 
 /// 手动分配（manual，§13）：CIDR 由管理员提供，仍走同一套 overlap 校验。
+/// `external_reserved`：宿主 Docker 网络 / 路由占用，同样必须避让（Phase 10 A2）。
 pub async fn allocate_manual(
     db: &DatabaseConnection,
     event_id: uuid::Uuid,
     req: ManualNetworkRequest,
+    external_reserved: &[Ipv4Cidr],
 ) -> AwdResult2<crate::entity::awd_event_networks::Model> {
     let awd = event_network_repo::find_awd_event(db, event_id).await?;
     assert_network_editable(&awd.status)?;
@@ -114,6 +168,16 @@ pub async fn allocate_manual(
             gb_cidr.to_string(),
             wg_cidr.to_string()
         )));
+    }
+
+    // Phase 10 A2：手动 CIDR 也不得与宿主 Docker 网络/路由重叠
+    for ext in external_reserved {
+        if ext.overlaps(&gb_cidr) || ext.overlaps(&wg_cidr) {
+            return Err(AwdError::NetworkOverlap(format!(
+                "manual CIDR 与宿主外部占用 {} 重叠（Docker 网络/路由），请另选网段",
+                ext.to_string()
+            )));
+        }
     }
 
     run_allocator_tx(db, event_id, move |txn, settings| {
@@ -181,9 +245,11 @@ pub async fn allocate_manual(
 
 /// 重新分配（§33/§93）：事务内 reserve new → 更新 Event Network → release old。
 /// 任何一步失败整体回滚，旧分配保持 active。
+/// `external_reserved`：宿主 Docker 网络 / 路由占用，同样必须避让（Phase 10 A2）。
 pub async fn reallocate(
     db: &DatabaseConnection,
     event_id: uuid::Uuid,
+    external_reserved: &[Ipv4Cidr],
 ) -> AwdResult2<crate::entity::awd_event_networks::Model> {
     let awd = event_network_repo::find_awd_event(db, event_id).await?;
     assert_network_editable(&awd.status)?;
@@ -193,6 +259,9 @@ pub async fn reallocate(
             "network locked after deploy；不可 reallocate".into(),
         ));
     }
+
+    // 闭包为 'static async：外部保留网段必须转为 owned（Ipv4Cidr: Clone）。
+    let external_reserved = external_reserved.to_vec();
 
     run_allocator_tx(db, event_id, move |txn, settings| {
         Box::pin(async move {
@@ -210,9 +279,11 @@ pub async fn reallocate(
             let active = network_allocation_repo::list_active(txn).await?;
             let used_ports = list_used_ports(txn).await?;
 
-            // 新候选必须跳过全部 active allocations（含本 Event 的旧 CIDR）
-            let gb_cidr = first_free_event_subnet(&gb_pool, &active, "gamebox")?;
-            let wg_cidr = first_free_event_subnet(&wg_pool, &active, "wireguard")?;
+            // 新候选必须跳过全部 active allocations（含本 Event 的旧 CIDR）与宿主外部占用
+            let gb_cidr =
+                first_free_event_subnet(&gb_pool, &active, &external_reserved, "gamebox")?;
+            let wg_cidr =
+                first_free_event_subnet(&wg_pool, &active, &external_reserved, "wireguard")?;
             let port = allocate_port(
                 WireGuardPortRange::new(
                     settings.wireguard_port_min as u16,
@@ -403,10 +474,11 @@ async fn build_and_persist(
     Ok(model)
 }
 
-/// 从平台池找第一个不与任何 active allocation 重叠的 event 级子网（§79 惰性迭代）。
+/// 从平台池找第一个不与任何 active allocation 或宿主外部占用重叠的 event 级子网（§79 惰性迭代）。
 fn first_free_event_subnet(
     pool: &NetworkPool,
     active: &[crate::entity::awd_network_allocations::Model],
+    external_reserved: &[Ipv4Cidr],
     label: &str,
 ) -> AwdResult2<Ipv4Cidr> {
     let capacity = pool.event_capacity();
@@ -414,12 +486,14 @@ fn first_free_event_subnet(
         let candidate = pool
             .nth_event_subnet(i)
             .ok_or_else(|| AwdError::Internal(format!("event subnet {i} 超出容量 {capacity}")))?;
-        let taken = active.iter().any(|a| {
+        let taken_by_db = active.iter().any(|a| {
             Ipv4Cidr::parse(&a.cidr.to_string())
                 .map(|c| c.overlaps(&candidate))
                 .unwrap_or(false)
         });
-        if !taken {
+        // Phase 10 A2：宿主 Docker 网络/路由同样视为占用（即使库里没有记录）
+        let taken_external = external_reserved.iter().any(|ext| ext.overlaps(&candidate));
+        if !taken_by_db && !taken_external {
             return Ok(candidate);
         }
     }

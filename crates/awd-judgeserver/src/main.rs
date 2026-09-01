@@ -39,8 +39,8 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
-    let platform_url = env::var("PLATFORM_INTERNAL_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9090".to_string());
+    let platform_url =
+        env::var("PLATFORM_INTERNAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9090".to_string());
     let event_id = env::var("EVENT_ID").expect("EVENT_ID must be set");
     let internal_token = env::var("INTERNAL_TOKEN").expect("INTERNAL_TOKEN must be set");
     let listen_addr = env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());

@@ -64,6 +64,12 @@ pub trait AwdNetworkRuntime: Send + Sync {
     async fn clear_event_connections(&self, event: EventNetworkIdentity) -> AwdResult<()>;
     async fn clear_team_connections(&self, team: TeamNetworkIdentity) -> AwdResult<()>;
     async fn inspect(&self, event: EventNetworkIdentity) -> AwdResult<NetworkObservedState>;
+    /// 列出宿主路由表中与 AWD 地址池可能冲突的 IPv4 网段（Phase 10 A2：
+    /// 分配器必须考虑 Docker 网络 + 宿主路由，不能假设「FloatCTF 库里没有 = 空闲」）。
+    /// 默认实现返回空（Noop / mock 无宿主路由语义）；Host 实现 = `ip -o route show`。
+    async fn list_host_route_cidrs(&self) -> AwdResult<Vec<String>> {
+        Ok(vec![])
+    }
 }
 
 /// 使用真实宿主命令的生产实现。
@@ -181,6 +187,64 @@ impl AwdNetworkRuntime for HostNetworkRuntime {
             wireguard_interface_up,
             notes,
         })
+    }
+
+    async fn list_host_route_cidrs(&self) -> AwdResult<Vec<String>> {
+        // `ip -o route show`：每行 `dst[/prefix] via|dev ...`；只取 IPv4 前缀。
+        // 覆盖 Docker 网络之外的宿主占用（libvirt/incus/VPN/手工路由等）。
+        let out = self
+            .runner()
+            .run(
+                "ip",
+                &["-o".to_string(), "route".to_string(), "show".to_string()],
+            )
+            .await
+            .map_err(|e| crate::modules::event::awd::AwdError::Network(e.to_string()))?;
+        Ok(parse_host_route_cidrs(&out.stdout))
+    }
+}
+
+/// 解析 `ip -o route show` 输出中的 IPv4 前缀列表（纯函数，可单测）。
+/// 跳过 default 路由与 IPv6；去重排序保证确定性（分配器依赖稳定顺序）。
+fn parse_host_route_cidrs(output: &str) -> Vec<String> {
+    let mut cidrs = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("default") {
+            continue;
+        }
+        let dst = line.split_whitespace().next().unwrap_or("");
+        if let Some(idx) = dst.find('/') {
+            // IPv4 only（IPv6 含 ':'，跳过）
+            if !dst[..idx].contains(':') {
+                cidrs.push(dst.to_string());
+            }
+        }
+    }
+    cidrs.sort();
+    cidrs.dedup();
+    cidrs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_host_route_cidrs;
+
+    #[test]
+    fn parses_ipv4_routes_skips_default_and_ipv6() {
+        let out = "default via 192.168.21.1 dev wlp0s20f3 proto static metric 600
+10.66.66.0/24 dev wg0 scope link src 10.66.66.1
+172.16.9.0/24 dev br-abc123 scope link
+192.168.122.0/24 dev virbr0 proto kernel scope link src 192.168.122.1
+2001:db8::/32 dev eth0 proto kernel metric 256 pref medium
+10.66.66.0/24 dev wg0 scope link src 10.66.66.1
+";
+        let got = parse_host_route_cidrs(out);
+        assert_eq!(
+            got,
+            vec!["10.66.66.0/24", "172.16.9.0/24", "192.168.122.0/24",],
+            "default/IPv6 必须跳过，IPv4 去重排序"
+        );
     }
 }
 

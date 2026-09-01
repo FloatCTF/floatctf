@@ -263,10 +263,10 @@ async fn automatic_allocation_unique_per_event() {
     let e1 = seed_event(&db, "uniq-a").await;
     let e2 = seed_event(&db, "uniq-b").await;
 
-    let n1 = event_network_service::allocate_automatic(&db, e1)
+    let n1 = event_network_service::allocate_automatic(&db, e1, &[])
         .await
         .expect("allocate e1");
-    let n2 = event_network_service::allocate_automatic(&db, e2)
+    let n2 = event_network_service::allocate_automatic(&db, e2, &[])
         .await
         .expect("allocate e2");
 
@@ -286,7 +286,7 @@ async fn automatic_allocation_unique_per_event() {
     );
 
     // 幂等：重复 allocate 返回同一行（不重复分配）
-    let n1_again = event_network_service::allocate_automatic(&db, e1)
+    let n1_again = event_network_service::allocate_automatic(&db, e1, &[])
         .await
         .expect("idempotent allocate");
     assert_eq!(n1_again.id, n1.id, "重复分配必须幂等返回同一行");
@@ -324,7 +324,7 @@ async fn automatic_allocation_concurrent_no_duplicate() {
         let db = Arc::clone(&db);
         handles.push(tokio::spawn(async move {
             let event_id = seed_event(&db, &format!("conc-{i}")).await;
-            let res = event_network_service::allocate_automatic(&db, event_id).await;
+            let res = event_network_service::allocate_automatic(&db, event_id, &[]).await;
             (event_id, res)
         }));
     }
@@ -380,6 +380,7 @@ async fn manual_allocation_validation() {
             wireguard_cidr: "192.168.200.0/24".into(),
             wireguard_listen_port: None,
         },
+        &[],
     )
     .await
     .expect("manual outside pool must be allowed");
@@ -394,6 +395,7 @@ async fn manual_allocation_validation() {
             wireguard_cidr: "192.168.201.0/24".into(),
             wireguard_listen_port: None,
         },
+        &[],
     )
     .await
     .expect_err("overlap with existing allocation must be rejected");
@@ -411,6 +413,7 @@ async fn manual_allocation_validation() {
             wireguard_cidr: "10.99.0.0/24".into(),
             wireguard_listen_port: None,
         },
+        &[],
     )
     .await
     .expect_err("self-overlapping cidrs must be rejected");
@@ -443,7 +446,7 @@ async fn reallocate_keeps_old_on_failure() {
     let orig_gb_team = original.gamebox_team_prefix;
 
     let event_id = seed_event(&db, "rea").await;
-    let net = event_network_service::allocate_automatic(&db, event_id)
+    let net = event_network_service::allocate_automatic(&db, event_id, &[])
         .await
         .expect("allocate");
     let old_gb = net.gamebox_cidr.to_string();
@@ -461,7 +464,7 @@ async fn reallocate_keeps_old_on_failure() {
     .await
     .expect("narrow pool update");
 
-    let err = event_network_service::reallocate(&db, event_id)
+    let err = event_network_service::reallocate(&db, event_id, &[])
         .await
         .expect_err("reallocate must fail when pool cannot fit");
     assert!(
@@ -510,7 +513,7 @@ async fn network_locked_after_deploy() {
     let _guard = pool_lock().await;
     cleanup_all_ipam_events(&db).await;
     let event_id = seed_event(&db, "lock").await;
-    let net = event_network_service::allocate_automatic(&db, event_id)
+    let net = event_network_service::allocate_automatic(&db, event_id, &[])
         .await
         .expect("allocate");
     assert!(
@@ -536,7 +539,7 @@ async fn network_locked_after_deploy() {
     );
 
     // §94：锁定后 reallocate 拒绝
-    let err = event_network_service::reallocate(&db, event_id)
+    let err = event_network_service::reallocate(&db, event_id, &[])
         .await
         .expect_err("reallocate on locked network must fail");
     assert!(
@@ -553,6 +556,7 @@ async fn network_locked_after_deploy() {
             wireguard_cidr: "192.168.151.0/24".into(),
             wireguard_listen_port: None,
         },
+        &[],
     )
     .await
     .expect_err("manual on allocated event must fail");
@@ -578,7 +582,7 @@ async fn team_subnet_stable_and_unique() {
     configure_crypto_once();
 
     let event_id = seed_event(&db, "teamnet").await;
-    let net = event_network_service::allocate_automatic(&db, event_id)
+    let net = event_network_service::allocate_automatic(&db, event_id, &[])
         .await
         .expect("allocate");
     let gb_parent = Ipv4Cidr::parse(&net.gamebox_cidr.to_string()).expect("gb parse");
@@ -669,7 +673,7 @@ async fn archive_release_only_after_cleanup() {
     let _guard = pool_lock().await;
     cleanup_all_ipam_events(&db).await;
     let event_id = seed_event(&db, "release").await;
-    event_network_service::allocate_automatic(&db, event_id)
+    event_network_service::allocate_automatic(&db, event_id, &[])
         .await
         .expect("allocate");
 
@@ -704,4 +708,77 @@ async fn archive_release_only_after_cleanup() {
     );
 
     cleanup_event(&db, event_id).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 10 A2：自动分配必须避让宿主外部占用（Docker 网络子网 / 路由），
+// 即使 FloatCTF 库中没有记录。模拟 fctf-px-net 占用 10.9.0.0/16 的同类场景。
+// ────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn automatic_allocation_skips_external_reserved() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
+
+    // 默认 gamebox 池 10.0.0.0/8 + event /16 → 第一个空闲 = 10.0.0.0/16。
+    // 模拟宿主已有 Docker 网络占用 10.0.0.0/16（库里无任何记录）。
+    let reserved = vec![Ipv4Cidr::parse("10.0.0.0/16").expect("reserved cidr")];
+
+    let e1 = seed_event(&db, "ext-res").await;
+    let net = event_network_service::allocate_automatic(&db, e1, &reserved)
+        .await
+        .expect("allocate with external reserved must succeed");
+    assert_eq!(
+        net.gamebox_cidr.to_string(),
+        "10.1.0.0/16",
+        "外部占用 10.0.0.0/16 时自动分配必须跳到 10.1.0.0/16"
+    );
+    // wireguard 池未被外部占用 → 仍取 172.16.0.0/16
+    assert_eq!(
+        net.wireguard_cidr.to_string(),
+        "172.16.0.0/16",
+        "wireguard 池无外部占用时应取第一个"
+    );
+
+    // 两个外部占用 → 依次跳过后取第三个
+    let e2 = seed_event(&db, "ext-res2").await;
+    let reserved2 = vec![
+        Ipv4Cidr::parse("10.0.0.0/16").expect("r1"),
+        Ipv4Cidr::parse("10.1.0.0/16").expect("r2"),
+    ];
+    let net2 = event_network_service::allocate_automatic(&db, e2, &reserved2)
+        .await
+        .expect("allocate e2");
+    assert_eq!(
+        net2.gamebox_cidr.to_string(),
+        "10.2.0.0/16",
+        "跳过两个外部占用后应取 10.2.0.0/16"
+    );
+
+    // 手动分配同样拒绝与外部占用重叠（与 Docker 网络冲突的 manual CIDR 会直接部署失败）
+    let e3 = seed_event(&db, "ext-manual").await;
+    let err = event_network_service::allocate_manual(
+        &db,
+        e3,
+        ManualNetworkRequest {
+            gamebox_cidr: "10.0.0.0/16".into(),
+            wireguard_cidr: "172.16.9.0/24".into(),
+            wireguard_listen_port: None,
+        },
+        &reserved,
+    )
+    .await
+    .expect_err("manual CIDR overlapping external reserved must be rejected");
+    assert!(
+        matches!(err, AwdError::NetworkOverlap(_)),
+        "expected NetworkOverlap, got {err:?}"
+    );
+
+    cleanup_event(&db, e1).await;
+    cleanup_event(&db, e2).await;
+    cleanup_event(&db, e3).await;
+    cleanup_all_ipam_events(&db).await;
 }

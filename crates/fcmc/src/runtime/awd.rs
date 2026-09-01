@@ -84,6 +84,14 @@ pub trait AwdContainerRuntime: Send + Sync {
 
     async fn remove_event_network(&self, network_id: &str) -> anyhow::Result<()>;
 
+    /// 列出宿主全部 Docker 网络的 IPv4 子网（IPAM subnets），供 AWD CIDR
+    /// 分配器避让外部占用（Phase 10 A2：不能假设「FloatCTF 库里没有 = 空闲」）。
+    /// 默认实现返回空（无 Docker 能力的 mock 保持可用）；生产 DockerRuntime
+    /// 用 bollard list_networks 采集。纯读操作，绝不改动任何网络。
+    async fn list_docker_network_cidrs(&self) -> anyhow::Result<Vec<String>> {
+        Ok(vec![])
+    }
+
     async fn create_infrastructure_container(
         &self,
         spec: InfrastructureContainerSpec,
@@ -355,5 +363,36 @@ impl AwdContainerRuntime for DockerRuntime {
         use super::{ContainerRuntime, DockerContainerRuntime};
         let rt = DockerContainerRuntime::new(self.docker.clone());
         rt.logs(container_id, limit).await
+    }
+
+    async fn list_docker_network_cidrs(&self) -> anyhow::Result<Vec<String>> {
+        use bollard::network::ListNetworksOptions;
+
+        let networks = self
+            .docker
+            .list_networks(None::<ListNetworksOptions<String>>)
+            .await?;
+        let mut out = Vec::new();
+        for net in networks {
+            // IPAM subnets（IPv4 only；IPv6 与 AWD IPv4 设计无关）
+            let Some(ipam) = net.ipam else {
+                continue;
+            };
+            let Some(config) = ipam.config else {
+                continue;
+            };
+            for cfg in config {
+                if let Some(subnet) = cfg.subnet {
+                    if subnet.contains(':') {
+                        continue; // IPv6
+                    }
+                    out.push(subnet);
+                }
+            }
+        }
+        // 确定性：去重 + 排序，避免分配器决策依赖 daemon 返回顺序
+        out.sort();
+        out.dedup();
+        Ok(out)
     }
 }

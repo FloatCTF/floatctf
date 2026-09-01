@@ -102,9 +102,17 @@ precheck() {
     info "端口：API=$api_port PG=$pg_port RustFS=$rustfs_port HTTP=$http_port"
     for port_spec in "$api_port" "$pg_port" "$rustfs_port" "$http_port"; do
         if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port_spec}$"; then
-            # 若端口已被本平台自己的 infra 容器占用（重部署），放行；否则 fail-closed。
+            # 放行本平台容器占用（重部署）：
+            #  - postgres/rustfs：导出端口映射含该端口
+            #  - nginx（network_mode: host，无 Ports 映射）：仅对 HTTP/HTTPS 端口放行
+            local owned=0
             if docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
-                | grep -qE "floatctf-(postgres|rustfs|nginx).*[:.]${port_spec}"; then
+                | grep -qE "floatctf-(postgres|rustfs).*[:.]${port_spec}"; then
+                owned=1
+            elif [ "$port_spec" = "$(env_get HTTP_PORT 80)" ] || [ "$port_spec" = "$(env_get HTTPS_PORT 443)" ]; then
+                [ -n "$(docker ps -q --filter name=^floatctf-nginx$ 2>/dev/null)" ] && owned=1
+            fi
+            if [ "$owned" = "1" ]; then
                 info "端口 $port_spec 由本平台容器占用（重部署，放行）"
             else
                 die "端口 $port_spec 已被无关进程占用（ss 检查）；请调整 .env 端口"

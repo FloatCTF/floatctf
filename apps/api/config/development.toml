@@ -32,7 +32,7 @@ web_terminal = true
 unsafe_sql_admin = true
 
 [awd]
-network_runtime = "noop"
+network_runtime = "host"
 flagserver_image = "floatctf/awd-flagserver:latest"
 judgeserver_image = "floatctf/awd-judgeserver:latest"
 

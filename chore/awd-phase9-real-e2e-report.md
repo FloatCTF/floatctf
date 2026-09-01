@@ -277,6 +277,10 @@ Run5：选手对自家 GameBox 连续两次 Reset：第 1 次免费（free_reset
   | Finished（Run8/Run9） | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ |
 
 - 旧 harness ACCEPT 规则已在 Run6 前全部移除；本轮无任何补充。
+- **NO PRODUCTION NETWORK HARNESS WORKAROUNDS USED**（生产网络无任何 harness 工作区：
+  无手动 nft ACCEPT、无生产不创建的手动 /32 路由、无手动桥接、无
+  PLATFORM_INTERNAL_URL 手工绕行、无生产所需的临时 sudoers；选手模拟 netns 属测试
+  工具，不修补生产网络）。
 
 ### 8.3 每赛事内部平台端点（platform_internal_url 派生）
 

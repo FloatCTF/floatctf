@@ -236,8 +236,11 @@ stage_release() {
         return
     fi
     run_priv install -m 0755 "$RELEASE_DIR/bin/floatctf" "$FCTF_ROOT/bin/floatctf"
-    run_priv rm -rf "$FCTF_ROOT/web"
-    run_priv cp -r "$RELEASE_DIR/web" "$FCTF_ROOT/web"
+    # web：固定目录就地覆盖（勿 rm -rf 换 inode —— bind-mount 容器会持有旧空 inode
+    #  导致 nginx 读到空目录；真实部署发现）。清空内容但保留目录 inode。
+    run_priv mkdir -p "$FCTF_ROOT/web"
+    run_priv find "$FCTF_ROOT/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    run_priv cp -a "$RELEASE_DIR/web/." "$FCTF_ROOT/web/"
     run_priv chown -R root:root "$FCTF_ROOT/web"
     run_priv install -m 0644 "$COMPOSE_SRC" "$FCTF_ROOT/compose.yml"
     run_priv mkdir -p "$FCTF_ROOT/runtime"

@@ -1,11 +1,11 @@
 [package]
 name = "fcmc"
-version = "1.1.0"
+version = "1.2.0"
 edition.workspace = true
 description = "A CLI tool to check whether CTF challenge meta.toml configs are valid, and optionally test Docker setup"
 license = "MIT"
 repository = "https://github.com/FloatCTF/fcmc"
-readme = "README.md"                                                                                                    # 如果有 README 文件，推荐加上
+readme = "README.md"
 
 [dependencies]
 tokio-util = { version = "0.7.16", features = ["io"] }

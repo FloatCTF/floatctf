@@ -2,6 +2,10 @@
 name = "floatctf"
 version = "0.3.3"
 edition.workspace = true
+description = "FloatCTF CTF 实训/竞赛平台后端（Actix Web + SeaORM + PostgreSQL + RustFS；Jeopardy + AWD 双赛制）"
+license.workspace = true
+repository = "https://github.com/FloatCTF/floatctf"
+readme = "README.md"
 
 [features]
 default = []
@@ -9,7 +13,7 @@ default = []
 realtime-redis = ["dep:redis"]
 
 [dependencies]
-fcmc = { path = "../../crates/fcmc" }
+fcmc = { path = "../../crates/fcmc", version = "1.2" }
 # Optional: enable with `--features realtime-redis` for multi-node SSE fan-out.
 redis = { version = "0.27", optional = true, default-features = false, features = [
   "tokio-comp",

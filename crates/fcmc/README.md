@@ -9,6 +9,13 @@ fcmc 是 [FloatCTF](https://github.com/FloatCTF/floatctf) 平台的 **Challenge 
 - **运行时验证**：起一个临时容器，打印访问地址（Challenge）或 Docker IP + SSH 凭据（GameBox），按 Enter 后自动清理；
 - **库接口**：`metadata` / `runtime` / `application` 三个层次，供平台 API（`apps/api`）复用同一套解析、构建与镜像逻辑。
 
+## 安装在 crates.io 上发布
+
+```bash
+cargo install fcmc          # 从 crates.io 安装最新版
+```
+
+> 版本来自 crates.io：https://crates.io/crates/fcmc
 > 交互式完整手册（面向 AI / 自动化工具，非常详细）：`fcmc help --agent`
 
 ---

@@ -225,7 +225,14 @@ stage_release() {
     run_priv install -m 0644 "$COMPOSE_SRC" "$FCTF_ROOT/compose.yml"
     run_priv mkdir -p "$FCTF_ROOT/runtime"
     run_priv chown "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/runtime"
-    ok "产物装配完成（bin/floatctf + web/ + compose.yml）"
+    # 容器专用目录属主：rustfs 容器以 uid 10001（镜像内置用户）运行，postgres 以
+    # uid 999 运行；这些 bind-mount 目录必须归对应容器 uid，而非 floatctf（否则 EACCES）。
+    # postgres 数据目录仅首次（空）或未初始化时设 999:999，避免破坏既有数据。
+    run_priv chown -R 10001:10001 "$FCTF_ROOT/data/rustfs" "$FCTF_ROOT/logs/rustfs" 2>/dev/null || true
+    if [ -z "$(ls -A "$FCTF_ROOT/data/postgres" 2>/dev/null)" ]; then
+        run_priv chown -R 999:999 "$FCTF_ROOT/data/postgres" 2>/dev/null || true
+    fi
+    ok "产物装配完成（bin/floatctf + web/ + compose.yml + 容器目录属主）"
 }
 
 # ── 3. infra 容器 ─────────────────────────────────────────────────────────────

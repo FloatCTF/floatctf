@@ -37,6 +37,7 @@ services:
         image: rustfs/rustfs:latest
         container_name: floatctf-rustfs
         restart: unless-stopped
+        user: "10001:10001"   # rustfs 镜像内置用户 uid/gid 10001（OverlayFS 下避免宿主导入）
         ports:
             - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
             - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"

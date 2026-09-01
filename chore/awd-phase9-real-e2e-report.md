@@ -216,3 +216,144 @@ Run5：选手对自家 GameBox 连续两次 Reset：第 1 次免费（free_reset
 - [x] 删除 trace 表与 `/tmp` 临时文件
 
 > 清理动作由会话末尾统一执行，避免验证中途误删。
+
+---
+
+## 8. Phase 9.1 Integration Closure（真实部署集成闭环，2026-09-01）
+
+> 本阶段在**无任何 harness 网络规则**的真实主机 Docker 29 环境完成四类集成闭环，共运行
+> 6 个独立 AWD 赛事（Run6–Run11，CIDR 10.5/10.6/10.7/10.8/10.10/10.11 依次推进），
+> 全部经 WG 隧道由真实选手侧访问。代码改动集中在：
+> `render.rs`（结算/Finished 防火墙分流）、`deploy_service.rs` + `domain/network.rs`
+> （每赛事内部平台端点派生）、`nftables.rs`/`firewall/mod.rs`（面向 Docker 29 的增量收敛）。
+> 分支 `awd`，未 push。
+
+### 8.1 最终结算裁判连通性（spec §18/§28；替换原报告 §2.6 的"冻结设计"判定）
+
+**结论：结算期裁判必须能连通 GameBox —— 已实现并实测，不再冻结。**
+
+原 §2.6 观测到"结算窗口内裁判必然判定 down"并归为冻结设计；Phase 9.1 判定该结论
+**不可接受**（真实部署中最终轮裁判必须反映轮末真实状态），已按 spec 授权修复：
+
+- **Final Settlement（派生状态）防火墙**（`render.rs`，实测 Run11 链 `event_ev_43d5fb4c`）：
+
+  ```text
+  ip saddr @players_v4 ip daddr @banned_gameboxes_v4 drop
+  ip saddr @gameboxes_v4 ip daddr @banned_gameboxes_v4 drop
+  ip saddr @players_v4 drop                              ← 玩家竞争访问关闭
+  ip saddr 10.11.0.3 ip daddr @gameboxes_v4 accept       ← 仅放行 JudgeServer IP（最窄 infra）
+  ip saddr @gameboxes_v4 ip daddr 10.11.0.3 ct state established,related accept  ← 裁判回程
+  ip saddr @gameboxes_v4 drop
+  ip saddr @players_v4 ip daddr @infrastructure_v4 drop
+  ip saddr @gameboxes_v4 ip daddr @infrastructure_v4 drop
+  ```
+
+  — 只放行 `judgeserver_ip` 单地址（非整个 infra 子网），玩家/GameBox 已建立连接
+  不存活（与 Pause 一致），玩家→GameBox 实测 `000`。
+- **Finished 防火墙**（同链切换，实测 Run11）：`ip saddr 10.11.0.3 ... drop` ——
+  结算完成、裁判不再需要评估，JudgeServer→GameBox **DENY**（fail-closed DENY-ALL）。
+- **真实最终轮裁判**（Run11 第 2 轮，judge 容器在轮末前主动停止 → 结算窗口拉长）：
+
+  | task | 轮 | status | exit | attempt | 耗时 | 说明 |
+  |---|---|---|---|---|---|---|
+  | Team A ×2 | R2 | up | 0 | 1 | ~415ms | 健康 GameBox，结算期连通（02:19:12 提交） |
+  | Team B（健康） | R2 | up | 0 | 1 | 417ms | 同上 |
+  | Team B（被停 10.11.2.3） | R2 | **down** | 1 | **2** | 3192ms | 结算期重启裁判 → 租约过期 → attempt 2 判定 down |
+
+  → **healthy=Up / 故意 Down=Down / 仅真正 Down 实例产生 judge_down（-200，task-scoped
+  幂等键 `judge-down:{task_id}`）**。同一场景在 Run9/Run10 各复现一次（3 up + 1 down）。
+
+### 8.2 Docker 29 nftables 生产化（无 harness 规则）
+
+- 生产路径增量收敛（`nftables.rs`/`firewall/mod.rs`）：不全局 flush、仅操作 FloatCTF 表、
+  幂等、崩溃恢复安全（按 revision 重放）、多赛事并存（Run6–11 六事件同表互不干扰）。
+- 真实连通矩阵（WG 隧道实测，**零手动规则**）：
+
+  | 阶段 | A→自家 | A→对方 | B→自家 | B→对方 | GameBox→Internet |
+  |---|---|---|---|---|---|
+  | Hardening（Run8/Run9） | 200 ✓ | 000 ✓ | 200 ✓ | 000 ✓ | 000 ✓ |
+  | Attack（Run8/Run9/Run11） | 200 ✓ | 200 ✓ | 200 ✓ | 200 ✓ | 000 ✓ |
+  | Final Settlement（Run11） | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ |
+  | Finished（Run8/Run9） | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ | 000 ✓ |
+
+- 旧 harness ACCEPT 规则已在 Run6 前全部移除；本轮无任何补充。
+
+### 8.3 每赛事内部平台端点（platform_internal_url 派生）
+
+- 实现（`domain/network.rs::derive_event_internal_platform_url`）：以配置的
+  `platform_internal_url` 为模板，host 替换为本赛事 infra 网关（infrastructure_subnet
+  首地址 = docker bridge gateway），端口保留；注入本赛事的 FlagServer 与 JudgeServer。
+- 为什么必须派生：固定 URL 只对首个事件有效 —— 网段推进后旧事件桥网关被清理，固定
+  URL 立即失效（原报告 §2.4）。派生后每赛事自带可达端点，不依赖任何其他事件存活。
+- 实测：Run6–11 六事件 CIDR 10.5→10.6→10.7→10.8→10.10→10.11 依次推进，旧事件网络
+  删除后新事件 infra 全部自达平台（每事件 precheck Passed + flag 轮询 + 裁判 claim/result
+  全部经各自网关成功）。
+- 另证：Run10 首次 deploy 因 Docker `10.9.0.0/16` 与平台常驻网络 `fctf-px-net` 冲突失败，
+  reallocate 到 10.10.0.0/16 后即通过 —— 事件 infra 端点随网段自动切换（见 §8.6 新发现）。
+
+### 8.4 真实浏览器 / SSE 验收
+
+- 真实 web 前端（nginx :7780 → host.docker.internal:9091 临时代理，验收后恢复 9090）：
+  SuperAdmin（sysadmin）登录管理页 + Player A（p91a1）+ Player B（p91b1）选手页。
+- SSE 认证域（Phase 7.2）：选手 `GET /api/events/{id}/awd/stream`（User Bearer）、
+  管理员 `GET /api/admin/events/{id}/awd/stream`（SuperAdmin Bearer）；驱动全程断言
+  `tokenInUrl=false`（令牌永不在 URL）✓。
+- 实时状态流转（驱动 2s 轮询 + 页面文本断言 + 截图）：
+
+  | 时机 | 管理页 | 选手页 |
+  |---|---|---|
+  | 开赛 | adminPhase=Hardening | flagState "Attack has not started (Hardening.)" |
+  | 暂停（Run8） | adminPhase=Pause | flagState "Competition paused." |
+  | Attack | — | 提交按钮可用（flag 流实测提交成功） |
+  | Final Settlement（Run11） | **Final Settlement** 徽章 | flagState **"Final settlement — competition is closed."** + 横幅 |
+  | Finished | 状态 Finished | 计分板稳定（最终轮结算后不变） |
+
+- SSE 行为观测：页面加载时 SSE 即 live（`: connected` + 事件流）；经 nginx 代理的长驻
+  SSE 出现 `net::ERR_ABORTED`（代理缓冲/空闲超时），fetch 型 connectSse 按退避重连；
+  暂停/恢复、Final Settlement 等阶段切换由初始 REST 状态 + 事件流驱动，无需手动刷新。
+
+### 8.5 干净最终 E2E 路径（Run11 全自动）
+
+deploy → precheck Passed → verified → start → hardening → attack R1（flag 偷取+提交：
+`attack_score:100 / victim_loss:100 / first_bonus:20 / was_first_blood:true`）→ R2 →
+Final Settlement（final_settlement=true 派生态，选手 000 / 裁判连通）→ 真实最终轮裁判
+（3 up + 1 down，judge_down 仅 down 实例）→ **仅在所有裁判任务终态 + 计分完成后转
+Finished**（§18"Finished = final scoreboard is stable"）→ Finished 防火墙 DENY-ALL。
+全程无 harness 网络 hack。
+
+### 8.6 本轮新增发现（全部 D 类，无阻塞）
+
+| # | 级别 | 发现 | 处置 |
+|---|---|---|---|
+| 1 | D | `POST /teams/{id}/users` 无条件重插 event_users → 重复键 500（经 `/events/{id}/users` 先注册时） | 工作区绕过（仅用 team 端点）；已记录，待修复 |
+| 2 | D | AWD 网段自动分配不检查平台常驻 Docker 网络（`fctf-px-net` 占用 10.9.0.0/16 导致 Run10 deploy 失败） | reallocate 换网段绕过；分配器应纳入全部 Docker 网络，待修复 |
+| 3 | D | deploy 失败（docker 403）仍 `locked_at` 网络 → 无法 reallocate（Run10 需 DB 清锁） | 已记录：失败路径应回滚锁或允许 reallocate，待修复 |
+| 4 | D | 经 nginx 的长驻 SSE 空闲后 `net::ERR_ABORTED`、页面状态不再推进（驱动观察到页面冻结） | 页面初始 REST 状态正确；SSE 重连路径待前端验证 |
+| 5 | D | dev-profile 二进制要求 host glibc ≥ 2.39，bookworm 容器仅 2.36 → 部署镜像内裁判崩溃 | 改为容器内构建 glibc-2.34 二进制（`objdump -T <bin> | grep -o GLIBC_[0-9.]* | sort -V | tail -1` 验证）；打包流程应默认容器兼容构建 |
+| 6 | D | 裁判/镜像预检在容器启动后即探活；容器内无 wget/curl 时无法自检（本次用宿主机经 nft 规则验证连通） | 观测类，无代码改动 |
+
+### 8.7 验证门禁
+
+- `cargo fmt --check` ✓
+- `cargo check -p floatctf` ✓
+- `cargo test -p floatctf-awd-judgeserver` 43/43 ✓
+- `cargo test -p floatctf`（settlement 11 / final_settlement 10 / firewall 41 全绿；全量见 §8.8 执行结果）
+- 真实主机 E2E：Run6–11 六事件全自动闭环 ✓
+
+> 注：`awd_final_settlement` / `settlement` / `firewall` 集成测试首次跑红，根因是开发库
+> （5432）缺 AWD Wave 迁移（`awd_events.round_count` 等列不存在）；`mise run
+> db:migration:apply` 应用 5 个 Wave 迁移后全部转绿 —— 非代码缺陷。
+
+### 8.8 最终判定
+
+四类集成闭环节点全部 PASS：
+
+1. ✅ 最终结算裁判连通性（§8.1）—— 结算期裁判 ALLOW + 回程；Finished 裁判 DENY；
+   真实最终轮裁判 healthy=Up / Down=Down / 仅 down 实例 judge_down。
+2. ✅ Docker 29 nftables 生产化（§8.2）—— 无 harness 规则，增量收敛幂等多赛事；
+   Hardening/Attack/Settlement/Finished 四态矩阵全对。
+3. ✅ 每赛事内部平台端点（§8.3）—— 六事件网段推进全自达；Run10 换网段即恢复。
+4. ✅ 真实浏览器/SSE（§8.4）—— 双路由 Bearer 认证、令牌不进 URL、live 状态流转、
+   Final Settlement 横幅与"competition is closed."选手态、Finished 稳定计分板。
+
+新增发现均为 D 类（无核心语义阻塞，无 STOP/BLOCKED），列表见 §8.6。

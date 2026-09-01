@@ -1,6 +1,0 @@
-# Phase 9 REAL HOST E2E — JudgeServer image (bookworm glibc base; alpine cannot run glibc binaries)
-FROM python:3.12-slim-bookworm
-COPY bin/awd_judgeserver /usr/local/bin/awd_judgeserver
-ENV LISTEN_ADDR=0.0.0.0:8080
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/awd_judgeserver"]

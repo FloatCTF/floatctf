@@ -350,6 +350,21 @@ pub async fn lock(db: &DatabaseConnection, event_id: uuid::Uuid) -> AwdResult2<(
     Ok(())
 }
 
+/// 部署失败后释放锁定（Phase 10 A3）：DeployFailed 时 locked_at 必须清除，
+/// 否则唯一恢复路径是手工改库。成功部署保留锁；本函数只由 deploy_service
+/// 在真正记录 DeployFailed 后调用（并发安全：仅当仍处于 Deploying 时）。
+pub async fn unlock(db: &DatabaseConnection, event_id: uuid::Uuid) -> AwdResult2<()> {
+    let net = event_network_repo::require_by_event_id(db, event_id).await?;
+    if net.locked_at.is_some() {
+        let patch = event_network_repo::EventNetworkPatch {
+            unlock: Some(true),
+            ..Default::default()
+        };
+        event_network_repo::update_in_tx(db, &net, patch).await?;
+    }
+    Ok(())
+}
+
 /// Archive runtime cleanup 成功后才释放（§56/§89）。Event Network 行保留（历史）。
 pub async fn release_allocations(db: &DatabaseConnection, event_id: uuid::Uuid) -> AwdResult2<()> {
     let txn = db

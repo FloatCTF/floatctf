@@ -193,6 +193,9 @@ pub async fn deploy_event(
         Err(e) => {
             // DeployFailed 写入路径（P1-16）：部署失败不再停留在 Deploying。
             // 仅当仍处于 Deploying 时转移（幂等重入/并发场景不覆盖新状态）。
+            // Phase 10 A3：成功部署保留锁；失败必须释放网络锁定，否则唯一恢复
+            // 路径是手工改库。释放后官方恢复路径 = DeployFailed → Configuring →
+            // reallocate（换网段）→ 重新 deploy（ensure_* 幂等重建）。
             if let Ok(Some(ev)) = event_repo::find_by_event_id(db, event_id).await {
                 if ev.status == AwdEventStatus::Deploying {
                     if let Err(te) = event_repo::transition_event(
@@ -209,6 +212,21 @@ pub async fn deploy_event(
                             event_id,
                             te
                         );
+                    } else {
+                        // 状态转移成功（Deploying → DeployFailed）才解锁；并发安全：
+                        // 若另一部署已抢先转出 Deploying，本分支不会执行，锁保留。
+                        if let Err(ue) = event_network_service::unlock(db, event_id).await {
+                            tracing::error!(
+                                "[Deploy] failed to release network lock for event {}: {}",
+                                event_id,
+                                ue
+                            );
+                        } else {
+                            tracing::warn!(
+                                "[Deploy] Event {} deployment failed; network lock released for retry",
+                                event_id
+                            );
+                        }
                     }
                 }
             }
@@ -236,13 +254,32 @@ async fn ensure_docker_network(
         .map(|r| r.resource_id);
 
     if let Some(id) = db_tracked_id {
-        // Verify still exists; recreate if missing
+        // Verify still exists AND subnet matches the current allocation; recreate if missing
+        // or stale (Phase 10 A3：DeployFailed 解锁后 reallocate 换了网段，旧网络必须重建，
+        // 否则容器挂在错误网段上，重试部署必然失败）。
         match containers.inspect_event_network(&id).await {
-            Ok(state) if state.exists => return Ok((id, net_name)),
+            Ok(state) if state.exists => {
+                let expected = event_network.gamebox_cidr.to_string();
+                if state.subnet.as_deref() == Some(expected.as_str()) {
+                    return Ok((id, net_name));
+                }
+                warn!(
+                    "[Deploy] docker network {} subnet mismatch (want {}, observed {:?}) — recreating",
+                    net_name, expected, state.subnet
+                );
+            }
             _ => {
                 warn!("[Deploy] docker network {} missing — recreating", net_name);
             }
         }
+        // 旧跟踪行失效（网络重建后会拿到新 network_id）：先清掉该赛事该类型的历史
+        // 跟踪行，避免下次 deploy 又命中过期 id 重复重建。
+        awd_runtime_resources::Entity::delete_many()
+            .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+            .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))
+            .exec(db)
+            .await
+            .map_err(|e| AwdError::Database(e.to_string()))?;
     }
 
     info!("[Deploy] Creating Docker network for event {}", event_id);

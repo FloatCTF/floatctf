@@ -24,7 +24,7 @@ use floatctf::modules::event::awd::{
     AwdError,
     crypto::AwdCrypto,
     domain::network::Ipv4Cidr,
-    repo::{event_network_repo, network_allocation_repo, network_settings_repo},
+    repo::{event_network_repo, event_repo, network_allocation_repo, network_settings_repo},
     service::{
         event_network_service::{self, ManualNetworkRequest},
         platform_network_service, team_network_allocator,
@@ -780,5 +780,123 @@ async fn automatic_allocation_skips_external_reserved() {
     cleanup_event(&db, e1).await;
     cleanup_event(&db, e2).await;
     cleanup_event(&db, e3).await;
+    cleanup_all_ipam_events(&db).await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 10 A3：Deploy 失败必须释放网络锁 —— 官方恢复路径（DeployFailed →
+// Configuring → reallocate → 重新 deploy）无需手工改库。
+// 模拟 deploy_service 失败路径：Deploying → DeployFailed + unlock。
+// ────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn deploy_failure_releases_network_lock() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let _guard = pool_lock().await;
+    cleanup_all_ipam_events(&db).await;
+    let event_id = seed_event(&db, "deploy-fail").await;
+
+    let net = event_network_service::allocate_automatic(&db, event_id, &[])
+        .await
+        .expect("allocate");
+    let orig_gb = net.gamebox_cidr.to_string();
+
+    // transition_event 的 id 是 awd_events 行主键（非父 events.id）
+    let awd_row = floatctf::entity::awd_events::Entity::find()
+        .filter(floatctf::entity::awd_events::Column::EventId.eq(event_id))
+        .one(&db)
+        .await
+        .expect("find awd row")
+        .expect("awd row exists");
+    let awd_row_id = awd_row.id;
+
+    // ── 部署开始：Deploying + 锁定 ──
+    event_repo::transition_event(
+        &db,
+        awd_row_id,
+        AwdEventStatus::Configuring,
+        AwdEventStatus::Deploying,
+        Default::default(),
+    )
+    .await
+    .expect("Configuring → Deploying");
+    event_network_service::lock(&db, event_id)
+        .await
+        .expect("lock on deploy start");
+    assert!(
+        event_network_service::is_locked(&db, event_id)
+            .await
+            .expect("is_locked"),
+        "Deploying 中必须锁定"
+    );
+    // 锁定期间 reallocate 被拒（A3 之前这是永久死锁，只能手工改库）
+    let err = event_network_service::reallocate(&db, event_id, &[])
+        .await
+        .expect_err("reallocate while locked must fail");
+    assert!(
+        matches!(err, AwdError::NetworkLocked(_)),
+        "expected NetworkLocked, got {err:?}"
+    );
+
+    // ── 部署失败：Deploying → DeployFailed + 解锁（deploy_service 失败路径）──
+    event_repo::transition_event(
+        &db,
+        awd_row_id,
+        AwdEventStatus::Deploying,
+        AwdEventStatus::DeployFailed,
+        Default::default(),
+    )
+    .await
+    .expect("Deploying → DeployFailed");
+    event_network_service::unlock(&db, event_id)
+        .await
+        .expect("unlock on deploy failure");
+    assert!(
+        !event_network_service::is_locked(&db, event_id)
+            .await
+            .expect("is_locked"),
+        "DeployFailed 后必须解锁（否则只能手工改库）"
+    );
+
+    // ── 官方恢复路径：DeployFailed → Configuring → reallocate → 重新 deploy ──
+    event_repo::transition_event(
+        &db,
+        awd_row_id,
+        AwdEventStatus::DeployFailed,
+        AwdEventStatus::Configuring,
+        Default::default(),
+    )
+    .await
+    .expect("DeployFailed → Configuring");
+
+    let retried = event_network_service::reallocate(&db, event_id, &[])
+        .await
+        .expect("reallocate after failure must work via official path");
+    assert_ne!(
+        retried.gamebox_cidr.to_string(),
+        orig_gb,
+        "reallocate 后必须换到新网段"
+    );
+    assert!(
+        !event_network_service::is_locked(&db, event_id)
+            .await
+            .expect("is_locked"),
+        "reallocate 后未部署前不锁定"
+    );
+
+    // 重新部署：锁回 → 成功后保留锁（成功路径锁定语义不变）
+    event_network_service::lock(&db, event_id)
+        .await
+        .expect("lock on redeploy");
+    assert!(
+        event_network_service::is_locked(&db, event_id)
+            .await
+            .expect("is_locked"),
+        "成功部署后必须保留锁"
+    );
+
+    cleanup_event(&db, event_id).await;
     cleanup_all_ipam_events(&db).await;
 }

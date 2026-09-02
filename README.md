@@ -29,6 +29,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [架构说明](#架构说明)
 - [环境要求](#环境要求)
 - [生产安装与部署](#生产安装与部署)
+- [发布渠道（crates.io / GitHub Release）](#发布渠道cratesio--github-release)
 - [环境初始化](#环境初始化)
 - [快速开始](#快速开始)
   - [1. 克隆项目](#1-克隆项目)
@@ -66,14 +67,14 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 | **[floatctf](https://github.com/FloatCTF/floatctf)**                   | FloatCTF Monorepo（当前仓库）             |
 | `apps/api`                                                             | 后端 API（Rust / Actix Web）              |
 | `apps/web`                                                             | 前端（React）                             |
-| `crates/fcmc`                                                          | 共享容器管理与出题工具                    |
+| `crates/fcmc`                                                          | 共享容器管理与出题工具（crates.io: `cargo install fcmc`） |
 | `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
 | `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
 | [floatctf-develop](https://github.com/FloatCTF/floatctf-develop)       | 开发环境（DevContainer）                  |
 | [floatctf-installer](https://github.com/FloatCTF/floatctf-installer)   | 主机安装脚本                              |
 | [floatctf-challenges](https://github.com/FloatCTF/floatctf-challenges) | 题目仓库                                  |
 | [challenge-template](https://github.com/FloatCTF/challenge-template)   | 出题教程 / 题目模板                       |
-| [fcmc](https://github.com/FloatCTF/fcmc)                               | 容器管理 / 出题工具                       |
+| [fcmc](https://github.com/FloatCTF/fcmc)                               | 容器管理 / 出题工具（已发布 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`） |
 | [floatctf-challenge-creator](https://github.com/FloatCTF/floatctf-challenge-creator) | Claude Code 出题 Skill    |
 
 **赛事相关：**
@@ -151,6 +152,19 @@ sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据�
 
 > 现代部署请使用 `init.sh` / `build-release.sh` / `deploy.sh` / `clean.sh` /
 > `uninstall.sh`。`scripts/legacy/install.sh` 仅为历史遗留，不再是安装路径。
+
+## 发布渠道（crates.io / GitHub Release）
+
+FloatCTF 提供两条获取工具/二进制的渠道（用于出题工具与平台二进制分发，平台部署仍走
+`scripts/` 生命周期脚本）：
+
+- **crates.io**：`fcmc` 已发布到 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`
+  即可安装出题/容器管理工具；后端 crate `floatctf` 亦已具备发布元数据。
+- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出
+  `web-dist.tar.gz`（前端）与 `rust-binaries.tar.gz`（含 `floatctf` / `fcmc` /
+  `awd_flagserver` / `awd_judgeserver` / `awdp_judgeserver` 五个可执行文件）。
+
+> crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
 
 ## 环境初始化
 

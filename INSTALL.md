@@ -125,6 +125,21 @@ scripts/build-release.sh --musl         # 强制 musl（需 rustup target + musl
 `checksums.txt`）。AWD 服务镜像 `floatctf/awd-flagserver` / `awd-judgeserver`
 本地构建不推送。可移植性：musl 静态或 bookworm glibc-2.34 基线（Phase 9 实测）。
 
+### crates.io 发布（出题工具 / 平台二进制分发）
+
+`fcmc`（出题 / 容器管理工具）已发布到 crates.io，可直接安装：
+
+```bash
+cargo install fcmc
+```
+
+平台后端 crate `floatctf` 亦已具备发布元数据。发布顺序须**先 `fcmc` 后 `floatctf`**
+（后者依赖前者）。发布流程与命令见 `chore/crates-io-publish-guide.md`。
+
+> crates.io 发布与「`scripts/build-release.sh` 本地发布构建」是两条独立渠道：
+> 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的自包含产物
+> （bin + web + AWD 镜像），供 `deploy.sh` 使用。
+
 ## systemd 管理
 
 **整平台**：

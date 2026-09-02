@@ -417,7 +417,11 @@ purge_remove_sysctl_modules() {
         rm -f "$MODULES_FILE" && { removed=1; ok "已移除 $MODULES_FILE"; }
     fi
     # 不自动 sysctl -w 关闭转发/br_netfilter：其他负载可能依赖；文档已说明此取舍。
-    [ "$removed" = "0" ] && ok "无 FloatCTF sysctl/modules 文件（或已不存在）"
+    # 用 if 而非 `[ ... ] && ok`：removed=1 时后者返回非零，叠加 set -e 会在
+    # 删除家目录/用户之前就退出（purge 实际观察到用户与 /home/floatctf 残留）。
+    if [ "$removed" = "0" ]; then
+        ok "无 FloatCTF sysctl/modules 文件（或已不存在）"
+    fi
 }
 
 purge_remove_user() {

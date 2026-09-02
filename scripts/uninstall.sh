@@ -58,15 +58,18 @@ EOF
 }
 
 parse_args() {
-    [ "$#" -ge 1 ] || return 0
-    case "$1" in
-        --purge) MODE="purge";;
-        --yes)   PURGE_YES=1;;
-        -h|--help) usage; exit 0 ;;
-        *) die "未知参数: $1（--help 查看用法）";;
-    esac
-    shift
-    [ "$#" -ge 1 ] && parse_args "$@"
+    # 用 while 循环而非递归：递归版在参数耗尽时结尾返回非零，
+    # 叠加 set -e 会导致脚本静默 exit 1、零输出（--purge 实测复发）。
+    while [ "$#" -ge 1 ]; do
+        case "$1" in
+            --purge) MODE="purge";;
+            --yes)   PURGE_YES=1;;
+            -h|--help) usage; exit 0 ;;
+            *) die "未知参数: $1（--help 查看用法）";;
+        esac
+        shift
+    done
+    return 0
 }
 
 # ── 自删除安全（§18）：purge 会把 /home/floatctf（含本脚本）删掉，Bash 不能继续读

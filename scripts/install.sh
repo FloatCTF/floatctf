@@ -19,7 +19,7 @@
 # 用法：
 #   sudo ./install.sh                          # 用默认（fake）3 个 URL，完整安装
 #   sudo ./install.sh --api-url <url> --web-url <url> --migrate-url <url>
-#   sudo ./install.sh --skip-download          # 跳过下载，改用本地 release/floatctf-* 产物
+#   sudo ./install.sh --skip-download          # 跳过下载与装配三产物，其余部署照走
 #   FLOATCTF_HOME=/opt/floatctf sudo ./install.sh   # 自定义安装根（默认 /home/floatctf）
 #
 # 环境变量（也可覆盖 URL）：
@@ -33,7 +33,6 @@
 set -Eeuo pipefail
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOATCTF_HOME="${FLOATCTF_HOME:-/home/floatctf}"
 FCTF_USER="floatctf"
 
@@ -41,9 +40,6 @@ FCTF_USER="floatctf"
 DEFAULT_API_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf"
 DEFAULT_WEB_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/web-dist.tar.gz"
 DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/merged.sql"
-
-# 本地 release 产物目录（--skip-download 时从这里读）。
-LOCAL_PKG_DIR="${FLOATCTF_PKG_DIR:-$REPO_ROOT/release}"
 
 # ── 颜色/日志 ─────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -302,7 +298,7 @@ run_init() {
 }
 
 # ============================================================================
-# 第二阶段：获取 release 产物（3 个 URL，或 --skip-download 用本地产物）
+# 第二阶段：获取 release 产物（3 个 URL；--skip-download 跳过下载）
 # ============================================================================
 download_url() { # url dest
     info "下载: $1"
@@ -332,22 +328,11 @@ download_release() {
     PKG_DIR="$TMP_STAGE_DIR"
 }
 
-# --skip-download：从本地 release/floatctf-* 目录读产物。
-locate_local_package() {
-    local pkg_dir
-    pkg_dir="$(ls -d "$LOCAL_PKG_DIR"/floatctf-* 2>/dev/null | sort -V | tail -1 || true)"
-    [ -n "$pkg_dir" ] || die "本地 release 产物不存在（$LOCAL_PKG_DIR/floatctf-*）。请先准备本地产物，或去掉 --skip-download 改为下载。"
-    [ -f "$pkg_dir/bin/floatctf" ] || die "本地产物缺少 bin/floatctf: $pkg_dir"
-    [ -d "$pkg_dir/web" ] || die "本地产物缺少 web/: $pkg_dir"
-    [ -f "$pkg_dir/merged.sql" ] || die "本地产物缺少 merged.sql: $pkg_dir"
-    ok "本地 release 产物就绪: $pkg_dir"
-    PKG_DIR="$pkg_dir"
-}
-
+# --skip-download：跳过下载与装配 bin/web/merged.sql（其余部署照走）。
 acquire_package() {
     if [ "$SKIP_DOWNLOAD" = "1" ]; then
-        info "──── 第二阶段：使用本地 release 产物（--skip-download）────"
-        locate_local_package
+        info "──── 第二阶段：跳过下载与三产物装配（--skip-download）────"
+        PKG_DIR=""
     else
         download_release
     fi
@@ -1286,12 +1271,16 @@ prepare_configs() {
 
 stage_release() {
     info "──── 部署：装配产物 → $FLOATCTF_HOME ────"
-    install -m 0755 "$PKG_DIR/bin/floatctf" "$FLOATCTF_HOME/bin/floatctf"
-    mkdir -p "$FLOATCTF_HOME/web"
-    find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-    cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
-    chown -R root:root "$FLOATCTF_HOME/web"
-    install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
+    if [ "$SKIP_DOWNLOAD" = "1" ]; then
+        warn "跳过装配 bin/floatctf + web/ + merged.sql（--skip-download）"
+    else
+        install -m 0755 "$PKG_DIR/bin/floatctf" "$FLOATCTF_HOME/bin/floatctf"
+        mkdir -p "$FLOATCTF_HOME/web"
+        find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+        cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
+        chown -R root:root "$FLOATCTF_HOME/web"
+        install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
+    fi
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     chown -R 10001:10001 "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
@@ -1309,7 +1298,7 @@ stage_release() {
     elif [ -z "$(ls -A "$FLOATCTF_HOME/data/postgres" 2>/dev/null)" ]; then
         chown -R 999:999 "$FLOATCTF_HOME/data/postgres" 2>/dev/null || true
     fi
-    ok "产物装配完成（bin/floatctf + web/ + merged.sql + 容器目录属主）"
+    ok "产物装配完成（容器目录属主）"
 }
 
 start_infra() {
@@ -1371,7 +1360,11 @@ run_deploy() {
     prepare_configs
     stage_release
     start_infra
-    init_db
+    if [ "$SKIP_DOWNLOAD" = "1" ]; then
+        warn "跳过数据库初始化（--skip-download，merged.sql 未装配）"
+    else
+        init_db
+    fi
     write_systemd_units
     install_systemd
     start_api

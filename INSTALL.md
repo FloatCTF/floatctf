@@ -107,8 +107,8 @@ sudo ./scripts/install.sh \
 # 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
 ```
 
-**跳过下载（用本地产物）**：跳过下载，改用本地 `release/floatctf-*` 产物目录
-（`bin/floatctf` + `web/` + `merged.sql`），init 与部署照走：
+**跳过下载与三产物装配**：跳过下载，也不把 `bin/floatctf` / `web/` / `merged.sql`
+装进安装根；主机初始化、compose/config/nginx、infra、systemd、API 启动照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download

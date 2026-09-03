@@ -15,9 +15,8 @@
 # 用法：
 #   sudo ./install.sh                     # 用默认（fake）release 地址，完整安装
 #   sudo ./install.sh --url <tarball-url> # 显式指定 release 地址
-#   sudo ./install.sh --skip-download     # 跳过下载（与后续部署），只做主机初始化；
-#                                          # 开发环境用：之后自行起 docker-compose +
-#                                          # 本地 vite / cargo run
+#   sudo ./install.sh --skip-download     # 跳过下载，改用本地 release/floatctf-* 产物
+#                                          # （结构与 tarball 解压后一致），init 与部署照走
 #   FLOATCTF_ROOT=/home/floatctf sudo ./install.sh ...
 #
 # 注意：
@@ -28,8 +27,12 @@
 set -Eeuo pipefail
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FCTF_ROOT="${FCTF_ROOT:-/home/floatctf}"
 FCTF_USER="floatctf"
+
+# 本地 release 产物目录（--skip-download 时从这里读，结构与 tarball 解压后一致）。
+LOCAL_PKG_DIR="${FLOATCTF_PKG_DIR:-$REPO_ROOT/release}"
 
 # fake 占位地址：真实 release 地址发布后替换（或经 --url / FLOATCTF_RELEASE_URL 覆盖）。
 DEFAULT_RELEASE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf-0.0.0-fake.tar.gz"
@@ -285,8 +288,30 @@ run_init() {
 }
 
 # ============================================================================
-# 第二阶段：下载 release tarball
+# 第二阶段：获取 release 产物（下载 tarball，或 --skip-download 用本地产物）
 # ============================================================================
+
+# 校验一个产物目录（pkg_dir）包含部署所需的关键文件。
+assert_pkg_dir() {
+    local pkg_dir="$1"
+    [ -f "$pkg_dir/bin/floatctf" ] || die "产物目录缺少 bin/floatctf: $pkg_dir"
+    [ -d "$pkg_dir/web" ] || die "产物目录缺少 web/: $pkg_dir"
+    [ -f "$pkg_dir/compose.yml" ] || die "产物目录缺少 compose.yml: $pkg_dir"
+    [ -f "$pkg_dir/migrate.sh" ] || die "产物目录缺少 migrate.sh: $pkg_dir"
+}
+
+# 从本地 release 目录定位产物（结构与 tarball 解压后一致：release/floatctf-<version>/）。
+locate_local_package() {
+    local pkg_dir
+    pkg_dir="$(ls -d "$LOCAL_PKG_DIR"/floatctf-* 2>/dev/null | sort -V | tail -1 || true)"
+    [ -n "$pkg_dir" ] || die "本地 release 产物不存在（$LOCAL_PKG_DIR/floatctf-*）。请先准备本地产物，或去掉 --skip-download 改为下载。"
+    assert_pkg_dir "$pkg_dir"
+    VERSION="$(basename "$pkg_dir" | sed 's/^floatctf-//')"
+    info "release 版本: ${VERSION:-unknown}"
+    ok "本地 release 产物就绪: $pkg_dir"
+    PKG_DIR="$pkg_dir"
+}
+
 download_release() {
     info "──── 第二阶段：下载 release tarball ────"
     info "release URL: $RELEASE_URL"
@@ -307,17 +332,22 @@ download_release() {
     pkg_dir="$(find "$TMP_STAGE_DIR" -mindepth 1 -maxdepth 1 -type d ! -name 'release.tar.gz' | head -1)"
     [ -n "$pkg_dir" ] || die "tarball 结构异常：未找到顶层目录"
 
-    # 校验关键产物存在。
-    [ -f "$pkg_dir/bin/floatctf" ] || die "tarball 缺少 bin/floatctf"
-    [ -d "$pkg_dir/web" ] || die "tarball 缺少 web/"
-    [ -f "$pkg_dir/compose.yml" ] || die "tarball 缺少 compose.yml"
-    [ -f "$pkg_dir/migrate.sh" ] || die "tarball 缺少 migrate.sh"
+    assert_pkg_dir "$pkg_dir"
 
     VERSION="$(basename "$pkg_dir" | sed 's/^floatctf-//')"
     info "release 版本: ${VERSION:-unknown}"
     ok "release tarball 就绪: $pkg_dir"
     # 供后续阶段引用。
     PKG_DIR="$pkg_dir"
+}
+
+acquire_package() {
+    if [ "$SKIP_DOWNLOAD" = "1" ]; then
+        info "──── 第二阶段：使用本地 release 产物（--skip-download）────"
+        locate_local_package
+    else
+        download_release
+    fi
 }
 
 # ============================================================================
@@ -540,12 +570,7 @@ run_deploy() {
 main() {
     info "FloatCTF 一键安装 → $FCTF_ROOT"
     run_init
-    if [ "$SKIP_DOWNLOAD" = "1" ]; then
-        ok "已跳过下载与部署（--skip-download）。"
-        ok "开发环境：自行启动 docker compose + 本地 vite/cargo run。"
-        return
-    fi
-    download_release
+    acquire_package
     run_deploy
     ok "FloatCTF 安装完成：$FCTF_ROOT"
 }

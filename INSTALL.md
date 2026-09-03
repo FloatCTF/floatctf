@@ -93,8 +93,8 @@ systemctl status floatctf.target
 以上每项都幂等：**已存在/已做过就跳过**（不依赖 `.initialized` 单点标记），
 重跑安全。
 
-**跳过下载（开发环境）**：只跑第一阶段，跳过下载与部署；之后自行起
-docker-compose + 本地 vite / cargo run：
+**跳过下载（用本地产物）**：跳过从 GitHub 下载，改用本地 `release/floatctf-*`
+产物目录（结构与 tarball 解压后一致），init 与部署照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download

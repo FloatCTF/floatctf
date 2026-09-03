@@ -137,8 +137,8 @@ systemctl status floatctf.target
 sudo ./scripts/install.sh   # 幂等：已初始化的部分自动 skip，重下载最新 release 并部署
 ```
 
-**跳过下载（开发环境）**：只做主机初始化，跳过下载与部署；之后自行起
-docker-compose + 本地 vite / cargo run：
+**跳过下载（用本地产物）**：跳过从 GitHub 下载，改用本地 `release/floatctf-*`
+产物目录（结构与 tarball 解压后一致），init 与部署照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download

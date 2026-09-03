@@ -137,6 +137,13 @@ systemctl status floatctf.target
 sudo ./scripts/install.sh   # 幂等：已初始化的部分自动 skip，重下载最新 release 并部署
 ```
 
+**仅初始化（开发环境）**：只做主机初始化，跳过下载与部署；之后自行起
+docker-compose + 本地 vite / cargo run：
+
+```bash
+sudo ./scripts/install.sh --init-only
+```
+
 **卸载**：
 
 ```bash

@@ -93,6 +93,13 @@ systemctl status floatctf.target
 以上每项都幂等：**已存在/已做过就跳过**（不依赖 `.initialized` 单点标记），
 重跑安全。
 
+**仅初始化（开发环境）**：只跑第一阶段，跳过下载与部署；之后自行起
+docker-compose + 本地 vite / cargo run：
+
+```bash
+sudo ./scripts/install.sh --init-only
+```
+
 **下载 release tarball**：默认从 GitHub Release 下载自包含产物；地址可覆盖：
 
 ```bash

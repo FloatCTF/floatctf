@@ -107,11 +107,13 @@ sudo ./scripts/install.sh \
 # 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
 ```
 
-**跳过下载与三产物装配**：跳过下载，也不把 `bin/floatctf` / `web/` / `merged.sql`
-装进安装根；主机初始化、compose/config/nginx、infra、systemd、API 启动照走：
+**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 用源码里的
+`merged.sql` 初始化 db + dev compose（nginx 反代 api:9090 / vite:3000），三产物
+不下载不装配：
 
 ```bash
-sudo ./scripts/install.sh --skip-download
+./scripts/install.sh --develop
+# 之后手动起开发服务：mise run dev:api + mise run dev:web，入口 http://127.0.0.1:7780
 ```
 
 **部署（仅全新安装）**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入

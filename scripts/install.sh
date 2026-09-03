@@ -19,7 +19,10 @@
 # 用法：
 #   sudo ./install.sh                          # 用默认（fake）3 个 URL，完整安装
 #   sudo ./install.sh --api-url <url> --web-url <url> --migrate-url <url>
-#   sudo ./install.sh --skip-download          # 跳过下载与装配三产物，其余部署照走
+#   ./install.sh --develop                     # 开发模式：检测源码目录，用源码里的
+#                                               # merged.sql 初始化 db + dev compose
+#                                               # （nginx 反代 api:9090 / vite:3000），
+#                                               # 三产物不下载不装配
 #   FLOATCTF_HOME=/opt/floatctf sudo ./install.sh   # 自定义安装根（默认 /home/floatctf）
 #
 # 环境变量（也可覆盖 URL）：
@@ -56,13 +59,13 @@ die()  { printf '%s[FAIL]%s %s\n' "$C_ERR" "$C_END" "$*" >&2; exit 1; }
 API_URL="$DEFAULT_API_URL"
 WEB_URL="$DEFAULT_WEB_URL"
 MIGRATE_URL="$DEFAULT_MIGRATE_URL"
-SKIP_DOWNLOAD=0
+DEVELOP=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --api-url) API_URL="${2:?--api-url 需要一个地址参数}"; shift ;;
         --web-url) WEB_URL="${2:?--web-url 需要一个地址参数}"; shift ;;
         --migrate-url) MIGRATE_URL="${2:?--migrate-url 需要一个地址参数}"; shift ;;
-        --skip-download) SKIP_DOWNLOAD=1 ;;
+        --develop) DEVELOP=1 ;;
         -h|--help)
             sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -298,7 +301,7 @@ run_init() {
 }
 
 # ============================================================================
-# 第二阶段：获取 release 产物（3 个 URL；--skip-download 跳过下载）
+# 第二阶段：获取 release 产物（3 个 URL）
 # ============================================================================
 download_url() { # url dest
     info "下载: $1"
@@ -328,14 +331,8 @@ download_release() {
     PKG_DIR="$TMP_STAGE_DIR"
 }
 
-# --skip-download：跳过下载与装配 bin/web/merged.sql（其余部署照走）。
 acquire_package() {
-    if [ "$SKIP_DOWNLOAD" = "1" ]; then
-        info "──── 第二阶段：跳过下载与三产物装配（--skip-download）────"
-        PKG_DIR=""
-    else
-        download_release
-    fi
+    download_release
 }
 
 # ============================================================================
@@ -1271,16 +1268,12 @@ prepare_configs() {
 
 stage_release() {
     info "──── 部署：装配产物 → $FLOATCTF_HOME ────"
-    if [ "$SKIP_DOWNLOAD" = "1" ]; then
-        warn "跳过装配 bin/floatctf + web/ + merged.sql（--skip-download）"
-    else
-        install -m 0755 "$PKG_DIR/bin/floatctf" "$FLOATCTF_HOME/bin/floatctf"
-        mkdir -p "$FLOATCTF_HOME/web"
-        find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-        cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
-        chown -R root:root "$FLOATCTF_HOME/web"
-        install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
-    fi
+    install -m 0755 "$PKG_DIR/bin/floatctf" "$FLOATCTF_HOME/bin/floatctf"
+    mkdir -p "$FLOATCTF_HOME/web"
+    find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
+    chown -R root:root "$FLOATCTF_HOME/web"
+    install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     chown -R 10001:10001 "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
@@ -1360,11 +1353,7 @@ run_deploy() {
     prepare_configs
     stage_release
     start_infra
-    if [ "$SKIP_DOWNLOAD" = "1" ]; then
-        warn "跳过数据库初始化（--skip-download，merged.sql 未装配）"
-    else
-        init_db
-    fi
+    init_db
     write_systemd_units
     install_systemd
     start_api
@@ -1372,8 +1361,79 @@ run_deploy() {
     ok "部署完成：$FLOATCTF_HOME"
 }
 
+# ============================================================================
+# 开发模式（--develop）：源码目录 + dev compose（nginx 反代 api:9090 / vite:3000）
+# ============================================================================
+run_develop() {
+    info "════ 开发模式（--develop）════"
+
+    # 1. 检测是否在源码目录（clone 后）。
+    local src_root
+    src_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    [ -f "$src_root/Cargo.toml" ] && [ -d "$src_root/apps" ] && [ -d "$src_root/infra" ] \
+        || die "未检测到源码目录（缺 Cargo.toml / apps/ / infra/）。--develop 需在 git clone 后的源码根目录运行。"
+    info "源码目录: $src_root"
+
+    # 2. merged.sql 必须存在（dev compose 的 db 用它 initdb）。
+    [ -f "$src_root/apps/api/src/sql/merged.sql" ] \
+        || die "缺少 apps/api/src/sql/merged.sql。请先运行: mise run db:migration:merge"
+
+    # 3. 主机基础检查：docker 必须可用（dev 容器依赖它）；nftables/WG 开发时不强求。
+    check_linux
+    local DISTRO
+    DISTRO=$(detect_distro)
+    info "发行版: $DISTRO"
+    case "$DISTRO" in
+        arch)
+            # 装缺失主机包（需要 root，仅缺包时）；非 root 且缺包则报错提示。
+            if [ "$(id -u)" -eq 0 ]; then
+                install_arch_pkgs
+            else
+                local missing=() p
+                for p in "${ARCH_PKGS[@]}"; do
+                    pacman -Q "$p" >/dev/null 2>&1 || missing+=("$p")
+                done
+                if [ "${#missing[@]}" -gt 0 ]; then
+                    die "缺少主机包（${missing[*]}），且当前非 root。请先以 root 补齐，或改用 docker 组成员身份（包已装时）运行"
+                fi
+                ok "主机包齐全（pacman）"
+            fi
+            ;;
+        debian|fedora|unknown)
+            die "开发模式暂只支持 Arch Linux（pacman）"
+            ;;
+    esac
+    check_commands
+    check_docker
+
+    # 4. 起 dev 容器（db 自动用 merged.sql initdb + nginx 反代 api:9090/vite:3000）。
+    info "起开发基础设施（compose.dev.yml，PROJECT_ROOT=$src_root）..."
+    PROJECT_ROOT="$src_root" docker compose -f "$src_root/infra/compose/compose.dev.yml" up -d --build \
+        || die "dev 容器启动失败"
+    ok "开发基础设施就绪"
+
+    cat <<EOF
+
+开发环境已就绪：
+  - 数据库  : 127.0.0.1:5432（首次启动已用 merged.sql 自动初始化）
+  - RustFS  : 127.0.0.1:9000/9001
+  - nginx   : http://127.0.0.1:7780（/api/ → 127.0.0.1:9090，/ → 127.0.0.1:3000）
+
+接下来手动启动开发服务（两个终端）：
+  mise run dev:api     # API → http://127.0.0.1:9090
+  mise run dev:web     # Vite → http://127.0.0.1:3000
+
+统一入口 http://127.0.0.1:7780 。
+EOF
+}
+
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 main() {
+    if [ "$DEVELOP" = "1" ]; then
+        run_develop
+        ok "开发环境初始化完成"
+        return
+    fi
     info "FloatCTF 一键安装 → $FLOATCTF_HOME"
     run_init
     acquire_package

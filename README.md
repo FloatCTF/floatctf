@@ -151,7 +151,7 @@ sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据�
 签出里的再生构建产物（`./scripts/clean.sh [--all]`）。
 
 > 现代部署请使用 `init.sh` / `build-release.sh` / `deploy.sh` / `clean.sh` /
-> `uninstall.sh`。`scripts/legacy/install.sh` 仅为历史遗留，不再是安装路径。
+> `uninstall.sh` 这套生命周期脚本。
 
 ## 发布渠道（crates.io / GitHub Release）
 

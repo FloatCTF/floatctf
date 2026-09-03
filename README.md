@@ -139,13 +139,14 @@ systemctl status floatctf.target
 FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
 ```
 
-**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 用源码里的
-`merged.sql` 初始化 db + dev compose（nginx 反代 api:9090 / vite:3000），三产物
-不下载不装配：
+**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
+（同生产，含 nftables/WireGuard/host 网络）→ 用源码里的 `merged.sql` 初始化 db +
+dev compose（nginx 反代 api:9090 / vite:3000），三产物不下载不装配：
 
 ```bash
-./scripts/install.sh --develop
-# 之后手动起开发服务：mise run dev:api + mise run dev:web，入口 http://127.0.0.1:7780
+sudo ./scripts/install.sh --develop
+# 之后手动起开发服务：sudo mise run dev:api（host 需 root）+ mise run dev:web，
+# 入口 http://127.0.0.1:7780
 ```
 
 **卸载**：

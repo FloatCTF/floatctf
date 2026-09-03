@@ -19,8 +19,9 @@
 # 用法：
 #   sudo ./install.sh                          # 用默认（fake）3 个 URL，完整安装
 #   sudo ./install.sh --api-url <url> --web-url <url> --migrate-url <url>
-#   ./install.sh --develop                     # 开发模式：检测源码目录，用源码里的
-#                                               # merged.sql 初始化 db + dev compose
+#   sudo ./install.sh --develop                # 开发模式：检测源码目录 + 完整主机初始化
+#                                               # （同生产，含 nftables/WireGuard/host），
+#                                               # 用源码 merged.sql 初始化 db + dev compose
 #                                               # （nginx 反代 api:9090 / vite:3000），
 #                                               # 三产物不下载不装配
 #   FLOATCTF_HOME=/opt/floatctf sudo ./install.sh   # 自定义安装根（默认 /home/floatctf）
@@ -1378,33 +1379,9 @@ run_develop() {
     [ -f "$src_root/apps/api/src/sql/merged.sql" ] \
         || die "缺少 apps/api/src/sql/merged.sql。请先运行: mise run db:migration:merge"
 
-    # 3. 主机基础检查：docker 必须可用（dev 容器依赖它）；nftables/WG 开发时不强求。
-    check_linux
-    local DISTRO
-    DISTRO=$(detect_distro)
-    info "发行版: $DISTRO"
-    case "$DISTRO" in
-        arch)
-            # 装缺失主机包（需要 root，仅缺包时）；非 root 且缺包则报错提示。
-            if [ "$(id -u)" -eq 0 ]; then
-                install_arch_pkgs
-            else
-                local missing=() p
-                for p in "${ARCH_PKGS[@]}"; do
-                    pacman -Q "$p" >/dev/null 2>&1 || missing+=("$p")
-                done
-                if [ "${#missing[@]}" -gt 0 ]; then
-                    die "缺少主机包（${missing[*]}），且当前非 root。请先以 root 补齐，或改用 docker 组成员身份（包已装时）运行"
-                fi
-                ok "主机包齐全（pacman）"
-            fi
-            ;;
-        debian|fedora|unknown)
-            die "开发模式暂只支持 Arch Linux（pacman）"
-            ;;
-    esac
-    check_commands
-    check_docker
+    # 3. 完整主机初始化（与生产一致：docker/nftables/WireGuard/转发/br_netfilter/用户/布局）。
+    #    开发用 network_runtime=host，需要 nftables + WireGuard 能力，故不跳过。
+    run_init
 
     # 4. 起 dev 容器（db 自动用 merged.sql initdb + nginx 反代 api:9090/vite:3000）。
     info "起开发基础设施（compose.dev.yml，PROJECT_ROOT=$src_root）..."
@@ -1420,8 +1397,8 @@ run_develop() {
   - nginx   : http://127.0.0.1:7780（/api/ → 127.0.0.1:9090，/ → 127.0.0.1:3000）
 
 接下来手动启动开发服务（两个终端）：
-  mise run dev:api     # API → http://127.0.0.1:9090
-  mise run dev:web     # Vite → http://127.0.0.1:3000
+  sudo mise run dev:api   # API → http://127.0.0.1:9090（host 网络需 root/CAP_NET_ADMIN）
+  mise run dev:web       # Vite → http://127.0.0.1:3000
 
 统一入口 http://127.0.0.1:7780 。
 EOF

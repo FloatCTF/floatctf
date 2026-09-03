@@ -1,5 +1,5 @@
 # FloatCTF production infrastructure compose (Phase 10.5).
-# Deployed to /home/floatctf/compose.yml by scripts/deploy.sh.
+# Deployed to /home/floatctf/compose.yml by scripts/install.sh.
 #
 # 网络边界（设计定稿）：
 #   - postgres / rustfs：仅回环发布（127.0.0.1:<port>），绝不 0.0.0.0
@@ -7,7 +7,7 @@
 #     经 127.0.0.1 反代到原生 API 进程与 rustfs 容器（见 infra/nginx/nginx.prod.conf）
 #   - API：原生 systemd 进程（floatctf-api.service），不在此编排
 #
-# 就绪语义：全部服务带 healthcheck；deploy.sh 与 floatctf-infra.service 用
+# 就绪语义：全部服务带 healthcheck；install.sh 与 floatctf-infra.service 用
 # `docker compose up -d --wait` 等待 healthcheck 通过才算 infra ready。
 
 name: floatctf
@@ -31,7 +31,7 @@ services:
             timeout: 3s
             retries: 10
             start_period: 10s
-        # 禁止：公开端口、自动 initdb 迁移（生产迁移由 deploy.sh 显式执行）
+        # 禁止：公开端口、自动 initdb 迁移（生产迁移由 install.sh 显式执行）
 
     rustfs:
         image: rustfs/rustfs:latest

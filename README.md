@@ -116,7 +116,7 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 - systemd Linux（Arch 已完整真实验证）
 - Docker + Docker Compose
 - nftables、WireGuard（wireguard-tools）、iproute2
-- IPv4 转发 + `br_netfilter`（`init.sh` 自动检查/持久化）
+- IPv4 转发 + `br_netfilter`（`install.sh` 自动检查/持久化）
 
 **开发环境**：Docker 与 Docker Compose、约 10GB 可用磁盘空间。
 
@@ -124,19 +124,17 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 
 > 完整权威指南见 **[INSTALL.md](./INSTALL.md)**。以下是极简入口。
 
-**全新主机**：
+**全新主机（一键安装）**：
 
 ```bash
-sudo ./scripts/init.sh     # 主机初始化（一次性，root）：docker/nftables/WG/转发/br_netfilter/用户/布局
-./scripts/deploy.sh        # 首次部署（构建产物 → infra → 迁移 → systemd → API）
+sudo ./scripts/install.sh   # 下载 release tarball + 主机初始化(幂等) + 部署
 systemctl status floatctf.target
 ```
 
 **升级 / 重部署**（保留数据与密钥）：
 
 ```bash
-git pull
-./scripts/deploy.sh
+sudo ./scripts/install.sh   # 幂等：已初始化的部分自动 skip，重下载最新 release 并部署
 ```
 
 **卸载**：
@@ -146,12 +144,11 @@ sudo /home/floatctf/uninstall.sh          # 安全卸载（保留 PG/RustFS 数�
 sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认 PURGE FLOATCTF）
 ```
 
-`deploy.sh` 每次成功部署都会把 `scripts/uninstall.sh` 安装到
+`install.sh` 每次成功部署都会把 `scripts/uninstall.sh` 安装到
 `/home/floatctf/uninstall.sh`（root:floatctf 0750）。`scripts/clean.sh` 可清理源码
 签出里的再生构建产物（`./scripts/clean.sh [--all]`）。
 
-> 现代部署请使用 `init.sh` / `build-release.sh` / `deploy.sh` / `clean.sh` /
-> `uninstall.sh` 这套生命周期脚本。
+> 现代部署请使用 `install.sh` / `clean.sh` / `uninstall.sh` 这套生命周期脚本。
 
 ## 发布渠道（crates.io / GitHub Release）
 
@@ -160,9 +157,9 @@ FloatCTF 提供两条获取工具/二进制的渠道（用于出题工具与平�
 
 - **crates.io**：`fcmc` 已发布到 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`
   即可安装出题/容器管理工具；后端 crate `floatctf` 亦已具备发布元数据。
-- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出
-  `web-dist.tar.gz`（前端）与 `rust-binaries.tar.gz`（含 `floatctf` / `fcmc` /
-  `awd_flagserver` / `awd_judgeserver` / `awdp_judgeserver` 五个可执行文件）。
+- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出自包含
+  tarball `floatctf-<version>.tar.gz`（bin + web + compose + 配置/nginx 模板 + 迁移 +
+  systemd + uninstall），由 `install.sh` 下载部署。
 
 > crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
 
@@ -281,7 +278,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — `scripts/deploy.sh` 全流程部署（precheck → 构建 → infra → 迁移 → systemd → API）；`init.sh` 一次性准备主机；`clean.sh`/`uninstall.sh` 完善生命周期
+- **一键部署** — `scripts/install.sh` 一键安装（下载 release tarball → 主机初始化(幂等) → 部署 → systemd → API）；`clean.sh`/`uninstall.sh` 完善生命周期
 
 ## 目录结构
 
@@ -295,7 +292,7 @@ floatctf/
 │   ├── awd-flagserver/  # AWD FlagServer 独立服务
 │   └── awd-judgeserver/ # AWD JudgeServer 独立服务
 ├── infra/               # Compose / Nginx / systemd / Docker 配置
-├── scripts/             # 生命周期脚本：init / build-release / deploy / clean / uninstall
+├── scripts/             # 生命周期脚本：install / clean / uninstall
 ├── docs/                # 项目文档
 ├── INSTALL.md           # 生产安装与运维权威指南
 ├── app/                 # 运行时数据（日志、上传、题目文件，git 忽略）

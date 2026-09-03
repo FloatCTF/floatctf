@@ -34,20 +34,20 @@ FloatCTF 生产部署采用「原生进程 + Docker 容器」的混合架构：
 | 能力 | 用途 | 缺失时 |
 |------|------|--------|
 | systemd Linux | 服务托管 | 不支持 |
-| Docker | 全部容器 | `init.sh` 报错并退出 |
-| Docker Compose（v2 插件） | infra 编排 | `init.sh` 报错并退出 |
-| nftables | 赛事隔离防火墙 | `init.sh` 报错并退出 |
-| WireGuard / wireguard-tools | 选手接入隧道 | `init.sh` 报错并退出 |
-| iproute2 | 接口 / 路由 | `init.sh` 报错并退出 |
+| Docker | 全部容器 | `install.sh` 报错并退出 |
+| Docker Compose（v2 插件） | infra 编排 | `install.sh` 报错并退出 |
+| nftables | 赛事隔离防火墙 | `install.sh` 报错并退出 |
+| WireGuard / wireguard-tools | 选手接入隧道 | `install.sh` 报错并退出 |
+| iproute2 | 接口 / 路由 | `install.sh` 报错并退出 |
 
-Phase 9 真实主机验证要求以下内核设置（`init.sh` 自动检查并持久化）：
+Phase 9 真实主机验证要求以下内核设置（`install.sh` 自动检查并持久化）：
 
 - `net.ipv4.ip_forward=1` → `/etc/sysctl.d/99-floatctf.conf`
 - `br_netfilter` 模块 → `/etc/modules-load.d/floatctf-br-netfilter.conf`
 - `net.bridge.bridge-nf-call-{ip,ip6}tables=1` → `/etc/sysctl.d/99-floatctf.conf`
 
 **已验证平台**：Arch Linux（pacman）真实主机验收全 PASS。Debian/Fedora/RHEL 的
-`init.sh` 安装路径未硬编码（避免盲装），需手动安装上述能力后重试 —— 请勿宣称
+`install.sh` 安装路径未硬编码（避免盲装），需手动安装上述能力后重试 —— 请勿宣称
 未经验证的发行版受支持。
 
 ## 全新安装（Fresh Host）
@@ -56,8 +56,7 @@ Phase 9 真实主机验证要求以下内核设置（`init.sh` 自动检查并�
 git clone https://github.com/FloatCTF/floatctf.git
 cd floatctf
 
-sudo ./scripts/init.sh      # 1. 主机初始化（一次性，root）
-./scripts/deploy.sh         # 2. 首次部署（普通用户 + sudo，或直接 root）
+sudo ./scripts/install.sh    # 一键：下载 release tarball + 主机初始化(幂等) + 部署
 ```
 
 部署完成后：
@@ -66,13 +65,23 @@ sudo ./scripts/init.sh      # 1. 主机初始化（一次性，root）
 systemctl status floatctf.target
 ```
 
-> `deploy.sh` 每次成功部署都会把当前源码的 `scripts/uninstall.sh` 安装为
+> `install.sh` 每次成功部署都会把 release tarball 内自带的 `uninstall.sh` 安装为
 > `/home/floatctf/uninstall.sh`（root:floatctf 0750），供日后卸载/清理使用，
 > 无需保留源码签出。
 
-## init.sh —— 主机初始化
+## install.sh —— 一键安装（主机初始化 + 下载 + 部署）
 
-**职责（只做这些）**：
+`install.sh` 合并了原 `init.sh`（主机初始化）与 `deploy.sh`（部署）的职责，并新增
+「从 GitHub Release 下载自包含 tarball」。三阶段：
+
+```
+1. 主机初始化（幂等） → 2. 下载 release tarball → 3. 部署
+   （docker/nftables/WG/       （bin+web+compose+模板     （渲染配置 → 装配 →
+    转发/br_netfilter/           +迁移+systemd+uninstall）  infra(--wait) → 迁移 →
+    用户/布局，已存在即 skip）                               systemd → 启动 API）
+```
+
+**主机初始化（幂等，逐项补齐）**：
 - 检查 Linux 环境 / 内核版本（拒绝容器内运行）
 - 检查 Docker daemon（含创建/删除临时网络验证）
 - 检查 nftables（含创建/删除临时表验证）
@@ -81,49 +90,32 @@ systemctl status floatctf.target
 - 创建 `floatctf` 系统服务用户 + 加入 `docker` 组（`runuser` 实测组生效）
 - 创建 `/home/floatctf` 运行布局 + 写 `.initialized` 完成标记
 
-**绝不负责**：
-- 不装原生 PostgreSQL / nginx / Rust / Node 运行时
-- 不构建 / 部署 FloatCTF
-- 不创建数据库、不启动 postgres/nginx 容器
-- 不创建 systemd 单元
-- 不创建生产赛事网络
+以上每项都幂等：**已存在/已做过就跳过**（不依赖 `.initialized` 单点标记），
+重跑安全。
 
-幂等：重复运行安全；`.initialized` 已存在时跳过主体写入。
-
-## deploy.sh —— 首次安装与重部署/升级
-
-```
-precheck → .env/configs → 装配产物 → infra(--wait) → 迁移(forward-only)
-         → systemd → 启动 API → 安装 uninstall.sh
-```
-
-**首部署**：生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
-`/home/floatctf/.env` 与 `config/floatctf.toml`，启动 infra，跑前向迁移，装
-systemd 单元，启动 API，并安装 `/home/floatctf/uninstall.sh`。
-
-**重部署 / 升级**：`./scripts/deploy.sh` 保留既有数据与密钥（只更新非敏感值与新
-发布产物），跑前向迁移，更新 systemd 单元与卸载脚本。**数据与 secrets 均保留**。
-
-升级流程：
+**下载 release tarball**：默认从 GitHub Release 下载自包含产物；地址可覆盖：
 
 ```bash
-git pull
-./scripts/deploy.sh
+sudo ./scripts/install.sh --url <tarball-url>   # 显式指定
+FLOATCTF_RELEASE_URL=<url> sudo ./scripts/install.sh  # 或经环境变量
 ```
 
-**不承诺降级支持**（迁移 forward-only）。
+**部署**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
+`/home/floatctf/.env` 与 `config/floatctf.toml`，装配 bin/web/compose，起 infra，
+跑前向迁移，装 systemd 单元，启动 API，并安装 `/home/floatctf/uninstall.sh`。
 
-## build-release.sh —— 发布构建
+**重部署 / 升级**：直接重跑 `sudo ./scripts/install.sh` —— 保留既有数据与密钥
+（只更新非敏感值与新发布产物），跑前向迁移，更新 systemd 单元与卸载脚本。
+**数据与 secrets 均保留**。**不承诺降级支持**（迁移 forward-only）。
 
-```bash
-scripts/build-release.sh                # 自动：musl 可用则 musl，否则容器 glibc-2.34 基线
-scripts/build-release.sh --container    # 强制容器 glibc 基线
-scripts/build-release.sh --musl         # 强制 musl（需 rustup target + musl-gcc）
-```
+> AWD 服务镜像（`floatctf/awd-flagserver` / `awd-judgeserver`）暂不在 install.sh
+> 构建，需另行准备（TODO：registry 拉取或本地 docker build）。
 
-产物：`release/floatctf-<version>/`（`bin/floatctf` + `web/` + AWD 服务镜像 +
-`checksums.txt`）。AWD 服务镜像 `floatctf/awd-flagserver` / `awd-judgeserver`
-本地构建不推送。可移植性：musl 静态或 bookworm glibc-2.34 基线（Phase 9 实测）。
+## 发布构建与 crates.io
+
+release tarball 由 CI 打 `v*` tag 触发 `.github/workflows/release.yml` 产出
+（自包含：bin + web + compose + 配置/nginx 模板 + 迁移 + systemd + uninstall），
+供 `install.sh` 下载部署；本地不再需要 `build-release.sh`。
 
 ### crates.io 发布（出题工具 / 平台二进制分发）
 
@@ -136,9 +128,9 @@ cargo install fcmc
 平台后端 crate `floatctf` 亦已具备发布元数据。发布顺序须**先 `fcmc` 后 `floatctf`**
 （后者依赖前者）。发布流程与命令见 `chore/crates-io-publish-guide.md`。
 
-> crates.io 发布与「`scripts/build-release.sh` 本地发布构建」是两条独立渠道：
+> crates.io 发布与「GitHub Release 自包含 tarball」是两条独立渠道：
 > 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的自包含产物
-> （bin + web + AWD 镜像），供 `deploy.sh` 使用。
+> （bin + web + compose + 模板 + 迁移 + systemd + uninstall），供 `install.sh` 使用。
 
 ## systemd 管理
 
@@ -285,8 +277,6 @@ nft list table inet floatctf_awd
 
 | 术语 | 含义 |
 |------|------|
-| `init.sh` | 主机初始化（一次性准备） |
-| `build-release.sh` | 构建可移植发布产物 |
-| `deploy.sh` | 首次安装 **和** 后续重部署/升级 |
+| `install.sh` | 一键安装（下载 release tarball + 主机初始化(幂等) + 部署/升级） |
 | `clean.sh` | 清理源码签出里的再生构建产物 |
 | `uninstall.sh` | 移除已部署的 FloatCTF（safe / purge） |

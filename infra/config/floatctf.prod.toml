@@ -1,5 +1,5 @@
 # FloatCTF production configuration (Phase 10.6).
-# Deployed to /home/floatctf/config/floatctf.toml by scripts/deploy.sh
+# Deployed to /home/floatctf/config/floatctf.toml by scripts/install.sh
 # (root:floatctf 640，含密钥，重部署时保留既有文件不覆盖密钥）。
 #
 # 铁律 1：配置只从本文件读取（FLOATCTF_CONFIG 指向它）；API 不读环境变量。
@@ -16,7 +16,7 @@ listen_port = ${API_PORT}
 work_dir = "/home/floatctf/runtime"
 
 [auth]
-# 生产密钥：由 deploy.sh 首次部署生成并写入本文件，重部署保留。
+# 生产密钥：由 install.sh 首次部署生成并写入本文件，重部署保留。
 jwt_secret = "${JWT_SECRET}"
 
 [database]

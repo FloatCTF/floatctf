@@ -2,8 +2,8 @@
 #
 # FloatCTF uninstall (Phase 10.9) — 独立卸载脚本，可脱离源码签出运行.
 #
-# 本脚本安装到 /home/floatctf/uninstall.sh（由 scripts/deploy.sh 每次成功部署自动安装），
-# 必须能在用户删除 Git 签出后独立工作：绝不依赖仓库相对路径 / scripts/deploy.sh /
+# 本脚本安装到 /home/floatctf/uninstall.sh（由 scripts/install.sh 每次成功部署自动安装），
+# 必须能在用户删除 Git 签出后独立工作：绝不依赖仓库相对路径 / scripts/install.sh /
 # 源码 / mise / cargo / pnpm / git / chore / docs。仅依赖宿主既有工具：
 #   systemctl, systemd, docker, docker compose, nft, iptables, ip, wg,
 #   usermod/userdel, rm/install/find/cp/trap。
@@ -340,7 +340,7 @@ safe_uninstall() {
   日志          : $FCTF_ROOT/logs
 
 重新安装:
-  对源码签出运行 scripts/deploy.sh（会恢复相同数据与密钥，API 启动时自动重建 AWD 动态资源）。
+  运行 scripts/install.sh（会恢复相同数据与密钥，API 启动时自动重建 AWD 动态资源）。
 
 完全删除:
   sudo $FCTF_ROOT/uninstall.sh --purge
@@ -477,8 +477,7 @@ purge_run() {
     echo "  - 如需关闭 IPv4 转发 / br_netfilter，请手动评估（可能被其他负载依赖）。"
     echo ""
     echo "重新初始化并部署（全新安装）: "
-    echo "  sudo ./scripts/init.sh"
-    echo "  ./scripts/deploy.sh"
+    echo "  sudo ./scripts/install.sh"
 }
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────

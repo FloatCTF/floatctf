@@ -9,7 +9,7 @@
 #   默认（无参数）：
 #     - target/                          Cargo 构建缓存（cargo build 可再生）
 #     - apps/web/dist/                   Web 构建产物（vite build 可再生）
-#     - release/                         发布包（scripts/build-release.sh 可再生）
+#     - release/                         本地发布包（可经 install.sh 从 GitHub Release 下载）
 #     - scripts/__pycache__/             Python 生成器字节码
 #
 #   --all（更彻底，额外清理依赖与开发运行时数据）：

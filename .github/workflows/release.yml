@@ -9,11 +9,13 @@ permissions:
   contents: write
 
 jobs:
-  web:
-    name: Build web release
+  release:
+    name: Build self-contained release tarball
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # ── 前端 ──
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
@@ -25,22 +27,62 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @floatctf/web build
-      - run: tar -czf web-dist.tar.gz -C apps/web/dist .
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: web-dist.tar.gz
-          generate_release_notes: true
 
-  rust:
-    name: Build Rust release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── 后端（全 workspace 二进制）──
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
-      - run: tar -czf rust-binaries.tar.gz -C target/release floatctf fcmc awd_flagserver awd_judgeserver awdp_judgeserver
-      - uses: softprops/action-gh-release@v2
+
+      # ── 组装自包含 tarball（供 install.sh 下载部署）──
+      # 结构（顶层目录 floatctf-<version>）：
+      #   bin/floatctf            API 二进制
+      #   web/                    前端静态产物
+      #   compose.yml             = infra/compose/compose.prod.yml
+      #   config/floatctf.prod.toml  配置模板（install.sh envsubst 渲染）
+      #   nginx/nginx.prod.conf       nginx 模板
+      #   migrate.sh + migrations/    forward-only 迁移
+      #   systemd/                   floatctf-{infra,api}.service + target
+      #   uninstall.sh              独立卸载脚本
+      - name: Assemble self-contained tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="floatctf-$VERSION"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"/{bin,web,config,nginx,systemd}
+
+          # 二进制
+          install -m 0755 target/release/floatctf "$STAGE/bin/floatctf"
+
+          # 前端静态产物
+          cp -a apps/web/dist/. "$STAGE/web/"
+
+          # compose + 模板
+          install -m 0644 infra/compose/compose.prod.yml "$STAGE/compose.yml"
+          install -m 0644 infra/config/floatctf.prod.toml "$STAGE/config/floatctf.prod.toml"
+          install -m 0644 infra/nginx/nginx.prod.conf "$STAGE/nginx/nginx.prod.conf"
+
+          # 迁移（migrate.sh 依赖同目录 migrations/）
+          install -m 0755 apps/api/src/sql/migrate.sh "$STAGE/migrate.sh"
+          cp -a apps/api/src/sql/migrations "$STAGE/migrations"
+
+          # systemd 单元
+          install -m 0644 infra/systemd/floatctf-infra.service "$STAGE/systemd/"
+          install -m 0644 infra/systemd/floatctf-api.service "$STAGE/systemd/"
+          install -m 0644 infra/systemd/floatctf.target "$STAGE/systemd/"
+
+          # 卸载脚本
+          install -m 0755 scripts/uninstall.sh "$STAGE/uninstall.sh"
+
+          # 打包 + 校验清单
+          tar -czf "$STAGE.tar.gz" "$STAGE"
+          echo "tarball contents:"
+          tar -tzf "$STAGE.tar.gz" | sed 's/^/  /'
+          echo "TARBALL=$STAGE.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload release artifact
+        uses: softprops/action-gh-release@v2
         with:
-          files: rust-binaries.tar.gz
+          files: floatctf-*.tar.gz
           generate_release_notes: true

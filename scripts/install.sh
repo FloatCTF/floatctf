@@ -12,8 +12,8 @@
 #   2. 下载 3 个 release 产物：
 #        - API 二进制（bin/floatctf）
 #        - 前端静态产物（web dist，tar.gz）
-#        - migrate.sql（单个 SQL，fresh-DB bootstrap，= merged.sql）
-#   3. 部署：渲染配置 → 装配 bin/web/compose → 起 infra(--wait) → psql 初始化 migrate.sql
+#        - merged.sql（单个 SQL，fresh-DB bootstrap）
+#   3. 部署：渲染配置 → 装配 bin/web/compose → 起 infra(--wait) → psql 初始化 merged.sql
 #      → 装 systemd 单元 → 启动 API → 生成 uninstall.sh。
 #
 # 用法：
@@ -40,7 +40,7 @@ FCTF_USER="floatctf"
 # fake 占位地址：真实 release 地址发布后替换（或经 --*-url / 环境变量覆盖）。
 DEFAULT_API_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf"
 DEFAULT_WEB_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/web-dist.tar.gz"
-DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/migrate.sql"
+DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/merged.sql"
 
 # 本地 release 产物目录（--skip-download 时从这里读）。
 LOCAL_PKG_DIR="${FLOATCTF_PKG_DIR:-$REPO_ROOT/release}"
@@ -325,8 +325,8 @@ download_release() {
     tar xzf "$TMP_STAGE_DIR/web-dist.tar.gz" -C "$TMP_STAGE_DIR/web" \
         || die "解压 web-dist 失败"
 
-    # 3) migrate.sql
-    download_url "$MIGRATE_URL" "$TMP_STAGE_DIR/migrate.sql"
+    # 3) merged.sql
+    download_url "$MIGRATE_URL" "$TMP_STAGE_DIR/merged.sql"
 
     ok "release 产物就绪: $TMP_STAGE_DIR"
     PKG_DIR="$TMP_STAGE_DIR"
@@ -339,7 +339,7 @@ locate_local_package() {
     [ -n "$pkg_dir" ] || die "本地 release 产物不存在（$LOCAL_PKG_DIR/floatctf-*）。请先准备本地产物，或去掉 --skip-download 改为下载。"
     [ -f "$pkg_dir/bin/floatctf" ] || die "本地产物缺少 bin/floatctf: $pkg_dir"
     [ -d "$pkg_dir/web" ] || die "本地产物缺少 web/: $pkg_dir"
-    [ -f "$pkg_dir/migrate.sql" ] || die "本地产物缺少 migrate.sql: $pkg_dir"
+    [ -f "$pkg_dir/merged.sql" ] || die "本地产物缺少 merged.sql: $pkg_dir"
     ok "本地 release 产物就绪: $pkg_dir"
     PKG_DIR="$pkg_dir"
 }
@@ -441,7 +441,7 @@ services:
             timeout: 3s
             retries: 10
             start_period: 10s
-        # 禁止：公开端口、自动 initdb 迁移（迁移由 install.sh 显式执行 migrate.sql）
+        # 禁止：公开端口、自动 initdb 迁移（迁移由 install.sh 显式执行 merged.sql）
 
     rustfs:
         image: rustfs/rustfs:latest
@@ -985,7 +985,7 @@ stop_infra_containers() {
 remove_application_artifacts() {
     info "── 移除可运行应用产物（保留 data/config/.env/runtime/logs）──"
     local p
-    for p in "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml" "$FCTF_ROOT/migrate.sql"; do
+    for p in "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml" "$FCTF_ROOT/merged.sql"; do
         if [ -e "$p" ] || [ -L "$p" ]; then
             rm -rf -- "$p" && ok "已移除 $p" || warn "移除 $p 失败（忽略）"
         fi
@@ -1291,7 +1291,7 @@ stage_release() {
     find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
     cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
     chown -R root:root "$FLOATCTF_HOME/web"
-    install -m 0644 "$PKG_DIR/migrate.sql" "$FLOATCTF_HOME/migrate.sql"
+    install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     chown -R 10001:10001 "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
@@ -1309,7 +1309,7 @@ stage_release() {
     elif [ -z "$(ls -A "$FLOATCTF_HOME/data/postgres" 2>/dev/null)" ]; then
         chown -R 999:999 "$FLOATCTF_HOME/data/postgres" 2>/dev/null || true
     fi
-    ok "产物装配完成（bin/floatctf + web/ + migrate.sql + 容器目录属主）"
+    ok "产物装配完成（bin/floatctf + web/ + merged.sql + 容器目录属主）"
 }
 
 start_infra() {
@@ -1320,7 +1320,7 @@ start_infra() {
 }
 
 init_db() {
-    info "──── 部署：数据库初始化（migrate.sql，fresh-DB）────"
+    info "──── 部署：数据库初始化（merged.sql，fresh-DB）────"
     local pg_user pg_db
     pg_user=$(env_get POSTGRES_USER postgres)
     pg_db=$(env_get POSTGRES_DB floatctf_db)
@@ -1329,12 +1329,12 @@ init_db() {
     table_count=$(docker exec floatctf-postgres psql -U "$pg_user" -d "$pg_db" -tAc \
         "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo "?")
     if [ "$table_count" != "0" ] && [ "$table_count" != "?" ]; then
-        warn "数据库 $pg_db 已有 $table_count 张表，跳过 migrate.sql 初始化（全新安装语义）"
+        warn "数据库 $pg_db 已有 $table_count 张表，跳过 merged.sql 初始化（全新安装语义）"
         return
     fi
     docker exec -i floatctf-postgres psql -U "$pg_user" -d "$pg_db" -v ON_ERROR_STOP=1 \
-        < "$FLOATCTF_HOME/migrate.sql" || die "migrate.sql 初始化失败"
-    ok "数据库初始化完成（migrate.sql 已应用）"
+        < "$FLOATCTF_HOME/merged.sql" || die "merged.sql 初始化失败"
+    ok "数据库初始化完成（merged.sql 已应用）"
 }
 
 install_systemd() {

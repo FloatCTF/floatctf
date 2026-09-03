@@ -78,7 +78,7 @@ systemctl status floatctf.target
 1. 主机初始化（幂等） → 2. 下载 3 产物 → 3. 部署
    （docker/nftables/WG/       （API 二进制 +       （渲染配置 → 装配 →
     转发/br_netfilter/           前端 dist +          infra(--wait) → psql 初始化
-    用户/布局，已存在即 skip）    migrate.sql）         migrate.sql → systemd → API）
+    用户/布局，已存在即 skip）    merged.sql）         merged.sql → systemd → API）
 ```
 
 **主机初始化（幂等，逐项补齐）**：
@@ -108,18 +108,18 @@ sudo ./scripts/install.sh \
 ```
 
 **跳过下载（用本地产物）**：跳过下载，改用本地 `release/floatctf-*` 产物目录
-（`bin/floatctf` + `web/` + `migrate.sql`），init 与部署照走：
+（`bin/floatctf` + `web/` + `merged.sql`），init 与部署照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download
 ```
 
 **部署（仅全新安装）**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
-`$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配 bin/web/migrate.sql，起 infra，
-用 `psql` 应用 `migrate.sql` 初始化空库（库已有表则跳过），装 systemd 单元，启动
+`$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配 bin/web/merged.sql，起 infra，
+用 `psql` 应用 `merged.sql` 初始化空库（库已有表则跳过），装 systemd 单元，启动
 API，并内嵌生成 `$FLOATCTF_HOME/uninstall.sh`。
 
-> **只做全新安装**：`migrate.sql` 是 fresh-DB bootstrap（merged.sql），只适用于空库。
+> **只做全新安装**：`merged.sql` 是 fresh-DB bootstrap，只适用于空库。
 > 已有数据的升级（forward-only 迁移）后续单独实现。
 >
 > AWD 服务镜像（`floatctf/awd-flagserver` / `awd-judgeserver`）暂不在 install.sh
@@ -128,8 +128,8 @@ API，并内嵌生成 `$FLOATCTF_HOME/uninstall.sh`。
 ## 发布构建与 crates.io
 
 CI 打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物：
-`floatctf`（API 二进制）、`web-dist.tar.gz`（前端）、`migrate.sql`（数据库初始化，
-= `mise run db:migration:merge` 生成的 merged.sql），供 `install.sh` 下载部署。
+`floatctf`（API 二进制）、`web-dist.tar.gz`（前端）、`merged.sql`（数据库初始化，
+由 `mise run db:migration:merge` 生成），供 `install.sh` 下载部署。
 
 ### crates.io 发布（出题工具 / 平台二进制分发）
 
@@ -144,7 +144,7 @@ cargo install fcmc
 
 > crates.io 发布与「GitHub Release 产物」是两条独立渠道：
 > 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的 3 个产物
-> （bin + web + migrate.sql），供 `install.sh` 使用。
+> （bin + web + merged.sql），供 `install.sh` 使用。
 
 ## systemd 管理
 

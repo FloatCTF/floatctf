@@ -36,7 +36,7 @@ jobs:
       # ── 发布 3 个产物（供 install.sh 下载部署）──
       #   1. floatctf            API 二进制（bin/floatctf）
       #   2. web-dist.tar.gz     前端静态产物
-      #   3. migrate.sql         单个 SQL（fresh-DB bootstrap，= merged.sql）
+      #   3. merged.sql          单个 SQL（fresh-DB bootstrap）
       - name: Assemble release artifacts
         shell: bash
         run: |
@@ -48,12 +48,12 @@ jobs:
           # 2) 前端静态产物
           tar -czf web-dist.tar.gz -C apps/web/dist .
 
-          # 3) migrate.sql（merged.sql：确定性 fresh-DB bootstrap）
+          # 3) merged.sql（确定性 fresh-DB bootstrap）
           bash apps/api/src/sql/migrate.sh make
-          install -m 0644 apps/api/src/sql/merged.sql migrate.sql
+          install -m 0644 apps/api/src/sql/merged.sql merged.sql
 
           echo "release artifacts:"
-          ls -la floatctf web-dist.tar.gz migrate.sql
+          ls -la floatctf web-dist.tar.gz merged.sql
 
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
@@ -61,5 +61,5 @@ jobs:
           files: |
             floatctf
             web-dist.tar.gz
-            migrate.sql
+            merged.sql
           generate_release_notes: true

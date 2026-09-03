@@ -15,7 +15,7 @@
 # 用法：
 #   sudo ./install.sh                     # 用默认（fake）release 地址，完整安装
 #   sudo ./install.sh --url <tarball-url> # 显式指定 release 地址
-#   sudo ./install.sh --init-only         # 只做主机初始化（跳过下载与部署），
+#   sudo ./install.sh --skip-download     # 跳过下载（与后续部署），只做主机初始化；
 #                                          # 开发环境用：之后自行起 docker-compose +
 #                                          # 本地 vite / cargo run
 #   FLOATCTF_ROOT=/home/floatctf sudo ./install.sh ...
@@ -47,11 +47,11 @@ die()  { printf '%s[FAIL]%s %s\n' "$C_ERR" "$C_END" "$*" >&2; exit 1; }
 
 # ── 参数 ──────────────────────────────────────────────────────────────────────
 RELEASE_URL="$DEFAULT_RELEASE_URL"
-INIT_ONLY=0
+SKIP_DOWNLOAD=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --url) RELEASE_URL="${2:?--url 需要一个地址参数}"; shift ;;
-        --init-only) INIT_ONLY=1 ;;
+        --skip-download) SKIP_DOWNLOAD=1 ;;
         -h|--help)
             sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -540,8 +540,8 @@ run_deploy() {
 main() {
     info "FloatCTF 一键安装 → $FCTF_ROOT"
     run_init
-    if [ "$INIT_ONLY" = "1" ]; then
-        ok "仅初始化完成（--init-only，跳过下载与部署）。"
+    if [ "$SKIP_DOWNLOAD" = "1" ]; then
+        ok "已跳过下载与部署（--skip-download）。"
         ok "开发环境：自行启动 docker compose + 本地 vite/cargo run。"
         return
     fi

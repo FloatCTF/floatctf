@@ -259,4 +259,4 @@ FloatCTF 的 **AWDP 模块**（`apps/api/src/modules/event/awdp/`）是单独的
 - nftables：<https://wiki.nftables.org/> · conntrack：<https://conntrack-tools.netfilter.org/manual.html>
 - 开源 AWD/AWDP 平台（详见 §6.1 增补）。
 
-> 注：本次调研以「一手来源（Docker/WG 官方文档 + 开源平台源码）」为准；FloatCTF 自研架构（flag-server 按 source IP、独立 judgeserver worker、nftables reconcile、archive 状态机）的依据来自仓库源码注释与 `docs/handoff.md`、`docs/challenge-package.md`、`docs/gamebox-package.md`。
+> 注：本次调研以「一手来源（Docker/WG 官方文档 + 开源平台源码）」为准；FloatCTF 自研架构（flag-server 按 source IP、独立 judgeserver worker、nftables reconcile、archive 状态机）的依据来自仓库源码注释与 `docs/challenge-package.md`、`docs/gamebox-package.md`、`docs/agents/ARCHITECTURE.md`。

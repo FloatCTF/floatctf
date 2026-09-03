@@ -1,5 +1,5 @@
 # FloatCTF production configuration (Phase 10.6).
-# Deployed to /home/floatctf/config/floatctf.toml by scripts/install.sh
+# Deployed to ${FLOATCTF_HOME}/config/floatctf.toml by scripts/install.sh
 # (root:floatctf 640，含密钥，重部署时保留既有文件不覆盖密钥）。
 #
 # 铁律 1：配置只从本文件读取（FLOATCTF_CONFIG 指向它）；API 不读环境变量。
@@ -13,7 +13,7 @@ main_url = "http://${HOST_ADDRESS}:${HTTP_PORT}"
 # （Phase 9 真实部署实测）。对外暴露面由宿主 nftables 限制，勿在此收紧。
 listen_ip = "0.0.0.0"
 listen_port = ${API_PORT}
-work_dir = "/home/floatctf/runtime"
+work_dir = "${FLOATCTF_HOME}/runtime"
 
 [auth]
 # 生产密钥：由 install.sh 首次部署生成并写入本文件，重部署保留。

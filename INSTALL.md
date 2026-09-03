@@ -56,7 +56,7 @@ Phase 9 真实主机验证要求以下内核设置（`install.sh` 自动检查�
 git clone https://github.com/FloatCTF/floatctf.git
 cd floatctf
 
-sudo ./scripts/install.sh    # 一键：下载 release tarball + 主机初始化(幂等) + 部署
+sudo ./scripts/install.sh    # 一键：下载 3 产物 + 主机初始化(幂等) + 部署（仅全新安装）
 ```
 
 部署完成后：
@@ -65,20 +65,20 @@ sudo ./scripts/install.sh    # 一键：下载 release tarball + 主机初始化
 systemctl status floatctf.target
 ```
 
-> `install.sh` 每次成功部署都会把 release tarball 内自带的 `uninstall.sh` 安装为
-> `/home/floatctf/uninstall.sh`（root:floatctf 0750），供日后卸载/清理使用，
-> 无需保留源码签出。
+> `install.sh` 是**单文件自包含**安装器：内嵌所有模板，部署时内嵌生成
+> `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`（root:floatctf 0750）。
+> 安装根默认 `/home/floatctf`，可用 `FLOATCTF_HOME` 环境变量覆盖。
 
-## install.sh —— 一键安装（主机初始化 + 下载 + 部署）
+## install.sh —— 一键安装（单文件自包含）
 
-`install.sh` 合并了原 `init.sh`（主机初始化）与 `deploy.sh`（部署）的职责，并新增
-「从 GitHub Release 下载自包含 tarball」。三阶段：
+`install.sh` 合并了主机初始化 + 下载 + 部署，**不依赖仓库其他文件**（模板全部内嵌）。
+三阶段：
 
 ```
-1. 主机初始化（幂等） → 2. 下载 release tarball → 3. 部署
-   （docker/nftables/WG/       （bin+web+compose+模板     （渲染配置 → 装配 →
-    转发/br_netfilter/           +迁移+systemd+uninstall）  infra(--wait) → 迁移 →
-    用户/布局，已存在即 skip）                               systemd → 启动 API）
+1. 主机初始化（幂等） → 2. 下载 3 产物 → 3. 部署
+   （docker/nftables/WG/       （API 二进制 +       （渲染配置 → 装配 →
+    转发/br_netfilter/           前端 dist +          infra(--wait) → psql 初始化
+    用户/布局，已存在即 skip）    migrate.sql）         migrate.sql → systemd → API）
 ```
 
 **主机初始化（幂等，逐项补齐）**：
@@ -88,41 +88,48 @@ systemctl status floatctf.target
 - 检查 WireGuard（含创建/删除临时接口验证）
 - 检查并启用 IPv4 转发、`br_netfilter`、bridge netfilter sysctls（持久化到 FloatCTF 自有文件）
 - 创建 `floatctf` 系统服务用户 + 加入 `docker` 组（`runuser` 实测组生效）
-- 创建 `/home/floatctf` 运行布局 + 写 `.initialized` 完成标记
+- 创建 `$FLOATCTF_HOME` 运行布局 + 写 `.initialized` 完成标记
 
 以上每项都幂等：**已存在/已做过就跳过**（不依赖 `.initialized` 单点标记），
 重跑安全。
 
-**跳过下载（用本地产物）**：跳过从 GitHub 下载，改用本地 `release/floatctf-*`
-产物目录（结构与 tarball 解压后一致），init 与部署照走：
+**安装根**：默认 `/home/floatctf`，可经环境变量覆盖（所有路径相对它）：
+
+```bash
+FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
+```
+
+**下载 3 个 release 产物**：默认 fake 占位地址，可经 `--*-url` 或环境变量覆盖：
+
+```bash
+sudo ./scripts/install.sh \
+  --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
+# 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
+```
+
+**跳过下载（用本地产物）**：跳过下载，改用本地 `release/floatctf-*` 产物目录
+（`bin/floatctf` + `web/` + `migrate.sql`），init 与部署照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download
 ```
 
-**下载 release tarball**：默认从 GitHub Release 下载自包含产物；地址可覆盖：
+**部署（仅全新安装）**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
+`$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配 bin/web/migrate.sql，起 infra，
+用 `psql` 应用 `migrate.sql` 初始化空库（库已有表则跳过），装 systemd 单元，启动
+API，并内嵌生成 `$FLOATCTF_HOME/uninstall.sh`。
 
-```bash
-sudo ./scripts/install.sh --url <tarball-url>   # 显式指定
-FLOATCTF_RELEASE_URL=<url> sudo ./scripts/install.sh  # 或经环境变量
-```
-
-**部署**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
-`/home/floatctf/.env` 与 `config/floatctf.toml`，装配 bin/web/compose，起 infra，
-跑前向迁移，装 systemd 单元，启动 API，并安装 `/home/floatctf/uninstall.sh`。
-
-**重部署 / 升级**：直接重跑 `sudo ./scripts/install.sh` —— 保留既有数据与密钥
-（只更新非敏感值与新发布产物），跑前向迁移，更新 systemd 单元与卸载脚本。
-**数据与 secrets 均保留**。**不承诺降级支持**（迁移 forward-only）。
-
+> **只做全新安装**：`migrate.sql` 是 fresh-DB bootstrap（merged.sql），只适用于空库。
+> 已有数据的升级（forward-only 迁移）后续单独实现。
+>
 > AWD 服务镜像（`floatctf/awd-flagserver` / `awd-judgeserver`）暂不在 install.sh
 > 构建，需另行准备（TODO：registry 拉取或本地 docker build）。
 
 ## 发布构建与 crates.io
 
-release tarball 由 CI 打 `v*` tag 触发 `.github/workflows/release.yml` 产出
-（自包含：bin + web + compose + 配置/nginx 模板 + 迁移 + systemd + uninstall），
-供 `install.sh` 下载部署；本地不再需要 `build-release.sh`。
+CI 打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物：
+`floatctf`（API 二进制）、`web-dist.tar.gz`（前端）、`migrate.sql`（数据库初始化，
+= `mise run db:migration:merge` 生成的 merged.sql），供 `install.sh` 下载部署。
 
 ### crates.io 发布（出题工具 / 平台二进制分发）
 
@@ -135,9 +142,9 @@ cargo install fcmc
 平台后端 crate `floatctf` 亦已具备发布元数据。发布顺序须**先 `fcmc` 后 `floatctf`**
 （后者依赖前者）。发布流程与命令见 `chore/crates-io-publish-guide.md`。
 
-> crates.io 发布与「GitHub Release 自包含 tarball」是两条独立渠道：
-> 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的自包含产物
-> （bin + web + compose + 模板 + 迁移 + systemd + uninstall），供 `install.sh` 使用。
+> crates.io 发布与「GitHub Release 产物」是两条独立渠道：
+> 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的 3 个产物
+> （bin + web + migrate.sql），供 `install.sh` 使用。
 
 ## systemd 管理
 

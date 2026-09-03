@@ -29,7 +29,7 @@
 #
 set -Eeuo pipefail
 
-FCTF_ROOT="${FCTF_ROOT:-/home/floatctf}"
+FCTF_ROOT="${FLOATCTF_HOME:-${FCTF_ROOT:-/home/floatctf}}"
 FCTF_USER="floatctf"
 
 info() { printf '%s[INFO]%s %s\n'  "$(tput setaf 4 2>/dev/null || true)" "$(tput sgr0 2>/dev/null || true)" "$*"; }

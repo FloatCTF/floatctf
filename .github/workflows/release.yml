@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    name: Build self-contained release tarball
+    name: Build release artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,57 +33,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
 
-      # ── 组装自包含 tarball（供 install.sh 下载部署）──
-      # 结构（顶层目录 floatctf-<version>）：
-      #   bin/floatctf            API 二进制
-      #   web/                    前端静态产物
-      #   compose.dev.yml + compose.prod.yml   基础设施编排（dev/prod 两套都装到 /home/floatctf）
-      #   config/floatctf.prod.toml  配置模板（install.sh envsubst 渲染）
-      #   nginx/nginx.prod.conf       nginx 模板
-      #   migrate.sh + migrations/    forward-only 迁移
-      #   systemd/                   floatctf-{infra,api}.service + target
-      #   uninstall.sh              独立卸载脚本
-      - name: Assemble self-contained tarball
+      # ── 发布 3 个产物（供 install.sh 下载部署）──
+      #   1. floatctf            API 二进制（bin/floatctf）
+      #   2. web-dist.tar.gz     前端静态产物
+      #   3. migrate.sql         单个 SQL（fresh-DB bootstrap，= merged.sql）
+      - name: Assemble release artifacts
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          STAGE="floatctf-$VERSION"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE"/{bin,web,config,nginx,systemd}
 
-          # 二进制
-          install -m 0755 target/release/floatctf "$STAGE/bin/floatctf"
+          # 1) API 二进制
+          install -m 0755 target/release/floatctf floatctf
 
-          # 前端静态产物
-          cp -a apps/web/dist/. "$STAGE/web/"
+          # 2) 前端静态产物
+          tar -czf web-dist.tar.gz -C apps/web/dist .
 
-          # compose（dev + prod 两套都进产物）+ 模板
-          install -m 0644 infra/compose/compose.dev.yml "$STAGE/compose.dev.yml"
-          install -m 0644 infra/compose/compose.prod.yml "$STAGE/compose.prod.yml"
-          install -m 0644 infra/config/floatctf.prod.toml "$STAGE/config/floatctf.prod.toml"
-          install -m 0644 infra/nginx/nginx.prod.conf "$STAGE/nginx/nginx.prod.conf"
+          # 3) migrate.sql（merged.sql：确定性 fresh-DB bootstrap）
+          bash apps/api/src/sql/migrate.sh make
+          install -m 0644 apps/api/src/sql/merged.sql migrate.sql
 
-          # 迁移（migrate.sh 依赖同目录 migrations/）
-          install -m 0755 apps/api/src/sql/migrate.sh "$STAGE/migrate.sh"
-          cp -a apps/api/src/sql/migrations "$STAGE/migrations"
+          echo "release artifacts:"
+          ls -la floatctf web-dist.tar.gz migrate.sql
 
-          # systemd 单元
-          install -m 0644 infra/systemd/floatctf-infra.service "$STAGE/systemd/"
-          install -m 0644 infra/systemd/floatctf-api.service "$STAGE/systemd/"
-          install -m 0644 infra/systemd/floatctf.target "$STAGE/systemd/"
-
-          # 卸载脚本
-          install -m 0755 scripts/uninstall.sh "$STAGE/uninstall.sh"
-
-          # 打包 + 校验清单
-          tar -czf "$STAGE.tar.gz" "$STAGE"
-          echo "tarball contents:"
-          tar -tzf "$STAGE.tar.gz" | sed 's/^/  /'
-          echo "TARBALL=$STAGE.tar.gz" >> "$GITHUB_ENV"
-
-      - name: Upload release artifact
+      - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: floatctf-*.tar.gz
+          files: |
+            floatctf
+            web-dist.tar.gz
+            migrate.sql
           generate_release_notes: true

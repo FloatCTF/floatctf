@@ -24,7 +24,7 @@ services:
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必须在 .env 设置}
             POSTGRES_DB: ${POSTGRES_DB:-floatctf_db}
         volumes:
-            - /home/floatctf/data/postgres:/var/lib/postgresql/data
+            - ${FLOATCTF_HOME}/data/postgres:/var/lib/postgresql/data
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-floatctf_db}"]
             interval: 5s
@@ -42,8 +42,8 @@ services:
             - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
             - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
         volumes:
-            - /home/floatctf/data/rustfs:/data
-            - /home/floatctf/logs/rustfs:/logs
+            - ${FLOATCTF_HOME}/data/rustfs:/data
+            - ${FLOATCTF_HOME}/logs/rustfs:/logs
         environment:
             RUSTFS_ADDRESS: ":9000"
             RUSTFS_SERVER_DOMAINS: example.com
@@ -66,13 +66,13 @@ services:
         # host 网络：nginx 是唯一对外暴露面，直接由宿主 nftables 管辖。
         network_mode: host
         volumes:
-            - /home/floatctf/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-            - /home/floatctf/web:/usr/share/nginx/html:ro
-            # 挑战附件静态下载（WORK_DIR=/home/floatctf/runtime → challenges 在其下）
-            - /home/floatctf/runtime/challenges:/app/api/challenges:ro
-            - /home/floatctf/logs/nginx:/var/log/nginx
-        # TLS 结构预留：证书由运维放入 /home/floatctf/config/nginx/keys/
-        #   - /home/floatctf/config/nginx/keys:/etc/nginx/keys:ro
+            - ${FLOATCTF_HOME}/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+            - ${FLOATCTF_HOME}/web:/usr/share/nginx/html:ro
+            # 挑战附件静态下载（WORK_DIR=${FLOATCTF_HOME}/runtime → challenges 在其下）
+            - ${FLOATCTF_HOME}/runtime/challenges:/app/api/challenges:ro
+            - ${FLOATCTF_HOME}/logs/nginx:/var/log/nginx
+        # TLS 结构预留：证书由运维放入 ${FLOATCTF_HOME}/config/nginx/keys/
+        #   - ${FLOATCTF_HOME}/config/nginx/keys:/etc/nginx/keys:ro
         depends_on:
             postgres:
                 condition: service_healthy

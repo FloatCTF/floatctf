@@ -1,7 +1,7 @@
 # FloatCTF API (native process) — Phase 10.6.
 # 最小能力原则：仅 CAP_NET_ADMIN（AWD HostNetworkRuntime 管理 nftables/WireGuard/
 # Docker 转发的底线）。绝不 PrivateNetwork —— API 必须操作宿主网络。
-# 配置只从 TOML 读取（铁律 1）：FLOATCTF_CONFIG 指向 /home/floatctf/config/floatctf.toml。
+# 配置只从 TOML 读取（铁律 1）：FLOATCTF_CONFIG 指向 ${FLOATCTF_HOME}/config/floatctf.toml。
 [Unit]
 Description=FloatCTF API
 Requires=floatctf-infra.service
@@ -13,10 +13,10 @@ Type=simple
 User=floatctf
 Group=floatctf
 SupplementaryGroups=docker
-WorkingDirectory=/home/floatctf/runtime
-EnvironmentFile=/home/floatctf/.env
-Environment=FLOATCTF_CONFIG=/home/floatctf/config/floatctf.toml
-ExecStart=/home/floatctf/bin/floatctf
+WorkingDirectory=${FLOATCTF_HOME}/runtime
+EnvironmentFile=${FLOATCTF_HOME}/.env
+Environment=FLOATCTF_CONFIG=${FLOATCTF_HOME}/config/floatctf.toml
+ExecStart=${FLOATCTF_HOME}/bin/floatctf
 Restart=on-failure
 RestartSec=5
 # AWD host runtime 需要 CAP_NET_ADMIN（nftables / WireGuard / docker forward 管理）。

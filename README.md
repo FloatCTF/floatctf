@@ -123,22 +123,24 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 ## 生产安装与部署
 
 > 完整权威指南见 **[INSTALL.md](./INSTALL.md)**。以下是极简入口。
+> `install.sh` 是**单文件自包含**安装器：内嵌所有模板，下载 3 个 release 产物
+> （API 二进制 + 前端 dist + migrate.sql）后一键部署。
 
 **全新主机（一键安装）**：
 
 ```bash
-sudo ./scripts/install.sh   # 下载 release tarball + 主机初始化(幂等) + 部署
+sudo ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅全新安装）
 systemctl status floatctf.target
 ```
 
-**升级 / 重部署**（保留数据与密钥）：
+**安装根**（默认 `/home/floatctf`，可用环境变量覆盖）：
 
 ```bash
-sudo ./scripts/install.sh   # 幂等：已初始化的部分自动 skip，重下载最新 release 并部署
+FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
 ```
 
-**跳过下载（用本地产物）**：跳过从 GitHub 下载，改用本地 `release/floatctf-*`
-产物目录（结构与 tarball 解压后一致），init 与部署照走：
+**跳过下载（用本地产物）**：跳过下载，改用本地 `release/floatctf-*` 产物目录
+（`bin/floatctf` + `web/` + `migrate.sql`），init 与部署照走：
 
 ```bash
 sudo ./scripts/install.sh --skip-download
@@ -151,22 +153,20 @@ sudo /home/floatctf/uninstall.sh          # 安全卸载（保留 PG/RustFS 数�
 sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认 PURGE FLOATCTF）
 ```
 
-`install.sh` 每次成功部署都会把 `scripts/uninstall.sh` 安装到
-`/home/floatctf/uninstall.sh`（root:floatctf 0750）。`scripts/clean.sh` 可清理源码
-签出里的再生构建产物（`./scripts/clean.sh [--all]`）。
+`install.sh` 每次部署都会内嵌生成 `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`
+（root:floatctf 0750）。`scripts/clean.sh` 可清理源码签出里的再生构建产物。
 
 > 现代部署请使用 `install.sh` / `clean.sh` / `uninstall.sh` 这套生命周期脚本。
 
 ## 发布渠道（crates.io / GitHub Release）
 
-FloatCTF 提供两条获取工具/二进制的渠道（用于出题工具与平台二进制分发，平台部署仍走
-`scripts/` 生命周期脚本）：
+FloatCTF 提供两条获取工具/二进制的渠道：
 
 - **crates.io**：`fcmc` 已发布到 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`
   即可安装出题/容器管理工具；后端 crate `floatctf` 亦已具备发布元数据。
-- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出自包含
-  tarball `floatctf-<version>.tar.gz`（bin + web + compose + 配置/nginx 模板 + 迁移 +
-  systemd + uninstall），由 `install.sh` 下载部署。
+- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物
+  （`floatctf` API 二进制 + `web-dist.tar.gz` 前端 + `migrate.sql` 数据库初始化），
+  由 `install.sh` 下载部署。
 
 > crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
 

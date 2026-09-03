@@ -11,8 +11,8 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/home/floatctf
-ExecStart=/usr/bin/docker compose -f /home/floatctf/compose.yml up -d --wait
-ExecStop=/usr/bin/docker compose -f /home/floatctf/compose.yml down
+ExecStart=/usr/bin/docker compose -f /home/floatctf/compose.prod.yml up -d --wait
+ExecStop=/usr/bin/docker compose -f /home/floatctf/compose.prod.yml down
 TimeoutStartSec=300
 
 [Install]

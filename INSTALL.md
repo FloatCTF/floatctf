@@ -172,11 +172,11 @@ systemctl status floatctf-infra
 ## Docker 运维（infra 容器）
 
 ```bash
-docker compose -f /home/floatctf/compose.yml ps
-docker compose -f /home/floatctf/compose.yml logs
-docker compose -f /home/floatctf/compose.yml logs -f postgres
-docker compose -f /home/floatctf/compose.yml logs -f rustfs
-docker compose -f /home/floatctf/compose.yml logs -f nginx
+docker compose -f /home/floatctf/compose.prod.yml ps
+docker compose -f /home/floatctf/compose.prod.yml logs
+docker compose -f /home/floatctf/compose.prod.yml logs -f postgres
+docker compose -f /home/floatctf/compose.prod.yml logs -f rustfs
+docker compose -f /home/floatctf/compose.prod.yml logs -f nginx
 ```
 
 ## 开发 vs 生产
@@ -269,8 +269,8 @@ systemctl status floatctf-infra
 journalctl -fu floatctf-api
 journalctl -fu floatctf-infra
 
-docker compose -f /home/floatctf/compose.yml ps
-docker compose -f /home/floatctf/compose.yml logs
+docker compose -f /home/floatctf/compose.prod.yml ps
+docker compose -f /home/floatctf/compose.prod.yml logs
 
 docker info
 wg show

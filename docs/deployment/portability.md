@@ -84,6 +84,6 @@ bin/  web/  config/  data/{postgres,rustfs}  logs/{api,nginx,rustfs}  runtime/  
 ## 8. 故障排查锚点
 
 - `journalctl -u floatctf-api -f` —— API 启动/崩溃日志。
-- `docker compose -f /home/floatctf/compose.yml ps` —— infra 健康状态。
+- `docker compose -f /home/floatctf/compose.prod.yml ps` —— infra 健康状态。
 - `nft list table inet floatctf_awd` —— 赛事防火墙表（`managed-by=floatctf`）。
 - `docker network ls | grep fctf-awd` —— AWD 赛事子网。

@@ -1,5 +1,5 @@
 # FloatCTF production infrastructure compose (Phase 10.5).
-# Deployed to /home/floatctf/compose.yml by scripts/install.sh.
+# Deployed to /home/floatctf/compose.prod.yml by scripts/install.sh.
 #
 # 网络边界（设计定稿）：
 #   - postgres / rustfs：仅回环发布（127.0.0.1:<port>），绝不 0.0.0.0

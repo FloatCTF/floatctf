@@ -7,7 +7,7 @@
 #      IPv4 转发 + br_netfilter、floatctf 服务用户 + docker 组 + /home/floatctf 布局。
 #      已存在/已做过 → 逐项跳过（不依赖 .initialized 单点标记）。
 #   2. 下载 release tarball：默认从 GitHub Release 下载自包含产物（bin + web +
-#      compose.yml + config/nginx 模板 + migrate.sh + migrations + systemd 单元 +
+#      compose.dev.yml + compose.prod.yml + config/nginx 模板 + migrate.sh + migrations + systemd 单元 +
 #      uninstall.sh）。地址可经 FLOATCTF_RELEASE_URL 或 --url 覆盖（默认 fake 占位）。
 #   3. 部署：渲染配置 → 装配 bin/web/compose → 起 infra(--wait) → forward-only 迁移 →
 #      装 systemd 单元 → 启动 API → 安装独立 uninstall.sh。
@@ -296,7 +296,8 @@ assert_pkg_dir() {
     local pkg_dir="$1"
     [ -f "$pkg_dir/bin/floatctf" ] || die "产物目录缺少 bin/floatctf: $pkg_dir"
     [ -d "$pkg_dir/web" ] || die "产物目录缺少 web/: $pkg_dir"
-    [ -f "$pkg_dir/compose.yml" ] || die "产物目录缺少 compose.yml: $pkg_dir"
+    [ -f "$pkg_dir/compose.dev.yml" ] || die "产物目录缺少 compose.dev.yml: $pkg_dir"
+    [ -f "$pkg_dir/compose.prod.yml" ] || die "产物目录缺少 compose.prod.yml: $pkg_dir"
     [ -f "$pkg_dir/migrate.sh" ] || die "产物目录缺少 migrate.sh: $pkg_dir"
 }
 
@@ -473,7 +474,8 @@ stage_release() {
     find "$FCTF_ROOT/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
     cp -a "$PKG_DIR/web/." "$FCTF_ROOT/web/"
     chown -R root:root "$FCTF_ROOT/web"
-    install -m 0644 "$PKG_DIR/compose.yml" "$FCTF_ROOT/compose.yml"
+    install -m 0644 "$PKG_DIR/compose.dev.yml" "$FCTF_ROOT/compose.dev.yml"
+    install -m 0644 "$PKG_DIR/compose.prod.yml" "$FCTF_ROOT/compose.prod.yml"
     mkdir -p "$FCTF_ROOT/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FCTF_ROOT/runtime"
     chown -R 10001:10001 "$FCTF_ROOT/data/rustfs" "$FCTF_ROOT/logs/rustfs" 2>/dev/null || true
@@ -491,12 +493,12 @@ stage_release() {
     elif [ -z "$(ls -A "$FCTF_ROOT/data/postgres" 2>/dev/null)" ]; then
         chown -R 999:999 "$FCTF_ROOT/data/postgres" 2>/dev/null || true
     fi
-    ok "产物装配完成（bin/floatctf + web/ + compose.yml + 容器目录属主）"
+    ok "产物装配完成（bin/floatctf + web/ + compose.dev.yml + compose.prod.yml + 容器目录属主）"
 }
 
 start_infra() {
-    info "──── 部署：基础设施容器（docker compose up -d --wait）────"
-    ( cd "$FCTF_ROOT" && docker compose -f compose.yml up -d --wait ) \
+    info "──── 部署：基础设施容器（docker compose -f compose.prod.yml up -d --wait）────"
+    ( cd "$FCTF_ROOT" && docker compose -f compose.prod.yml up -d --wait ) \
         || die "infra 容器启动/健康检查失败"
     ok "infra 就绪（postgres/rustfs/nginx healthcheck 通过）"
 }

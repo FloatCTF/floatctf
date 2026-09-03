@@ -263,15 +263,15 @@ cleanup_nftables() {
 # ============================================================================
 stop_infra_containers() {
     info "── 停止/移除基础设施容器（compose down，保护 bind-mount 数据）──"
-    if [ -f "$FCTF_ROOT/compose.yml" ] && [ -d "$FCTF_ROOT" ]; then
+    if [ -f "$FCTF_ROOT/compose.prod.yml" ] && [ -d "$FCTF_ROOT" ]; then
         # 用系统 docker compose 插件；无 -> 尝试 docker-compose。
         ( cd "$FCTF_ROOT" \
-            && { docker compose -f compose.yml down 2>/dev/null \
-                 || docker compose -f compose.yml stop 2>/dev/null \
+            && { docker compose -f compose.prod.yml down 2>/dev/null \
+                 || docker compose -f compose.prod.yml stop 2>/dev/null \
                  || docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true; } ) \
             && ok "infra 容器已停止/移除（数据保留在 bind-mount）"
     else
-        warn "未找到 $FCTF_ROOT/compose.yml，跳过 compose down；尝试按名字精确停止"
+        warn "未找到 $FCTF_ROOT/compose.prod.yml，跳过 compose down；尝试按名字精确停止"
         docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true
     fi
     # 兜底：强制移除（别名命中检查，防误删无关容器）
@@ -285,9 +285,9 @@ stop_infra_containers() {
 
 remove_application_artifacts() {
     info "── 移除可运行应用产物（保留 data/config/.env/runtime/logs）──"
-    # 只删可再生产物：bin/、web/、compose.yml；保留持久/可恢复状态。
+    # 只删可再生产物：bin/、web/、compose.dev.yml、compose.prod.yml；保留持久/可恢复状态。
     local p
-    for p in "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.yml"; do
+    for p in "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml"; do
         if [ -e "$p" ] || [ -L "$p" ]; then
             rm -rf -- "$p" && ok "已移除 $p" || warn "移除 $p 失败（忽略）"
         fi

@@ -37,7 +37,7 @@ jobs:
       # 结构（顶层目录 floatctf-<version>）：
       #   bin/floatctf            API 二进制
       #   web/                    前端静态产物
-      #   compose.yml             = infra/compose/compose.prod.yml
+      #   compose.dev.yml + compose.prod.yml   基础设施编排（dev/prod 两套都装到 /home/floatctf）
       #   config/floatctf.prod.toml  配置模板（install.sh envsubst 渲染）
       #   nginx/nginx.prod.conf       nginx 模板
       #   migrate.sh + migrations/    forward-only 迁移
@@ -58,8 +58,9 @@ jobs:
           # 前端静态产物
           cp -a apps/web/dist/. "$STAGE/web/"
 
-          # compose + 模板
-          install -m 0644 infra/compose/compose.prod.yml "$STAGE/compose.yml"
+          # compose（dev + prod 两套都进产物）+ 模板
+          install -m 0644 infra/compose/compose.dev.yml "$STAGE/compose.dev.yml"
+          install -m 0644 infra/compose/compose.prod.yml "$STAGE/compose.prod.yml"
           install -m 0644 infra/config/floatctf.prod.toml "$STAGE/config/floatctf.prod.toml"
           install -m 0644 infra/nginx/nginx.prod.conf "$STAGE/nginx/nginx.prod.conf"
 

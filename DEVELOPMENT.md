@@ -5,7 +5,21 @@
 - **人工开发者**：在自己机器上跑起来、改代码、调试。
 - **AI Agent**（Claude Code / Cursor / Pi Coding Agent 等）：在本仓库内协同开发时的工作约定。
 
-部署 / 生产运维请见 [INSTALL.md](./INSTALL.md)；架构与功能开发流程见 [docs/agents/](./docs/agents/) 系列。
+生产安装 / 运维请见 [INSTALL.md](./INSTALL.md)；架构与功能开发流程见 [docs/agents/](./docs/agents/) 系列。
+
+---
+
+## 0. 两种场景，先分清（本文档只管「开发」）
+
+| | 生产安装 | 本地开发（本文档） |
+|---|---|---|
+| 起点 | **一行流下载 install.sh**，无需 clone 仓库 | **clone 仓库**后，用仓库里的 `install.sh --develop` |
+| 命令 | `curl -fsSL <install.sh URL> -o install.sh && sudo bash install.sh` | `git clone … && cd floatctf && sudo ./scripts/install.sh --develop` |
+| 产物 | 下载 release 产物（API 二进制 + web dist + merged.sql） | 本地源码编译（cargo run + vite），三产物不下载 |
+| 文档 | [INSTALL.md](./INSTALL.md) | **本文档** |
+
+**本文档只讲「开发」**：clone 仓库 → `sudo ./scripts/install.sh --develop` 起环境 →
+`sudo mise run dev:api` + `mise run dev:web` 开发。
 
 ---
 

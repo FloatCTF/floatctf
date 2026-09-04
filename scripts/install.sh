@@ -1,33 +1,29 @@
 #!/usr/bin/env bash
 #
-# FloatCTF 一键安装（Phase 11）— 单文件自包含安装器。
+# FloatCTF 一键安装器（Phase 11）— 单文件自包含。
 #
-# 本脚本不依赖仓库其他文件：所有模板（compose.dev/prod、floatctf.toml、nginx.conf、
+# 本脚本**不依赖仓库其他文件**：所有模板（compose.dev/prod、floatctf.toml、nginx.conf、
 # systemd 单元、uninstall.sh）都内嵌在本文件里，运行时写出到 FLOATCTF_HOME。
 #
-# 语义（仅全新安装；升级迁移后续单独做）：
-#   1. 主机初始化（幂等）：发行版检测/装缺失主机包、docker/nftables/WireGuard 能力检查、
-#      IPv4 转发 + br_netfilter、floatctf 服务用户 + docker 组 + FLOATCTF_HOME 布局。
-#      已存在/已做过 → 逐项跳过（不依赖 .initialized 单点标记）。
-#   2. 下载 3 个 release 产物：
-#        - API 二进制（bin/floatctf）
-#        - 前端静态产物（web dist，tar.gz）
-#        - merged.sql（单个 SQL，fresh-DB bootstrap）
-#   3. 部署：渲染配置 → 装配 bin/web/compose → 起 infra(--wait) → psql 初始化 merged.sql
-#      → 装 systemd 单元 → 启动 API → 生成 uninstall.sh。
+# 两种用法（二选一，语义完全不同）：
 #
-# 用法：
-#   sudo ./install.sh                          # 用默认（fake）3 个 URL，完整安装
-#   sudo ./install.sh --api-url <url> --web-url <url> --migrate-url <url>
-#   sudo ./install.sh --develop                # 开发模式：检测源码目录 + 完整主机初始化
-#                                               # （同生产，含 nftables/WireGuard/host），
-#                                               # 用源码 merged.sql 初始化 db + dev compose
-#                                               # （nginx 反代 api:9090 / vite:3000），
-#                                               # 三产物不下载不装配
-#   FLOATCTF_HOME=/opt/floatctf sudo ./install.sh   # 自定义安装根（默认 /home/floatctf）
+# 【生产安装】一行流下载本脚本后运行，无需 clone 仓库：
+#   curl -fsSL <install.sh 的 URL> -o install.sh && sudo bash install.sh
+#   或指定 3 个 release 产物 URL：
+#     sudo bash install.sh --api-url <bin> --web-url <dist> --migrate-url <sql>
+#   流程：主机初始化(幂等) → 下载 3 产物 → 部署(渲染配置 → 装配 → infra --wait
+#         → psql 应用 merged.sql → systemd → 启动 API → 生成 uninstall.sh)
 #
-# 环境变量（也可覆盖 URL）：
+# 【开发模式】在 clone 后的源码目录里运行，用源码编译 + dev compose：
+#   git clone https://github.com/FloatCTF/floatctf.git && cd floatctf
+#   sudo ./scripts/install.sh --develop
+#   流程：检测源码目录 → 完整主机初始化(同生产，host) → 用源码 merged.sql 初始化 db
+#         + dev compose（nginx 反代 api:9090 / vite:3000），三产物不下载不装配
+#
+# 环境变量（覆盖 3 个产物 URL）：
 #   FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
+# 安装根：
+#   FLOATCTF_HOME=/opt/floatctf   （默认 /home/floatctf）
 #
 # 注意：
 #   - 只做全新安装；已有数据的升级（forward-only 迁移）后续单独实现。

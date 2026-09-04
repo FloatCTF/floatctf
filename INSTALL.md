@@ -50,13 +50,21 @@ Phase 9 真实主机验证要求以下内核设置（`install.sh` 自动检查�
 `install.sh` 安装路径未硬编码（避免盲装），需手动安装上述能力后重试 —— 请勿宣称
 未经验证的发行版受支持。
 
-## 全新安装（Fresh Host）
+## 全新安装（Fresh Host，一行流）
+
+生产安装**无需 clone 仓库**：直接下载单文件 `install.sh` 并运行（脚本自包含，内嵌所有
+模板，运行时下载 3 个 release 产物并部署）：
 
 ```bash
-git clone https://github.com/FloatCTF/floatctf.git
-cd floatctf
+curl -fsSL https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh -o install.sh
+sudo bash install.sh
+```
 
-sudo ./scripts/install.sh    # 一键：下载 3 产物 + 主机初始化(幂等) + 部署（仅全新安装）
+或指定 3 个 release 产物 URL（默认是 fake 占位，需替换为真实地址或显式传入）：
+
+```bash
+sudo bash install.sh \
+  --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
 ```
 
 部署完成后：
@@ -68,8 +76,11 @@ systemctl status floatctf.target
 > `install.sh` 是**单文件自包含**安装器：内嵌所有模板，部署时内嵌生成
 > `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`（root:floatctf 0750）。
 > 安装根默认 `/home/floatctf`，可用 `FLOATCTF_HOME` 环境变量覆盖。
+>
+> 本地开发（clone 仓库 + 源码编译 + dev compose）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**，
+> 不走本节的生产安装流程。
 
-## install.sh —— 一键安装（单文件自包含）
+## install.sh —— 生产安装（单文件自包含，一行流）
 
 `install.sh` 合并了主机初始化 + 下载 + 部署，**不依赖仓库其他文件**（模板全部内嵌）。
 三阶段：
@@ -96,25 +107,15 @@ systemctl status floatctf.target
 **安装根**：默认 `/home/floatctf`，可经环境变量覆盖（所有路径相对它）：
 
 ```bash
-FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
+FLOATCTF_HOME=/opt/floatctf sudo bash install.sh
 ```
 
 **下载 3 个 release 产物**：默认 fake 占位地址，可经 `--*-url` 或环境变量覆盖：
 
 ```bash
-sudo ./scripts/install.sh \
+sudo bash install.sh \
   --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
 # 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
-```
-
-**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
-（同生产，含 nftables/WireGuard/host 网络）→ 用源码里的 `merged.sql` 初始化 db +
-dev compose（nginx 反代 api:9090 / vite:3000），三产物不下载不装配：
-
-```bash
-sudo ./scripts/install.sh --develop
-# 之后手动起开发服务：sudo mise run dev:api（host 需 root）+ mise run dev:web，
-# 入口 http://127.0.0.1:7780
 ```
 
 **部署（仅全新安装）**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
@@ -190,6 +191,8 @@ docker compose -f /home/floatctf/compose.prod.yml logs -f nginx
 ```
 
 ## 开发 vs 生产
+
+> 本地开发完整指南（人工开发 / Agent 协同）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
 
 两者主机初始化**完全一致**（`network_runtime = host`，nftables + WireGuard + 转发 +
 br_netfilter + floatctf 用户/布局），区别只在「产物来源与运行形态」：
@@ -302,6 +305,6 @@ nft list table inet floatctf_awd
 
 | 术语 | 含义 |
 |------|------|
-| `install.sh` | 一键安装（下载 release tarball + 主机初始化(幂等) + 部署/升级） |
+| `install.sh` | 生产安装（单文件自包含：下载 3 产物 + 主机初始化(幂等) + 部署）；`--develop` 为开发模式 |
 | `clean.sh` | 清理源码签出里的再生构建产物 |
 | `uninstall.sh` | 移除已部署的 FloatCTF（safe / purge） |

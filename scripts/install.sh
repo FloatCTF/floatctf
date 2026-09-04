@@ -11,14 +11,14 @@
 #   curl -fsSL <install.sh 的 URL> -o install.sh && sudo bash install.sh
 #   或指定 3 个 release 产物 URL：
 #     sudo bash install.sh --api-url <bin> --web-url <dist> --migrate-url <sql>
-#   流程：主机初始化(幂等) → 下载 3 产物 → 部署(渲染配置 → 装配 → infra --wait
-#         → psql 应用 merged.sql → systemd → 启动 API → 生成 uninstall.sh)
+#   流程：主机初始化(幂等) → 下载 3 产物 → 部署(渲染配置 → 装配 → 写 systemd
+#         单元并 enable（不 start）→ 生成 uninstall.sh)
 #
 # 【开发模式】在 clone 后的源码目录里运行，用源码编译 + dev compose：
 #   git clone https://github.com/FloatCTF/floatctf.git && cd floatctf
 #   sudo ./scripts/install.sh --develop
-#   流程：检测源码目录 → 完整主机初始化(同生产，host) → 用源码 merged.sql 初始化 db
-#         + dev compose（nginx 反代 api:9090 / vite:3000），三产物不下载不装配
+#   流程：检测源码目录 → 完整主机初始化(同生产，host) → 三产物不下载不装配，
+#         也不起 dev 容器（留给 mise run infra:up）
 #
 # 环境变量（覆盖 3 个产物 URL）：
 #   FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
@@ -27,6 +27,9 @@
 #
 # 注意：
 #   - 只做全新安装；已有数据的升级（forward-only 迁移）后续单独实现。
+#   - 本脚本只写文件、创建（enable）systemd 服务，绝不自己启动服务/容器：
+#     整平台由运维 systemctl start floatctf.target 启动（首次启动 postgres
+#     自动用 merged.sql 初始化数据库）。
 #   - AWD 服务镜像（floatctf/awd-flagserver / awd-judgeserver）暂不在本脚本构建
 #     （TODO Phase 11.1：registry 拉取或本地 docker build）。
 #
@@ -414,13 +417,14 @@ services:
             POSTGRES_DB: ${POSTGRES_DB:-floatctf_db}
         volumes:
             - ${FLOATCTF_HOME}/data/postgres:/var/lib/postgresql/data
+            - ${FLOATCTF_HOME}/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-floatctf_db}"]
             interval: 5s
             timeout: 3s
             retries: 10
             start_period: 10s
-        # 禁止：公开端口、自动 initdb 迁移（迁移由 install.sh 显式执行 merged.sql）
+        # 首次启动（空数据目录）postgres 自动用 merged.sql 初始化数据库；禁止公开端口。
 
     rustfs:
         image: rustfs/rustfs:latest
@@ -1274,73 +1278,21 @@ stage_release() {
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     chown -R 10001:10001 "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
-    local pg_mismatch=0 pg_owner
-    if [ -e "$FLOATCTF_HOME/data/postgres/PG_VERSION" ]; then
-        pg_owner=$(stat -c '%u' "$FLOATCTF_HOME/data/postgres/PG_VERSION" 2>/dev/null || echo "999")
-        [ "$pg_owner" = "999" ] || pg_mismatch=1
-    fi
-    if [ "$pg_mismatch" = "1" ]; then
-        warn "postgres 数据属主非 999；停容器后修正"
-        docker stop floatctf-postgres >/dev/null 2>&1 || true
-        chown -R 999:999 "$FLOATCTF_HOME/data/postgres"
-        docker start floatctf-postgres >/dev/null 2>&1 || true
-        ok "postgres 数据属主已修正为 999"
-    elif [ -z "$(ls -A "$FLOATCTF_HOME/data/postgres" 2>/dev/null)" ]; then
-        chown -R 999:999 "$FLOATCTF_HOME/data/postgres" 2>/dev/null || true
-    fi
+    # postgres 容器 uid 固定 999：数据目录须归其所有（首次启动时 initdb 写入）。
+    # install.sh 不启动容器，直接 chown 即可（不触碰运行中的容器）。
+    chown -R 999:999 "$FLOATCTF_HOME/data/postgres" 2>/dev/null || true
     ok "产物装配完成（容器目录属主）"
-}
-
-start_infra() {
-    info "──── 部署：基础设施容器（docker compose -f compose.prod.yml up -d --wait）────"
-    ( cd "$FLOATCTF_HOME" && docker compose -f compose.prod.yml up -d --wait ) \
-        || die "infra 容器启动/健康检查失败"
-    ok "infra 就绪（postgres/rustfs/nginx healthcheck 通过）"
-}
-
-init_db() {
-    info "──── 部署：数据库初始化（merged.sql，fresh-DB）────"
-    local pg_user pg_db
-    pg_user=$(env_get POSTGRES_USER postgres)
-    pg_db=$(env_get POSTGRES_DB floatctf_db)
-    # 仅当库是空的才初始化（避免误灌已有数据；全新安装语义）。
-    local table_count
-    table_count=$(docker exec floatctf-postgres psql -U "$pg_user" -d "$pg_db" -tAc \
-        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo "?")
-    if [ "$table_count" != "0" ] && [ "$table_count" != "?" ]; then
-        warn "数据库 $pg_db 已有 $table_count 张表，跳过 merged.sql 初始化（全新安装语义）"
-        return
-    fi
-    docker exec -i floatctf-postgres psql -U "$pg_user" -d "$pg_db" -v ON_ERROR_STOP=1 \
-        < "$FLOATCTF_HOME/merged.sql" || die "merged.sql 初始化失败"
-    ok "数据库初始化完成（merged.sql 已应用）"
 }
 
 install_systemd() {
     info "──── 部署：systemd 单元（floatctf-infra / api / target）────"
     systemctl daemon-reload
     systemctl enable floatctf.target floatctf-infra.service floatctf-api.service
-    ok "systemd 单元已安装并 enable（floatctf.target）"
-}
-
-start_api() {
-    info "──── 部署：启动 API（floatctf-api.service）────"
-    systemctl restart floatctf-api.service || die "API 启动失败（journalctl -u floatctf-api）"
-    local api_port tries=0 code
-    api_port=$(env_get API_PORT 9090)
-    while [ "$tries" -lt 30 ]; do
-        code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$api_port/api/announcements" 2>/dev/null || true)
-        if [ -n "$code" ] && [ "$code" != "000" ]; then
-            ok "API 已在 $api_port 监听（HTTP $code）"
-            return
-        fi
-        tries=$((tries + 1)); sleep 2
-    done
-    die "API 60s 内未监听 $api_port（journalctl -u floatctf-api 查看日志）"
+    ok "systemd 单元已写出并 enable（未启动；用 systemctl start floatctf.target 启动）"
 }
 
 run_deploy() {
-    info "──── 第三阶段：部署 → $FLOATCTF_HOME ────"
+    info "──── 第三阶段：部署（仅写文件 + 建服务，不启动）→ $FLOATCTF_HOME ────"
     precheck
     prepare_env
     write_compose_dev
@@ -1349,13 +1301,10 @@ run_deploy() {
     write_nginx_template
     prepare_configs
     stage_release
-    start_infra
-    init_db
     write_systemd_units
     install_systemd
-    start_api
     write_uninstall
-    ok "部署完成：$FLOATCTF_HOME"
+    ok "部署完成（未启动任何服务）：$FLOATCTF_HOME"
 }
 
 # ============================================================================
@@ -1379,21 +1328,14 @@ run_develop() {
     #    开发用 network_runtime=host，需要 nftables + WireGuard 能力，故不跳过。
     run_init
 
-    # 4. 起 dev 容器（db 自动用 merged.sql initdb + nginx 反代 api:9090/vite:3000）。
-    info "起开发基础设施（compose.dev.yml，PROJECT_ROOT=$src_root）..."
-    PROJECT_ROOT="$src_root" docker compose -f "$src_root/infra/compose/compose.dev.yml" up -d --build \
-        || die "dev 容器启动失败"
-    ok "开发基础设施就绪"
+    # 4. 不启动 dev 容器（只写文件/建主机能力）；容器留给 mise run infra:up。
+    info "主机与 dev 布局就绪（未启动任何容器/服务）"
 
     cat <<EOF
 
-开发环境已就绪：
-  - 数据库  : 127.0.0.1:5432（首次启动已用 merged.sql 自动初始化）
-  - RustFS  : 127.0.0.1:9000/9001
-  - nginx   : http://127.0.0.1:7780（/api/ → 127.0.0.1:9090，/ → 127.0.0.1:3000）
-
-接下来手动启动开发服务（两个终端）：
-  sudo mise run dev:api   # API → http://127.0.0.1:9090（host 网络需 root/CAP_NET_ADMIN）
+开发环境初始化完成（未启动任何容器/服务）。接下来手动启动：
+  mise run infra:up      # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + nginx:7780）
+  sudo mise run dev:api  # API → http://127.0.0.1:9090（host 网络需 root/CAP_NET_ADMIN）
   mise run dev:web       # Vite → http://127.0.0.1:3000
 
 统一入口 http://127.0.0.1:7780 。
@@ -1404,13 +1346,22 @@ EOF
 main() {
     if [ "$DEVELOP" = "1" ]; then
         run_develop
-        ok "开发环境初始化完成"
+        ok "开发环境初始化完成（未启动服务）"
         return
     fi
     info "FloatCTF 一键安装 → $FLOATCTF_HOME"
     run_init
     acquire_package
     run_deploy
+    cat <<EOF
+
+安装完成（未启动任何服务）。启动整平台：
+  sudo systemctl start floatctf.target
+（首次启动 postgres 会自动用 merged.sql 初始化数据库）
+查看状态：
+  systemctl status floatctf.target
+  journalctl -fu floatctf-infra floatctf-api
+EOF
     ok "FloatCTF 安装完成：$FLOATCTF_HOME"
 }
 

@@ -130,7 +130,8 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 **全新主机（一键安装）**：
 
 ```bash
-sudo ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅全新安装）
+sudo ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅写文件/建服务，不启动）
+sudo systemctl start floatctf.target   # 手动启动（首次启动 postgres 自动初始化数据库）
 systemctl status floatctf.target
 ```
 
@@ -141,13 +142,13 @@ FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
 ```
 
 **开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
-（同生产，含 nftables/WireGuard/host 网络）→ 用源码里的 `merged.sql` 初始化 db +
-dev compose（nginx 反代 api:9090 / vite:3000），三产物不下载不装配：
+（同生产，含 nftables/WireGuard/host 网络），三产物不下载不装配，也**不启动** dev
+容器：
 
 ```bash
 sudo ./scripts/install.sh --develop
-# 之后手动起开发服务：sudo mise run dev:api（host 需 root）+ mise run dev:web，
-# 入口 http://127.0.0.1:7780
+# 之后手动起开发环境：mise run infra:up（dev 容器）+ sudo mise run dev:api（host 需 root）
+#                     + mise run dev:web，入口 http://127.0.0.1:7780
 ```
 
 **卸载**：

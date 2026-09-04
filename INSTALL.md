@@ -67,9 +67,10 @@ sudo bash install.sh \
   --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
 ```
 
-部署完成后：
+部署完成后（`install.sh` **只写文件、创建服务，不启动**），手动启动整平台：
 
 ```bash
+sudo systemctl start floatctf.target   # 首次启动 postgres 自动用 merged.sql 初始化数据库
 systemctl status floatctf.target
 ```
 
@@ -87,9 +88,9 @@ systemctl status floatctf.target
 
 ```
 1. 主机初始化（幂等） → 2. 下载 3 产物 → 3. 部署
-   （docker/nftables/WG/       （API 二进制 +       （渲染配置 → 装配 →
-    转发/br_netfilter/           前端 dist +          infra(--wait) → psql 初始化
-    用户/布局，已存在即 skip）    merged.sql）         merged.sql → systemd → API）
+   （docker/nftables/WG/       （API 二进制 +       （渲染配置 → 装配 → 写
+    转发/br_netfilter/           前端 dist +          systemd 单元 + enable；
+    用户/布局，已存在即 skip）    merged.sql）         不启动任何服务）
 ```
 
 **主机初始化（幂等，逐项补齐）**：
@@ -118,10 +119,12 @@ sudo bash install.sh \
 # 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
 ```
 
-**部署（仅全新安装）**：首部署生成密钥（DB 密码 / RustFS 密钥 / JWT secret）写入
-`$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配 bin/web/merged.sql，起 infra，
-用 `psql` 应用 `merged.sql` 初始化空库（库已有表则跳过），装 systemd 单元，启动
-API，并内嵌生成 `$FLOATCTF_HOME/uninstall.sh`。
+**部署（仅全新安装，只写文件、不启动服务）**：首部署生成密钥（DB 密码 / RustFS
+密钥 / JWT secret）写入 `$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配
+bin/web/merged.sql，写出 systemd 单元并 `enable`（不 `start`），内嵌生成
+`$FLOATCTF_HOME/uninstall.sh`。数据库初始化推迟到首次 `systemctl start floatctf.target`：
+postgres 容器挂载 `merged.sql` 到 `docker-entrypoint-initdb.d`，空数据目录首次启动时
+自动建库。
 
 > **只做全新安装**：`merged.sql` 是 fresh-DB bootstrap，只适用于空库。
 > 已有数据的升级（forward-only 迁移）后续单独实现。
@@ -202,7 +205,7 @@ br_netfilter + floatctf 用户/布局），区别只在「产物来源与运行�
 | 主机初始化 | ✅ 完整（含 nftables/WG/host） | ✅ 完整 |
 | API 二进制 | 本地 `cargo run`（源码编译） | 下载 release 产物 |
 | 前端 | Vite dev server（3000，热更新） | 下载 web dist（静态） |
-| 数据库初始化 | 源码 merged.sql（dev compose initdb） | 下载 merged.sql（psql 应用） |
+| 数据库初始化 | 源码 merged.sql（dev compose initdb） | 下载 merged.sql（postgres 首次启动自动 initdb） |
 | nginx | dev compose，反代 api:9090 / vite:3000，入口 7780 | prod compose，host 网络 80/443 |
 | systemd | 不装 | floatctf-infra/api/target |
 | 运行身份 | `sudo mise run dev:api`（root，需 CAP_NET_ADMIN） | systemd floatctf 用户 + AmbientCapabilities |

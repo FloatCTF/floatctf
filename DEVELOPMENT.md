@@ -83,19 +83,19 @@ sudo -E env PATH="$PATH" /home/fb0sh/.local/bin/mise run dev:api
 git clone https://github.com/FloatCTF/floatctf.git
 cd floatctf
 mise run install                          # 装 Rust/Node/pnpm + pnpm install + cargo fetch
-sudo ./scripts/install.sh --develop       # 完整主机初始化 + 起 dev 容器 + merged.sql 初始化
+sudo ./scripts/install.sh --develop       # 完整主机初始化（只写文件，不启动 dev 容器）
 ```
 
 `--develop` 做的事：
 1. 检测是否在源码目录（缺 `Cargo.toml`/`apps/`/`infra/` 则报错）；
 2. 检查 `apps/api/src/sql/merged.sql` 存在（否则先 `mise run db:migration:merge`）；
 3. 完整主机初始化（与生产一致，含 nftables/WireGuard/host，**需要 root**）；
-4. 起 dev 容器（db 自动 initdb merged.sql + nginx 反代）；
-5. 打印下一步提示。
+4. 打印下一步提示（**不启动任何容器/服务**）。
 
-然后**手动**起开发服务（两个终端）：
+然后**手动**起开发环境（dev 容器 + 开发服务）：
 
 ```bash
+mise run infra:up         # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + nginx:7780）
 sudo mise run dev:api     # API → 127.0.0.1:9090
 mise run dev:web          # Vite → 127.0.0.1:3000
 ```

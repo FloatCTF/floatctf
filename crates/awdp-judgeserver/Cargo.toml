@@ -1,0 +1,23 @@
+[package]
+name = "floatctf-awdp-judgeserver"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "AWDP practice judge service: exploit check + flag curl verification"
+
+[[bin]]
+name = "awdp_judgeserver"
+path = "src/main.rs"
+
+[dependencies]
+actix-web = "4"
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["fs", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["serde", "v4"] }

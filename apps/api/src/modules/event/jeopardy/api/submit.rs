@@ -1,12 +1,12 @@
 use crate::api::prelude::*;
-use actix_web::web;
 
 use crate::{
     entity::{event_teams, event_writeup, events},
     modules::event::{
-        EventModuleRegistry,
-        jeopardy::application::context::{
-            EventContextBuilder, SubmitFlagRequest as ModeSubmitFlag,
+        common::domain::practice_event::require_practice_jeopardy_event,
+        jeopardy::application::{
+            context::{EventContextBuilder, SubmitFlagRequest as ModeSubmitFlag},
+            submit as jeopardy_submit,
         },
     },
 };
@@ -27,21 +27,21 @@ pub struct SubmitFlagRequest {
 pub async fn submit_flag(
     user: UserJwtGuard,
     ctx: ReqCtx,
-    registry: web::Data<EventModuleRegistry>,
     sfr: Json<SubmitFlagRequest>,
 ) -> UniResult<()> {
     let user = user.into_inner();
     let mut sfr = sfr.into_inner();
     sfr.flag = sfr.flag.trim().to_string();
 
-    // prepare event
+    // 练习提交可省略 event_id；显式解析系统练习赛事（Context 不再自动回落）。
     let event = match sfr.event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound("no event".into()))?
-            .into(),
-        None => None,
+            .ok_or(AppError::NotFound("no event".into()))?,
+        None => require_practice_jeopardy_event(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?,
     };
 
     let event_ctx = EventContextBuilder::new()
@@ -54,17 +54,15 @@ pub async fn submit_flag(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    registry
-        .get_ref()
-        .submit_flag(
-            &event_ctx,
-            ModeSubmitFlag {
-                instance_id: sfr.instance_id,
-                flag: sfr.flag.clone(),
-            },
-        )
-        .await
-        .map_err(|e| AppError::BadRequest(format!("submit flag error: {}", e)))?;
+    jeopardy_submit::submit_flag(
+        &event_ctx,
+        ModeSubmitFlag {
+            instance_id: sfr.instance_id,
+            flag: sfr.flag.clone(),
+        },
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(format!("submit flag error: {}", e)))?;
 
     if let Some(_event_id) = sfr.event_id {
         ctx.log

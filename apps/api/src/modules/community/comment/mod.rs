@@ -1,4 +1,4 @@
-//! Discussion comments for player and admin surfaces.
+//! 评论模块。
 
 pub mod dto;
 pub use dto::DiscussionCommentsDto;

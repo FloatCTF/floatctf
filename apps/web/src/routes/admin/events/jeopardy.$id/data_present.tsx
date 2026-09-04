@@ -99,7 +99,7 @@ function RouteComponent() {
                     <div id="head" className="flex gap-2 items-center">
                         <RocketIcon size={20} />
                         <h3>
-                            {dp?.event.title} - {dp?.event?.type}
+                            {dp?.event.title} - {dp?.event?.family}/{dp?.event?.participant_mode}
                         </h3>
                         <LabelGroup>
                             <Label variant="success" size="large">
@@ -248,7 +248,7 @@ function ChallengeTile({
     );
 }
 
-// Responsive grid that auto-fills available width (Primer/GitHub-like)
+// 自适应网格，自动填满可用宽度（Primer/GitHub 风格）
 export function ChallengeGrid({
     items,
     className,

@@ -7,9 +7,9 @@ export type AwdTeamNetworks = {
   ssh_password_ciphertext: string;
   ssh_password_nonce: string;
   key_version: number;
-  next_gamebox_host: number;
   next_wireguard_host: number;
   status: string;
   created_at: string;
   updated_at: string;
+  subnet_index: string;
 };

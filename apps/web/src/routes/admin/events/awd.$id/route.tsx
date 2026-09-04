@@ -1,92 +1,159 @@
 import { Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { createContext } from "react";
+import {
+	Outlet,
+	createFileRoute,
+	useLocation,
+	useNavigate,
+} from "@tanstack/react-router";
+import { createContext, useEffect } from "react";
 
 import { adminApi } from "@/api";
 import {
-    type Challenges,
-    type EventChallenges,
-    EventType,
-    type Events,
+	type Challenges,
+	type JeopardyEventChallenges as EventChallenges,
+	EventFamily,
+	type Events,
 } from "@/entity";
+import { useAdminAwdEventStream } from "@/hooks/useAdminAwdEventStream";
+import { AwdEventProgress, adminProgressState } from "@/components/awd/AwdEventProgress";
 import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
 
 export const Route = createFileRoute("/admin/events/awd/$id")({
-    component: RouteComponent,
+	component: RouteComponent,
 });
 
 export const EventContext = createContext<Events | null>(null);
 
 export type EventChallengeResult = {
-    id: string;
-    event_challenge: EventChallenges;
-    challenge: Challenges;
+	id: string;
+	event_challenge: EventChallenges;
+	challenge: Challenges;
 };
+
 function RouteComponent() {
-    const { id } = Route.useParams();
+	const { id } = Route.useParams();
+	const location = useLocation();
+	const navigate = useNavigate();
+	const eventQuery = useQuery({
+		queryKey: ["event", id],
+		queryFn: () => adminApi.events.get(id),
+	});
+	const statusQuery = useQuery({
+		queryKey: ["admin-awd-status", id],
+		queryFn: () => adminApi.awd.getStatus(id),
+	});
 
-    const {
-        data: event_data,
-        isLoading,
-        isError,
-    } = useQuery({
-        queryKey: ["event", id],
-        queryFn: () => adminApi.events.get(id),
-    });
+	// SSE — 管理端实时事件流
+	const stream = useAdminAwdEventStream({ eventId: id });
 
-    const event = event_data?.data;
+	const event = eventQuery.data?.data;
+	const configured = Boolean(statusQuery.data?.data);
 
-    if (isLoading) {
-        return <Spinner size="large" />;
-    }
+	useEffect(() => {
+		if (
+			!event?.is_virtual &&
+			!statusQuery.isLoading &&
+			!statusQuery.isError &&
+			!configured &&
+			location.pathname !== `/admin/events/awd/${id}/configure`
+		) {
+			navigate({
+				to: "/admin/events/awd/$id/configure",
+				params: { id },
+				replace: true,
+			});
+		}
+	}, [
+		configured,
+		event?.is_virtual,
+		id,
+		location.pathname,
+		navigate,
+		statusQuery.isError,
+		statusQuery.isLoading,
+	]);
 
-    if (isError || !event) {
-        return <div>Error loading event</div>;
-    }
+	if (eventQuery.isLoading || statusQuery.isLoading) {
+		return <Spinner size="large" />;
+	}
+	if (eventQuery.isError || !event) {
+		return <div>Error loading event</div>;
+	}
+	if (statusQuery.isError) {
+		return <div>Error loading AWD configuration</div>;
+	}
 
-    return (
-        <div>
-            <h3>
-                {event.title} #{event.id}
-            </h3>
-            <UnderlineNav aria-label="Repository">
-                <RouterNavItem to="/admin/events/awd/$id" params={{ id }}>
-                    Challenges
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/awd/$id/ops"
-                    params={{ id }}
-                >
-                    Ops
-                </RouterNavItem>
-                {event?.type === EventType.AwdTeam && (
-                    <RouterNavItem
-                        to="/admin/events/awd/$id/teams"
-                        params={{ id }}
-                    >
-                        Teams
-                    </RouterNavItem>
-                )}
-                <RouterNavItem
-                    to="/admin/events/awd/$id/announcements"
-                    params={{ id }}
-                >
-                    Announcements
-                </RouterNavItem>
-                <RouterNavItem
-                    to="/admin/events/awd/$id/writeups"
-                    params={{ id }}
-                >
-                    WriteUps
-                </RouterNavItem>
-                <RouterNavItem to="/admin/events/awd/$id/logs" params={{ id }}>
-                    Logs
-                </RouterNavItem>
-            </UnderlineNav>
-            <EventContext.Provider value={event}>
-                <Outlet /> {/* 普通 TanStack Router 的 Outlet */}
-            </EventContext.Provider>
-        </div>
-    );
+	const awd = statusQuery.data?.data ?? null;
+
+	return (
+		<div>
+			<h3>
+				{event.title} #{event.id}
+			</h3>
+			{awd && <AwdEventProgress {...adminProgressState(awd)} />}
+			<span className="text-xs opacity-60 ml-2">
+				{stream.connected ? "live" : "poll"}
+			</span>
+			<UnderlineNav aria-label="AWD Event">
+				{event.is_virtual ? (
+					<>
+						<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
+							Instance
+						</RouterNavItem>
+						<RouterNavItem to="/admin/events/awd/$id/logs" params={{ id }}>
+							Logs
+						</RouterNavItem>
+					</>
+				) : (
+					<>
+						{configured && (
+							<RouterNavItem to="/admin/events/awd/$id" params={{ id }}>
+								Overview
+							</RouterNavItem>
+						)}
+						<RouterNavItem to="/admin/events/awd/$id/configure" params={{ id }}>
+							Configure
+						</RouterNavItem>
+						{configured && (
+							<>
+								<RouterNavItem to="/admin/events/awd/$id/gameboxes" params={{ id }}>
+									GameBoxes
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/network" params={{ id }}>
+									Network
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/ops" params={{ id }}>
+									Operations
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/instance" params={{ id }}>
+									Instance
+								</RouterNavItem>
+								{event.family === EventFamily.Awd && (
+									<RouterNavItem to="/admin/events/awd/$id/teams" params={{ id }}>
+										Teams
+									</RouterNavItem>
+								)}
+								<RouterNavItem
+									to="/admin/events/awd/$id/announcements"
+									params={{ id }}
+								>
+									Announcements
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/writeups" params={{ id }}>
+									WriteUps
+								</RouterNavItem>
+								<RouterNavItem to="/admin/events/awd/$id/logs" params={{ id }}>
+									Logs
+								</RouterNavItem>
+							</>
+						)}
+					</>
+				)}
+			</UnderlineNav>
+			<EventContext.Provider value={event}>
+				<Outlet />
+			</EventContext.Provider>
+		</div>
+	);
 }

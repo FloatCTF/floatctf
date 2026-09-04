@@ -1,7 +1,7 @@
-//! JWT encode/decode and claims (technical layer).
+//! JWT 编解码与声明（技术层）。
 //!
-//! Business login/register/password-reset lives in `modules::identity`.
-//! HTTP guards live in `api::extractor::auth`.
+//! 业务登录/注册/重置口令见 `modules::identity`。
+//! HTTP 守卫见 `api::extractor::auth`。
 
 use crate::core::secret::Secret;
 use chrono::{Duration, Utc};
@@ -10,10 +10,10 @@ use sea_orm::prelude::Uuid;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-/// Process-wide JWT signing secret, installed once from `AppConfig` at startup.
+/// 进程级 JWT 签名密钥，启动时从 `AppConfig` 安装一次。
 static JWT_SECRET: OnceLock<Secret> = OnceLock::new();
 
-/// Install the JWT secret from typed config (call once during bootstrap).
+/// 从类型化配置安装 JWT 密钥（bootstrap 期间调用一次）。
 pub fn configure_jwt_secret(secret: Secret) {
     let _ = JWT_SECRET.set(secret);
 }
@@ -33,7 +33,7 @@ pub enum Role {
     AwdJudger,
 }
 
-/// JWT claims payload.
+/// JWT 声明载荷。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthClaims {
     pub sub: Uuid,

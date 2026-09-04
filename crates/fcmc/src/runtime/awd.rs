@@ -1,14 +1,8 @@
-//! AWD container runtime — unified Docker lifecycle for AWD events.
-//!
-//! Provides the `AwdContainerRuntime` trait and its `Docker` implementation
-//! for managing event networks, infrastructure containers, and GameBox
-//! instances with AWD security constraints.
+//! AWD 相关运行时辅助。
 
 use bollard::Docker;
 use std::collections::HashMap;
 use uuid::Uuid;
-
-use crate::metadata::HealthcheckConfig;
 
 // Re-export model types for convenience
 pub use super::model::{
@@ -26,6 +20,9 @@ pub struct EventNetworkSpec {
     pub network_name: String,
     pub subnet_cidr: String,
     pub internal: bool,
+    /// Host-side Linux bridge ifname（≤15 字符；网络名可更长，Linux ifname 有 15 字符上限）。
+    /// None 时回退用 network_name（仅当 network_name ≤15 字符时可用）。
+    pub bridge_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,8 +41,11 @@ pub struct InfrastructureContainerSpec {
 pub struct GameBoxSpec {
     pub event_id: Uuid,
     pub team_id: Uuid,
-    pub template_id: Uuid,
+    /// EventGameBox（逻辑靶机定义）；不再使用旧 template 概念。
+    pub event_gamebox_id: Uuid,
     pub instance_id: Uuid,
+    /// 当前 runtime generation（首次=1，Reset 后 +1；仅标签/审计，不参与逻辑身份）。
+    pub runtime_generation: i64,
     pub container_name: String,
     pub image_ref: String,
     pub network_name: String,
@@ -55,7 +55,9 @@ pub struct GameBoxSpec {
     pub cpu_millis: i64,
     pub memory_bytes: i64,
     pub pids_limit: i64,
-    pub healthcheck: Option<HealthcheckConfig>,
+    /// Docker-level healthcheck (CMD/CMD-SHELL). Manifest HTTP/TCP readiness
+    /// probes are a separate concern and are NOT stored here.
+    pub healthcheck: Option<HealthcheckSpec>,
     pub extra_hosts: Vec<String>,
     pub labels: HashMap<String, String>,
 }
@@ -64,7 +66,7 @@ pub struct GameBoxSpec {
 pub struct GameBoxResetSpec {
     pub event_id: Uuid,
     pub team_id: Uuid,
-    pub template_id: Uuid,
+    pub event_gamebox_id: Uuid,
     pub instance_id: Uuid,
     pub container_name: String,
     pub recreate_spec: GameBoxSpec,
@@ -81,6 +83,14 @@ pub trait AwdContainerRuntime: Send + Sync {
     async fn inspect_event_network(&self, network_id: &str) -> anyhow::Result<NetworkState>;
 
     async fn remove_event_network(&self, network_id: &str) -> anyhow::Result<()>;
+
+    /// 列出宿主全部 Docker 网络的 IPv4 子网（IPAM subnets），供 AWD CIDR
+    /// 分配器避让外部占用（Phase 10 A2：不能假设「FloatCTF 库里没有 = 空闲」）。
+    /// 默认实现返回空（无 Docker 能力的 mock 保持可用）；生产 DockerRuntime
+    /// 用 bollard list_networks 采集。纯读操作，绝不改动任何网络。
+    async fn list_docker_network_cidrs(&self) -> anyhow::Result<Vec<String>> {
+        Ok(vec![])
+    }
 
     async fn create_infrastructure_container(
         &self,
@@ -111,7 +121,8 @@ pub fn awd_labels(
     event_id: Uuid,
     team_id: Uuid,
     instance_id: Uuid,
-    template_id: Uuid,
+    event_gamebox_id: Uuid,
+    runtime_generation: i64,
     resource_kind: &str,
 ) -> HashMap<String, String> {
     let mut labels = HashMap::new();
@@ -122,8 +133,12 @@ pub fn awd_labels(
         instance_id.to_string(),
     );
     labels.insert(
-        "awd.gamebox_template_id".to_string(),
-        template_id.to_string(),
+        "awd.event_gamebox_id".to_string(),
+        event_gamebox_id.to_string(),
+    );
+    labels.insert(
+        "awd.runtime_generation".to_string(),
+        runtime_generation.to_string(),
     );
     labels.insert("awd.resource_kind".to_string(), resource_kind.to_string());
     labels
@@ -153,12 +168,16 @@ impl AwdContainerRuntime for DockerRuntime {
         use super::{ContainerRuntime, DockerContainerRuntime, NetworkSpec};
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        let bridge = spec
+            .bridge_name
+            .clone()
+            .unwrap_or_else(|| spec.network_name.clone());
         let handle = rt
             .create_network(NetworkSpec {
                 name: spec.network_name.clone(),
                 subnet_cidr: spec.subnet_cidr,
                 internal: spec.internal,
-                bridge_name: Some(spec.network_name.clone()),
+                bridge_name: Some(bridge),
                 check_duplicate: true,
             })
             .await?;
@@ -199,6 +218,7 @@ impl AwdContainerRuntime for DockerRuntime {
             Uuid::nil(),
             Uuid::nil(),
             Uuid::nil(),
+            0,
             "infrastructure",
         );
 
@@ -206,6 +226,11 @@ impl AwdContainerRuntime for DockerRuntime {
         let mem = spec.memory_bytes.unwrap_or(256 * 1024 * 1024);
 
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        use super::image::ImageRuntime;
+        ImageRuntime::ensure_image(&rt, &spec.image_ref, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure infra image {}: {e}", spec.image_ref))?;
+
         let handle = rt
             .create_and_start(ContainerSpec {
                 name: spec.container_name.clone(),
@@ -214,6 +239,7 @@ impl AwdContainerRuntime for DockerRuntime {
                 labels,
                 network_name: Some(spec.network_name),
                 fixed_ip: Some(spec.fixed_ip),
+                network_aliases: vec![],
                 port_bindings: vec![],
                 auto_remove: false,
                 resources: ResourceLimits {
@@ -236,39 +262,37 @@ impl AwdContainerRuntime for DockerRuntime {
     }
 
     async fn create_gamebox(&self, spec: GameBoxSpec) -> anyhow::Result<ContainerHandle> {
-        use super::{
-            ContainerRuntime, ContainerSpec, DockerContainerRuntime, HealthcheckSpec,
-            ResourceLimits,
-        };
+        use super::image::ImageRuntime;
+        use super::{ContainerRuntime, ContainerSpec, DockerContainerRuntime, ResourceLimits};
 
         let labels = awd_labels(
             spec.event_id,
             spec.team_id,
             spec.instance_id,
-            spec.template_id,
+            spec.event_gamebox_id,
+            spec.runtime_generation,
             "gamebox",
         );
 
-        let healthcheck = spec.healthcheck.as_ref().map(|hc| HealthcheckSpec {
-            test: hc.test.clone(),
-            interval_secs: hc.interval_secs as i64,
-            timeout_secs: hc.timeout_secs as i64,
-            retries: hc.retries as i64,
-            start_period_secs: hc.start_period_secs as i64,
-        });
-
         let rt = DockerContainerRuntime::new(self.docker.clone());
+        // Ensure pinned image is present locally (inspect; pull by digest/tag if missing).
+        // Never rebuild from package — Runtime only uses the immutable pin from Revision.
+        ImageRuntime::ensure_image(&rt, &spec.image_ref, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure gamebox image {}: {e}", spec.image_ref))?;
+
         let handle = rt
             .create_and_start(ContainerSpec {
                 name: spec.container_name.clone(),
                 image: spec.image_ref,
                 env: vec![
-                    format!("CTF_USER={}", spec.username),
-                    format!("CTF_PASSWORD={}", spec.password),
+                    format!("GAMEBOX_USERNAME={}", spec.username),
+                    format!("GAMEBOX_USERPASS={}", spec.password),
                 ],
                 labels,
                 network_name: Some(spec.network_name),
                 fixed_ip: Some(spec.fixed_ip),
+                network_aliases: vec![],
                 port_bindings: vec![],
                 auto_remove: false,
                 resources: ResourceLimits {
@@ -284,7 +308,7 @@ impl AwdContainerRuntime for DockerRuntime {
                     extra_hosts: spec.extra_hosts,
                 },
                 network_mode: None,
-                healthcheck,
+                healthcheck: spec.healthcheck,
             })
             .await?;
 
@@ -339,5 +363,36 @@ impl AwdContainerRuntime for DockerRuntime {
         use super::{ContainerRuntime, DockerContainerRuntime};
         let rt = DockerContainerRuntime::new(self.docker.clone());
         rt.logs(container_id, limit).await
+    }
+
+    async fn list_docker_network_cidrs(&self) -> anyhow::Result<Vec<String>> {
+        use bollard::network::ListNetworksOptions;
+
+        let networks = self
+            .docker
+            .list_networks(None::<ListNetworksOptions<String>>)
+            .await?;
+        let mut out = Vec::new();
+        for net in networks {
+            // IPAM subnets（IPv4 only；IPv6 与 AWD IPv4 设计无关）
+            let Some(ipam) = net.ipam else {
+                continue;
+            };
+            let Some(config) = ipam.config else {
+                continue;
+            };
+            for cfg in config {
+                if let Some(subnet) = cfg.subnet {
+                    if subnet.contains(':') {
+                        continue; // IPv6
+                    }
+                    out.push(subnet);
+                }
+            }
+        }
+        // 确定性：去重 + 排序，避免分配器决策依赖 daemon 返回顺序
+        out.sort();
+        out.dedup();
+        Ok(out)
     }
 }

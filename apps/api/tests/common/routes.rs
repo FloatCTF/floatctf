@@ -532,9 +532,9 @@ pub fn admin_routes() -> Vec<Route> {
         },
         Route {
             method: Method::Post,
-            path: p("/api/admin/challenges/{id}/build"),
+            path: "/api/admin/challenges/build",
             auth: Auth::SuperAdminRequired,
-            json_body: false,
+            json_body: true,
         },
         Route {
             method: Method::Delete,

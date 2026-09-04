@@ -1,4 +1,4 @@
-//! S3-compatible object storage (RustFS) initialization.
+//! S3 兼容对象存储（RustFS）初始化。
 
 use anyhow::Result;
 use aws_sdk_s3::primitives::ByteStream;

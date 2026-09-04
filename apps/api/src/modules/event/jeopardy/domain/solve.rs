@@ -1,17 +1,27 @@
-//! Submission request/value types shared by application services.
+//! 应用服务共享的提交请求/值类型。
 
 use uuid::Uuid;
 
-/// Who receives credit for a Jeopardy solve and how Instance is scoped.
+/// Jeopardy 解题归属主体，并决定实例作用域。
+///
+/// 由 [`crate::entity::sea_orm_active_enums::ParticipantMode`] 驱动：
+/// - 个人 → [`SolveSubject::User`]
+/// - 战队 → [`SolveSubject::Team`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolveSubject {
-    /// Jeopardy single: per User.
+    /// 按用户归属/计分（个人参赛）。
     User,
-    /// Jeopardy team: per Team (submitting user still recorded).
+    /// 按战队归属/计分（战队参赛；操作者用户仍会记入）。
     Team,
 }
 
-/// Input for a formal Jeopardy flag submission (not practice).
+impl SolveSubject {
+    pub fn is_team(self) -> bool {
+        matches!(self, Self::Team)
+    }
+}
+
+/// 正式 Jeopardy Flag 提交入参（竞赛计分路径）。
 #[derive(Debug, Clone)]
 pub struct JeopardySubmitRequest {
     pub event_id: Uuid,

@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppLink } from "../AppLink";
 import { NavigationProvider } from "../NavigationContext";
 
-// Mock window.scrollTo for jsdom (TanStack Router scroll restoration)
+// 为 jsdom mock window.scrollTo（TanStack Router 滚动恢复）
 beforeEach(() => {
 	window.scrollTo = vi.fn();
 });
@@ -28,7 +28,7 @@ afterEach(() => {
 	cleanup();
 });
 
-// ── Test helper ───────────────────────────────────────────────────────────────
+// ── 测试辅助 ───────────────────────────────────────────────────────────────
 
 function setup(initialPath: string, indexContent: React.ReactNode) {
 	const rootRoute = createRootRoute({
@@ -87,7 +87,7 @@ function setup(initialPath: string, indexContent: React.ReactNode) {
 	return { router, queryClient, ...result };
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── 测试 ─────────────────────────────────────────────────────────────────────
 
 describe("Navigation transaction race", () => {
 	it("later navigation supersedes earlier one", async () => {
@@ -102,13 +102,13 @@ describe("Navigation transaction race", () => {
 		const slowLink = await screen.findByText("Slow");
 		const fastLink = await screen.findByText("Fast");
 
-		// Click slow first (will take 2s to load)
+		// 先点慢路由（加载约 2s）
 		fireEvent.click(slowLink);
 
-		// Immediately click fast (should supersede)
+		// 立刻点快路由（应覆盖前者）
 		fireEvent.click(fastLink);
 
-		// The fast route should win — user sees fast page
+		// 快路由应胜出——用户看到快页面
 		await waitFor(
 			() => {
 				expect(screen.queryByTestId("fast")).toBeTruthy();
@@ -116,7 +116,7 @@ describe("Navigation transaction race", () => {
 			{ timeout: 5000 },
 		);
 
-		// Should NOT end up on slow page
+		// 不应停在慢页面
 		expect(router.state.location.pathname).toBe("/fast");
 	});
 });
@@ -132,7 +132,7 @@ describe("Navigation progress cleanup", () => {
 			expect(router.state.location.pathname).toBe("/about");
 		});
 
-		// Progress bar should be hidden (opacity 0 or not visible)
+		// 进度条应隐藏（opacity 0 或不可见）
 		await waitFor(
 			() => {
 				const bar = document.querySelector(".floatctf-nav-progress");

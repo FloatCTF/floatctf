@@ -1,4 +1,4 @@
-//! HTTP handlers for common event operations.
+//! 赛事公共 HTTP 处理器。
 
 pub mod dto;
 pub mod event_announcement_dto;
@@ -39,7 +39,7 @@ pub use player::{
 
 use actix_web::web::{self, ServiceConfig, scope};
 
-/// Register player common event routes under an existing `/events` scope.
+/// 在已有 `/events` 作用域下注册选手端公共赛事路由。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(player::get_events)
         .service(player::get_event_challenges)
@@ -58,7 +58,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(player::quit_team);
 }
 
-/// Register admin common event CRUD under an existing `/events` scope.
+/// 在已有 `/events` 作用域下注册管理端公共赛事 CRUD。
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     cfg.service(admin::create_event)
         .service(admin::delete_event)
@@ -69,7 +69,7 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
         .service(admin::get_report);
 }
 
-/// Nested admin event sub-resources (users/teams/challenges/announcements/writeups/logs).
+/// 管理端赛事嵌套子资源（users/teams/challenges/announcements/writeups/logs）。
 pub fn configure_admin_nested_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         scope("/{event_id}/users")
@@ -93,6 +93,7 @@ pub fn configure_admin_nested_routes(cfg: &mut ServiceConfig) {
     .service(
         scope("/{event_id}/challenges")
             .service(event_challenges::add_challenge)
+            .service(event_challenges::set_challenge_points)
             .service(event_challenges::remove_challenge)
             .service(event_challenges::get_challenges)
             .service(event_challenges::hidden_challenges)

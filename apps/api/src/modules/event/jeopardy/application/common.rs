@@ -1,39 +1,47 @@
-//! Shared instance launch/destroy helpers for Jeopardy modes.
+//! Jeopardy 实例启动/销毁共享辅助。
 
 pub use anyhow::{Context, Result, anyhow};
 
 use crate::{
-    entity::{instances, users},
+    entity::{event_challenge_instance, users},
     infrastructure::settings::get_setting,
     infrastructure::{WebDb, WebDocker},
     modules::event::jeopardy::application::instance_service::InstanceService,
 };
 use uuid::Uuid;
 
-/// InstanceLifecycle: launch / destroy / scheduled expire live here (fcmc is docker adapter).
+/// 实例生命周期：启动 / 销毁 / 定时过期（`fcmc` 为 Docker 适配层）。
 ///
-/// Launch and destroy both go through `InstanceService`.
+/// 启动与销毁均经 `InstanceService`（单版本模型：直接使用 Challenge 当前版本字段）。
 
 pub async fn launch_instance(
     db: &WebDb,
     docker: &WebDocker,
+    event_id: Uuid,
     challenge_id: Uuid,
     identifier: String,
     user_id: Uuid,
-    r#ref: String,
+    team_id: Option<Uuid>,
     flag_prefix: Option<String>,
-) -> anyhow::Result<instances::Model> {
+) -> anyhow::Result<event_challenge_instance::Model> {
     let service = InstanceService::with_docker(db.get_ref().clone(), docker.get_ref().clone());
     service
-        .launch(challenge_id, identifier, user_id, r#ref, flag_prefix)
+        .launch(
+            event_id,
+            challenge_id,
+            identifier,
+            user_id,
+            team_id,
+            flag_prefix,
+        )
         .await
 }
 
-/// Destroy a user-owned running instance via `InstanceService`.
+/// 经 `InstanceService` 销毁用户拥有的运行中实例。
 ///
-/// Order is always: stop/remove runtime first, then mark Completed.
-/// Docker failures leave the row as Failed for scheduler retry (no silent DB-first delete).
-/// Missing / already-completed instances are a no-op (HTTP DELETE + auto-destroy).
+/// 顺序固定：先停止/移除运行时，再将行标为 Completed。
+/// Docker 失败时行记为 Failed 供调度重试（禁止静默先删库）。
+/// 实例不存在或已完成视为幂等成功（HTTP DELETE 与自动销毁共用）。
 pub async fn destroy_instance(
     db: &WebDb,
     docker: &WebDocker,

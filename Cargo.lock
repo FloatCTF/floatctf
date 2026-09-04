@@ -1885,7 +1885,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fcmc"
-version = "0.9.4"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1893,6 +1893,7 @@ dependencies = [
  "clap",
  "colored",
  "futures-util",
+ "semver",
  "serde",
  "serde_json",
  "tar",
@@ -1950,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "floatctf"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "actix-cors",
  "actix-multipart",
@@ -1967,10 +1968,12 @@ dependencies = [
  "chrono",
  "cron",
  "fcmc",
+ "flate2",
  "futures-util",
  "hex",
  "hkdf",
  "hmac 0.12.1",
+ "ipnetwork",
  "jsonwebtoken",
  "lettre",
  "minijinja",
@@ -1979,10 +1982,12 @@ dependencies = [
  "redis",
  "reqwest",
  "sea-orm",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "sysinfo",
+ "tar",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1991,6 +1996,7 @@ dependencies = [
  "tracing-actix-web",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "uuid",
  "x25519-dalek",
  "zip",
@@ -2011,6 +2017,22 @@ dependencies = [
 
 [[package]]
 name = "floatctf-awd-judgeserver"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "async-trait",
+ "dotenvy",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "floatctf-awdp-judgeserver"
 version = "0.1.0"
 dependencies = [
  "actix-web",
@@ -4226,6 +4248,7 @@ dependencies = [
  "chrono",
  "derive_more 2.1.1",
  "futures-util",
+ "ipnetwork",
  "log",
  "mac_address",
  "ouroboros",
@@ -4268,6 +4291,7 @@ dependencies = [
  "bigdecimal",
  "chrono",
  "inherent",
+ "ipnetwork",
  "ordered-float",
  "rust_decimal",
  "serde_json",
@@ -4283,6 +4307,7 @@ checksum = "b0019f47430f7995af63deda77e238c17323359af241233ec768aba1faea7608"
 dependencies = [
  "bigdecimal",
  "chrono",
+ "ipnetwork",
  "rust_decimal",
  "sea-query",
  "serde_json",
@@ -4640,6 +4665,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hashlink",
  "indexmap 2.14.0",
+ "ipnetwork",
  "log",
  "memchr",
  "once_cell",
@@ -4767,6 +4793,7 @@ dependencies = [
  "hkdf",
  "hmac 0.12.1",
  "home",
+ "ipnetwork",
  "itoa",
  "log",
  "md-5 0.10.6",

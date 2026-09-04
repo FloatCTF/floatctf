@@ -1,7 +1,7 @@
-//! Player-facing event application service.
+//! 选手侧赛事应用服务。
 //!
-//! Business logic extracted from `api/service/events` HTTP handlers.
-//! Handlers: auth → parse → call these functions → map errors → UniResponse.
+//! 业务逻辑自 `api/service/events` HTTP 处理器抽出。
+//! 处理器职责：鉴权 → 解析 → 调用本模块 → 映射错误 → UniResponse。
 
 use std::str::FromStr;
 
@@ -16,20 +16,21 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenges, event_announcements, event_challenge_solves, event_challenges,
-        event_team_members, event_teams, event_users, events, instances,
-        sea_orm_active_enums::{EventTeamMemberRole, EventType},
+        challenges, event_announcements, event_challenge_instance, event_team_members, event_teams,
+        event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
         users,
     },
     infrastructure::{WebDb, WebDocker},
-    modules::event::{
-        jeopardy::{
-            application::context::EventContextBuilder,
-            domain::{
-                scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
-            },
+    modules::event::jeopardy::{
+        application::{
+            context::EventContextBuilder, instance as jeopardy_instance,
+            scoreboard as jeopardy_scoreboard, trend as jeopardy_trend,
+            writeup as jeopardy_writeup,
         },
-        registry::event_registry,
+        domain::{
+            scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
+        },
     },
 };
 
@@ -56,7 +57,8 @@ pub struct EventInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventChallengeResult {
-    pub challenge: challenges::Model,
+    /// Enriched challenge DTO（latest ready revision 摘要 + 附件元数据）。
+    pub challenge: crate::modules::challenge::catalog::ChallengesDto,
     pub current_points: f64,
     pub solved_count: u64,
     pub solved: bool,
@@ -65,7 +67,7 @@ pub struct EventChallengeResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventInstanceResult {
-    pub instance: instances::Model,
+    pub instance: event_challenge_instance::Model,
     pub challenge_name: String,
     pub user_nickname: String,
 }
@@ -91,14 +93,14 @@ impl EventStatus {
             .await?
             .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-        let now = Utc::now();
-        if now < event.start_time {
-            Ok(Self::NotStarted)
-        } else if now > event.end_time {
-            Ok(Self::Ended)
-        } else {
-            Ok(Self::Ongoing)
-        }
+        use crate::modules::event::common::domain::time_state::{
+            EventTimeStatus, event_time_status_of,
+        };
+        Ok(match event_time_status_of(&event, Utc::now()) {
+            EventTimeStatus::NotStarted => Self::NotStarted,
+            EventTimeStatus::Ongoing => Self::Ongoing,
+            EventTimeStatus::Ended => Self::Ended,
+        })
     }
 
     /// Variant that accepts `WebDb` (legacy call sites).
@@ -107,10 +109,34 @@ impl EventStatus {
     }
 }
 
+fn require_competition(event: &events::Model) -> Result<(), AppError> {
+    if event.purpose != EventPurpose::Competition {
+        return Err(AppError::BadRequest(
+            "UnsupportedForPurpose: only competition events support join/team".into(),
+        ));
+    }
+    if event.system_key.is_some() {
+        return Err(AppError::BadRequest(
+            "system-managed events cannot be joined".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_team_mode(event: &events::Model) -> Result<(), AppError> {
+    require_competition(event)?;
+    if event.participant_mode != ParticipantMode::Team {
+        return Err(AppError::BadRequest(
+            "UnsupportedForParticipantMode: team operations require team participant mode".into(),
+        ));
+    }
+    Ok(())
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────
 
-/// Enrich event rows with join status for `user_id`.
-/// Filters/queries are applied by the caller (HTTP layer owns FilterMapping).
+/// 为赛事行附加 `user_id` 的报名状态。
+/// 过滤/查询由调用方完成（HTTP 层持有 FilterMapping）。
 pub fn list_events_for_user(
     user_id: Uuid,
     events_with_users: Vec<(events::Model, Vec<event_users::Model>)>,
@@ -128,7 +154,7 @@ pub fn list_events_for_user(
         .collect()
 }
 
-/// Load a single non-hidden event with team membership detail for the user.
+/// 加载单条非隐藏赛事，并附带该用户的战队成员详情。
 pub async fn get_event_info(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -182,7 +208,7 @@ pub async fn get_event_info(
     }
 }
 
-/// Challenges for a joined user during ongoing/ended events.
+/// 已报名用户在进行中/已结束赛事中的题目列表。
 pub async fn list_event_challenges(
     db: &WebDb,
     event_id: Uuid,
@@ -211,8 +237,8 @@ pub async fn list_event_challenges(
     }
 
     let c_ec = event
-        .find_related(event_challenges::Entity)
-        .filter(event_challenges::Column::Hidden.eq(false))
+        .find_related(jeopardy_event_challenges::Entity)
+        .filter(jeopardy_event_challenges::Column::Hidden.eq(false))
         .find_also_related(challenges::Entity)
         .all(db.get_ref())
         .await?;
@@ -220,16 +246,21 @@ pub async fn list_event_challenges(
     let mut result = Vec::new();
     for (event_challenge, challenge) in c_ec {
         if let Some(c) = challenge {
-            let solved_count = event_challenge_solves::Entity::find()
-                .filter(event_challenge_solves::Column::EventId.eq(event_id))
-                .filter(event_challenge_solves::Column::ChallengeId.eq(c.id))
+            let solved_count = jeopardy_challenge_solves::Entity::find()
+                .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+                .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(c.id))
                 .count(db.get_ref())
                 .await?;
 
-            let (solved, solved_no) = event_registry()
-                .challenge_solve_status(db, &event, user, c.id)
-                .await
-                .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
+            let (solved, solved_no) = jeopardy_instance::challenge_solve_status(
+                db.get_ref(),
+                event.id,
+                c.id,
+                user.id,
+                &event.participant_mode,
+            )
+            .await
+            .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
 
             let current_points =
                 calculate_next_dynamic_score(db.get_ref(), event_challenge.points, solved_count)
@@ -238,7 +269,7 @@ pub async fn list_event_challenges(
                         AppError::BadRequest(format!("calculate_next_dynamic_score error: {}", e))
                     })?;
             result.push(EventChallengeResult {
-                challenge: c,
+                challenge: crate::modules::challenge::catalog::ChallengesDto::from(&c),
                 current_points,
                 solved_count,
                 solved,
@@ -266,13 +297,12 @@ pub async fn list_event_instances(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    let instances = event_registry()
-        .get_instances(&event_ctx)
+    let instances = jeopardy_instance::get_instances(&event_ctx)
         .await
         .map_err(|e| AppError::BadRequest(format!("get_instances error: {}", e)))?;
 
@@ -292,7 +322,7 @@ pub async fn get_challenge_instance(
     event_id: Uuid,
     challenge_id: Uuid,
     user: users::Model,
-) -> Result<instances::Model, AppError> {
+) -> Result<crate::modules::event::jeopardy::api::InstancesDto, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
@@ -303,20 +333,21 @@ pub async fn get_challenge_instance(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    event_registry()
-        .get_instance_by_challenge_id(&event_ctx, challenge_id)
+    let result = jeopardy_instance::get_instance_by_challenge_id(&event_ctx, challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))
+        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))?;
+
+    Ok(crate::modules::event::jeopardy::api::InstancesDto::from_pair(&result.0, &result.1))
 }
 
 // ── Team membership workflows ─────────────────────────────────────────────
 
-/// Create a team and join as captain (pre-start only). Returns the team model.
+/// 创建战队并以队长加入（仅赛前）。返回战队模型。
 pub async fn create_team(
     db: &WebDb,
     event_id: Uuid,
@@ -328,6 +359,8 @@ pub async fn create_team(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+
+    require_team_mode(&event)?;
 
     match EventStatus::check_web(db, &event.id).await? {
         EventStatus::Ongoing | EventStatus::Ended => {
@@ -373,7 +406,7 @@ pub async fn create_team(
     Ok(team)
 }
 
-/// Captain quits → team deleted; member quits → membership removed. Also leaves event_users.
+/// 队长退出 → 删除战队；队员退出 → 移除成员关系。同时离开 event_users。
 pub async fn quit_team(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -409,6 +442,12 @@ pub async fn join_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<event_teams::Model, AppError> {
+    let event = events::Entity::find_by_id(event_id)
+        .one(db)
+        .await?
+        .ok_or(AppError::NotFound("event not found".to_string()))?;
+    require_team_mode(&event)?;
+
     let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
         .one(db)
         .await?;
@@ -474,6 +513,8 @@ pub async fn join_event(
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
+    require_competition(&event)?;
+
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow join".to_string()));
     }
@@ -526,7 +567,7 @@ pub async fn leave_event(
     Ok((event, rows))
 }
 
-// ── Scoreboard / trend adapters (EventModuleRegistry) ─────────────────────
+// ── Scoreboard / trend adapters (Jeopardy application) ─────────────────────
 
 pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<ScoreboardItem>> {
     let event = events::Entity::find_by_id(event_id)
@@ -534,8 +575,7 @@ pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<Sco
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_scoreboard(&db, &event)
+    jeopardy_scoreboard::get_scoreboard(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
@@ -546,13 +586,12 @@ pub async fn get_trend(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<TrendIte
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_trend(&db, &event)
+    jeopardy_trend::get_trend(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
 
-/// Scoreboard with pre-start challenge list blanked.
+/// 积分榜；赛前题目列表置空。
 pub async fn get_scoreboard_for_player(
     db: WebDb,
     event_id: Uuid,
@@ -583,7 +622,7 @@ pub async fn list_announcements(
         .await?)
 }
 
-/// Resolve private object key for the player's own writeup (if any).
+/// 解析选手本人 Writeup 的私有对象键（若有）。
 pub async fn own_writeup_file_url(
     db: &WebDb,
     event_id: Uuid,
@@ -594,8 +633,7 @@ pub async fn own_writeup_file_url(
         .await?
         .ok_or(AppError::NotFound(format!("event {} not found", event_id)))?;
 
-    event_registry()
-        .own_writeup_file_url(db, &event, user)
+    jeopardy_writeup::own_writeup_file_url(db, &event, user)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)))?
         .ok_or(AppError::NotFound("Has no wp".into()))
@@ -603,7 +641,7 @@ pub async fn own_writeup_file_url(
 
 // ── Filter helpers for list endpoints (keep FilterMapping construction here) ─
 
-/// Build sea_orm condition filter mappings for player event list.
+/// 构建选手赛事列表的 sea_orm 条件过滤映射。
 pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
     [
         FilterMapping {
@@ -618,11 +656,11 @@ pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
             column: Box::new(|v| Condition::all().add(events::Column::Title.contains(v))),
         },
         FilterMapping {
-            key: "type",
+            key: "family",
             column: Box::new(|v| {
                 Condition::all().add(
-                    events::Column::Type
-                        .eq(serde_json::from_str(v).unwrap_or(EventType::JeopardyPractice)),
+                    events::Column::Family
+                        .eq(serde_json::from_str(v).unwrap_or(EventFamily::Jeopardy)),
                 )
             }),
         },

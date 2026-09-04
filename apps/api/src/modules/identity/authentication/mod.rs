@@ -1,4 +1,4 @@
-//! Player authentication: login, register, password reset.
+//! 登录、注册、会话与口令重置。
 
 use crate::api::prelude::*;
 use crate::core::security::jwt::{Role, gen_jwt_token, validate_jwt};

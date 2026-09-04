@@ -32,9 +32,31 @@ web_terminal = true
 unsafe_sql_admin = true
 
 [awd]
-host_network = false
+network_runtime = "host"
 flagserver_image = "floatctf/awd-flagserver:latest"
 judgeserver_image = "floatctf/awd-judgeserver:latest"
+
+[awdp]
+# AWDP 练习 JudgeServer：部署到练习专用 docker 子网（fctf-awdp-practice）。
+# platform_internal_url 是 JudgeServer 容器回推平台使用的基址（容器视角）。
+practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:latest"
+practice_network_subnet = "10.42.2.0/23"
+practice_judge_ip = "10.42.2.2"
+# 比赛赛事独立网络：每个 AWDP Event 从 network_pool 分配一个 /event_netmask 子网。
+network_pool = "10.43.0.0/16"
+event_netmask = 24
+platform_internal_url = "http://10.42.2.128:9090"  # 宿主 API（data 网络网关；host firewall 限制 GameBox 访问）
+
+# GameBox package import / image pipeline.
+# push = false → LocalOnly：本地 build+inspect 后以 image_id 为 pin，不要求 registry。
+[registry]
+image_prefix = "floatctf"
+push = false
+# username = ""
+# password = ""
+# server_address = ""
+insecure = false
+build_timeout_secs = 600
 
 [realtime]
 # redis_url = "redis://127.0.0.1:6379"

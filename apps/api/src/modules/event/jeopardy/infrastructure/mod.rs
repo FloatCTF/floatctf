@@ -1,4 +1,4 @@
-//! Jeopardy shared infrastructure (repos + container runtime).
+//! Jeopardy 共享基础设施（仓储与容器运行时适配）。
 
 pub mod container_runtime;
 pub mod instance_repository;

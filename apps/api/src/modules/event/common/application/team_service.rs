@@ -1,7 +1,6 @@
-//! Team membership service — centralized team operations.
+//! 战队成员关系服务：集中战队相关操作。
 //!
-//! Extracted from scattered handler queries to provide consistent
-//! team membership checks across admin and player handlers.
+//! 自分散的处理器查询抽出，统一管理端与选手端的战队成员校验。
 
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -9,9 +8,9 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::event_team_members;
-use crate::modules::event::awd_team::{AwdError, AwdResult};
+use crate::modules::event::awd::{AwdError, AwdResult};
 
-/// Find user's team for an event.
+/// 查找用户在某赛事中的战队。
 pub async fn find_user_team(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -27,8 +26,8 @@ pub async fn find_user_team(
     Ok(membership.map(|m| m.team_id))
 }
 
-/// Require user to be a member of a team in the event.
-/// Returns team_id or error.
+/// 要求用户是该赛事某战队的成员。
+/// 返回 team_id，否则错误。
 pub async fn require_member(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -39,7 +38,7 @@ pub async fn require_member(
         .ok_or_else(|| AwdError::NotFound("You are not in a team for this event".into()))
 }
 
-/// Check if user is a captain of their team.
+/// 检查用户是否为其战队队长。
 pub async fn is_captain(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) -> AwdResult<bool> {
     let membership = event_team_members::Entity::find()
         .filter(event_team_members::Column::EventId.eq(event_id))
@@ -53,7 +52,7 @@ pub async fn is_captain(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) 
         .unwrap_or(false))
 }
 
-/// Join a team (add user to team).
+/// 加入战队（将用户加入战队）。
 pub async fn join_team(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -83,7 +82,7 @@ pub async fn join_team(
     Ok(())
 }
 
-/// Leave a team (remove user from team).
+/// 退出战队（移除用户与战队的成员关系）。
 pub async fn leave_team(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) -> AwdResult<()> {
     let membership = event_team_members::Entity::find()
         .filter(event_team_members::Column::EventId.eq(event_id))

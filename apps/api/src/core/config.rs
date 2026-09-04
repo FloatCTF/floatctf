@@ -1,8 +1,7 @@
-//! Typed static configuration loaded once from a TOML file at process start.
+//! 进程启动时从 TOML 一次性加载的类型化静态配置。
 //!
-//! The file selected by `FLOATCTF_CONFIG` is the only source for process-static
-//! API configuration. Dynamic, admin-editable settings remain in the `settings`
-//! DB table (`seed_default_settings` / `get_setting`).
+//! 由 `FLOATCTF_CONFIG` 选定的文件是进程静态 API 配置的**唯一**来源。
+//! 可管理端动态编辑的项仍在数据库 `settings` 表（`seed_default_settings` / `get_setting`）。
 
 use std::path::Path;
 
@@ -10,7 +9,7 @@ use serde::Deserialize;
 
 use super::secret::Secret;
 
-/// Top-level application configuration.
+/// 应用顶层配置。
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub server: ServerConfig,
@@ -21,6 +20,9 @@ pub struct AppConfig {
     pub cors: CorsConfig,
     pub paths: PathConfig,
     pub awd: AwdStaticConfig,
+    pub awdp: AwdpStaticConfig,
+    /// Container image registry settings for GameBox package builds.
+    pub registry: RegistryConfig,
     pub features: FeatureFlags,
     pub realtime: RealtimeConfig,
     pub logging: LoggingConfig,
@@ -47,6 +49,25 @@ pub struct DockerConfig {
     pub use_defaults: bool,
 }
 
+/// GameBox 包导入管线的镜像仓库 / 推送设置。
+///
+/// `push = false` 为显式 **LocalOnly** 模式：本地 build+inspect 后标记
+/// 以 `image_id` 就绪；`image_repo_digest` 可为空；运行时钉扎 `image_id`。
+/// 当 `push = true` 时必须推送，且仅在拿到 RepoDigest 后标记就绪。
+#[derive(Debug, Clone)]
+pub struct RegistryConfig {
+    /// Image name prefix → `{image_prefix}/gameboxes/{safe}:{ver}`.
+    pub image_prefix: String,
+    /// When false: LocalOnly (no registry push). When true: must push + resolve digest.
+    pub push: bool,
+    pub username: Option<String>,
+    pub password: Option<Secret>,
+    pub server_address: Option<String>,
+    /// Reserved/document; bollard may not honor yet.
+    pub insecure: bool,
+    pub build_timeout_secs: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
     pub endpoint_url: String,
@@ -70,14 +91,47 @@ pub struct PathConfig {
     pub work_dir: String,
 }
 
-/// Static AWD process config (not per-event secrets).
+/// AWD 进程静态配置（非每场赛事密钥）。
 #[derive(Debug, Clone)]
 pub struct AwdStaticConfig {
     /// Whether AWD crypto could be derived from the shared JWT secret material.
     pub crypto_from_app_secret: bool,
-    pub host_network: bool,
+    /// 网络 runtime 选择（P1-17）：`host` = HostNetworkRuntime + NftablesFirewallRuntime；
+    /// `noop` = 仅 unit test / dev mock（Noop 永远不允许 Verified）。
+    /// 取代旧 `host_network = true/false`；不新增 `firewall_backend` 开关。
+    pub network_runtime: String,
     pub flagserver_image: String,
     pub judgeserver_image: String,
+    /// JudgeServer/FlagServer 访问 FloatCTF internal API 的端点**模板**（容器视角，
+    /// `scheme://host:port`）。Phase 9.1 起 host 会被替换为各赛事 infra 网关
+    /// （`derive_event_internal_platform_url`，spec 授权）——固定 host 对网段推进的
+    /// 多赛事无效（旧事件桥网关被清理后失效）。模板只提供 scheme + 端口。
+    pub platform_internal_url: String,
+}
+
+/// AWDP（含练习）进程静态配置。
+#[derive(Debug, Clone)]
+pub struct AwdpStaticConfig {
+    /// 练习 JudgeServer 镜像（部署到练习 docker 子网）。
+    pub practice_judgeserver_image: String,
+    /// 练习专用 docker 子网 CIDR（全部练习实例 + JudgeServer 所在）。
+    pub practice_network_subnet: String,
+    /// 练习子网内 JudgeServer 固定 IP。
+    pub practice_judge_ip: String,
+    /// 比赛赛事子网分配池（CIDR）：每 AWDP Event 从池中分配一个 `event_netmask` 大小的子网。
+    pub network_pool: String,
+    /// 每赛事子网掩码长度（如 24 → 每赛事 /24；默认 24）。
+    pub event_netmask: i32,
+    /// JudgeServer data plane 主机名（玩家 contract；data 网络内 DNS alias，默认 judge-server）。
+    pub practice_judge_data_host: String,
+    /// JudgeServer 访问 FloatCTF internal API 的基址（容器视角，control/data 网络可达；
+    /// 宿主部署时用 data 网络网关直连宿主 API，host firewall 限制 GameBox 访问；
+    /// 必须显式配置——不再默认 host.docker.internal（§36/§37）。
+    pub platform_internal_url: String,
+    /// 评估 lease 时长（秒）：worker claim 后持有；到期未心跳可被回收重领。
+    pub eval_lease_duration_secs: i64,
+    /// 评估最大领取次数：超过则终态 PLATFORM_ERROR，不再重领。
+    pub eval_max_attempts: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +171,10 @@ struct TomlConfig {
     features: FeaturesToml,
     #[serde(default)]
     awd: AwdToml,
+    #[serde(default)]
+    awdp: AwdpToml,
+    #[serde(default)]
+    registry: RegistryToml,
     #[serde(default)]
     realtime: RealtimeToml,
     #[serde(default)]
@@ -207,23 +265,148 @@ struct FeaturesToml {
 struct AwdToml {
     #[serde(default = "default_true")]
     crypto_from_app_secret: bool,
-    #[serde(default)]
-    host_network: bool,
+    /// 默认 `noop`（dev/CI 无特权环境）；生产配置显式写 `host`。
+    #[serde(default = "default_network_runtime")]
+    network_runtime: String,
     #[serde(default = "default_flagserver_image")]
     flagserver_image: String,
     #[serde(default = "default_judgeserver_image")]
     judgeserver_image: String,
+    #[serde(default = "default_platform_internal_url")]
+    platform_internal_url: String,
+}
+
+fn default_network_runtime() -> String {
+    "noop".to_string()
 }
 
 impl Default for AwdToml {
     fn default() -> Self {
         Self {
             crypto_from_app_secret: true,
-            host_network: false,
+            network_runtime: default_network_runtime(),
             flagserver_image: default_flagserver_image(),
             judgeserver_image: default_judgeserver_image(),
+            platform_internal_url: default_platform_internal_url(),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct AwdpToml {
+    #[serde(default = "default_practice_judgeserver_image")]
+    practice_judgeserver_image: String,
+    #[serde(default = "default_practice_network_subnet")]
+    practice_network_subnet: String,
+    #[serde(default = "default_practice_judge_ip")]
+    practice_judge_ip: String,
+    #[serde(default = "default_network_pool")]
+    network_pool: String,
+    #[serde(default = "default_event_netmask")]
+    event_netmask: i32,
+    #[serde(default = "default_practice_judge_data_host")]
+    practice_judge_data_host: String,
+    #[serde(default = "default_platform_internal_url")]
+    platform_internal_url: String,
+    #[serde(default = "default_eval_lease_duration_secs")]
+    eval_lease_duration_secs: i64,
+    #[serde(default = "default_eval_max_attempts")]
+    eval_max_attempts: i32,
+}
+
+impl Default for AwdpToml {
+    fn default() -> Self {
+        Self {
+            practice_judgeserver_image: default_practice_judgeserver_image(),
+            practice_network_subnet: default_practice_network_subnet(),
+            practice_judge_ip: default_practice_judge_ip(),
+            network_pool: default_network_pool(),
+            event_netmask: default_event_netmask(),
+            practice_judge_data_host: default_practice_judge_data_host(),
+            platform_internal_url: default_platform_internal_url(),
+            eval_lease_duration_secs: default_eval_lease_duration_secs(),
+            eval_max_attempts: default_eval_max_attempts(),
+        }
+    }
+}
+
+fn default_eval_lease_duration_secs() -> i64 {
+    120
+}
+
+fn default_eval_max_attempts() -> i32 {
+    3
+}
+
+fn default_practice_judge_data_host() -> String {
+    "judge-server".to_string()
+}
+
+fn default_practice_judgeserver_image() -> String {
+    "floatctf/infra/awdp-judgeserver:latest".to_string()
+}
+
+fn default_practice_network_subnet() -> String {
+    "10.42.2.0/23".to_string()
+}
+
+fn default_practice_judge_ip() -> String {
+    "10.42.2.2".to_string()
+}
+
+fn default_network_pool() -> String {
+    // 10.43.0.0/16：与练习固定网络（10.42.2.0/24）、control（10.42.8.0/24）完全错开，
+    // 避免 Docker 报 "Pool overlaps with other one on this address space"。
+    "10.43.0.0/16".to_string()
+}
+
+fn default_event_netmask() -> i32 {
+    24
+}
+
+fn default_platform_internal_url() -> String {
+    String::new()
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistryToml {
+    #[serde(default = "default_image_prefix")]
+    image_prefix: String,
+    /// Default false = LocalOnly (dev-friendly).
+    #[serde(default)]
+    push: bool,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    server_address: Option<String>,
+    #[serde(default)]
+    insecure: bool,
+    #[serde(default = "default_build_timeout_secs")]
+    build_timeout_secs: u64,
+}
+
+impl Default for RegistryToml {
+    fn default() -> Self {
+        Self {
+            image_prefix: default_image_prefix(),
+            push: false,
+            username: None,
+            password: None,
+            server_address: None,
+            insecure: false,
+            build_timeout_secs: default_build_timeout_secs(),
+        }
+    }
+}
+
+fn default_image_prefix() -> String {
+    "floatctf".to_string()
+}
+
+fn default_build_timeout_secs() -> u64 {
+    600
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -298,9 +481,30 @@ impl AppConfig {
             },
             awd: AwdStaticConfig {
                 crypto_from_app_secret: file.awd.crypto_from_app_secret,
-                host_network: file.awd.host_network,
+                network_runtime: file.awd.network_runtime,
                 flagserver_image: file.awd.flagserver_image,
                 judgeserver_image: file.awd.judgeserver_image,
+                platform_internal_url: file.awd.platform_internal_url,
+            },
+            awdp: AwdpStaticConfig {
+                practice_judgeserver_image: file.awdp.practice_judgeserver_image,
+                practice_network_subnet: file.awdp.practice_network_subnet,
+                practice_judge_ip: file.awdp.practice_judge_ip,
+                network_pool: file.awdp.network_pool,
+                event_netmask: file.awdp.event_netmask,
+                practice_judge_data_host: file.awdp.practice_judge_data_host,
+                platform_internal_url: file.awdp.platform_internal_url,
+                eval_lease_duration_secs: file.awdp.eval_lease_duration_secs,
+                eval_max_attempts: file.awdp.eval_max_attempts,
+            },
+            registry: RegistryConfig {
+                image_prefix: file.registry.image_prefix,
+                push: file.registry.push,
+                username: non_empty(file.registry.username),
+                password: non_empty(file.registry.password).map(Secret::new),
+                server_address: non_empty(file.registry.server_address),
+                insecure: file.registry.insecure,
+                build_timeout_secs: file.registry.build_timeout_secs,
             },
             features: FeatureFlags {
                 enable_unsafe_sql_admin: file.features.unsafe_sql_admin,
@@ -328,6 +532,9 @@ impl AppConfig {
             cors_origins = ?self.cors.allowed_origins,
             enable_unsafe_sql_admin = self.features.enable_unsafe_sql_admin,
             enable_web_terminal = self.features.enable_web_terminal,
+            registry_image_prefix = %self.registry.image_prefix,
+            registry_push = self.registry.push,
+            registry_build_timeout_secs = self.registry.build_timeout_secs,
             database_url = "Secret(***)",
             jwt_secret = "Secret(***)",
             "AppConfig loaded from TOML"
@@ -361,7 +568,7 @@ fn default_listen_port() -> u16 {
 fn default_work_dir() -> String {
     "./".to_string()
 }
-/// Empty timezone = leave the process local timezone untouched.
+/// 时区为空 = 不修改进程本地时区。
 fn default_timezone() -> String {
     String::new()
 }

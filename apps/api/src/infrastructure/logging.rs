@@ -1,4 +1,4 @@
-//! Request/audit logging service (`LogService` / `WebLog`).
+//! 请求/审计日志服务（`LogService` / `WebLog`）。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::Value;
@@ -84,7 +84,9 @@ impl LogService {
             event_id: Set(event.id),
             user_id: Set(user_id),
             team_id: Set(team_id),
-            r#type: Set(event.r#type.clone()),
+            family: Set(event.family.clone()),
+            purpose: Set(event.purpose.clone()),
+            participant_mode: Set(event.participant_mode.clone()),
             level: Set(level.to_string()),
             action: Set(action.to_string()),
             details: Set(details),

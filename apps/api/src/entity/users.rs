@@ -30,8 +30,18 @@ pub enum Relation {
     AwdResetRecords,
     #[sea_orm(has_many = "super::awd_wireguard_peers::Entity")]
     AwdWireguardPeers,
-    #[sea_orm(has_many = "super::challenge_solves::Entity")]
-    ChallengeSolves,
+    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
+    AwdpBreaks,
+    #[sea_orm(has_many = "super::awdp_instances::Entity")]
+    AwdpInstances,
+    #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
+    AwdpPatchSubmissions,
+    #[sea_orm(has_many = "super::awdp_run_writeups::Entity")]
+    AwdpRunWriteups,
+    #[sea_orm(has_many = "super::awdp_runs::Entity")]
+    AwdpRuns,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
     #[sea_orm(has_many = "super::discussion_comments::Entity")]
@@ -40,8 +50,8 @@ pub enum Relation {
     DiscussionLikes,
     #[sea_orm(has_many = "super::discussions::Entity")]
     Discussions,
-    #[sea_orm(has_many = "super::event_challenge_solves::Entity")]
-    EventChallengeSolves,
+    #[sea_orm(has_many = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
     #[sea_orm(has_many = "super::event_instances::Entity")]
     EventInstances,
     #[sea_orm(has_many = "super::event_logs::Entity")]
@@ -52,8 +62,8 @@ pub enum Relation {
     EventUsers,
     #[sea_orm(has_many = "super::event_writeup::Entity")]
     EventWriteup,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
+    #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
+    JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::logs::Entity")]
     Logs,
 }
@@ -76,9 +86,39 @@ impl Related<super::awd_wireguard_peers::Entity> for Entity {
     }
 }
 
-impl Related<super::challenge_solves::Entity> for Entity {
+impl Related<super::awdp_breaks::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ChallengeSolves.def()
+        Relation::AwdpBreaks.def()
+    }
+}
+
+impl Related<super::awdp_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpInstances.def()
+    }
+}
+
+impl Related<super::awdp_patch_submissions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpPatchSubmissions.def()
+    }
+}
+
+impl Related<super::awdp_run_writeups::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRunWriteups.def()
+    }
+}
+
+impl Related<super::awdp_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRuns.def()
+    }
+}
+
+impl Related<super::awdp_score_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpScoreEvents.def()
     }
 }
 
@@ -106,9 +146,9 @@ impl Related<super::discussions::Entity> for Entity {
     }
 }
 
-impl Related<super::event_challenge_solves::Entity> for Entity {
+impl Related<super::event_challenge_instance::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallengeSolves.def()
+        Relation::EventChallengeInstance.def()
     }
 }
 
@@ -142,9 +182,9 @@ impl Related<super::event_writeup::Entity> for Entity {
     }
 }
 
-impl Related<super::instances::Entity> for Entity {
+impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::JeopardyChallengeSolves.def()
     }
 }
 

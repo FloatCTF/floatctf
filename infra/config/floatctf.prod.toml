@@ -1,0 +1,56 @@
+# FloatCTF production configuration (Phase 10.6).
+# Deployed to ${FLOATCTF_HOME}/config/floatctf.toml by scripts/install.sh
+# (root:floatctf 640，含密钥，重部署时保留既有文件不覆盖密钥）。
+#
+# 铁律 1：配置只从本文件读取（FLOATCTF_CONFIG 指向它）；API 不读环境变量。
+
+[application]
+main_url = "http://${HOST_ADDRESS}:${HTTP_PORT}"
+
+[server]
+# 必须 0.0.0.0：AWD FlagServer/JudgeServer 经赛事 infra 网关（docker bridge IP）
+# 回连平台（derive_event_internal_platform_url），仅回环监听会导致回连失败
+# （Phase 9 真实部署实测）。对外暴露面由宿主 nftables 限制，勿在此收紧。
+listen_ip = "0.0.0.0"
+listen_port = ${API_PORT}
+work_dir = "${FLOATCTF_HOME}/runtime"
+
+[auth]
+# 生产密钥：由 install.sh 首次部署生成并写入本文件，重部署保留。
+jwt_secret = "${JWT_SECRET}"
+
+[database]
+url = "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}"
+
+[logging]
+filter = "actix_server=info,floatctf=info,fcmc=info"
+timezone = "Asia/Shanghai"
+
+[rustfs]
+region = "cn-east-1"
+endpoint_url = "http://127.0.0.1:${RUSTFS_PORT}"
+access_key_id = "${RUSTFS_ACCESS_KEY}"
+secret_access_key = "${RUSTFS_SECRET_KEY}"
+
+[features]
+web_terminal = true
+unsafe_sql_admin = true
+
+[awd]
+network_runtime = "host"
+flagserver_image = "floatctf/awd-flagserver:${VERSION}"
+judgeserver_image = "floatctf/awd-judgeserver:${VERSION}"
+
+[awdp]
+practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:latest"
+practice_network_subnet = "10.42.2.0/23"
+practice_judge_ip = "10.42.2.2"
+network_pool = "10.43.0.0/16"
+event_netmask = 24
+platform_internal_url = "http://${HOST_ADDRESS}:${API_PORT}"
+
+[registry]
+image_prefix = "floatctf"
+push = false
+insecure = false
+build_timeout_secs = 600

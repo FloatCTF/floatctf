@@ -1,0 +1,26 @@
+name = "test-gamebox-awdp"
+version = "1.0.0"
+author = "tester@example.com"
+category = "web"
+description = "Gamebox with awdp exploit"
+safe_name = "test-gamebox-awdp"
+
+[gamebox]
+username = "ctf"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+
+[judge]
+script = "judge/check.py"
+
+[awdp]
+exploit_script = "awdp/exploit.py"
+source_code_dir = "/var/www/html"
+
+[gamebox.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100

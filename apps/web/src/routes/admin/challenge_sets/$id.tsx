@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import { adminApi } from "@/api";
 import { GenericTable, useMsgBanner } from "@/components";
 import { DatetimeToShow } from "@/util";
-import type { Challenges } from "@/entity";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { useSelectedRowIds } from "@/util";
 import { Dialog } from "@primer/react/experimental";
@@ -37,7 +37,7 @@ function RouteComponent() {
             accessorKey: "hidden",
             header: "Hidden",
             field: "hidden",
-            renderCell: (row: Challenges) => {
+            renderCell: (row: ChallengesListItem) => {
                 return <span>{row.hidden ? "✓" : <></>}</span>;
             },
             sortBy: true,
@@ -46,7 +46,7 @@ function RouteComponent() {
             accessorKey: "updated_at",
             header: "Updated At",
             field: "updated_at",
-            renderCell: (row: Challenges) => {
+            renderCell: (row: ChallengesListItem) => {
                 return <span>{DatetimeToShow(row.updated_at)}</span>;
             },
         },
@@ -141,7 +141,7 @@ function AddChallengeButton({
             accessorKey: "hidden",
             header: "Hidden",
             field: "hidden",
-            renderCell: (row: Challenges) => {
+            renderCell: (row: ChallengesListItem) => {
                 return <span>{row.hidden ? "✓" : <></>}</span>;
             },
         },

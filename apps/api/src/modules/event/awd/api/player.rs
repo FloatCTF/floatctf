@@ -1,0 +1,606 @@
+//! AWD 选手端 HTTP 处理器。
+
+use actix_web::{HttpResponse, web};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use uuid::Uuid;
+
+use crate::{
+    api::{AppError, UniResponse, UniResult, extractor::auth::UserJwtGuard, prelude::*},
+    modules::event::awd::{
+        domain::AwdEventStatusExt,
+        repo::{event_repo, gamebox_repo, round_repo},
+        service::{event_service, flag_service, score_service, submission_service},
+    },
+    modules::event::common::infrastructure::event_repository as repo,
+};
+
+use super::dto::*;
+
+use actix_web::{get, post};
+
+/// GET /api/events/{event_id}/awd/gameboxes
+#[get("{event_id}/awd/gameboxes")]
+pub async fn get_my_gameboxes(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<GameBoxResponse>> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    // Find user's team for this event (using centralized repository)
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+
+    let instances =
+        gamebox_repo::find_instances_by_team(ctx.db.get_ref(), event_id, membership.team_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+    // 批量解析 EventGameBox → GameBox 身份名（对应 Jeopardy 的 Challenge 列）。
+    use crate::entity::{awd_event_gameboxes, gameboxes};
+    use sea_orm::QueryFilter;
+    use std::collections::HashMap;
+    let eg_list = awd_event_gameboxes::Entity::find()
+        .filter(awd_event_gameboxes::Column::EventId.eq(event_id))
+        .all(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let eg_map: HashMap<Uuid, Uuid> = eg_list.iter().map(|e| (e.id, e.gamebox_id)).collect();
+    let gb_ids: Vec<Uuid> = eg_map.values().copied().collect();
+    let gb_list = if gb_ids.is_empty() {
+        vec![]
+    } else {
+        gameboxes::Entity::find()
+            .filter(gameboxes::Column::Id.is_in(gb_ids))
+            .all(ctx.db.get_ref())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+    };
+    let name_map: HashMap<Uuid, String> = gb_list.iter().map(|g| (g.id, g.name.clone())).collect();
+
+    let response: Vec<GameBoxResponse> = instances
+        .into_iter()
+        .map(|(i, root)| GameBoxResponse {
+            id: i.id,
+            team_id: i.team_id,
+            event_gamebox_id: i.event_gamebox_id,
+            gamebox_name: eg_map
+                .get(&i.event_gamebox_id)
+                .and_then(|gbid| name_map.get(gbid))
+                .cloned()
+                .unwrap_or_default(),
+            status: format!("{:?}", i.status).to_lowercase(),
+            gamebox_ip: i.gamebox_ip.ip().to_string(),
+            container_name: root.container_name,
+            health_status: i.health_status,
+        })
+        .collect();
+
+    UniResponse::ok(response.into()).into()
+}
+
+/// POST /api/events/{event_id}/awd/gameboxes/{instance_id}/reset
+#[post("{event_id}/awd/gameboxes/{instance_id}/reset")]
+pub async fn reset_my_gamebox(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<(Uuid, Uuid)>,
+) -> UniResult<()> {
+    let (event_id, instance_id) = path.into_inner();
+    let user = user.into_inner();
+
+    // Guard: Finished events cannot be reset
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "Cannot reset gamebox after event is finished".into(),
+        ));
+    }
+    // Guard: Final settlement (no active round) also blocks reset
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "Cannot reset gamebox during final settlement".into(),
+                ));
+            }
+        }
+    }
+
+    // Find user's team for this event (using centralized repository)
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+
+    // P5-10 限流：reset（每队伍每小时）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Reset,
+            &membership.team_id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
+
+    // P4-2：player reset 接入完整 execute_reset 流程（同 IP/同密码/Ready/ResetFailed）
+    crate::modules::event::awd::service::reset_service::execute_reset(
+        ctx.db.get_ref(),
+        awd.containers.as_ref(),
+        crate::modules::event::awd::service::reset_service::ResetContext {
+            event_id,
+            instance_id,
+            team_id: membership.team_id,
+            actor: crate::modules::event::awd::service::reset_service::ResetActor::Player {
+                user_id: user.id,
+                team_id: membership.team_id,
+            },
+        },
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    UniResponse::ok_none().into()
+}
+
+/// POST /api/events/{event_id}/awd/submissions
+#[post("{event_id}/awd/submissions")]
+pub async fn submit_flag(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<Uuid>,
+    body: web::Json<SubmitFlagRequest>,
+) -> UniResult<SubmissionResponse> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    // Guard: Finished events cannot accept submissions
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "Cannot submit flag after event is finished".into(),
+        ));
+    }
+
+    // P5-10 限流：submit（每用户每分钟）
+    awd.rate_limiter
+        .check(
+            ctx.db.get_ref(),
+            crate::infrastructure::ratelimit::RateScope::Submit,
+            &user.id.to_string(),
+        )
+        .await
+        .map_err(AppError::from)?;
+
+    // Find user's team for this event (using centralized repository)
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+
+    let attacker_team_id = membership.team_id;
+
+    // Validate the submission
+    let (flag_issue_id, victim_team_id, gamebox_instance_id) = flag_service::validate_submission(
+        ctx.db.get_ref(),
+        event_id,
+        &body.flag,
+        attacker_team_id,
+        user.id,
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    // Get active round
+    let round = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("No active round".into()))?;
+
+    // 从 Instance → EventGameBox 解析计分配置（§28：攻击分属于 EventGameBox）
+    let (instance, _root) =
+        gamebox_repo::find_instance_by_id(ctx.db.get_ref(), gamebox_instance_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .unwrap();
+    let resolved =
+        crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
+            ctx.db.get_ref(),
+            instance.event_gamebox_id,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Process the submission
+    let result = submission_service::process_submission(
+        ctx.db.get_ref(),
+        event_id,
+        round.id,
+        flag_issue_id,
+        attacker_team_id,
+        victim_team_id,
+        gamebox_instance_id,
+        user.id,
+        resolved.event_gamebox.attack_score,
+        resolved.event_gamebox.first_bonus,
+        resolved.event_gamebox.id,
+        awd.publisher.as_ref(),
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    UniResponse::ok(
+        SubmissionResponse {
+            success: true,
+            attack_score: result.attack_score_delta,
+            victim_loss: result.victim_loss_delta,
+            first_bonus: result.first_bonus_delta,
+            was_first_blood: result.was_first_blood,
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// GET /api/events/{event_id}/awd/ssh-config
+/// 返回本队 SSH 访问凭据：团队级密码（解密）+ 每实例用户名/IP/端口。
+/// 仅对已加入本赛事队伍的用户可见；凭据只属于本队（GameBox 模型 §22.1 一队一密码）。
+#[get("{event_id}/awd/ssh-config")]
+pub async fn get_ssh_config(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<Uuid>,
+) -> UniResult<super::dto::SshAccessResponse> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    // Guard: Finished/Final Settlement blocks SSH access
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "SSH access is disabled after event is finished".into(),
+        ));
+    }
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "SSH access is disabled during final settlement".into(),
+                ));
+            }
+        }
+    }
+
+    use crate::entity::event_team_members;
+    let membership = event_team_members::Entity::find()
+        .filter(event_team_members::Column::EventId.eq(event_id))
+        .filter(event_team_members::Column::UserId.eq(user.id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+
+    use crate::entity::awd_team_networks;
+    let team_net = awd_team_networks::Entity::find()
+        .filter(awd_team_networks::Column::EventId.eq(event_id))
+        .filter(awd_team_networks::Column::TeamId.eq(membership.team_id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("Team network not configured".into()))?;
+
+    // 解密团队 SSH 密码（AAD = event_id + "ssh_password"，与 deploy 写入一致）。
+    let password = crate::modules::event::awd::service::gamebox_service::decrypt_team_ssh_password(
+        awd.crypto.as_ref(),
+        event_id,
+        &team_net,
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    let instances =
+        gamebox_repo::find_instances_by_team(ctx.db.get_ref(), event_id, membership.team_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let mut info = Vec::with_capacity(instances.len());
+    for (inst, root) in instances {
+        let resolved =
+            crate::modules::event::awd::service::gamebox_service::resolve_event_gamebox_spec(
+                ctx.db.get_ref(),
+                inst.event_gamebox_id,
+            )
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        info.push(super::dto::SshInstanceInfo {
+            id: inst.id,
+            gamebox_ip: inst.gamebox_ip.ip().to_string(),
+            username: resolved.username.clone(),
+            container_name: root.container_name,
+            health_status: inst.health_status,
+        });
+    }
+
+    UniResponse::ok(
+        super::dto::SshAccessResponse {
+            port: 22,
+            password,
+            instances: info,
+        }
+        .into(),
+    )
+    .into()
+}
+
+/// GET /api/events/{event_id}/awd/scores
+#[get("{event_id}/awd/scores")]
+pub async fn get_scores(
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<Vec<super::super::domain::TeamScore>> {
+    let event_id = path.into_inner();
+
+    // Get all teams for the event
+    use crate::entity::event_teams;
+    let teams = event_teams::Entity::find()
+        .filter(event_teams::Column::EventId.eq(event_id))
+        .all(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let team_info: Vec<(Uuid, String)> = teams.into_iter().map(|t| (t.id, t.name)).collect();
+
+    let scores = score_service::get_scoreboard(ctx.db.get_ref(), event_id, &team_info)
+        .await
+        .map_err(AppError::from)?;
+
+    UniResponse::ok(scores.into()).into()
+}
+
+// ── WireGuard endpoints ──
+
+/// GET /api/events/{event_id}/awd/wireguard/config
+#[get("{event_id}/awd/wireguard/config")]
+pub async fn get_wireguard_config(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::AwdDependencies>,
+    path: web::Path<Uuid>,
+) -> UniResult<super::dto::WireGuardConfigResponse> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    // Guard: Finished/Final Settlement blocks WireGuard access
+    let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+    if awd_event.status.is_terminal() {
+        return Err(AppError::Forbidden(
+            "WireGuard access is disabled after event is finished".into(),
+        ));
+    }
+    if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
+        && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
+    {
+        let active = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if active.is_none() {
+            let latest = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
+                return Err(AppError::Forbidden(
+                    "WireGuard access is disabled during final settlement".into(),
+                ));
+            }
+        }
+    }
+
+    use crate::entity::{awd_events, event_team_members};
+
+    let membership = event_team_members::Entity::find()
+        .filter(event_team_members::Column::EventId.eq(event_id))
+        .filter(event_team_members::Column::UserId.eq(user.id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("Not in a team".into()))?;
+
+    let (peer, peer_privkey) =
+        crate::modules::event::awd::service::wireguard_service::ensure_peer_for_user(
+            ctx.db.get_ref(),
+            awd.crypto.as_ref(),
+            awd.network.as_ref(),
+            &ctx.config.awd,
+            event_id,
+            user.id,
+            membership.team_id,
+        )
+        .await
+        .map_err(AppError::from)?;
+
+    // P1-15 私钥一次返回：首次拉取才返回私钥（此后 config_fetched_at 置位）。
+    // 需要轮换/重新获取走 admin 轮换路径。
+    if peer.config_fetched_at.is_some() {
+        return Err(AppError::Forbidden(
+            "WireGuard 私钥仅首次拉取返回；如需重新获取请联系管理员轮换密钥".into(),
+        ));
+    }
+    crate::modules::event::awd::repo::wireguard_repo::mark_wg_config_fetched(
+        ctx.db.get_ref(),
+        peer.id,
+    )
+    .await
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let awd_event = awd_events::Entity::find()
+        .filter(awd_events::Column::EventId.eq(event_id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+
+    let server_pubkey = awd_event
+        .wg_server_public_key
+        .ok_or_else(|| AppError::Internal("Server public key not configured".into()))?;
+
+    use crate::entity::awd_team_networks;
+    let team_net = awd_team_networks::Entity::find()
+        .filter(awd_team_networks::Column::EventId.eq(event_id))
+        .filter(awd_team_networks::Column::TeamId.eq(membership.team_id))
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("Team network not configured".into()))?;
+
+    let endpoint_host = crate::infrastructure::settings::get_setting(ctx.db.get_ref(), "NODE_IP")
+        .await
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+
+    let event_network = crate::modules::event::awd::repo::event_network_repo::require_by_event_id(
+        ctx.db.get_ref(),
+        event_id,
+    )
+    .await
+    .map_err(AppError::from)?;
+    let config = crate::modules::event::awd::service::wireguard_service::build_client_config(
+        &peer.assigned_ip.ip().to_string(),
+        &peer_privkey,
+        &server_pubkey,
+        &endpoint_host,
+        event_network.wireguard_listen_port as u16,
+        &event_network.gamebox_cidr.to_string(),
+        &team_net.wireguard_subnet.to_string(),
+    );
+
+    UniResponse::ok(super::dto::WireGuardConfigResponse { config }.into()).into()
+}
+
+/// GET /api/events/{event_id}/awd/stream
+///
+/// 选手端 Server-Sent Events 流（fetch + Bearer token）。
+/// 认证：UserJwtGuard（Bearer token，users 表）。
+/// 授权：用户必须属于该赛事的战队（event_team_members）。
+///
+/// 管理员应使用 `/api/admin/events/{event_id}/awd/stream`（SuperAdminJwtGuard）。
+#[get("{event_id}/awd/stream")]
+pub async fn event_stream(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    hub: web::Data<crate::infrastructure::realtime::BroadcastEventPublisher>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    // ── 授权：赛事战队成员 ──
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .ok()
+        .flatten();
+    if membership.is_none() {
+        return HttpResponse::Forbidden().finish();
+    }
+
+    super::stream::build_awd_event_stream(&hub, event_id)
+}
+
+/// GET /api/events/{event_id}/awd/status
+///
+/// 选手端 AWD 赛事状态快照：phase、当前轮次、封禁状态、分数。
+/// 用于选手 Overview 页面初始化与轮询回退。
+#[get("{event_id}/awd/status")]
+pub async fn get_player_status(
+    user: UserJwtGuard,
+    ctx: ReqCtx,
+    path: web::Path<Uuid>,
+) -> UniResult<AwdPlayerStatusDto> {
+    let event_id = path.into_inner();
+    let user = user.into_inner();
+
+    let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::Forbidden("Not a member of this event".into()))?;
+
+    let awd = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| AppError::NotFound("AWD event not configured".into()))?;
+
+    let current_round = round_repo::find_active_round(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?
+        .map(|r| r.round_number);
+
+    let banned = crate::modules::event::awd::repo::ban_repo::find_active_ban(
+        ctx.db.get_ref(),
+        event_id,
+        membership.team_id,
+    )
+    .await
+    .map_err(AppError::from)?
+    .is_some();
+
+    let score = crate::modules::event::awd::repo::score_repo::team_total_score(
+        ctx.db.get_ref(),
+        event_id,
+        membership.team_id,
+    )
+    .await
+    .map_err(AppError::from)?;
+
+    // Compute final_settlement from canonical predicate
+    let latest_round = round_repo::find_latest_round(ctx.db.get_ref(), event_id)
+        .await
+        .map_err(AppError::from)?;
+    let final_settlement = crate::modules::event::awd::service::event_service::is_final_settlement(
+        &awd,
+        latest_round.as_ref(),
+    );
+
+    UniResponse::ok(Some(AwdPlayerStatusDto {
+        event_id,
+        status: super::dto::snake_str(&awd.status),
+        phase: super::dto::snake_str(&awd.phase),
+        current_round,
+        round_count: awd.round_count,
+        banned,
+        score: Some(score),
+        final_settlement,
+    }))
+    .into()
+}

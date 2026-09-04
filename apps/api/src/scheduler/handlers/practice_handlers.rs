@@ -1,15 +1,18 @@
+//! 练习赛事确保与实例清理相关调度处理器。
+
+use std::sync::Arc;
+
 use crate::{
-    entity::{events, scheduled_tasks, sea_orm_active_enums::EventType},
+    core::AppConfig,
+    entity::scheduled_tasks,
     infrastructure::{WebDb, WebDocker},
+    modules::event::common::domain::practice_event::ensure_practice_jeopardy_event,
     modules::event::jeopardy::InstanceService,
     scheduler::{TaskHandler, TaskKey},
 };
 use async_trait::async_trait;
 
-use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use tracing::{error, info};
-use uuid::Uuid;
+use tracing::{error, info, warn};
 
 pub struct CleanRunningInstancesHandler {
     pub db: WebDb,
@@ -60,7 +63,10 @@ impl TaskHandler for CleanRunningInstancesHandler {
 
 pub struct CheckPracticeEventHandler {
     pub db: WebDb,
+    pub docker: WebDocker,
+    pub config: Arc<AppConfig>,
 }
+
 #[async_trait]
 impl TaskHandler for CheckPracticeEventHandler {
     fn trigger_type(&self) -> &'static str {
@@ -71,39 +77,51 @@ impl TaskHandler for CheckPracticeEventHandler {
     }
 
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
-        let practice_event = events::Entity::find_by_id(Uuid::nil())
-            .one(self.db.get_ref())
-            .await?;
-
-        if practice_event.is_some() {
-            info!("{} PraticeEvent already exists", self.task_key());
-            return Ok(());
-        }
-
-        let practice_event = events::ActiveModel {
-            id: Set(Uuid::nil()),
-            r#type: Set(EventType::JeopardyPractice),
-            title: Set("PraticeEvent".into()),
-            description: Set(Some("Practice Event".into())),
-            hidden: Set(true),
-            start_time: Set(Utc::now().into()),
-            end_time: Set((Utc::now() + chrono::Duration::days(36500)).into()),
-            rules: Set("".into()),
-            allow_join: Set(true),
-            flag_prefix: Set(None), // use config settings
-            created_at: Set(Utc::now().into()),
-            updated_at: Set(Utc::now().into()),
-            ..Default::default()
-        };
-
-        let practice_event = practice_event.insert(self.db.get_ref()).await?;
-
+        let _ = &task;
+        // Jeopardy 练习赛事：practice:jeopardy
         info!(
-            "{} Inserting practice_event: {:?}",
+            "{} ensuring practice:jeopardy system event",
+            self.task_key()
+        );
+        let practice_event = ensure_practice_jeopardy_event(self.db.get_ref()).await?;
+        info!(
+            "{} practice event ready id={} system_key={:?}",
             self.task_key(),
-            practice_event
+            practice_event.id,
+            practice_event.system_key
+        );
+        // AWDP 练习赛事：AWDPlusPractice（system_key=awdp-practice，练习模块单挂载点）
+        let awdp_event_id =
+            crate::modules::event::awdp::repo::run_repo::ensure_practice_event(self.db.get_ref())
+                .await
+                .map_err(|e| anyhow::anyhow!("ensure AWDPlusPractice failed: {e}"))?;
+        info!(
+            "{} AWDPlusPractice ready id={} system_key={}",
+            self.task_key(),
+            awdp_event_id,
+            crate::core::system_ids::EVENT_PRACTICE_AWDP_SYSTEM_KEY
         );
 
+        // AWDP 练习 docker 环境 ensure（练习 data 网络 + control 网络 + JudgeServer）：
+        // best-effort——失败仅告警不阻塞启动（周期任务 awdp.practice.judge 会持续重试自愈）。
+        info!(
+            "{} ensuring AWDP practice docker environment (network + judge)",
+            self.task_key()
+        );
+        if let Err(e) =
+            crate::modules::event::awdp::service::practice_judge::ensure_practice_environment(
+                self.db.get_ref(),
+                self.docker.get_ref(),
+                &self.config.awdp,
+                self.config.auth.jwt_secret.expose().as_bytes(),
+            )
+            .await
+        {
+            warn!(
+                "{} ensure AWDP practice docker environment failed (best-effort, awdp.practice.judge will retry): {e}",
+                self.task_key()
+            );
+        }
         Ok(())
     }
 }

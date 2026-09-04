@@ -1,4 +1,4 @@
-//! Player event HTTP handlers — thin adapters over `modules::event::common::application::player_service`.
+//! 选手端赛事 HTTP 处理器——薄适配 `player_service`。
 
 use crate::api::dto::map_dto_vec;
 
@@ -8,9 +8,9 @@ use crate::modules::event::common::api::EventUsersDto;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::{apply_filters, prelude::*},
-    entity::{event_announcements, event_teams, event_users, events, instances},
+    entity::{event_announcements, event_challenge_instance, event_teams, event_users, events},
     modules::event::common::application::player_service::{self as svc},
-    modules::platform::files::download::generate_presigned_download_url,
+    modules::platform::files::download::presign_private_download_url,
 };
 
 // Re-export DTOs / adapters for other handlers (admin dashboard, etc.).
@@ -35,7 +35,9 @@ pub async fn get_events(
     let query_params = query_params.0;
     let mappings = svc::player_event_filter_mappings();
 
-    let stmt = events::Entity::find().filter(events::Column::Hidden.eq(false));
+    let stmt = events::Entity::find()
+        .filter(events::Column::Hidden.eq(false))
+        .filter(events::Column::IsVirtual.eq(false));
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
     let stmt = stmt.order_by_desc(events::Column::UpdatedAt);
 
@@ -68,7 +70,9 @@ pub async fn get_event_capabilities(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
-    let caps = crate::modules::event::EventModuleRegistry::capabilities_for(&event.r#type);
+    let caps = crate::modules::event::common::domain::capability::EventCapabilities::for_mode(
+        &event.mode_unchecked(),
+    );
     UniResponse::ok(Some(caps)).into()
 }
 
@@ -113,7 +117,7 @@ pub async fn get_event_challenge_instance(
         user,
     )
     .await?;
-    UniResponse::ok(Some(instance.into())).into()
+    UniResponse::ok(Some(instance)).into()
 }
 
 /// POST /api/events/{event_id}/team
@@ -311,13 +315,8 @@ pub async fn get_own_wp(
 ) -> UniResult<String> {
     let user = user.into_inner();
     let file_url = svc::own_writeup_file_url(&ctx.db, *event_id, &user).await?;
-    let signed_url = generate_presigned_download_url(
-        ctx.rustfs,
-        "floatctf-private",
-        &file_url,
-        5 * 60, // 5 minutes
-    )
-    .await
-    .map_err(|e| AppError::Internal(format!("Failed to generate signed URL: {}", e)))?;
-    UniResponse::ok(Some(signed_url)).into()
+    let proxy_url = presign_private_download_url(ctx.rustfs, &file_url, 5 * 60)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to generate signed URL: {}", e)))?;
+    UniResponse::ok(Some(proxy_url)).into()
 }

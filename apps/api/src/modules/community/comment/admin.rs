@@ -1,4 +1,4 @@
-//! Admin comment handlers — `/api/admin/discussions/{id}/comments`.
+//! 评论管理端接口。
 
 use crate::api::dto::map_dto_vec;
 

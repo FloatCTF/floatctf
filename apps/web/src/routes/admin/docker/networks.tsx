@@ -1,5 +1,5 @@
 import { PlusIcon, TrashIcon } from "@primer/octicons-react";
-import { ActionList, ActionMenu } from "@primer/react";
+import { ActionList, ActionMenu, useConfirm } from "@primer/react";
 import {
     Button,
     ButtonGroup,
@@ -22,6 +22,7 @@ export const Route = createFileRoute("/admin/docker/networks")({
 });
 
 function RouteComponent() {
+	const confirmDialog = useConfirm();
     const queryClient = useQueryClient();
     const [isOpen, setIsOpen] = useState(false);
     const [newNetwork, setNewNetwork] = useState({
@@ -78,10 +79,13 @@ function RouteComponent() {
         <ActionList>
             <ActionList.Item
                 variant="danger"
-                onClick={() => {
-                    if (confirm(`Delete network ${row.name}?`)) {
-                        deleteMutation.mutate(row.id);
-                    }
+                onClick={async () => {
+                    const ok = await confirmDialog({
+                        title: `Delete network ${row.name}?`,
+                        content: `网络 ${row.name} 将被删除，操作不可撤销。`,
+                        confirmButtonType: "danger",
+                    });
+                    if (ok) deleteMutation.mutate(row.id);
                 }}
             >
                 Delete

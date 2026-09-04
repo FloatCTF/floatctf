@@ -1,0 +1,29 @@
+name = "test-g"
+version = "1.0.3"
+author = "your_email"
+category = "web"
+description = "hello floatctf"
+# optional: safe_name = "test-g"
+
+[gamebox]
+username = "floatctf"
+
+[[gamebox.healthchecks]]
+type = "http"
+port = 80
+path = "/"
+expected_status = 200
+
+[judge]
+check_script = "judge/check.py"
+
+# optional: awdp
+[awdp]
+# zip file from docker image and provide the path to user
+source_code_dir = "/var/www/html"
+exploit_script = "awdp/exploit.py"
+
+[gamebox.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100

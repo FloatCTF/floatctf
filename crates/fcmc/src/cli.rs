@@ -1,4 +1,4 @@
-//! CLI argument definitions.
+//! fcmc 命令行入口与参数定义。
 
 use clap::{Parser, ValueEnum};
 
@@ -21,6 +21,7 @@ pub struct Args {
 
 #[derive(Parser, Debug, Clone)]
 #[command(rename_all = "snake_case")]
+#[command(disable_help_subcommand = true)]
 pub enum Commands {
     /// 检查题目配置文件是否合法
     Check {
@@ -37,9 +38,19 @@ pub enum Commands {
         /// 配置文件目录 (里面需要包含 meta.toml)
         #[arg(short, long)]
         path: Option<String>,
-        /// 构建模板类型: challenge (c) | gamebox (g)
-        #[arg(short, long, default_value = "challenge")]
-        format: GenFormat,
+        /// 构建模板类型: challenge (c) | gamebox (g)。缺省不传时按 meta.toml 内容自动识别
+        /// （含 [gamebox] 段按 gamebox，否则按 challenge）。
+        #[arg(short, long)]
+        format: Option<GenFormat>,
+        /// 镜像 tag（gamebox 推荐显式传入；缺省为 floatctf/gameboxes/<safe_name>:<version>）
+        /// Challenge 默认 <prefix>/challenges/<safe_name>:<version>。
+        #[arg(short = 't', long = "tag")]
+        tag: Option<String>,
+        /// 构建代理 [ip:]port（缺省 ip 用 host.docker.internal）。设置后注入
+        /// --add-host=host.docker.internal:host-gateway 与 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY；
+        /// 未设置则不注入。
+        #[arg(long)]
+        proxy: Option<String>,
     },
     /// 生成新的题目模板
     Gen {
@@ -59,6 +70,16 @@ pub enum Commands {
         #[arg(short, long, default_value = "false")]
         template: bool,
     },
+    /// 输出详细使用说明（--agent 输出面向 AI 助手的完整手册；
+    /// 或指定命令查看单命令详解）
+    Help {
+        /// 输出面向 AI 助手的超详细完整手册（含 meta.toml 契约、包布局、
+        /// 镜像命名、代理、运行时检查、常见错误），纯文本打印到 stdout
+        #[arg(long)]
+        agent: bool,
+        /// 查看单个命令的详解: check | build | gen | help
+        command: Option<String>,
+    },
 }
 
 impl Commands {
@@ -68,6 +89,7 @@ impl Commands {
             Commands::Check { path, .. } => path.as_deref(),
             Commands::Build { path, .. } => path.as_deref(),
             Commands::Gen { .. } => None,
+            Commands::Help { .. } => None,
         }
     }
 }

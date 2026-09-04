@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppLink } from "../AppLink";
 import { NavigationProvider } from "../NavigationContext";
 
-// Mock window.scrollTo for jsdom (TanStack Router scroll restoration)
+// 为 jsdom mock window.scrollTo（TanStack Router 滚动恢复）
 beforeEach(() => {
 	window.scrollTo = vi.fn();
 });
@@ -28,7 +28,7 @@ afterEach(() => {
 	cleanup();
 });
 
-// ── Test helper ───────────────────────────────────────────────────────────────
+// ── 测试辅助 ───────────────────────────────────────────────────────────────
 
 function setup(initialPath: string, indexContent: React.ReactNode) {
 	const rootRoute = createRootRoute({
@@ -80,7 +80,7 @@ function setup(initialPath: string, indexContent: React.ReactNode) {
 	return { router, queryClient, ...result };
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── 测试 ─────────────────────────────────────────────────────────────────────
 
 describe("AppLink", () => {
 	it("navigates on plain left click via coordinator", async () => {

@@ -1,16 +1,15 @@
-//! Dynamic DB-backed settings (admin-editable).
+//! 数据库承载的动态设置（管理端可编辑）。
 //!
-//! Process-static env config lives in `crate::core::config::AppConfig`.
+//! 进程静态配置见 `crate::core::config::AppConfig`。
 
 use std::collections::{HashMap, HashSet};
 
 use crate::entity::settings;
 use crate::{core::AppConfig, entity::sea_orm_active_enums::SettingValueType};
 use sea_orm::{ActiveValue::Set, DbConn, EntityTrait, sea_query::OnConflict};
-/// Upsert default rows into the `settings` table (do nothing on conflict).
+/// 向 `settings` 表 upsert 默认行（冲突则跳过）。
 ///
-/// Values come from the process TOML configuration; settings remain editable
-/// through the database after they have been seeded.
+/// 取值来自进程 TOML 配置；种子写入后仍可通过数据库编辑。
 pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     let defaults = vec![
         (
@@ -42,6 +41,12 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             "{{WORK_DIR}}/challenges".to_string(),
             SettingValueType::String,
             "题目位置（支持 {{WORK_DIR}} 等变量引用）",
+        ),
+        (
+            "GAMEBOXES_DIR",
+            "{{WORK_DIR}}/gameboxes".to_string(),
+            SettingValueType::String,
+            "GameBox 位置（支持 {{WORK_DIR}} 等变量引用）",
         ),
         (
             "HTTP_PREFIX",
@@ -102,19 +107,19 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
     }
 }
 
-/// Backward-compatible alias for [`seed_default_settings`].
+/// [`seed_default_settings`] 的向后兼容别名。
 #[deprecated(note = "use seed_default_settings")]
 pub async fn init_settings(db: &DbConn, config: &AppConfig) {
     seed_default_settings(db, config).await;
 }
 
-/// Load all settings into a `key -> raw value` map.
+/// 加载全部 settings，得到 `key -> 原始 value` 映射。
 async fn load_settings_map(db: &DbConn) -> HashMap<String, String> {
     let rows = settings::Entity::find().all(db).await.unwrap_or_default();
     rows.into_iter().map(|s| (s.key, s.value)).collect()
 }
 
-/// Resolve `{{KEY}}` references in `value` against the DB settings.
+/// 按数据库 settings 解析 `value` 中的 `{{KEY}}` 引用。
 ///
 /// 解析后的值仅用于 API 响应与消费方；数据库里始终保存原始模板，
 /// 便于管理端继续编辑 `{{WORK_DIR}}/xxx` 形式。
@@ -193,6 +198,56 @@ pub async fn get_setting(db: &DbConn, key: &str) -> Result<String, anyhow::Error
         .cloned()
         .ok_or(anyhow::anyhow!("Setting not found:{}", key))?;
     Ok(resolve_value_with_map(&raw, &map))
+}
+
+// ---------------------------------------------------------------------------
+// 相对路径设置（CHALLENGES_DIR / GAMEBOXES_DIR / UPLOAD_DIR）的锚定解析
+// ---------------------------------------------------------------------------
+//
+// 配置里 `work_dir = "../../app"` 是相对**启动目录**（apps/api）的；bootstrap 会
+// chdir 进 work_dir，此后 `Path::new("{{WORK_DIR}}/challenges")` 会被错误地相对
+// work_dir 再次解析（双重应用）。因此启动时先记录启动目录，路径类设置一律以它为锚。
+
+static LAUNCH_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// bootstrap chdir 前调用，记录进程启动目录。
+pub fn set_launch_dir(dir: std::path::PathBuf) {
+    let _ = LAUNCH_DIR.set(dir);
+}
+
+/// 解析目录类设置：绝对路径原样返回；相对路径以启动目录为锚（未记录时退回当前目录）。
+pub fn resolve_dir_path(value: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(value);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    let anchor = LAUNCH_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    anchor.join(p)
+}
+
+/// Upsert 一个设置值（不存在则插入，存在则更新 value）。
+///
+/// 动态设置统一走这里（AGENTS.md 铁律 1：配置只从 TOML / settings 表读取）。
+/// 内部系统参数（如 AWD 网络策略 revision）由系统自动维护。
+pub async fn upsert_setting(db: &DbConn, key: &str, value: &str) -> Result<(), anyhow::Error> {
+    settings::Entity::insert(settings::ActiveModel {
+        key: Set(key.to_string()),
+        value: Set(value.to_string()),
+        r#type: Set(SettingValueType::String),
+        description: Set("内部系统参数（自动维护）".to_string()),
+        ..Default::default()
+    })
+    .on_conflict(
+        OnConflict::column(settings::Column::Key)
+            .update_column(settings::Column::Value)
+            .to_owned(),
+    )
+    .exec(db)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

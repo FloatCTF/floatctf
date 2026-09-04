@@ -3,12 +3,12 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "gameboxes")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(column_type = "Text", unique)]
+    #[sea_orm(column_type = "Text")]
     pub name: String,
     #[sea_orm(column_type = "Text", unique)]
     pub safe_name: String,
@@ -17,48 +17,104 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub description: String,
     pub hidden: bool,
-    #[sea_orm(column_type = "Text")]
-    pub toml_str: String,
-    #[sea_orm(column_type = "Text")]
-    pub username: String,
-    #[sea_orm(column_type = "Double")]
-    pub break_point: f64,
-    #[sea_orm(column_type = "Double")]
-    pub fix_point: f64,
-    #[sea_orm(column_type = "Double")]
-    pub down_point: f64,
-    #[sea_orm(column_type = "Double")]
-    pub first_bouns: f64,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub version: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub source_toml: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub spec_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub spec_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub package_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_ref: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_repo_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub username: Option<String>,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub healthchecks_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub judge_script_name: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub judge_script_content: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub judge_args_json: Option<Json>,
+    pub judge_timeout_secs: Option<i32>,
+    pub judge_retry_interval_secs: Option<i32>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_status: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_error: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_code_dir: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_exploit_script_name: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_exploit_script_content: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_artifact_key: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub awdp_source_artifact_digest: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::event_gameboxes::Entity")]
-    EventGameboxes,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
+    #[sea_orm(has_many = "super::awd_event_gameboxes::Entity")]
+    AwdEventGameboxes,
+    #[sea_orm(has_many = "super::awdp_breaks::Entity")]
+    AwdpBreaks,
+    #[sea_orm(has_many = "super::awdp_event_gameboxes::Entity")]
+    AwdpEventGameboxes,
+    #[sea_orm(has_many = "super::awdp_instances::Entity")]
+    AwdpInstances,
+    #[sea_orm(has_many = "super::awdp_runs::Entity")]
+    AwdpRuns,
+    #[sea_orm(has_many = "super::awdp_score_events::Entity")]
+    AwdpScoreEvents,
 }
 
-impl Related<super::event_gameboxes::Entity> for Entity {
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventGameboxes.def()
+        Relation::AwdEventGameboxes.def()
     }
 }
 
-impl Related<super::instances::Entity> for Entity {
+impl Related<super::awdp_breaks::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::AwdpBreaks.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::awdp_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        super::event_gameboxes::Relation::Events.def()
+        Relation::AwdpEventGameboxes.def()
     }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_gameboxes::Relation::Gameboxes.def().rev())
+}
+
+impl Related<super::awdp_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpInstances.def()
+    }
+}
+
+impl Related<super::awdp_runs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpRuns.def()
+    }
+}
+
+impl Related<super::awdp_score_events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpScoreEvents.def()
     }
 }
 

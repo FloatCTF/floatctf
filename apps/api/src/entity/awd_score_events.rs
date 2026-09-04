@@ -18,7 +18,6 @@ pub struct Model {
     pub idempotency_key: String,
     pub related_team_id: Option<Uuid>,
     pub gamebox_instance_id: Option<Uuid>,
-    pub gamebox_template_id: Option<Uuid>,
     pub reference_id: Option<Uuid>,
     #[sea_orm(column_type = "Text", nullable)]
     pub reason: Option<String>,
@@ -26,26 +25,27 @@ pub struct Model {
     pub metadata_json: Json,
     pub created_by: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
+    pub event_gamebox_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::awd_gamebox_instances::Entity",
-        from = "Column::GameboxInstanceId",
-        to = "super::awd_gamebox_instances::Column::Id",
+        belongs_to = "super::awd_event_gameboxes::Entity",
+        from = "Column::EventGameboxId",
+        to = "super::awd_event_gameboxes::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    AwdGameboxInstances,
+    AwdEventGameboxes,
     #[sea_orm(
-        belongs_to = "super::awd_gamebox_templates::Entity",
-        from = "Column::GameboxTemplateId",
-        to = "super::awd_gamebox_templates::Column::Id",
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
         on_update = "NoAction",
-        on_delete = "SetNull"
+        on_delete = "Cascade"
     )]
-    AwdGameboxTemplates,
+    AwdEvents,
     #[sea_orm(
         belongs_to = "super::awd_rounds::Entity",
         from = "Column::RoundId",
@@ -54,6 +54,14 @@ pub enum Relation {
         on_delete = "SetNull"
     )]
     AwdRounds,
+    #[sea_orm(
+        belongs_to = "super::event_gamebox_instances::Entity",
+        from = "Column::GameboxInstanceId",
+        to = "super::event_gamebox_instances::Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    EventGameboxInstances,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "Column::RelatedTeamId",
@@ -71,14 +79,6 @@ pub enum Relation {
     )]
     EventTeams1,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
-    #[sea_orm(
         belongs_to = "super::super_admin::Entity",
         from = "Column::CreatedBy",
         to = "super::super_admin::Column::Id",
@@ -88,15 +88,15 @@ pub enum Relation {
     SuperAdmin,
 }
 
-impl Related<super::awd_gamebox_instances::Entity> for Entity {
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdGameboxInstances.def()
+        Relation::AwdEventGameboxes.def()
     }
 }
 
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
+impl Related<super::awd_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
+        Relation::AwdEvents.def()
     }
 }
 
@@ -106,9 +106,9 @@ impl Related<super::awd_rounds::Entity> for Entity {
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::event_gamebox_instances::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::EventGameboxInstances.def()
     }
 }
 

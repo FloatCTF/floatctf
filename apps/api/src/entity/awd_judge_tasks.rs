@@ -13,7 +13,6 @@ pub struct Model {
     pub event_id: Uuid,
     pub round_id: Uuid,
     pub gamebox_instance_id: Uuid,
-    pub template_id: Uuid,
     pub team_id: Uuid,
     pub status: JudgeTaskStatus,
     pub attempt_count: i32,
@@ -29,26 +28,34 @@ pub struct Model {
     pub duration_ms: Option<i32>,
     pub callback_idempotency_key: Option<String>,
     pub created_at: DateTimeWithTimeZone,
+    pub event_gamebox_id: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub worker_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub lease_token_hash: Option<String>,
+    pub lease_expires_at: Option<DateTimeWithTimeZone>,
+    pub heartbeat_at: Option<DateTimeWithTimeZone>,
+    pub claimed_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::awd_gamebox_instances::Entity",
-        from = "Column::GameboxInstanceId",
-        to = "super::awd_gamebox_instances::Column::Id",
+        belongs_to = "super::awd_event_gameboxes::Entity",
+        from = "Column::EventGameboxId",
+        to = "super::awd_event_gameboxes::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
-    AwdGameboxInstances,
+    AwdEventGameboxes,
     #[sea_orm(
-        belongs_to = "super::awd_gamebox_templates::Entity",
-        from = "Column::TemplateId",
-        to = "super::awd_gamebox_templates::Column::Id",
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    AwdGameboxTemplates,
+    AwdEvents,
     #[sea_orm(
         belongs_to = "super::awd_judge_batches::Entity",
         from = "Column::BatchId",
@@ -66,6 +73,14 @@ pub enum Relation {
     )]
     AwdRounds,
     #[sea_orm(
+        belongs_to = "super::event_gamebox_instances::Entity",
+        from = "Column::GameboxInstanceId",
+        to = "super::event_gamebox_instances::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventGameboxInstances,
+    #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "Column::TeamId",
         to = "super::event_teams::Column::Id",
@@ -73,25 +88,17 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     EventTeams,
-    #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
 }
 
-impl Related<super::awd_gamebox_instances::Entity> for Entity {
+impl Related<super::awd_event_gameboxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdGameboxInstances.def()
+        Relation::AwdEventGameboxes.def()
     }
 }
 
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
+impl Related<super::awd_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
+        Relation::AwdEvents.def()
     }
 }
 
@@ -107,15 +114,15 @@ impl Related<super::awd_rounds::Entity> for Entity {
     }
 }
 
-impl Related<super::event_teams::Entity> for Entity {
+impl Related<super::event_gamebox_instances::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventTeams.def()
+        Relation::EventGameboxInstances.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::EventTeams.def()
     }
 }
 

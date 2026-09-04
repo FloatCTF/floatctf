@@ -1,7 +1,6 @@
-//! Application bootstrap — initialization and HTTP server startup.
+//! 应用引导：初始化与 HTTP 服务启动。
 //!
-//! This module contains the startup logic previously in `main.rs`,
-//! exposed as a library function for integration testing.
+//! 原 `main.rs` 中的启动逻辑集中于此，并以库函数形式暴露，供集成测试复用。
 
 pub mod routes;
 pub mod scheduler;
@@ -20,17 +19,28 @@ use crate::{
         LogService, WebDb, WebDocker, WebRustfs, audit::AuditService, database, docker,
         seed_default_settings, storage,
     },
-    modules::event::EventModuleRegistry,
-    modules::event::awd_team::crypto::AwdCrypto,
+    modules::event::awd::crypto::AwdCrypto,
 };
 
 pub use state::{AppState, AwdDependencies};
 
-/// Initialize and run the FloatCTF HTTP server.
+/// 启动阶段致命错误（fail-fast）。
 ///
-/// This is the single entry point for both the binary and integration tests.
-/// Returns `Err` if initialization fails (database, Docker, or S3 connection).
-pub async fn run() -> std::io::Result<()> {
+/// Phase 0 P0-2：AWD crypto 初始化失败不允许降级运行（历史存在全零密钥回退，
+/// 攻击者可预测所有 token/flag）。`run()` 返回 Err 后由 `main` 打印原因并 `exit(1)`。
+#[derive(Debug, thiserror::Error)]
+pub enum BootstrapError {
+    #[error("AWD crypto initialization failed: {0}")]
+    Crypto(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// 初始化并运行 FloatCTF HTTP 服务。
+///
+/// 二进制与集成测试共用的唯一入口。
+/// 初始化失败（数据库、Docker、S3 或 AWD 加密）时返回 `Err`。
+pub async fn run() -> Result<(), BootstrapError> {
     // Load all process-static settings from TOML — fail fast before touching infrastructure.
     let config_path = std::env::var_os("FLOATCTF_CONFIG")
         .map(std::path::PathBuf::from)
@@ -45,9 +55,10 @@ pub async fn run() -> std::io::Result<()> {
 
     // Set working directory: absolutize relative paths before chdir so later
     // derived paths (e.g. logs) don't double-apply the relative work_dir.
-    let work_dir_abs = std::env::current_dir()
-        .unwrap_or_default()
-        .join(&config.server.work_dir);
+    // 先记录启动目录：settings 里 `{{WORK_DIR}}/challenges` 等相对路径以它为锚。
+    let launch_dir = std::env::current_dir().unwrap_or_default();
+    crate::infrastructure::settings::set_launch_dir(launch_dir.clone());
+    let work_dir_abs = launch_dir.join(&config.server.work_dir);
     std::env::set_current_dir(&work_dir_abs)
         .unwrap_or_else(|e| panic!("failed to set WORK_DIR={}: {}", config.server.work_dir, e));
 
@@ -112,15 +123,55 @@ pub async fn run() -> std::io::Result<()> {
 
     // AWD host network runtime (shared by HTTP + scheduler).
     let awd_network: Arc<
-        dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
-    > = if config.awd.host_network {
+        dyn crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime,
+    > = if config.awd.network_runtime == "host" {
         info!("AWD host network enabled — using HostNetworkRuntime");
+        Arc::new(crate::modules::event::awd::infrastructure::network::HostNetworkRuntime::new())
+    } else {
+        info!("AWD host network disabled (network_runtime=noop) — NoopNetworkRuntime");
+        Arc::new(crate::modules::event::awd::infrastructure::network::NoopNetworkRuntime)
+    };
+
+    // AWD firewall runtime：唯一生产实现为 native nftables（Phase 1）。
+    // Noop 仅用于 unit test / dev mock，且 Noop 永远不允许 Verified（Phase 2 双门禁）。
+    let awd_firewall: Arc<
+        dyn crate::modules::event::awd::infrastructure::firewall::FirewallRuntime,
+    > = if config.awd.network_runtime == "host" {
+        info!("AWD firewall enabled — using NftablesFirewallRuntime");
         Arc::new(
-            crate::modules::event::awd_team::infrastructure::network::HostNetworkRuntime::new(),
+            crate::modules::event::awd::infrastructure::firewall::NftablesFirewallRuntime::new(),
         )
     } else {
-        Arc::new(crate::modules::event::awd_team::infrastructure::network::NoopNetworkRuntime)
+        info!("AWD firewall disabled — using NoopFirewallRuntime (dev/mock only)");
+        Arc::new(crate::modules::event::awd::infrastructure::firewall::NoopFirewallRuntime)
     };
+
+    // AWD crypto（fail-fast，Phase 0 P0-2）
+    let awd_crypto = Arc::new(
+        AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
+            .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
+    );
+
+    // AWD startup recovery（Phase 1 P1-16 接线）：
+    // Firewall Recovery 必须先于 AWD Scheduler（§5.14 启动顺序）。
+    // recover_all 失败不阻塞启动——记录错误，交由 Precheck/Start gate 判定。
+    {
+        let awd_containers_for_recovery: Arc<dyn fcmc::AwdContainerRuntime> =
+            Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
+        match crate::modules::event::awd::service::recovery_service::recover_all(
+            db.get_ref(),
+            awd_containers_for_recovery.as_ref(),
+            awd_network.as_ref(),
+            awd_firewall.as_ref(),
+            awd_crypto.as_ref(),
+            publisher.as_ref(),
+        )
+        .await
+        {
+            Ok(n) => info!("[Recovery] startup recovery complete: {n} resources reconciled"),
+            Err(e) => error!("[Recovery] startup recovery failed: {}", e),
+        }
+    }
 
     // Initialize scheduler
     let task_scheduler = scheduler::build_task_scheduler(
@@ -129,6 +180,10 @@ pub async fn run() -> std::io::Result<()> {
         rustfs.clone(),
         log_service.clone(),
         awd_network.clone(),
+        awd_firewall.clone(),
+        awd_crypto.clone(),
+        publisher.clone(),
+        config.clone(),
     )
     .await
     .expect("init startup handlers failed!");
@@ -152,38 +207,24 @@ pub async fn run() -> std::io::Result<()> {
         docker.get_ref().clone(),
         rustfs.get_ref().clone(),
         log_service.clone(),
-        audit_service,
+        audit_service.clone(),
         publisher.clone(),
         task_scheduler_arc.clone(),
-        EventModuleRegistry::new(),
     ));
 
     // AWD container runtime + crypto
     let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
         Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
 
-    let awd_deps = match AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes()) {
-        Ok(crypto) => web::Data::new(AwdDependencies {
-            crypto: Arc::new(crypto),
-            publisher: publisher.clone(),
-            containers: awd_containers.clone(),
-            network: awd_network.clone(),
-        }),
-        Err(e) => {
-            error!(
-                "Failed to initialize AWD crypto: {}. AWD features will be unavailable.",
-                e
-            );
-            web::Data::new(AwdDependencies {
-                crypto: Arc::new(AwdCrypto::new(
-                    crate::modules::event::awd_team::crypto::AwdSecret::new(vec![0u8; 32]),
-                )),
-                publisher: publisher.clone(),
-                containers: awd_containers,
-                network: awd_network,
-            })
-        }
-    };
+    let awd_deps = web::Data::new(AwdDependencies {
+        crypto: awd_crypto.clone(),
+        publisher: publisher.clone(),
+        containers: awd_containers.clone(),
+        network: awd_network.clone(),
+        firewall: awd_firewall.clone(),
+        rate_limiter: Arc::new(crate::infrastructure::ratelimit::RateLimiter::new()),
+        audit: audit_service.clone(),
+    });
 
     let ip = config.server.listen_ip.clone();
     let port = config.server.listen_port;
@@ -200,8 +241,6 @@ pub async fn run() -> std::io::Result<()> {
             .wrap(cors)
             // New centralized state
             .app_data(app_state.clone())
-            // Same registry instance as AppState (handlers may extract either)
-            .app_data(web::Data::new(app_state.get_ref().event_registry.clone()))
             .app_data(awd_deps.clone())
             // Concrete hub for SSE / WS fan-out (subscribe)
             .app_data(web::Data::from(broadcast_hub.clone()))
@@ -216,7 +255,8 @@ pub async fn run() -> std::io::Result<()> {
     })
     .bind((ip, port))?
     .run()
-    .await
+    .await?;
+    Ok(())
 }
 
 pub use routes::{configure_all_routes, configure_routes};

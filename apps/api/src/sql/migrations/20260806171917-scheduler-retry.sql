@@ -1,6 +1,0 @@
--- 本文件有意不包含 DDL：调度重试列属于增量迁移，已由 20260806171908 提供，
--- 避免 awd/*.sql 批量执行时重复应用。
--- Moved: scheduler reliability columns are incremental, not AWD schema.
--- Canonical: src/sql/update/01-scheduler-retry.sql
--- Applied by migration m0101 (include_str of that path).
--- This file intentionally has no DDL (avoids double-apply if awd/*.sql is bulk-run).

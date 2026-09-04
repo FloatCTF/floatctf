@@ -1,185 +1,81 @@
-//! Admin challenge import / check / docker image build.
+//! 题目镜像/包构建相关能力。
 
-use crate::api::dto::map_dto_vec;
+pub mod import_service;
 
 use crate::api::prelude::*;
 use crate::entity::{challenges, prelude::Challenges};
+use crate::modules::challenge::build::import_service::ChallengeScanItem;
 use crate::modules::challenge::catalog::ChallengesDto;
-use crate::modules::challenge::metadata::generate_safe_name;
-use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
-use base64::Engine;
-use fcmc::{ChallengeMeta, DockerContainerRuntime};
-
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, sea_query::OnConflict,
-};
-use std::io::Read;
-use tempfile::NamedTempFile;
+use actix_multipart::form::{MultipartForm, tempfile::TempFile};
+use fcmc::{DockerContainerRuntime, ImageRuntime};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 #[derive(Debug, MultipartForm)]
 struct UploadForm {
-    #[multipart(limit = "1024MB")]
-    challenge_zip: Option<TempFile>,
+    /// 单题 package zip：meta.toml + src/** + attachment/**
     #[multipart(limit = "10240MB")]
-    challenge_list_zip: Option<TempFile>,
-    toml_str_b64: Option<Text<String>>,
+    package_zip: TempFile,
 }
-/// POST /api/admin/challenges/import
+
+/// POST /api/admin/challenges/import —— package zip 导入（单版本：同步 build + pin digest）
 #[post("/import")]
 pub async fn web_import_challenge(
     user: SuperAdminJwtGuard,
     ctx: ReqCtx,
     MultipartForm(form): MultipartForm<UploadForm>,
-) -> UniResult<Vec<ChallengesDto>> {
+) -> UniResult<ImportChallengeResponse> {
     let user = user.into_inner();
-    let mut will_insert_toml_strs = Vec::new();
-    let mut inserted_challenges = Vec::new();
 
-    if let Some(s) = form.toml_str_b64 {
-        let toml_str = base64::prelude::BASE64_STANDARD
-            .decode(s.0)
-            .map_err(|e| AppError::BadRequest(format!("base64 decode error: {}", e)))?;
+    let result = import_service::import_challenge_package(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        &ctx.config.registry,
+        form.package_zip.file.path(),
+    )
+    .await?;
 
-        let toml_str = String::from_utf8(toml_str)
-            .map_err(|e| AppError::BadRequest(format!("utf8 decode error: {}", e)))?;
-
-        will_insert_toml_strs.push(toml_str);
-    }
-
-    if let Some(challenge_zip) = form.challenge_zip {
-        let toml_str = import_challenge_zip(&ctx.db, challenge_zip.file)
-            .await
-            .map_err(|e| AppError::BadRequest(format!("import challenge zip error: {}", e)))?;
-
-        will_insert_toml_strs.push(toml_str);
-    }
-
-    if let Some(challenge_list_zip) = form.challenge_list_zip {
-        let toml_strs = import_challenge_list_zip(&ctx.db, challenge_list_zip.file)
-            .await
-            .map_err(|e| AppError::BadRequest(format!("import challenge list zip error: {}", e)))?;
-
-        will_insert_toml_strs.extend(toml_strs);
-    }
-
-    for toml_str in will_insert_toml_strs {
-        let challenge = import_challenge(ctx.db.get_ref(), toml_str)
-            .await
-            .map_err(|e| AppError::BadRequest(format!("import challenge error: {}", e)))?;
-
-        inserted_challenges.push(challenge);
-    }
+    let response = ImportChallengeResponse {
+        challenge: ChallengesDto::from(&result.challenge),
+    };
 
     ctx.log
         .add_log(
             "INFO",
             "CHALLENGES",
             "IMPORT",
-            format!(
-                "{} 导入 {} 道题目",
-                user.username,
-                inserted_challenges.len()
-            )
-            .as_str(),
-            json!({"count": inserted_challenges.len()}),
+            format!("{} 导入题目包: {}", user.username, response.challenge.name).as_str(),
+            json!({
+                "challenge_id": response.challenge.id,
+                "version": response.challenge.version,
+                "build_status": response.challenge.build_status,
+            }),
             None,
             user.id.into(),
             Some(&ctx.req),
         )
         .await;
 
-    UniResponse::ok(Some(map_dto_vec(inserted_challenges))).into()
+    UniResponse::ok(Some(response)).into()
 }
 
-pub async fn import_challenge(
-    db: &DatabaseConnection,
-    challenge_toml_str: String,
-) -> anyhow::Result<challenges::Model> {
-    let c = ChallengeMeta::from_toml_str(&challenge_toml_str)?;
-
-    let new_challenge = challenges::ActiveModel {
-        name: Set(c.name.clone()),
-        category: Set(c.category),
-        description: Set(c.description),
-        attachment: Set(c.attachment),
-        safe_name: Set(generate_safe_name(&c.name)),
-        toml_str: Set(challenge_toml_str),
-        ..Default::default()
-    };
-
-    // 关键：按 name 唯一键 UPSERT（存在则覆盖更新）
-    challenges::Entity::insert(new_challenge)
-        .on_conflict(
-            OnConflict::column(challenges::Column::Name)
-                .update_columns([
-                    challenges::Column::Category,
-                    challenges::Column::Description,
-                    challenges::Column::Attachment,
-                    challenges::Column::TomlStr,
-                    challenges::Column::SafeName,
-                ])
-                .to_owned(),
-        )
-        .exec(db)
-        .await?;
-
-    // 返回最新记录（无论是插入还是更新）
-    let model = challenges::Entity::find()
-        .filter(challenges::Column::Name.eq(c.name))
-        .one(db)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("challenge not found after upsert"))?;
-
-    Ok(model)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImportChallengeResponse {
+    pub challenge: ChallengesDto,
 }
 
-pub async fn import_challenge_zip(
-    db: &DatabaseConnection,
-    challenge_zip: tempfile::NamedTempFile,
-) -> anyhow::Result<String> {
-    let output_root = get_setting(&db, "CHALLENGES_DIR")
-        .await
-        .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
-    let mut archive = zip::ZipArchive::new(challenge_zip)?;
-
-    let meta_toml = {
-        let mut meta_toml_file = archive.by_name("meta.toml")?;
-        let mut meta_toml_content = String::new();
-        meta_toml_file.read_to_string(&mut meta_toml_content)?;
-        meta_toml_content
-    };
-
-    let cm = ChallengeMeta::from_toml_str(&meta_toml)?;
-    let safe_name = generate_safe_name(&cm.name);
-    let output_dir = std::path::Path::new(&output_root).join(safe_name);
-
-    if output_dir.exists() {
-        // 覆盖题目
-        std::fs::remove_dir_all(&output_dir)?;
-    }
-
-    std::fs::create_dir_all(&output_dir)?;
-
-    archive.extract(&output_dir)?;
-
-    Ok(meta_toml)
-}
-
-pub async fn import_challenge_list_zip(
-    db: &DatabaseConnection,
-    challenge_list_zip: tempfile::NamedTempFile,
-) -> anyhow::Result<Vec<String>> {
-    let mut archive = zip::ZipArchive::new(challenge_list_zip)?;
-    let file_names: Vec<String> = archive.file_names().map(|s| s.to_string()).collect();
-    let mut will_insert_toml_strs = Vec::new();
-    for zip_name in file_names {
-        let mut file = archive.by_name(&zip_name)?;
-        let mut temp_file = NamedTempFile::new()?;
-        std::io::copy(&mut file, &mut temp_file)?;
-        let meta_toml = import_challenge_zip(db, temp_file).await?;
-        will_insert_toml_strs.push(meta_toml);
-    }
-    Ok(will_insert_toml_strs)
+/// POST /api/admin/challenges/scan —— 扫描 CHALLENGES_DIR 登记未入库 package
+#[post("/scan")]
+pub async fn scan_challenges(
+    _user: SuperAdminJwtGuard,
+    ctx: ReqCtx,
+) -> UniResult<Vec<ChallengeScanItem>> {
+    let items = import_service::scan_challenges_dir(
+        ctx.db.get_ref(),
+        ctx.docker.get_ref(),
+        &ctx.config.registry,
+    )
+    .await?;
+    UniResponse::ok(items.into()).into()
 }
 
 /// POST /api/admin/challenges/check
@@ -204,17 +100,14 @@ pub async fn check_challenges(
     ccr: Json<ChallengeCheckRequest>,
 ) -> UniResult<Vec<ChallengeCheckResult>> {
     let ccr = ccr.into_inner();
-    let mut challenge_check_results = Vec::new();
-    // check docker image
-    // check challenge attachment
     let challenge_dir = get_setting(&ctx.db, "CHALLENGES_DIR")
         .await
         .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
 
     let challenges = {
-        if ccr.challenge_id_list.is_some() {
+        if let Some(ids) = ccr.challenge_id_list {
             Challenges::find()
-                .filter(challenges::Column::Id.is_in(ccr.challenge_id_list.unwrap()))
+                .filter(challenges::Column::Id.is_in(ids))
                 .all(ctx.db.get_ref())
                 .await?
         } else {
@@ -222,33 +115,49 @@ pub async fn check_challenges(
         }
     };
 
+    let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
+    let mut results = Vec::new();
     for challenge in challenges {
-        let attachment_ok = challenge.attachment.as_ref().map_or(true, |attachment| {
-            let challenge_dir = std::path::Path::new(&challenge_dir).join(&challenge.safe_name);
-            challenge_dir.join(attachment).exists()
-        });
+        let (docker_image_ok, attachment_ok) =
+            if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
+                // 镜像检查：当前版本 image pin（RepoDigest/image_id）必须本地可 inspect
+                let docker_ok = match effective_image_ref(
+                    challenge.image_repo_digest.as_deref(),
+                    challenge.image_id.as_deref(),
+                ) {
+                    Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
+                    Err(_) => false,
+                };
+                let attach_ok = match &challenge.attachment_path {
+                    Some(rel) => {
+                        let p = crate::infrastructure::settings::resolve_dir_path(&challenge_dir)
+                            .join(&challenge.safe_name)
+                            .join(rel);
+                        p.is_file()
+                    }
+                    None => true,
+                };
+                (docker_ok, attach_ok)
+            } else {
+                (false, true)
+            };
 
-        let cm = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .map_err(|e| AppError::BadRequest(format!("parse challenge meta error: {}", e)))?;
-
-        let docker_image_ok = match &cm.docker {
-            Some(d) => ctx.docker.inspect_image(&d.image_tag).await.is_ok(),
-            None => true, // 非docker 题目 默认为true
-        };
-
-        challenge_check_results.push(ChallengeCheckResult {
+        results.push(ChallengeCheckResult {
             id: challenge.id,
             challenge_name: challenge.name,
-            is_ok: attachment_ok && docker_image_ok,
+            is_ok: docker_image_ok && attachment_ok,
             docker_image: docker_image_ok,
             attachment: attachment_ok,
         });
     }
 
-    UniResponse::ok(challenge_check_results.into()).into()
+    UniResponse::ok(results.into()).into()
 }
 
 /// POST /api/admin/challenges/build
+///
+/// 单版本模型：仅 re-ensure 当前版本的 pin 镜像本地存在（pull by RepoDigest when missing），
+/// 不重新构建。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildChallengeRequest {
     pub challenge_id: Option<Uuid>,
@@ -269,45 +178,46 @@ pub async fn build_challenge(
 ) -> UniResult<Vec<BuildChallengeResult>> {
     let user = user.into_inner();
     let bcr = bcr.into_inner();
-    let mut res = Vec::new();
     let mut challenge_id_list = Vec::new();
-    bcr.challenge_id.map(|c| {
+    if let Some(c) = bcr.challenge_id {
         challenge_id_list.push(c);
-    });
-    bcr.challenge_id_list.map(|c| {
-        challenge_id_list.extend(c);
-    });
+    }
+    if let Some(l) = bcr.challenge_id_list {
+        challenge_id_list.extend(l);
+    }
 
+    let mut res = Vec::new();
     for challenge_id in challenge_id_list {
         let challenge = Challenges::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let cm = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .map_err(|e| AppError::BadRequest(format!("parse challenge meta error: {}", e)))?;
-
-        if cm.docker.is_none() {
-            continue;
-        }
-
-        let challenges_dir = get_setting(&ctx.db, "CHALLENGES_DIR")
-            .await
-            .map_err(|e| AppError::BadRequest(format!("get setting error: {}", e)))?;
-
-        let context_path = std::path::Path::new(&challenges_dir)
-            .join(&challenge.safe_name)
-            .join("src");
-
-        let image_tag = &cm
-            .docker
-            .as_ref()
-            .expect("docker metadata checked")
-            .image_tag;
-        let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
-        let build_result = runtime.build_image(image_tag, &context_path).await;
-        let is_ok = build_result.is_ok();
-        let message = build_result.map_or_else(|e| e.to_string(), |_| "ok".to_string());
+        let (is_ok, message) =
+            if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
+                if challenge.container_port.is_some() {
+                    match effective_image_ref(
+                        challenge.image_repo_digest.as_deref(),
+                        challenge.image_id.as_deref(),
+                    ) {
+                        Ok(pin) => {
+                            let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
+                            match ImageRuntime::ensure_image(&runtime, &pin, None).await {
+                                Ok(_) => (true, "ok".to_string()),
+                                Err(e) => (false, e.to_string()),
+                            }
+                        }
+                        Err(e) => (false, e),
+                    }
+                } else {
+                    (true, "no docker runtime (static/misc)".to_string())
+                }
+            } else {
+                (
+                    false,
+                    "no ready package; import a package first".to_string(),
+                )
+            };
 
         res.push(BuildChallengeResult {
             challenge_name: challenge.name.clone(),
@@ -320,7 +230,7 @@ pub async fn build_challenge(
                 "INFO",
                 "CHALLENGES",
                 "BUILD",
-                format!("{} 构建题目镜像: {}", user.username, challenge.name).as_str(),
+                format!("{} 确保题目镜像: {}", user.username, challenge.name).as_str(),
                 json!({"challenge_name": challenge.name, "success": is_ok}),
                 None,
                 user.id.into(),
@@ -331,3 +241,20 @@ pub async fn build_challenge(
 
     UniResponse::ok(res.into()).into()
 }
+
+/// 镜像钉扎：`image_repo_digest`（repo@sha256:…）优先于 `image_id`（仅本地 sha256:…）。
+pub fn effective_image_ref(
+    repo_digest: Option<&str>,
+    image_id: Option<&str>,
+) -> Result<String, String> {
+    if let Some(d) = repo_digest.filter(|d| !d.is_empty()) {
+        return Ok(d.to_string());
+    }
+    if let Some(id) = image_id.filter(|id| !id.is_empty()) {
+        return Ok(id.to_string());
+    }
+    Err("no image pin (image_repo_digest/image_id)".to_string())
+}
+
+// re-export for tests / other modules
+pub use crate::modules::challenge::build::import_service::ImportChallengeResult;

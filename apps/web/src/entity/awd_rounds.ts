@@ -8,7 +8,6 @@ export type AwdRounds = {
   phase: AwdPhase;
   started_at: string;
   scheduled_end_at: string;
-  grace_ends_at?: string;
   paused_at?: string;
   remaining_secs?: string;
   completed_at?: string;

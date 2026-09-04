@@ -1,4 +1,4 @@
-//! Bollard-backed unified container runtime.
+//! Docker 运行时实现（bollard）。
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,11 +12,11 @@ use futures_util::StreamExt;
 use tracing::{info, warn};
 
 use super::model::{
-    ContainerFilter, ContainerHandle, ContainerSpec, ContainerState, NetworkHandle, NetworkInspect,
-    NetworkSpec,
+    ContainerFilter, ContainerHandle, ContainerSpec, ContainerState, ExecOptions, ExecOutcome,
+    MAX_COPY_BYTES, NetworkHandle, NetworkInspect, NetworkSpec,
 };
 
-/// Unified Docker runtime used by Jeopardy instances, AWD, and CLI.
+/// 统一 Docker 运行时，供 Jeopardy 实例、AWD 与 CLI 使用。
 #[async_trait]
 pub trait ContainerRuntime: Send + Sync {
     async fn create_network(&self, spec: NetworkSpec) -> anyhow::Result<NetworkHandle>;
@@ -53,9 +53,34 @@ pub trait ContainerRuntime: Send + Sync {
     async fn list_containers(&self, filter: ContainerFilter)
     -> anyhow::Result<Vec<ContainerState>>;
     async fn logs(&self, id_or_name: &str, limit: usize) -> anyhow::Result<Vec<String>>;
+
+    /// Copy a file/dir out of a (possibly stopped) container as an uncompressed tar
+    /// archive (raw bytes). Used for AWD-P source extraction from a `docker create`
+    /// only (never started) container.
+    async fn copy_from_container(&self, id_or_name: &str, path: &str) -> anyhow::Result<Vec<u8>>;
+
+    /// Write a tar archive into a container at `dest_dir` (docker PUT /containers/{id}/archive).
+    /// Paths in the archive are relative to `dest_dir`; parent dirs are created automatically.
+    /// The container may be running or stopped; the writable layer is modified in place.
+    async fn copy_into_container(
+        &self,
+        id_or_name: &str,
+        dest_dir: &str,
+        tar_bytes: Vec<u8>,
+    ) -> anyhow::Result<()>;
+
+    /// Run a command inside a **running** container, capturing stdout/stderr with caps.
+    ///
+    /// Exit code is read via `inspect_exec` after the output stream closes. On timeout
+    /// the stream is abandoned and `timed_out = true`; partial output is preserved.
+    async fn exec(&self, id_or_name: &str, options: ExecOptions) -> anyhow::Result<ExecOutcome>;
+
+    /// Restart a container **preserving its writable layer** (unlike reset/recreate).
+    /// AWD-P patch reload: same physical container, patch persists.
+    async fn restart_container(&self, id_or_name: &str, timeout: Duration) -> anyhow::Result<()>;
 }
 
-/// Default Docker implementation of [`ContainerRuntime`].
+/// [`ContainerRuntime`] 的默认 Docker 实现。
 pub struct DockerContainerRuntime {
     docker: Docker,
 }
@@ -79,54 +104,31 @@ impl DockerContainerRuntime {
             .await
     }
 
-    /// Build a Docker image from a build context directory (tar streamed to the daemon).
+    /// Challenge-compatible thin wrapper around [`crate::runtime::ImageRuntime::build_image`].
+    ///
+    /// Prefer the typed `ImageBuildRequest` API via `ImageRuntime` for new call sites
+    /// (this inherent method shadows the trait method on the concrete type).
     pub async fn build_image(
         &self,
         image_tag: &str,
         context_path: &std::path::Path,
     ) -> anyhow::Result<()> {
-        use bollard::{body_full, query_parameters::BuildImageOptionsBuilder, secret::BuildInfo};
-        use std::fs::File;
-        use std::io::Read;
-        use tar::Builder;
-        use tempfile::NamedTempFile;
-        use tokio_util::bytes::Bytes;
-        use tracing::error;
+        use crate::runtime::image::{ImageBuildRequest, ImageRuntime};
+        use std::time::Duration;
 
-        let options = BuildImageOptionsBuilder::default().t(image_tag).build();
-
-        let tmp = NamedTempFile::new()?;
-        {
-            let file = File::create(tmp.path())?;
-            let mut tar_builder = Builder::new(file);
-            tar_builder.append_dir_all(".", context_path)?;
-            tar_builder.finish()?;
-        }
-
-        let mut buf = Vec::new();
-        File::open(tmp.path())?.read_to_end(&mut buf)?;
-
-        let body = body_full(Bytes::from(buf));
-
-        let mut build_stream = self.docker.build_image(options, None, Some(body));
-
-        let mut infos = Vec::new();
-        while let Some(update) = build_stream.next().await {
-            let info: BuildInfo = update?;
-
-            if let Some(ref stream_msg) = info.stream {
-                infos.push(stream_msg.trim().to_owned());
-            }
-            if let Some(ref err) = info.error {
-                error!("ERROR: {}", err);
-            }
-        }
-
-        for msg in infos {
-            info!("{}", msg);
-        }
-
-        Ok(())
+        let req = ImageBuildRequest {
+            context_dir: context_path.to_path_buf(),
+            dockerfile: "Dockerfile".into(),
+            target_ref: image_tag.to_string(),
+            labels: Default::default(),
+            timeout: Duration::from_secs(600),
+            verbose: false,
+            build_proxy: None,
+        };
+        ImageRuntime::build_image(self, req)
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
     }
 }
 
@@ -300,6 +302,15 @@ impl ContainerRuntime for DockerContainerRuntime {
                 .unwrap_or_default(),
             created_at: info.created,
             published_ports,
+            // bollard 0.19：IP 位于 NetworkSettings.Networks[].ip_address（顶层字段已废弃）。
+            ip_address: info
+                .network_settings
+                .as_ref()
+                .and_then(|n| n.networks.as_ref())
+                .and_then(|nets| {
+                    nets.iter()
+                        .find_map(|(_, ep)| ep.ip_address.clone().filter(|ip| !ip.is_empty()))
+                }),
         })
     }
 
@@ -398,15 +409,189 @@ impl ContainerRuntime for DockerContainerRuntime {
         }
         Ok(lines)
     }
+
+    async fn copy_from_container(&self, id_or_name: &str, path: &str) -> anyhow::Result<Vec<u8>> {
+        use bollard::query_parameters::DownloadFromContainerOptionsBuilder;
+
+        let options = Some(
+            DownloadFromContainerOptionsBuilder::default()
+                .path(path)
+                .build(),
+        );
+        let mut stream = self.docker.download_from_container(id_or_name, options);
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| anyhow::anyhow!("copy_from_container({id_or_name}:{path}): {e}"))?;
+            buf.extend_from_slice(&chunk);
+            if buf.len() > MAX_COPY_BYTES {
+                return Err(anyhow::anyhow!(
+                    "copy_from_container({id_or_name}:{path}) exceeded {MAX_COPY_BYTES} bytes"
+                ));
+            }
+        }
+        if buf.is_empty() {
+            return Err(anyhow::anyhow!(
+                "copy_from_container({id_or_name}:{path}): empty archive (path missing or no permission)"
+            ));
+        }
+        Ok(buf)
+    }
+
+    async fn copy_into_container(
+        &self,
+        id_or_name: &str,
+        dest_dir: &str,
+        tar_bytes: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        use bollard::body_full;
+        use bollard::container::UploadToContainerOptions;
+
+        let options = Some(UploadToContainerOptions {
+            path: dest_dir.to_string(),
+            no_overwrite_dir_non_dir: "false".to_string(),
+        });
+        self.docker
+            .upload_to_container(id_or_name, options, body_full(tar_bytes.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("copy_into_container({id_or_name}:{dest_dir}): {e}"))
+    }
+
+    async fn exec(&self, id_or_name: &str, options: ExecOptions) -> anyhow::Result<ExecOutcome> {
+        use bollard::container::LogOutput;
+        use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+
+        let stdin = options.stdin.clone();
+        let create = CreateExecOptions {
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            attach_stdin: Some(stdin.is_some()),
+            tty: Some(false),
+            cmd: Some(options.cmd.clone()),
+            // 空 env 表示继承容器环境（Docker API 的 Env=null 语义）。
+            env: if options.env.is_empty() {
+                None
+            } else {
+                Some(options.env.clone())
+            },
+            working_dir: options.workdir.clone(),
+            ..Default::default()
+        };
+        let created = self
+            .docker
+            .create_exec(id_or_name, create)
+            .await
+            .map_err(|e| anyhow::anyhow!("create_exec({id_or_name}): {e}"))?;
+
+        let started = std::time::Instant::now();
+        let results = self
+            .docker
+            .start_exec(
+                &created.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: false,
+                    output_capacity: None,
+                }),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("start_exec({id_or_name}): {e}"))?;
+
+        let mut stdout: Vec<u8> = Vec::new();
+        let mut stderr: Vec<u8> = Vec::new();
+        let mut timed_out = false;
+        let mut stream_error: Option<String> = None;
+
+        if let StartExecResults::Attached {
+            mut output,
+            mut input,
+        } = results
+        {
+            // 写入 stdin 后关闭（exec 在 stdin EOF 后开始）。
+            if let Some(data) = &stdin {
+                use tokio::io::AsyncWriteExt;
+                if let Err(e) = input.write_all(data).await {
+                    stream_error = Some(format!("exec stdin write: {e}"));
+                }
+                let _ = input.shutdown().await;
+            }
+            let deadline = tokio::time::Instant::now() + options.timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    timed_out = true;
+                    break;
+                }
+                match tokio::time::timeout(remaining, output.next()).await {
+                    Ok(Some(Ok(LogOutput::StdOut { message }))) => {
+                        if stdout.len() < options.stdout_limit {
+                            let take = message.len().min(options.stdout_limit - stdout.len());
+                            stdout.extend_from_slice(&message[..take]);
+                        }
+                    }
+                    Ok(Some(Ok(LogOutput::StdErr { message }))) => {
+                        if stderr.len() < options.stderr_limit {
+                            let take = message.len().min(options.stderr_limit - stderr.len());
+                            stderr.extend_from_slice(&message[..take]);
+                        }
+                    }
+                    Ok(Some(Ok(_))) => {}
+                    Ok(Some(Err(e))) => {
+                        stream_error = Some(e.to_string());
+                        break;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        timed_out = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 输出流已关闭后再查退出码（避免拿到 Running=true/ExitCode=null）。
+        let exit_code = self
+            .docker
+            .inspect_exec(&created.id)
+            .await
+            .map(|r| r.exit_code)
+            .map_err(|e| anyhow::anyhow!("inspect_exec({id_or_name}): {e}"))?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        if let Some(msg) = stream_error {
+            return Err(anyhow::anyhow!("exec({id_or_name}) stream error: {msg}"));
+        }
+        Ok(ExecOutcome {
+            exit_code,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            duration_ms,
+            timed_out,
+        })
+    }
+
+    async fn restart_container(&self, id_or_name: &str, timeout: Duration) -> anyhow::Result<()> {
+        use bollard::query_parameters::RestartContainerOptionsBuilder;
+
+        let options = Some(
+            RestartContainerOptionsBuilder::default()
+                .t(timeout.as_secs() as i32)
+                .build(),
+        );
+        self.docker
+            .restart_container(id_or_name, options)
+            .await
+            .map_err(|e| anyhow::anyhow!("restart_container({id_or_name}): {e}"))
+    }
 }
 
 pub use super::model::DEFAULT_STOP_TIMEOUT as STOP_TIMEOUT_DEFAULT;
 
-/// Convert a mode-agnostic [`ContainerSpec`] into a bollard container-create body.
+/// 将与赛制无关的 [`ContainerSpec`] 转为 bollard 容器创建体。
 ///
-/// Pure conversion, kept separate from the Docker API call so the mapping rules
-/// (CPU quota math, healthcheck nanosecond conversion, port/network wiring) are
-/// unit-testable without a running daemon.
+/// 纯转换，与 Docker API 调用分离，使映射规则
+/// （CPU 配额计算、健康检查纳秒换算、端口/网络接线）
+/// 可在无 daemon 时做单元测试。
 pub(crate) fn spec_to_create_body(spec: ContainerSpec) -> bollard::secret::ContainerCreateBody {
     use bollard::secret::{HostConfig, NetworkingConfig};
 
@@ -463,6 +648,11 @@ pub(crate) fn spec_to_create_body(spec: ContainerSpec) -> bollard::secret::Conta
                         ipv4_address: Some(ip.clone()),
                         ..Default::default()
                     }),
+                    aliases: if spec.network_aliases.is_empty() {
+                        None
+                    } else {
+                        Some(spec.network_aliases.clone())
+                    },
                     ..Default::default()
                 },
             );
@@ -514,6 +704,7 @@ mod tests {
             labels: Default::default(),
             network_name: None,
             fixed_ip: None,
+            network_aliases: vec![],
             port_bindings: vec![],
             auto_remove: true,
             resources: ResourceLimits::default(),

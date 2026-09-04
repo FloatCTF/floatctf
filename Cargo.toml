@@ -5,6 +5,7 @@ members = [
     "crates/fcmc",
     "crates/awd-flagserver",
     "crates/awd-judgeserver",
+    "crates/awdp-judgeserver",
 ]
 
 [workspace.package]

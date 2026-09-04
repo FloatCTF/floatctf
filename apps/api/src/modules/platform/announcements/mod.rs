@@ -1,4 +1,4 @@
-//! Site-wide announcements (not event announcements).
+//! 平台公告管理与展示。
 
 mod api;
 mod dto;

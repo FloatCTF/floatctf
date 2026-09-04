@@ -1,4 +1,7 @@
-use crate::entity::{event_logs, sea_orm_active_enums::EventType};
+use crate::entity::{
+    event_logs,
+    sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
+};
 use sea_orm::entity::prelude::{DateTimeWithTimeZone, Uuid};
 use serde::Serialize;
 use serde_json::Value as Json;
@@ -9,7 +12,9 @@ pub struct EventLogsDto {
     pub event_id: Uuid,
     pub user_id: Option<Uuid>,
     pub team_id: Option<Uuid>,
-    pub r#type: EventType,
+    pub family: EventFamily,
+    pub purpose: EventPurpose,
+    pub participant_mode: ParticipantMode,
     pub level: String,
     pub action: String,
     pub details: Json,
@@ -24,7 +29,9 @@ impl From<event_logs::Model> for EventLogsDto {
             event_id: m.event_id,
             user_id: m.user_id,
             team_id: m.team_id,
-            r#type: m.r#type,
+            family: m.family,
+            purpose: m.purpose,
+            participant_mode: m.participant_mode,
             level: m.level,
             action: m.action,
             details: m.details,

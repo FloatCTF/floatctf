@@ -15,7 +15,20 @@ export const Route = createFileRoute("/service/solves")({
 function RouteComponent() {
 	useTitle("Solves | FloatCTF");
 	const columns = [
-		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
+		{
+			accessorKey: "challenge_name",
+			header: "Challenge",
+			field: "challenge_name",
+			rowHeader: true,
+			renderCell: (row: SolveResult) => (
+				<AppLink
+					to={"/service/challenges/$id"}
+					params={{ id: row.challenge_id }}
+				>
+					{row.challenge_name ?? row.challenge_id}
+				</AppLink>
+			),
+		},
 		{
 			accessorKey: "nickname",
 			header: "User",
@@ -37,34 +50,15 @@ function RouteComponent() {
 			),
 		},
 		{
-			accessorKey: "challenge_id",
-			header: "Challenge ID",
-			field: "challenge_id",
+			accessorKey: "updated_at",
+			header: "Updated At",
+			field: "updated_at",
 			renderCell: (row: SolveResult) => (
-				<AppLink
-					to={"/service/challenges/$id"}
-					params={{ id: row.challenge_id }}
-				>
-					{row.challenge_id}
-				</AppLink>
-			),
-		},
-		{
-			accessorKey: "event_id",
-			header: "Event ID",
-			field: "event_id",
-			renderCell: (row: SolveResult) => <span>{row.event_id ?? "—"}</span>,
-		},
-		{
-			accessorKey: "created_at",
-			header: "Created At",
-			field: "created_at",
-			renderCell: (row: SolveResult) => (
-				<span>{DatetimeToShow(row.created_at)}</span>
+				<span>{DatetimeToShow(row.updated_at)}</span>
 			),
 		},
 	];
-	const filterKeys = ["challenge_id", "event_id"];
+	const filterKeys = ["challenge_id"];
 
 	return (
 		<GenericTable

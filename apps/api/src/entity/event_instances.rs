@@ -7,19 +7,44 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "event_instances")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
+    pub id: Uuid,
     pub event_id: Uuid,
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub instance_id: Uuid,
-    pub user_id: Uuid,
-    pub team_id: Option<Uuid>,
+    pub owner_user_id: Option<Uuid>,
+    pub owner_team_id: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_ref: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub container_id: Option<String>,
+    #[sea_orm(column_type = "Text", unique)]
+    pub container_name: String,
+    #[sea_orm(column_type = "Text")]
+    pub runtime_state: String,
+    pub runtime_generation: i64,
+    pub created_at: DateTimeWithTimeZone,
+    pub started_at: Option<DateTimeWithTimeZone>,
+    pub stopped_at: Option<DateTimeWithTimeZone>,
+    pub expires_at: Option<DateTimeWithTimeZone>,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::awdp_evaluation_proofs::Entity")]
+    AwdpEvaluationProofs,
+    #[sea_orm(has_many = "super::awdp_evaluations::Entity")]
+    AwdpEvaluations,
+    #[sea_orm(has_one = "super::awdp_instances::Entity")]
+    AwdpInstances,
+    #[sea_orm(has_many = "super::awdp_patch_submissions::Entity")]
+    AwdpPatchSubmissions,
+    #[sea_orm(has_one = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
+    #[sea_orm(has_one = "super::event_gamebox_instances::Entity")]
+    EventGameboxInstances,
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
-        from = "Column::TeamId",
-        to = "super::event_teams::Column::Id",
+        from = "(Column::EventId, Column::OwnerTeamId)",
+        to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
@@ -32,22 +57,52 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Events,
-    #[sea_orm(
-        belongs_to = "super::instances::Entity",
-        from = "Column::InstanceId",
-        to = "super::instances::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Instances,
+    #[sea_orm(has_many = "super::instance_endpoints::Entity")]
+    InstanceEndpoints,
     #[sea_orm(
         belongs_to = "super::users::Entity",
-        from = "Column::UserId",
+        from = "Column::OwnerUserId",
         to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
     Users,
+}
+
+impl Related<super::awdp_evaluation_proofs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpEvaluationProofs.def()
+    }
+}
+
+impl Related<super::awdp_evaluations::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpEvaluations.def()
+    }
+}
+
+impl Related<super::awdp_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpInstances.def()
+    }
+}
+
+impl Related<super::awdp_patch_submissions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AwdpPatchSubmissions.def()
+    }
+}
+
+impl Related<super::event_challenge_instance::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventChallengeInstance.def()
+    }
+}
+
+impl Related<super::event_gamebox_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventGameboxInstances.def()
+    }
 }
 
 impl Related<super::event_teams::Entity> for Entity {
@@ -62,9 +117,9 @@ impl Related<super::events::Entity> for Entity {
     }
 }
 
-impl Related<super::instances::Entity> for Entity {
+impl Related<super::instance_endpoints::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::InstanceEndpoints.def()
     }
 }
 

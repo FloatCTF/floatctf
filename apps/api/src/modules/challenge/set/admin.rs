@@ -1,4 +1,4 @@
-//! Admin challenge set handlers.
+//! 题集管理端接口。
 
 use std::str::FromStr;
 

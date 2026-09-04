@@ -20,13 +20,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=FloatCTF%2Ffloatctf&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FloatCTF/floatctf&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FloatCTF/floatctf&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FloatCTF/floatctf&type=date&legend=top-left" />
- </picture>
-</a>
+![FloatCTF Star History](https://github.com/fb0sh/StarHistory/raw/refs/heads/main/svg/FloatCTF-floatctf.svg)
 
 ## 目录
 
@@ -34,6 +28,9 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [项目仓库](#项目仓库)
 - [架构说明](#架构说明)
 - [环境要求](#环境要求)
+- [生产安装与部署](#生产安装与部署)
+- [发布渠道（crates.io / GitHub Release）](#发布渠道cratesio--github-release)
+- [开发指南](#开发指南)
 - [环境初始化](#环境初始化)
 - [快速开始](#快速开始)
   - [1. 克隆项目](#1-克隆项目)
@@ -53,6 +50,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [服务说明](#服务说明)
 - [常用命令](#常用命令)
 - [常用开发命令](#常用开发命令)
+- [运维速查](#运维速查)
 - [AI 开发手册](#ai-开发手册)
 - [故障排查](#故障排查)
 - [许可证](#许可证)
@@ -70,14 +68,14 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 | **[floatctf](https://github.com/FloatCTF/floatctf)**                   | FloatCTF Monorepo（当前仓库）             |
 | `apps/api`                                                             | 后端 API（Rust / Actix Web）              |
 | `apps/web`                                                             | 前端（React）                             |
-| `crates/fcmc`                                                          | 共享容器管理与出题工具                    |
+| `crates/fcmc`                                                          | 共享容器管理与出题工具（crates.io: `cargo install fcmc`） |
 | `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
 | `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
 | [floatctf-develop](https://github.com/FloatCTF/floatctf-develop)       | 开发环境（DevContainer）                  |
 | [floatctf-installer](https://github.com/FloatCTF/floatctf-installer)   | 主机安装脚本                              |
 | [floatctf-challenges](https://github.com/FloatCTF/floatctf-challenges) | 题目仓库                                  |
 | [challenge-template](https://github.com/FloatCTF/challenge-template)   | 出题教程 / 题目模板                       |
-| [fcmc](https://github.com/FloatCTF/fcmc)                               | 容器管理 / 出题工具                       |
+| [fcmc](https://github.com/FloatCTF/fcmc)                               | 容器管理 / 出题工具（已发布 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`） |
 | [floatctf-challenge-creator](https://github.com/FloatCTF/floatctf-challenge-creator) | Claude Code 出题 Skill    |
 
 **赛事相关：**
@@ -89,19 +87,98 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 
 ## 架构说明
 
-平台由 4 个核心服务组成：
+生产部署是「原生进程 + Docker 容器」的混合架构：
 
-| 服务              | 镜像              | 说明                   |
-| ----------------- | ----------------- | ---------------------- |
-| `floatctf-db`     | PostgreSQL 17     | 数据库                 |
-| `floatctf-rustfs` | rustfs/rustfs     | S3 兼容对象存储        |
-| `floatctf-nginx`  | Nginx 1.26        | 反向代理和静态文件服务 |
-| `floatctf-api`    | Alpine + floatctf | 后端 API（开发模式由 `mise run dev:api` 直接运行 Rust 进程，不启动容器） |
+```
+Browser
+  ↓
+nginx（容器，network_mode: host）
+  ↓
+FloatCTF API（原生 systemd 进程）
+  ├── PostgreSQL（容器）
+  ├── RustFS（容器）
+  └── AWD Runtime（GameBox / FlagServer / JudgeServer + nftables + WireGuard）
+```
+
+systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程）：
+
+| 单元 | 内容 |
+| ----- | ---- |
+| `floatctf-api.service` | 原生 API 进程 |
+| `floatctf-infra.service` | postgres / rustfs / nginx 容器（`--wait` 就绪） |
+| `floatctf.target` | 聚合目标 |
+
+> 开发模式仍可全部容器化运行（`mise run infra:up` + `dev:api`/`dev:web`），见「快速开始」。
 
 ## 环境要求
 
-- Docker 和 Docker Compose
-- 约 10GB 可用磁盘空间
+**生产部署**（见 [INSTALL.md](./INSTALL.md)）：
+
+- systemd Linux（Arch 已完整真实验证）
+- Docker + Docker Compose
+- nftables、WireGuard（wireguard-tools）、iproute2
+- IPv4 转发 + `br_netfilter`（`install.sh` 自动检查/持久化）
+
+**开发环境**：Docker 与 Docker Compose、约 10GB 可用磁盘空间。
+
+## 生产安装与部署
+
+> 完整权威指南见 **[INSTALL.md](./INSTALL.md)**。以下是极简入口。
+> `install.sh` 是**单文件自包含**安装器：内嵌所有模板，下载 3 个 release 产物
+> （API 二进制 + 前端 dist + merged.sql）后一键部署。
+
+**全新主机（一键安装）**：
+
+```bash
+sudo ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅写文件/建服务，不启动）
+sudo systemctl start floatctf.target   # 手动启动（首次启动 postgres 自动初始化数据库）
+systemctl status floatctf.target
+```
+
+**安装根**（默认 `/home/floatctf`，可用环境变量覆盖）：
+
+```bash
+FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
+```
+
+**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
+（同生产，含 nftables/WireGuard/host 网络），三产物不下载不装配，也**不启动** dev
+容器：
+
+```bash
+sudo ./scripts/install.sh --develop
+# 之后手动起开发环境：mise run infra:up（dev 容器）+ sudo mise run dev:api（host 需 root）
+#                     + mise run dev:web，入口 http://127.0.0.1:7780
+```
+
+**卸载**：
+
+```bash
+sudo /home/floatctf/uninstall.sh          # 安全卸载（保留 PG/RustFS 数据、config、secrets）
+sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认 PURGE FLOATCTF）
+```
+
+`install.sh` 每次部署都会内嵌生成 `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`
+（root:floatctf 0750）。`scripts/clean.sh` 可清理源码签出里的再生构建产物。
+
+> 现代部署请使用 `install.sh` / `clean.sh` / `uninstall.sh` 这套生命周期脚本。
+
+## 发布渠道（crates.io / GitHub Release）
+
+FloatCTF 提供两条获取工具/二进制的渠道：
+
+- **crates.io**：`fcmc` 已发布到 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`
+  即可安装出题/容器管理工具；后端 crate `floatctf` 亦已具备发布元数据。
+- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物
+  （`floatctf` API 二进制 + `web-dist.tar.gz` 前端 + `merged.sql` 数据库初始化），
+  由 `install.sh` 下载部署。
+
+> crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
+
+## 开发指南
+
+完整的本地开发说明（人工开发 + Agent 协同开发、mise 环境与 sudo 坑、CAP_NET_ADMIN、
+数据库迁移、常用命令）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
 
 ## 环境初始化
 
@@ -128,13 +205,20 @@ PostgreSQL、RustFS、Nginx 等基础设施的端口与挂载配置见 `infra/co
 
 ### 3. 启动开发环境
 
+推荐用 `install.sh --develop` 一键起开发环境（完整主机初始化 + dev 容器 + merged.sql 初始化）：
+
 ```bash
-mise run infra:up
-mise run dev:api
-mise run dev:web
+sudo ./scripts/install.sh --develop
+# 之后手动起开发服务（两个终端）：
+sudo mise run dev:api    # API → http://127.0.0.1:9090（host 网络需 root）
+mise run dev:web         # Vite → http://127.0.0.1:3000
 ```
 
-也可以使用 `mise run dev` 同时启动 API 和 Web。数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
+> 详细开发指南（人工开发 / Agent 协同开发、mise 环境、sudo 与 CAP_NET_ADMIN）见
+> **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+
+也可以手动分步：`mise run infra:up` + `mise run dev:api` + `mise run dev:web`。
+数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
 
 ```bash
 mise run db:migration:new <迁移名称>  # 新建迁移 SQL 模板
@@ -218,7 +302,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — Docker Compose 编排全部服务，支持快速迁移与标准化部署
+- **一键部署** — `scripts/install.sh` 一键安装（下载 release tarball → 主机初始化(幂等) → 部署 → systemd → API）；`clean.sh`/`uninstall.sh` 完善生命周期
 
 ## 目录结构
 
@@ -231,9 +315,10 @@ floatctf/
 │   ├── fcmc/            # 共享 Rust crate / CLI
 │   ├── awd-flagserver/  # AWD FlagServer 独立服务
 │   └── awd-judgeserver/ # AWD JudgeServer 独立服务
-├── infra/               # Compose 与 Nginx 配置
-├── scripts/             # 仓库级开发与检查脚本
+├── infra/               # Compose / Nginx / systemd / Docker 配置
+├── scripts/             # 生命周期脚本：install / clean / uninstall
 ├── docs/                # 项目文档
+├── INSTALL.md           # 生产安装与运维权威指南
 ├── app/                 # 运行时数据（日志、上传、题目文件，git 忽略）
 ├── Cargo.toml           # Rust workspace
 ├── Cargo.lock           # 唯一 Rust lockfile
@@ -245,11 +330,20 @@ floatctf/
 
 ## 服务说明
 
+**生产部署**（systemd，`/home/floatctf`）：
+
+| 单元 | 内容 | 端口（默认，可经 `.env` 覆盖） |
+| ----- | ---- | ---- |
+| `floatctf-infra.service` | postgres / rustfs / nginx 容器 | PG 5433 / RustFS 9000,9001 / HTTP 80,443 |
+| `floatctf-api.service` | 原生 API 进程 | API 9090 |
+
+**开发模式**（`mise run infra:up` / `dev:api` / `dev:web`）：
+
 | 服务              | 镜像              | 端口         | 说明                                                                             |
 | ----------------- | ----------------- | ------------ | -------------------------------------------------------------------------------- |
-| `floatctf-db`     | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
-| `floatctf-rustfs` | rustfs/rustfs     | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
-| `floatctf-nginx`  | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
+| `floatctf-dev-db` | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
+| `floatctf-dev-rustfs` | rustfs/rustfs | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
+| `floatctf-dev-nginx` | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
 | `floatctf-api`    | 本地 cargo 进程   | 9090         | 后端 API（开发模式），连接 PostgreSQL 和 RustFS                                  |
 
 ## 常用命令
@@ -292,6 +386,22 @@ mise run build         # 构建 Rust 与 Web
 ```
 
 数据库迁移是显式操作：新建见 `mise run db:migration:new`，合并见 `mise run db:migration:merge`，并将生成的 SQL 手动应用到数据库（见上文「3. 启动开发环境」）。
+
+## 运维速查
+
+生产环境生命周期命令（完整指南见 [INSTALL.md](./INSTALL.md)）：
+
+```bash
+systemctl status floatctf.target        # 平台整体状态
+sudo systemctl restart floatctf-api     # 重启 API
+sudo systemctl restart floatctf-infra   # 重启 infra 容器
+journalctl -fu floatctf-api             # 查看 API 日志
+
+sudo /home/floatctf/uninstall.sh        # 安全卸载（保留数据/密钥）
+sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认）
+```
+
+清理源码构建产物：`./scripts/clean.sh`（`--all` 额外清理依赖与开发运行时数据）。
 
 ## AI 开发手册
 

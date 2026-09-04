@@ -1,7 +1,6 @@
-//! FloatCTF — CTF competition platform library.
+//! FloatCTF — CTF 竞赛/实训平台库 crate。
 //!
-//! This crate exposes all modules for integration testing.
-//! The binary entry point (`main.rs`) calls `bootstrap::run()`.
+//! 对外暴露各业务模块与 bootstrap，供二进制与集成测试共用。
 
 pub mod api;
 pub mod bootstrap;

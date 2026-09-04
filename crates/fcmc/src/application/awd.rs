@@ -1,18 +1,15 @@
-//! AWD event orchestration.
-//!
-//! High-level operations for managing AWD event networks, infrastructure
-//! containers, and GameBox instances.
+//! AWD 相关应用用例。
 
 use anyhow::{Context, Result};
 use bollard::Docker;
 use uuid::Uuid;
 
-use crate::metadata::GameBoxMeta;
+use crate::runtime::HealthcheckSpec;
 use crate::runtime::awd::{
     AwdContainerRuntime, DockerRuntime, EventNetworkSpec, GameBoxResetSpec, GameBoxSpec,
 };
 
-/// AWD application context.
+/// AWD 应用上下文。
 pub struct AwdApp {
     runtime: DockerRuntime,
 }
@@ -45,6 +42,7 @@ impl AwdApp {
                 network_name,
                 subnet_cidr,
                 internal,
+                bridge_name: None,
             })
             .await
             .context("Failed to create event network")?;
@@ -52,41 +50,53 @@ impl AwdApp {
         Ok(handle.network_id)
     }
 
-    /// Create a GameBox from metadata.
+    /// Create a GameBox container from an already-resolved runtime spec.
+    ///
+    /// `image_ref` must be the platform-resolved reference (preferably
+    /// `repo@sha256:…` from a Ready GameBoxRevision). Username still typically
+    /// comes from the package manifest; resources come from EventGameBox.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_gamebox(
         &self,
         event_id: Uuid,
         team_id: Uuid,
-        template_id: Uuid,
+        event_gamebox_id: Uuid,
         instance_id: Uuid,
-        meta: &GameBoxMeta,
+        runtime_generation: i64,
         container_name: String,
+        image_ref: String,
         network_name: String,
         fixed_ip: String,
+        username: String,
         password: String,
+        cpu_millis: i64,
+        memory_bytes: i64,
+        pids_limit: i64,
+        healthcheck: Option<HealthcheckSpec>,
     ) -> Result<String> {
         let spec = GameBoxSpec {
             event_id,
             team_id,
-            template_id,
+            event_gamebox_id,
             instance_id,
+            runtime_generation,
             container_name,
-            image_ref: meta.gamebox.image_tag.clone(),
+            image_ref,
             network_name,
             fixed_ip,
-            username: meta.gamebox.username.clone(),
+            username,
             password,
-            cpu_millis: meta.gamebox.resources.cpu_millis,
-            memory_bytes: meta.gamebox.resources.memory_bytes,
-            pids_limit: meta.gamebox.resources.pids_limit,
-            healthcheck: meta.gamebox.healthcheck.clone(),
+            cpu_millis,
+            memory_bytes,
+            pids_limit,
+            healthcheck,
             extra_hosts: vec![],
             labels: crate::runtime::awd::awd_labels(
                 event_id,
                 team_id,
                 instance_id,
-                template_id,
+                event_gamebox_id,
+                runtime_generation,
                 "gamebox",
             ),
         };
@@ -105,7 +115,7 @@ impl AwdApp {
         &self,
         event_id: Uuid,
         team_id: Uuid,
-        template_id: Uuid,
+        event_gamebox_id: Uuid,
         instance_id: Uuid,
         container_name: String,
         recreate_spec: GameBoxSpec,
@@ -115,7 +125,7 @@ impl AwdApp {
             .reset_gamebox(GameBoxResetSpec {
                 event_id,
                 team_id,
-                template_id,
+                event_gamebox_id,
                 instance_id,
                 container_name,
                 recreate_spec,

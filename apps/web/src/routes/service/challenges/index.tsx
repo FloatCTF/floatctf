@@ -3,10 +3,11 @@ import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { Challenges } from "@/entity";
 import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "@/routes/service/route";
+import type { ChallengesListItem } from "@/types/challengeDto";
 import { DatetimeToShow } from "@/util";
+import { CheckIcon } from "@primer/octicons-react";
 
 export const Route = createFileRoute("/service/challenges/")({
 	component: RouteComponent,
@@ -17,24 +18,11 @@ function RouteComponent() {
 	useTitle("Challenges | FloatCTF");
 	const columns = [
 		{
-			accessorKey: "id",
-			header: "ID",
-			field: "id",
-			rowHeader: true,
-			renderCell: (row: Challenges) => {
-				return (
-					<AppLink to={"/service/challenges/$id"} params={{ id: row.id }}>
-						{row.id}
-					</AppLink>
-				);
-			},
-		},
-		{
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
 			rowHeader: true,
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return (
 					<AppLink to={"/service/challenges/$id"} params={{ id: row.id }}>
 						{row.name}
@@ -49,19 +37,45 @@ function RouteComponent() {
 			field: "category",
 		},
 		{
+			accessorKey: "solved",
+			header: "Solved",
+			field: "solved",
+			renderCell: (row: ChallengesListItem) => {
+				return row.solved ? (
+					<CheckIcon size={16} fill="var(--fgColor-success)" />
+				) : null;
+			},
+		},
+		{
+			accessorKey: "author",
+			header: "Author",
+			field: "author",
+			renderCell: (row: ChallengesListItem) => {
+				return <span>{row.author || "—"}</span>;
+			},
+		},
+		{
+			accessorKey: "version",
+			header: "Version",
+			field: "version",
+			renderCell: (row: ChallengesListItem) => {
+				return <span>{row.version ?? "—"}</span>;
+			},
+		},
+		{
 			accessorKey: "updated_at",
 			header: "Updated At",
 			field: "updated_at",
-			renderCell: (row: Challenges) => {
+			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},
 		},
 	];
-	const filterKeys = ["name", "category", "description"];
+	const filterKeys = ["name", "category", "description", "solved"];
 
 	return (
 		<GenericTable
-			subject="Challenges"
+			subject="ChallengesListItem"
 			subtitle="If you want submit yours, pls visit https://github.com/FloatCTF/challenge-template"
 			columns={columns}
 			filterKeys={filterKeys}

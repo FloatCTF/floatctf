@@ -1,0 +1,91 @@
+//! AWD HTTP API（选手 / 管理 / 内部 / 网络 / GameBox）。
+
+pub mod admin;
+pub mod auth;
+pub mod dto;
+pub mod gamebox_admin;
+pub mod internal;
+pub mod network_admin;
+pub mod player;
+pub mod stream;
+
+use actix_web::web;
+
+/// 在 `scope("/events")` **内部**注册 AWD 管理端路由。
+///
+/// 最终路径：`/api/admin/events/{event_id}/awd/...` 与 `POST /api/admin/events/awd`。
+/// 注意：必须与 common 的 /events scope 同组挂载（bootstrap routes.rs），
+/// 否则会被 common scope("/events") 吞掉（Actix 同前缀 scope 按注册顺序优先匹配）。
+pub fn admin_events_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(admin::create_awd_event)
+        .service(admin::get_awd_event)
+        .service(admin::configure_awd_event)
+        .service(admin::start_awd_event)
+        .service(admin::pause_awd_event)
+        .service(admin::resume_awd_event)
+        .service(admin::finish_awd_event)
+        .service(admin::ban_team)
+        .service(admin::unban_team)
+        .service(admin::adjust_score)
+        .service(admin::admin_reset_gamebox)
+        .service(admin::deploy_awd_event)
+        .service(admin::run_precheck)
+        .service(admin::get_prechecks)
+        .service(admin::get_judge_batches)
+        .service(admin::archive_event)
+        .service(admin::rotate_tokens)
+        .service(admin::update_network)
+        .service(admin::get_event_network)
+        .service(admin::reallocate_network)
+        .service(admin::get_event_scores)
+        .service(admin::admin_event_stream)
+        // GameBox 赛事选择（§46 术语：gamebox / revision / event_gamebox）
+        .service(gamebox_admin::list_event_gameboxes)
+        .service(gamebox_admin::add_event_gamebox)
+        .service(gamebox_admin::update_event_gamebox)
+        .service(gamebox_admin::delete_event_gamebox);
+}
+
+/// 在 `/api/admin` 顶层注册 AWD 管理端路由（无 events/ 前缀）。
+///
+/// Final paths: `/api/admin/awd/...`（平台 AWD Networking §73 + GameBox 库）。
+pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(network_admin::get_platform_network)
+        .service(network_admin::update_platform_network)
+        .service(network_admin::get_platform_network_health)
+        .service(network_admin::get_platform_network_allocations)
+        .service(gamebox_admin::list_gamebox_library)
+        .service(gamebox_admin::import_gamebox)
+        .service(gamebox_admin::scan_gameboxes)
+        .service(gamebox_admin::check_gameboxes)
+        .service(gamebox_admin::build_gamebox)
+        .service(gamebox_admin::update_gamebox)
+        .service(gamebox_admin::hide_gamebox)
+        .service(gamebox_admin::delete_gamebox_library);
+}
+
+/// 在 `scope("/events")` **内部**注册 AWD 选手端路由。
+///
+/// 最终路径：`/api/events/{event_id}/awd/...`
+/// 同样必须与 common 的 /events scope 同组挂载（bootstrap routes.rs）。
+pub fn player_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(player::get_my_gameboxes)
+        .service(player::reset_my_gamebox)
+        .service(player::submit_flag)
+        .service(player::get_scores)
+        .service(player::get_wireguard_config)
+        .service(player::get_ssh_config)
+        .service(player::get_player_status)
+        .service(player::event_stream);
+}
+
+/// 注册 AWD 内部路由（FlagServer / JudgeServer）。
+///
+/// 最终路径：`/internal/awd/events/...`
+pub fn internal_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(internal::issue_flag)
+        .service(internal::judge_claim)
+        .service(internal::judge_heartbeat)
+        .service(internal::judge_result)
+        .service(internal::event_health);
+}

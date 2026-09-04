@@ -1,3 +1,5 @@
+//! 通用工具类调度处理器（如清理未使用对象存储文件）。
+
 use async_trait::async_trait;
 use tracing::info;
 

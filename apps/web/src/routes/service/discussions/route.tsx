@@ -9,7 +9,7 @@ export const Route = createFileRoute("/service/discussions")({
 
 function RouteComponent() {
     const location = useLocation();
-    // Hide tabs on detail pages (/service/discussions/$id)
+    // 隐藏tabs on detail pages (/service/discussions/$id)
     const isDetailPage =
         location.pathname !== "/service/discussions" &&
         location.pathname !== "/service/discussions/my";

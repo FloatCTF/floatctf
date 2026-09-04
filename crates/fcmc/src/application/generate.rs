@@ -1,17 +1,17 @@
-//! Template generation logic.
+//! 脚手架/模板生成用例。
 
 use anyhow::{Context, Result};
 
 use crate::metadata::template;
 
-/// Generate a Challenge template.
+/// 生成 Challenge 模板。
 pub async fn generate_challenge(name: &str, output_dir: &str) -> Result<()> {
     template::generate_challenge_template(name, output_dir)
         .context("Failed to generate challenge template")?;
     Ok(())
 }
 
-/// Generate a GameBox template.
+/// 生成 GameBox 模板。
 pub async fn generate_gamebox(name: &str, output_dir: &str, basic: bool) -> Result<()> {
     if basic {
         template::generate_gamebox_basic_template(name, output_dir)

@@ -3,6 +3,7 @@ use crate::api::dto::map_dto_vec;
 use super::scheduled_tasks_dto::ScheduledTasksDto;
 use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
+    core::system_ids::scheduled_task_system_ids,
     entity::scheduled_tasks,
 };
 use sea_orm::Condition;
@@ -208,6 +209,30 @@ pub async fn get_scheduled_tasks(
             column: Box::new(|v| {
                 Condition::all()
                     .add(scheduled_tasks::Column::Protected.eq(v.parse::<bool>().unwrap_or(false)))
+            }),
+        },
+        // 视图分类：kind=system（平台内置/引擎常驻）| kind=event（赛事运行时一次性任务）
+        // | kind=service（管理员自建任务）。
+        // SystemTask = 启动维护任务固定主键（CLEAN_INSTANCES 等）
+        //          或 protected=true 且无 group_id 的引擎常驻任务（awdp.tick 等）；
+        // EventTasks  = group_id 指向赛事的一次性任务（awd.round.end 等）；
+        // ServiceTask 为其补集。
+        FilterMapping {
+            key: "kind",
+            column: Box::new(|v| match v {
+                "system" => Condition::any()
+                    .add(scheduled_tasks::Column::Id.is_in(scheduled_task_system_ids()))
+                    .add(
+                        Condition::all()
+                            .add(scheduled_tasks::Column::Protected.eq(true))
+                            .add(scheduled_tasks::Column::GroupId.is_null()),
+                    ),
+                "event" => Condition::all().add(scheduled_tasks::Column::GroupId.is_not_null()),
+                "service" => Condition::all()
+                    .add(scheduled_tasks::Column::GroupId.is_null())
+                    .add(scheduled_tasks::Column::Protected.eq(false))
+                    .add(scheduled_tasks::Column::Id.is_not_in(scheduled_task_system_ids())),
+                _ => Condition::all(),
             }),
         },
     ];

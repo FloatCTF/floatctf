@@ -98,6 +98,7 @@ cargo test -p floatctf
 
 - [ ] 根因已定位并有证据（日志/查询/复现测试），不是猜测
 - [ ] 未引入环境变量读取、未手改 entity/（改 Schema 走了迁移 + db:gen）
+- [ ] **未直接修改** `migrations/` 下任何已有文件；Schema/数据修复仅通过 `db:migration:new` 追加新迁移
 - [ ] 数据库修复幂等（可重复执行），带中文注释，已应用开发库
 - [ ] 复现测试存在并转绿
 - [ ] `cargo fmt` + `cargo check` 通过

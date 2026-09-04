@@ -156,8 +156,9 @@ POST /api/events/{id}/challenges/{cid}/submit
 mise run install                  # 安装依赖
 mise run infra:up / down / logs   # 基础设施（Postgres/RustFS/Nginx）
 mise run dev:api / dev:web / dev  # 启动开发服务
-mise run db:migration:new <名称>  # 新建 SQL 迁移
-mise run db:migration:merge       # 重新生成 merged.sql
+mise run db:migration:new <名称>  # 新建 SQL 迁移（文件内无 BEGIN/COMMIT）
+mise run db:migration:apply       # 应用未执行迁移（开发库已 baseline）
+mise run db:migration:merge       # 合并迁移 → merged.sql（fresh DB bootstrap）
 mise run db:gen                   # 从 DB 重新生成 Rust 实体 + TS 类型
 mise run fmt / lint / test / check / build
 ```
@@ -165,6 +166,7 @@ mise run fmt / lint / test / check / build
 ## 9. 常见陷阱
 
 - **sea-orm-cli 版本必须 1.1.20**（与运行时 sea-orm 1.1.20 匹配）。2.0.1 生成的 `rs_type = "Enum"` 语法在 1.x 编译失败（E0425）。
+- **Migrations 只前进**：`apps/api/src/sql/migrations/` 下已有文件**无论如何都不可直接修改/删除/重写**（含 baseline）；改 Schema 只能 `db:migration:new` 追加（详见 DATABASE.md「绝对禁令」与 AGENTS.md 铁律 2）。
 - **实体是生成的**：手改 `entity/` 会被下次 `db:gen` 覆盖；改 Schema 走迁移，改完重新生成。
 - **不要新增环境变量读取**：配置一律从 TOML（`ctx.config`）或 settings 表获取。
 - **entity/代码/DB Schema 三者必须一致**（详见 DATABASE.md 的"三处一致"原则）。

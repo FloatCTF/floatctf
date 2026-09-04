@@ -1,11 +1,11 @@
-//! AuditService — redacted, intentional audit trail over LogService.
+//! `AuditService`——在 `LogService` 之上的脱敏、有意审计轨迹。
 
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::infrastructure::logging::LogService;
 
-/// High-value operations that should always leave an audit trail.
+/// 高价值操作，必须留下审计轨迹。
 #[derive(Debug, Clone, Copy)]
 pub enum AuditAction {
     AdminEventUpdate,
@@ -54,7 +54,7 @@ impl AuditAction {
     }
 }
 
-/// Thin façade that always writes structured, redacted audit rows.
+/// 薄门面：始终写入结构化、已脱敏的审计行。
 #[derive(Clone)]
 pub struct AuditService {
     log: LogService,
@@ -92,7 +92,7 @@ impl AuditService {
     }
 }
 
-/// Best-effort redaction of common secret field names in JSON objects.
+/// 对 JSON 对象中常见密钥字段名尽力脱敏。
 fn redact_sensitive_keys(value: Value) -> Value {
     const SENSITIVE: &[&str] = &[
         "token",

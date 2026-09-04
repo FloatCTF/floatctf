@@ -10,10 +10,10 @@ export type AwdScoreEvents = {
   idempotency_key: string;
   related_team_id?: string;
   gamebox_instance_id?: string;
-  gamebox_template_id?: string;
   reference_id?: string;
   reason?: string;
   metadata_json: string;
   created_by?: string;
   created_at: string;
+  event_gamebox_id?: string;
 };

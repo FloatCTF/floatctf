@@ -1,7 +1,6 @@
-//! Application state — centralized dependency container.
+//! 应用状态——集中依赖容器。
 //!
-//! `AppState` holds all shared resources and is injected via `web::Data<AppState>`.
-//! Existing handlers continue to use individual `app_data` entries during migration.
+//! 新模块应依赖 `web::Data<AppState>`；迁移期间既有处理器仍可使用独立 `app_data`。
 
 use std::sync::Arc;
 
@@ -11,16 +10,16 @@ use crate::core::AppConfig;
 use crate::infrastructure::audit::AuditService;
 use crate::infrastructure::logging::LogService;
 use crate::infrastructure::realtime::EventPublisher;
-use crate::modules::event::EventModuleRegistry;
-use crate::modules::event::awd_team::crypto::AwdCrypto;
-use crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime;
+use crate::modules::event::awd::crypto::AwdCrypto;
+use crate::modules::event::awd::infrastructure::firewall::FirewallRuntime;
+use crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime;
 use crate::scheduler::TaskScheduler;
 use fcmc::AwdContainerRuntime;
 
-/// Central application state, shared across all request handlers.
+/// 中央应用状态，在全部请求处理器间共享。
 ///
-/// New modules should depend on `web::Data<AppState>` instead of
-/// extracting individual resources from `app_data`.
+/// 新模块应依赖 `web::Data<AppState>`，而非
+/// 从 `app_data` 逐个提取资源。
 #[derive(Clone)]
 pub struct AppState {
     /// Typed process-static configuration.
@@ -39,16 +38,12 @@ pub struct AppState {
     pub publisher: Arc<dyn EventPublisher>,
     /// Task scheduler.
     pub scheduler: Arc<TaskScheduler>,
-    /// Competition mode registry (Jeopardy modes + capability dispatch).
-    pub event_registry: EventModuleRegistry,
-    /// Domain service aggregation.
-    pub modules: ModuleServices,
 }
 
-/// AWD-specific dependencies.
+/// AWD 专用依赖。
 ///
-/// Separated from `AppState` because not all AWD deps are needed by
-/// non-AWD handlers.
+/// 与 `AppState` 分离：非 AWD 处理器无需全部 AWD 依赖。
+///
 #[derive(Clone)]
 pub struct AwdDependencies {
     /// Encryption service for AWD secrets and tokens.
@@ -57,8 +52,14 @@ pub struct AwdDependencies {
     pub publisher: Arc<dyn EventPublisher>,
     /// Docker-backed AWD container/network runtime.
     pub containers: Arc<dyn AwdContainerRuntime>,
-    /// Host WireGuard / firewall / conntrack runtime.
+    /// Host WireGuard / conntrack runtime.
     pub network: Arc<dyn AwdNetworkRuntime>,
+    /// Native nftables firewall runtime（唯一生产实现，Phase 1）。
+    pub firewall: Arc<dyn FirewallRuntime>,
+    /// 进程内限流器（P5-10）。
+    pub rate_limiter: Arc<crate::infrastructure::ratelimit::RateLimiter>,
+    /// 结构化审计（P5-11：管理员敏感操作）。
+    pub audit: crate::infrastructure::audit::AuditService,
 }
 
 impl AppState {
@@ -72,11 +73,7 @@ impl AppState {
         audit: AuditService,
         publisher: Arc<dyn EventPublisher>,
         scheduler: Arc<TaskScheduler>,
-        event_registry: EventModuleRegistry,
     ) -> Self {
-        let modules = ModuleServices {
-            event: event_registry.clone(),
-        };
         Self {
             config,
             db,
@@ -86,14 +83,6 @@ impl AppState {
             audit,
             publisher,
             scheduler,
-            event_registry,
-            modules,
         }
     }
-}
-
-/// Aggregated domain services (expand as modules grow DI needs).
-#[derive(Clone, Default)]
-pub struct ModuleServices {
-    pub event: crate::modules::event::EventModuleRegistry,
 }

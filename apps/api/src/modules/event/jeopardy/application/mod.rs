@@ -1,10 +1,15 @@
-//! Jeopardy shared application services.
+//! Jeopardy 应用用例（由 Purpose × ParticipantMode 驱动）。
 
 pub mod common;
 pub mod context;
-pub mod core;
+pub mod instance;
 pub mod instance_service;
+pub mod participant;
+pub mod scoreboard;
 pub mod submission_service;
+pub mod submit;
+pub mod trend;
+pub mod writeup;
 
 pub use context::{EventContext, EventContextBuilder, ModeInstanceResult, SubmitFlagRequest};
 pub use instance_service::InstanceService;

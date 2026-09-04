@@ -5,10 +5,10 @@ import ReactDOM from "react-dom/client";
 import * as TanStackQueryProvider from "./integrations/tanstack-query/root-provider.tsx";
 import { RouteLoading } from "./components/RouteLoading.tsx";
 import reportWebVitals from "./reportWebVitals.ts";
-// Import the generated route tree
+// 导入生成的路由树
 import { routeTree } from "./routeTree.gen";
 import "./style.css";
-// Create a new router instance
+// 创建路由实例
 
 const TanStackQueryProviderContext = TanStackQueryProvider.getContext();
 export const router = createRouter({
@@ -37,14 +37,14 @@ export const router = createRouter({
   ),
 });
 
-// Register the router instance for type safety
+// 注册路由实例以获得类型安全
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router;
   }
 }
 
-// Render the app
+// 渲染应用
 const rootElement = document.getElementById("app");
 if (rootElement && !rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement);
@@ -61,7 +61,7 @@ if (rootElement && !rootElement.innerHTML) {
   );
 }
 
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+// 若要测量应用性能，可传入函数
+// 记录结果（例如：reportWebVitals(console.log)）
+// 或发送到分析端点。详见 https://bit.ly/CRA-vitals
 reportWebVitals();

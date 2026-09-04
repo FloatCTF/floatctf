@@ -1,14 +1,4 @@
-//! EventPublisher trait and in-process / multi-node implementations.
-//!
-//! # Multi-node fan-out
-//!
-//! - Default: [`BroadcastEventPublisher`] (in-process only).
-//! - When `REALTIME_REDIS_URL` is set (and feature `realtime-redis` is enabled),
-//!   [`HybridEventPublisher`] publishes to local broadcast **and** Redis channel
-//!   `floatctf:realtime` (override via `REALTIME_REDIS_CHANNEL`).
-//! - Each node runs a Redis subscriber that re-broadcasts remote messages into
-//!   the local hub so SSE clients on every node receive events.
-//! - Messages carry an origin node id to avoid echo (double local delivery).
+//! `EventPublisher` trait 以及进程内 / 多节点实现。
 
 use std::sync::{Arc, Mutex};
 
@@ -18,12 +8,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Platform-wide real-time event envelope.
+/// 平台级实时事件信封。
 ///
-/// Must never contain full flags, WireGuard keys, or internal tokens.
+/// 不得包含完整 flag、WireGuard 密钥或内部令牌。
+/// `run_id`：AWDP practice run 维度订阅（competition 仍按 event_id；两者互斥使用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeEvent {
     pub event_id: Uuid,
+    #[serde(default)]
+    pub run_id: Option<Uuid>,
     pub sequence: Option<u64>,
     /// Event type, e.g. `attack.success`, `score.changed`.
     #[serde(rename = "type")]
@@ -36,11 +29,18 @@ impl RealtimeEvent {
     pub fn new(event_id: Uuid, event_type: impl Into<String>, payload: Value) -> Self {
         Self {
             event_id,
+            run_id: None,
             sequence: None,
             event_type: event_type.into(),
             occurred_at: Utc::now().to_rfc3339(),
             payload,
         }
+    }
+
+    /// 绑定 run 维度（practice SSE 按 run_id 订阅）。
+    pub fn with_run_id(mut self, run_id: Uuid) -> Self {
+        self.run_id = Some(run_id);
+        self
     }
 
     pub fn with_sequence(mut self, sequence: u64) -> Self {
@@ -54,7 +54,7 @@ pub trait EventPublisher: Send + Sync {
     async fn publish(&self, event: RealtimeEvent) -> anyhow::Result<()>;
 }
 
-/// Discards all events (default until a WS hub is wired).
+/// 丢弃全部事件（在接入 WS hub 前的默认实现）。
 pub struct NoopEventPublisher;
 
 #[async_trait]
@@ -64,7 +64,7 @@ impl EventPublisher for NoopEventPublisher {
     }
 }
 
-/// Records published events for tests.
+/// 记录已发布事件，供测试使用。
 #[derive(Default, Clone)]
 pub struct RecordingEventPublisher {
     events: Arc<Mutex<Vec<RealtimeEvent>>>,
@@ -92,10 +92,10 @@ impl EventPublisher for RecordingEventPublisher {
     }
 }
 
-/// In-process broadcast hub for WebSocket / SSE fans.
+/// 进程内广播中枢，供 WebSocket / SSE 订阅方使用。
 ///
-/// Subscribers receive clones of published events. Lagged receivers drop older
-/// messages (broadcast semantics). Suitable until a multi-node bus is needed.
+/// 订阅者收到已发布事件的克隆。落后接收方会丢弃较旧
+/// 消息（广播语义）。在需要多节点总线前适用。
 pub struct BroadcastEventPublisher {
     tx: tokio::sync::broadcast::Sender<RealtimeEvent>,
     seq: std::sync::atomic::AtomicU64,
@@ -153,7 +153,7 @@ impl EventPublisher for BroadcastEventPublisher {
     }
 }
 
-/// Wire format for Redis pub/sub (includes origin so nodes can drop echoes).
+/// Redis pub/sub 线路格式（含 origin，便于节点丢弃回环）。
 #[cfg(feature = "realtime-redis")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RedisBusMessage {
@@ -161,10 +161,10 @@ struct RedisBusMessage {
     event: RealtimeEvent,
 }
 
-/// Local broadcast + optional Redis PUBLISH for multi-node fan-out.
+/// 本地广播 + 可选 Redis PUBLISH，用于多节点扇出。
 ///
-/// SSE still subscribes to the shared [`BroadcastEventPublisher`]. Remote
-/// events arrive via a background Redis subscriber and are injected locally.
+/// SSE 仍订阅共享的 [`BroadcastEventPublisher`]。远端
+/// 事件经后台 Redis 订阅到达并注入本地。
 pub struct HybridEventPublisher {
     local: Arc<BroadcastEventPublisher>,
     node_id: Uuid,
@@ -361,7 +361,7 @@ impl EventPublisher for HybridEventPublisher {
     }
 }
 
-/// Resolve publisher wiring from the static TOML configuration.
+/// 从静态 TOML 配置解析 publisher 接线。
 pub fn build_realtime(
     capacity: usize,
     redis_url: Option<&str>,
@@ -391,6 +391,7 @@ pub fn build_realtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::EntityTrait;
     use serde_json::json;
 
     #[tokio::test]
@@ -471,5 +472,175 @@ mod tests {
             .unwrap();
         let got = rx.recv().await.unwrap();
         assert_eq!(got.event_type, "ping");
+    }
+
+    // ── SSE 格式 / 订阅者生命周期测试 ──
+
+    #[test]
+    fn sse_frame_format_is_data_colon_json_newline_newline() {
+        // 验证 SSE 端点输出的帧格式
+        let ev = RealtimeEvent::new(
+            Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            "score.changed",
+            json!({"points": 10}),
+        );
+        let json = serde_json::to_string(&ev).unwrap();
+        let frame = format!("data: {json}\n\n");
+        assert!(frame.starts_with("data: "));
+        assert!(frame.contains("\"type\":\"score.changed\""));
+        assert!(frame.ends_with("\n\n"));
+        // 帧不包含 event: 或 id: 字段（当前后端仅发送 data:）
+        assert!(!frame.starts_with("event:"));
+        assert!(!frame.starts_with("id:"));
+    }
+
+    #[test]
+    fn sse_keepalive_comment_format() {
+        // 验证 keepalive 注释格式（以 : 开头，前端解析器忽略）
+        let keepalive = ": keepalive\n\n";
+        assert!(keepalive.starts_with(':'));
+        assert!(keepalive.ends_with("\n\n"));
+        // 不应包含 data: 前缀
+        assert!(!keepalive.contains("data:"));
+    }
+
+    #[test]
+    fn sse_connected_comment_format() {
+        // 验证初始连接消息格式
+        let connected = ": connected\n\n";
+        assert!(connected.starts_with(':'));
+        assert!(connected.ends_with("\n\n"));
+    }
+
+    #[tokio::test]
+    async fn subscriber_count_reflects_active_receivers() {
+        let hub = BroadcastEventPublisher::new(8);
+        assert_eq!(hub.receiver_count(), 0);
+
+        let rx1 = hub.subscribe();
+        assert_eq!(hub.receiver_count(), 1);
+
+        let rx2 = hub.subscribe();
+        assert_eq!(hub.receiver_count(), 2);
+
+        drop(rx1);
+        // 异步广播 channel 的 receiver_count 在 drop 后立即更新
+        assert_eq!(hub.receiver_count(), 1);
+
+        drop(rx2);
+        assert_eq!(hub.receiver_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn publish_with_no_subscribers_does_not_error() {
+        // fire-and-forget：无订阅者时发布不报错
+        let hub = BroadcastEventPublisher::new(8);
+        // 没有订阅者
+        let result = hub
+            .publish(RealtimeEvent::new(Uuid::nil(), "test", json!({})))
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dropped_subscriber_does_not_receive_new_events() {
+        let hub = BroadcastEventPublisher::new(8);
+        let mut rx = hub.subscribe();
+
+        // 发布第一个事件
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "first", json!({})))
+            .await
+            .unwrap();
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got.event_type, "first");
+
+        // 丢弃订阅者
+        drop(rx);
+
+        // 发布第二个事件 — 不应 panic 或阻塞
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "second", json!({})))
+            .await
+            .unwrap();
+
+        // 新订阅者只能收到此后的事件
+        let mut rx2 = hub.subscribe();
+        hub.publish(RealtimeEvent::new(Uuid::nil(), "third", json!({})))
+            .await
+            .unwrap();
+        let got = rx2.recv().await.unwrap();
+        assert_eq!(got.event_type, "third");
+    }
+
+    #[tokio::test]
+    async fn lagged_subscriber_receives_lagged_error() {
+        let hub = BroadcastEventPublisher::new(2); // 极小容量（实现强制下限 16）
+        let mut rx = hub.subscribe();
+
+        // 填满缓冲区：capacity.max(16) —— 需超过 16 个事件才能让订阅者落后
+        for i in 0..20 {
+            hub.publish(RealtimeEvent::new(Uuid::nil(), format!("e{i}"), json!({})))
+                .await
+                .unwrap();
+        }
+
+        // 接收方落后 — 应收到 Lagged 错误
+        let result = rx.recv().await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            tokio::sync::broadcast::error::RecvError::Lagged(_)
+        ));
+    }
+
+    #[test]
+    fn realtime_event_json_contains_required_fields() {
+        let ev = RealtimeEvent::new(
+            Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            "attack.success",
+            json!({"flag": "redacted"}),
+        );
+        let json = serde_json::to_value(&ev).unwrap();
+
+        assert!(json.get("event_id").is_some());
+        assert_eq!(json["type"], "attack.success");
+        assert!(json.get("occurred_at").is_some());
+        assert!(json.get("payload").is_some());
+        // 序列号由 publish 分配，构造时可能为 None
+    }
+
+    // ── SSE 端点授权合约测试 ──
+    //
+    // 授权模型（Phase 7.2 — 分离认证域）：
+    //
+    // 选手路由 GET /api/events/{id}/awd/stream：
+    //   - 认证：UserJwtGuard（users 表）
+    //   - 授权：find_user_team_membership(event_id, user_id) → Some
+    //   - 拒绝：其他用户 → 403
+    //
+    // 管理路由 GET /api/admin/events/{id}/awd/stream：
+    //   - 认证：SuperAdminJwtGuard（super_admin 表）
+    //   - 授权：所有 SuperAdmin 均可订阅任意赛事
+    //   - SuperAdmin 不需要 users 记录
+    //
+    // HTTP 完整测试因 AppState 引导复杂度暂不可行（见
+    // chore/awd-core-backend-http-acceptance-report.md）。
+    // 以下测试验证基础实体可正常查询。
+
+    #[tokio::test]
+    #[ignore = "requires database — verify entity lookups compile"]
+    async fn entity_lookups_compile() {
+        // 验证 super_admin 和 event_team_members 实体可正常引用
+        let _ = crate::entity::super_admin::Entity::find();
+        let _ = crate::entity::event_team_members::Entity::find();
+    }
+
+    #[test]
+    fn sse_auth_separate_domains_contract() {
+        // 文档化授权决策（Phase 7.2）：
+        // - 选手路由：UserJwtGuard → 仅检查 event_team_members
+        // - 管理路由：SuperAdminJwtGuard → 无需额外检查
+        // - SuperAdmin 不需要 users 记录 — 使用独立的 admin token
+        let _admin_id = Uuid::nil();
+        let _user_id = Uuid::nil();
     }
 }

@@ -1,15 +1,9 @@
-//! Declared capabilities per competition mode (for API/frontend branching).
+//! 按 [`EventMode`] 声明的能力位（供 API / 前端分支）。
 
 use serde::Serialize;
 
-use crate::entity::sea_orm_active_enums::EventType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ParticipantMode {
-    Individual,
-    Team,
-}
+use crate::entity::sea_orm_active_enums::{EventFamily, ParticipantMode};
+use crate::modules::event::common::domain::event_mode::EventMode;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EventCapabilities {
@@ -25,52 +19,79 @@ pub struct EventCapabilities {
 }
 
 impl EventCapabilities {
-    pub fn for_event_type(event_type: &EventType) -> Self {
-        match event_type {
-            EventType::JeopardyPractice => Self {
-                participant_mode: ParticipantMode::Individual,
+    pub fn for_mode(mode: &EventMode) -> Self {
+        match mode.family {
+            EventFamily::Jeopardy => Self {
+                participant_mode: mode.participant_mode.clone(),
                 supports_instances: true,
                 supports_standard_flag_submission: true,
-                supports_teams: false,
+                supports_teams: mode.is_team(),
                 supports_wireguard: false,
                 supports_gameboxes: false,
                 supports_rounds: false,
                 supports_judge: false,
                 supports_reset: false,
             },
-            EventType::JeopardySingle => Self {
-                participant_mode: ParticipantMode::Individual,
-                supports_instances: true,
-                supports_standard_flag_submission: true,
-                supports_teams: false,
-                supports_wireguard: false,
-                supports_gameboxes: false,
-                supports_rounds: false,
-                supports_judge: false,
-                supports_reset: false,
-            },
-            EventType::JeopardyTeam => Self {
-                participant_mode: ParticipantMode::Team,
-                supports_instances: true,
-                supports_standard_flag_submission: true,
-                supports_teams: true,
-                supports_wireguard: false,
-                supports_gameboxes: false,
-                supports_rounds: false,
-                supports_judge: false,
-                supports_reset: false,
-            },
-            EventType::AwdTeam => Self {
-                participant_mode: ParticipantMode::Team,
+            EventFamily::Awd => Self {
+                participant_mode: mode.participant_mode.clone(),
                 supports_instances: false,
                 supports_standard_flag_submission: false,
-                supports_teams: true,
+                supports_teams: mode.is_team(),
                 supports_wireguard: true,
                 supports_gameboxes: true,
                 supports_rounds: true,
                 supports_judge: true,
                 supports_reset: true,
             },
+            // AWDP：通用 instances（按需启动）+ GameBox + Fix rounds + 评估 + reset；
+            // 无 WireGuard（V1 沿用 Challenge 的随机 high port 暴露模型）。
+            EventFamily::Awdp => Self {
+                participant_mode: mode.participant_mode.clone(),
+                supports_instances: true,
+                supports_standard_flag_submission: false,
+                supports_teams: mode.is_team(),
+                supports_wireguard: false,
+                supports_gameboxes: true,
+                supports_rounds: true,
+                supports_judge: true,
+                supports_reset: true,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::event::common::domain::event_mode::EventMode;
+
+    #[test]
+    fn all_valid_modes_have_capabilities() {
+        for mode in [
+            EventMode::jeopardy_practice(),
+            EventMode::jeopardy_individual_competition(),
+            EventMode::jeopardy_team_competition(),
+            EventMode::awd_team_competition(),
+            EventMode::awdp_team_competition(),
+            EventMode::awdp_individual_competition(),
+            EventMode::awdp_practice(),
+        ] {
+            let caps = EventCapabilities::for_mode(&mode);
+            assert_eq!(caps.participant_mode, mode.participant_mode);
+            if mode.is_jeopardy() {
+                assert!(caps.supports_instances);
+                assert!(caps.supports_standard_flag_submission);
+                assert!(!caps.supports_gameboxes);
+            } else if mode.is_awd() {
+                assert!(!caps.supports_instances);
+                assert!(caps.supports_gameboxes);
+                assert!(caps.supports_wireguard);
+            } else {
+                assert!(caps.supports_instances);
+                assert!(caps.supports_gameboxes);
+                assert!(!caps.supports_wireguard, "AWDP V1 不使用 WireGuard");
+                assert!(!caps.supports_standard_flag_submission);
+            }
         }
     }
 }

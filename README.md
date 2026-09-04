@@ -30,6 +30,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [环境要求](#环境要求)
 - [生产安装与部署](#生产安装与部署)
 - [发布渠道（crates.io / GitHub Release）](#发布渠道cratesio--github-release)
+- [开发指南](#开发指南)
 - [环境初始化](#环境初始化)
 - [快速开始](#快速开始)
   - [1. 克隆项目](#1-克隆项目)
@@ -173,6 +174,11 @@ FloatCTF 提供两条获取工具/二进制的渠道：
 
 > crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
 
+## 开发指南
+
+完整的本地开发说明（人工开发 + Agent 协同开发、mise 环境与 sudo 坑、CAP_NET_ADMIN、
+数据库迁移、常用命令）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+
 ## 环境初始化
 
 仓库级开发命令由 `mise` 管理。先安装仓库固定版本的 Rust、Node 和 pnpm，然后执行：
@@ -198,13 +204,20 @@ PostgreSQL、RustFS、Nginx 等基础设施的端口与挂载配置见 `infra/co
 
 ### 3. 启动开发环境
 
+推荐用 `install.sh --develop` 一键起开发环境（完整主机初始化 + dev 容器 + merged.sql 初始化）：
+
 ```bash
-mise run infra:up
-mise run dev:api
-mise run dev:web
+sudo ./scripts/install.sh --develop
+# 之后手动起开发服务（两个终端）：
+sudo mise run dev:api    # API → http://127.0.0.1:9090（host 网络需 root）
+mise run dev:web         # Vite → http://127.0.0.1:3000
 ```
 
-也可以使用 `mise run dev` 同时启动 API 和 Web。数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
+> 详细开发指南（人工开发 / Agent 协同开发、mise 环境、sudo 与 CAP_NET_ADMIN）见
+> **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+
+也可以手动分步：`mise run infra:up` + `mise run dev:api` + `mise run dev:web`。
+数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
 
 ```bash
 mise run db:migration:new <迁移名称>  # 新建迁移 SQL 模板

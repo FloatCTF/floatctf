@@ -191,10 +191,18 @@ docker compose -f /home/floatctf/compose.prod.yml logs -f nginx
 
 ## 开发 vs 生产
 
-| 场景 | `network_runtime` | 说明 |
-|------|-------------------|------|
-| 开发（普通 API/UI） | `noop` | 不建 nftables/WireGuard |
-| 生产 / 真实 AWD | `host` | HostNetworkRuntime + NftablesFirewallRuntime |
+两者主机初始化**完全一致**（`network_runtime = host`，nftables + WireGuard + 转发 +
+br_netfilter + floatctf 用户/布局），区别只在「产物来源与运行形态」：
+
+| | 开发（`--develop`） | 生产（完整安装） |
+|---|---|---|
+| 主机初始化 | ✅ 完整（含 nftables/WG/host） | ✅ 完整 |
+| API 二进制 | 本地 `cargo run`（源码编译） | 下载 release 产物 |
+| 前端 | Vite dev server（3000，热更新） | 下载 web dist（静态） |
+| 数据库初始化 | 源码 merged.sql（dev compose initdb） | 下载 merged.sql（psql 应用） |
+| nginx | dev compose，反代 api:9090 / vite:3000，入口 7780 | prod compose，host 网络 80/443 |
+| systemd | 不装 | floatctf-infra/api/target |
+| 运行身份 | `sudo mise run dev:api`（root，需 CAP_NET_ADMIN） | systemd floatctf 用户 + AmbientCapabilities |
 
 生产流量模型：
 

@@ -17,7 +17,7 @@ FloatCTF 生产部署采用「原生进程 + Docker 容器」的混合架构：
 **Containers（infra，`floatctf-infra`）**
 - PostgreSQL（持久化数据）
 - RustFS（S3 兼容对象存储）
-- nginx（反向代理 + 静态文件，`network_mode: host`）
+- Caddy（反向代理 + 静态文件，`network_mode: host`）
 
 **Dynamic AWD（赛事运行时）**
 - GameBox（选手靶机）
@@ -26,7 +26,7 @@ FloatCTF 生产部署采用「原生进程 + Docker 容器」的混合架构：
 
 **systemd**
 - `floatctf-api.service` — 原生 API 进程
-- `floatctf-infra.service` — infra 容器（postgres + rustfs + nginx）
+- `floatctf-infra.service` — infra 容器（postgres + rustfs + Caddy）
 - `floatctf.target` — 聚合目标（2 服务 + 1 target，**不是** 3 个独立守护进程）
 
 ## 环境要求
@@ -57,15 +57,17 @@ Phase 9 真实主机验证要求以下内核设置（`install.sh` 自动检查�
 
 ```bash
 curl -fsSL https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh -o install.sh
-sudo bash install.sh
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh
 ```
 
 或指定 3 个 release 产物 URL（默认是 fake 占位，需替换为真实地址或显式传入）：
 
 ```bash
-sudo bash install.sh \
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
   --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
 ```
+
+`SITE_ADDRESS` 必须填写已解析到部署主机的公网域名。Caddy 使用该域名自动申请并续签 ACME 证书，并自动处理 HTTP → HTTPS 跳转；无需 Certbot 或手动证书文件。
 
 部署完成后（`install.sh` **只写文件、创建服务，不启动**），手动启动整平台：
 
@@ -108,15 +110,15 @@ systemctl status floatctf.target
 **安装根**：默认 `/home/floatctf`，可经环境变量覆盖（所有路径相对它）：
 
 ```bash
-FLOATCTF_HOME=/opt/floatctf sudo bash install.sh
+sudo env FLOATCTF_HOME=/opt/floatctf SITE_ADDRESS=ctf.example.com bash install.sh
 ```
 
 **下载 3 个 release 产物**：默认 fake 占位地址，可经 `--*-url` 或环境变量覆盖：
 
 ```bash
-sudo bash install.sh \
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
   --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
-# 或环境变量：FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
+# 或环境变量：SITE_ADDRESS / FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
 ```
 
 **部署（仅全新安装，只写文件、不启动服务）**：首部署生成密钥（DB 密码 / RustFS
@@ -179,7 +181,7 @@ sudo systemctl restart floatctf-infra
 systemctl status floatctf-infra
 ```
 
-- `floatctf-infra`：postgres + rustfs + nginx 容器（`docker compose up -d --wait`）
+- `floatctf-infra`：postgres + rustfs + Caddy 容器（`docker compose up -d --wait`）
 - `floatctf-api`：原生 API 进程（`After=floatctf-infra`）
 - `floatctf.target`：聚合目标
 
@@ -190,8 +192,19 @@ docker compose -f /home/floatctf/compose.prod.yml ps
 docker compose -f /home/floatctf/compose.prod.yml logs
 docker compose -f /home/floatctf/compose.prod.yml logs -f postgres
 docker compose -f /home/floatctf/compose.prod.yml logs -f rustfs
-docker compose -f /home/floatctf/compose.prod.yml logs -f nginx
+docker compose -f /home/floatctf/compose.prod.yml logs -f caddy
 ```
+
+修改 `/home/floatctf/config/caddy/Caddyfile` 后，先验证再热重载：
+
+```bash
+docker compose -f /home/floatctf/compose.prod.yml exec caddy \
+  caddy validate --config /etc/caddy/Caddyfile
+docker compose -f /home/floatctf/compose.prod.yml exec caddy \
+  caddy reload --config /etc/caddy/Caddyfile
+```
+
+Caddy 的 ACME 证书与账户状态保存在 `/home/floatctf/data/caddy`，运行配置状态保存在 `/home/floatctf/data/caddy-config`；容器重建会复用这些数据。
 
 ## 开发 vs 生产
 
@@ -206,7 +219,7 @@ br_netfilter + floatctf 用户/布局），区别只在「产物来源与运行�
 | API 二进制 | 本地 `cargo run`（源码编译） | 下载 release 产物 |
 | 前端 | Vite dev server（3000，热更新） | 下载 web dist（静态） |
 | 数据库初始化 | 源码 merged.sql（dev compose initdb） | 下载 merged.sql（postgres 首次启动自动 initdb） |
-| nginx | dev compose，反代 api:9090 / vite:3000，入口 7780 | prod compose，host 网络 80/443 |
+| Caddy | dev compose，反代 api:9090 / vite:3000，入口 7780 | prod compose，host 网络 80/443 |
 | systemd | 不装 | floatctf-infra/api/target |
 | 运行身份 | `sudo mise run dev:api`（root，需 CAP_NET_ADMIN） | systemd floatctf 用户 + AmbientCapabilities |
 
@@ -243,7 +256,7 @@ sudo /home/floatctf/uninstall.sh --purge --yes  # 跳过确认（非交互）
 
 移除：systemd 单元、infra 与赛事容器/网络、API 二进制、web 资产、可再生产物。
 
-**保留**：`data/postgres`、`data/rustfs`、`config/`、`.env`（密钥）、`runtime/`、
+**保留**：`data/postgres`、`data/rustfs`、`data/caddy`、`data/caddy-config`、`config/`、`.env`（密钥）、`runtime/`、
 `logs/`、`.initialized`、`uninstall.sh` 本身（生命周期/恢复工具，保留并文档化）。
 
 语义：`deploy → safe uninstall → deploy` 恢复相同数据与密钥（用户/赛事/数据仍在；
@@ -275,6 +288,7 @@ libvirt、Incus、其他应用。
 
 - **PostgreSQL**：`/home/floatctf/data/postgres`（建议 `pg_dump`，见下）
 - **RustFS**：`/home/floatctf/data/rustfs`
+- **Caddy ACME 状态**：`/home/floatctf/data/caddy`（证书、账户与续签状态；迁移主机时一并备份）
 - **配置/密钥**：`/home/floatctf/config/` 与 `/home/floatctf/.env`
 
 ```bash

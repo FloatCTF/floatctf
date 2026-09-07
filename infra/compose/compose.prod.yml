@@ -1,14 +1,9 @@
-# FloatCTF production infrastructure compose (Phase 10.5).
-# Deployed to /home/floatctf/compose.prod.yml by scripts/install.sh.
-#
-# 网络边界（设计定稿）：
-#   - postgres / rustfs：仅回环发布（127.0.0.1:<port>），绝不 0.0.0.0
-#   - nginx：network_mode: host —— 与宿主共享网络命名空间，直接 listen 80/443，
-#     经 127.0.0.1 反代到原生 API 进程与 rustfs 容器（见 infra/nginx/nginx.prod.conf）
+# FloatCTF production infrastructure compose.
+# 网络边界：
+#   - postgres / rustfs：仅回环发布（127.0.0.1:<port>）
+#   - caddy：network_mode: host，是唯一公网 HTTP/HTTPS 入口
 #   - API：原生 systemd 进程（floatctf-api.service），不在此编排
-#
-# 就绪语义：全部服务带 healthcheck；install.sh 与 floatctf-infra.service 用
-# `docker compose up -d --wait` 等待 healthcheck 通过才算 infra ready。
+# Caddy 经 127.0.0.1 访问 API / RustFS；证书状态持久化到 data/caddy。
 
 name: floatctf
 
@@ -31,13 +26,13 @@ services:
             timeout: 3s
             retries: 10
             start_period: 10s
-        # 禁止：公开端口、自动 initdb 迁移（生产迁移由 install.sh 显式执行）
+        # 生产迁移由安装/升级流程显式执行，不在 compose 中自动迁移已有数据库。
 
     rustfs:
         image: rustfs/rustfs:latest
         container_name: floatctf-rustfs
         restart: unless-stopped
-        user: "10001:10001"   # rustfs 镜像内置用户 uid/gid 10001（OverlayFS 下避免宿主导入）
+        user: "10001:10001"   # RustFS 镜像内置 uid/gid
         ports:
             - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
             - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
@@ -52,34 +47,33 @@ services:
             RUSTFS_CONSOLE_ENABLE: "true"
             RUSTFS_OBS_LOG_DIRECTORY: /logs
         healthcheck:
-            # RustFS 无官方 healthcheck 命令；镜像自带 nc（busybox），用 TCP 探测 9000。
+            # RustFS 镜像带 nc，用 TCP 探测 9000。
             test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
             interval: 5s
             timeout: 3s
             retries: 10
             start_period: 10s
 
-    nginx:
-        image: nginx:1.26-bookworm
-        container_name: floatctf-nginx
+    caddy:
+        image: caddy:2-alpine
+        container_name: floatctf-caddy
         restart: unless-stopped
-        # host 网络：nginx 是唯一对外暴露面，直接由宿主 nftables 管辖。
         network_mode: host
+        env_file:
+            - ${FLOATCTF_HOME}/.env
         volumes:
-            - ${FLOATCTF_HOME}/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-            - ${FLOATCTF_HOME}/web:/usr/share/nginx/html:ro
-            # 挑战附件静态下载（WORK_DIR=${FLOATCTF_HOME}/runtime → challenges 在其下）
-            - ${FLOATCTF_HOME}/runtime/challenges:/app/api/challenges:ro
-            - ${FLOATCTF_HOME}/logs/nginx:/var/log/nginx
-        # TLS 结构预留：证书由运维放入 ${FLOATCTF_HOME}/config/nginx/keys/
-        #   - ${FLOATCTF_HOME}/config/nginx/keys:/etc/nginx/keys:ro
+            - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
+            - ${FLOATCTF_HOME}/web:/srv/web:ro
+            - ${FLOATCTF_HOME}/runtime/challenges:/srv/challenges:ro
+            - ${FLOATCTF_HOME}/data/caddy:/data
+            - ${FLOATCTF_HOME}/data/caddy-config:/config
         depends_on:
             postgres:
                 condition: service_healthy
             rustfs:
                 condition: service_healthy
         healthcheck:
-            test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${HTTP_PORT:-80}/ >/dev/null || exit 1"]
+            test: ["CMD-SHELL", "caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1"]
             interval: 10s
             timeout: 3s
             retries: 10

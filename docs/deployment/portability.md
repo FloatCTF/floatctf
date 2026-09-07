@@ -11,7 +11,7 @@
 | API（`floatctf` 二进制） | 原生 systemd 进程 | `floatctf` 用户、`CAP_NET_ADMIN`、`docker` 组访问、可写 `work_dir` |
 | PostgreSQL | Docker 容器 | Docker daemon（任意后端）、`127.0.0.1` 回环端口 |
 | RustFS | Docker 容器 | 同上（仅回环 9000/9001） |
-| nginx | Docker 容器（`network_mode: host`） | **宿主端口 80/443**（无端口映射，直接绑宿主） |
+| Caddy | Docker 容器（`network_mode: host`） | **宿主端口 80/443**（无端口映射，直接绑宿主） |
 | AWD 运行时 | Docker 容器（赛事动态创建） | `CAP_NET_ADMIN`（API 创建子网/桥/nftables/WireGuard） |
 
 ## 2. 宿主必需软件（feature-check，非发行版清单）
@@ -57,7 +57,7 @@ FloatCTF 自有文件（不污染系统默认配置）。
 ## 5. 目录布局（`/home/floatctf`）
 
 ```
-bin/  web/  config/  data/{postgres,rustfs}  logs/{api,nginx,rustfs}  runtime/  gameboxes/
+bin/  web/  config/caddy/  data/{postgres,rustfs,caddy,caddy-config}  logs/{api,rustfs}  runtime/  gameboxes/
 ```
 
 `config/` 属 `root:floatctf`（含密钥）；运行数据属 `floatctf`；容器数据目录
@@ -70,14 +70,14 @@ bin/  web/  config/  data/{postgres,rustfs}  logs/{api,nginx,rustfs}  runtime/  
 | API | 9090 | 监听 `0.0.0.0`（AWD 容器回连需要），对外暴露由 nftables 限制 |
 | PostgreSQL | 5433（回环） | compose 映射 `127.0.0.1:5433` |
 | RustFS | 9000/9001（回环） | 仅 `127.0.0.1` |
-| nginx | 80/443 | host 网络直绑宿主端口 |
+| Caddy | 80/443 | host 网络直绑宿主端口；`SITE_ADDRESS` 自动 HTTPS |
 
 所有端口可经 `/home/floatctf/.env`（或环境变量）调整，`install.sh` 部署前检测冲突。
 
 ## 7. 迁移（porting）到另一台主机
 
-1. 新主机：`sudo ./scripts/install.sh`（下载 release tarball + 建用户/布局/内核参数/权限 + 部署）。
-2. 数据迁移：`data/postgres/` 与 `data/rustfs/` 物理拷贝（原主机停容器后拷贝
+1. 新主机：`sudo env SITE_ADDRESS=ctf.example.com ./scripts/install.sh`（下载 release tarball + 建用户/布局/内核参数/权限 + 部署）。
+2. 数据迁移：`data/postgres/`、`data/rustfs/`、`data/caddy/` 与 `data/caddy-config/` 物理拷贝（原主机停容器后拷贝
    最安全），或逻辑导出/导入。密钥如需延续，原样拷贝 `/home/floatctf/.env` 与
    `config/floatctf.toml`。
 

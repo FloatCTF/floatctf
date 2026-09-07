@@ -25,8 +25,8 @@ floatctf/
 │   ├── awd-flagserver/          # AWD FlagServer 独立服务
 │   └── awd-judgeserver/         # AWD JudgeServer 独立服务
 ├── infra/
-│   ├── compose/                 # compose.dev.yml（db/rustfs/nginx/registry）
-│   └── nginx/                   # nginx.dev.conf（静态 upstream）
+│   ├── compose/                 # compose.dev.yml（db/rustfs/Caddy/registry）
+│   └── caddy/                   # Caddyfile.dev / Caddyfile.prod
 ├── scripts/                     # gen_entities.py、gen_web_types.py、infra-up.sh、dev.sh
 ├── mise.toml                    # 全部开发任务入口
 └── AGENTS.md                    # AI 工作手册索引
@@ -154,7 +154,7 @@ POST /api/events/{id}/challenges/{cid}/submit
 
 ```bash
 mise run install                  # 安装依赖
-mise run infra:up / down / logs   # 基础设施（Postgres/RustFS/Nginx）
+mise run infra:up / down / logs   # 基础设施（Postgres/RustFS/Caddy）
 mise run dev:api / dev:web / dev  # 启动开发服务
 mise run db:migration:new <名称>  # 新建 SQL 迁移（文件内无 BEGIN/COMMIT）
 mise run db:migration:apply       # 应用未执行迁移（开发库已 baseline）

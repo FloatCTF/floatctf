@@ -5,7 +5,7 @@
 # 铁律 1：配置只从本文件读取（FLOATCTF_CONFIG 指向它）；API 不读环境变量。
 
 [application]
-main_url = "http://${HOST_ADDRESS}:${HTTP_PORT}"
+main_url = "https://${SITE_ADDRESS}:${HTTPS_PORT}"
 
 [server]
 # 必须 0.0.0.0：AWD FlagServer/JudgeServer 经赛事 infra 网关（docker bridge IP）

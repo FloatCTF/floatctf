@@ -18,7 +18,7 @@ run = [
 
 # 基础设施
 [tasks."infra:up"]
-description = "启动 PostgreSQL、RustFS 和 Nginx"
+description = "启动 PostgreSQL、RustFS 和 Caddy"
 run = "./scripts/infra-up.sh"
 
 [tasks."infra:down"]

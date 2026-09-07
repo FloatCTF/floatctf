@@ -3,6 +3,10 @@ volumes:
       name: floatctf-dev-db-data
     floatctf-rustfs-data:
       name: floatctf-dev-rustfs-data
+    floatctf-caddy-data:
+      name: floatctf-dev-caddy-data
+    floatctf-caddy-config:
+      name: floatctf-dev-caddy-config
 
 services:
     db:
@@ -19,20 +23,19 @@ services:
             - ${PROJECT_ROOT}/apps/api/src/sql/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
         restart: unless-stopped
 
-    nginx:
+    caddy:
         depends_on:
             - db
-        container_name: floatctf-dev-nginx
-        image: nginx:1.26-bookworm
+            - rustfs
+        container_name: floatctf-dev-caddy
+        image: caddy:2-alpine
         ports:
             - "7780:80"
         volumes:
-            - ${PROJECT_ROOT}/app/logs/nginx:/var/log/nginx
-            - ${PROJECT_ROOT}/app/api/challenges:/app/api/challenges:ro
-            - ${PROJECT_ROOT}/app/api/uploads:/app/api/uploads:ro
-            - ${PROJECT_ROOT}/app/api/weapons:/app/api/weapons:ro
-            - ${PROJECT_ROOT}/app/api/images:/app/api/images:ro
-            - ${PROJECT_ROOT}/infra/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+            - ${PROJECT_ROOT}/app/api/challenges:/srv/challenges:ro
+            - ${PROJECT_ROOT}/infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+            - floatctf-caddy-data:/data
+            - floatctf-caddy-config:/config
         extra_hosts:
             - "host.docker.internal:host-gateway"
         restart: unless-stopped

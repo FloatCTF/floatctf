@@ -2,7 +2,7 @@
 #
 # FloatCTF 一键安装器（Phase 11）— 单文件自包含。
 #
-# 本脚本**不依赖仓库其他文件**：所有模板（compose.dev/prod、floatctf.toml、nginx.conf、
+# 本脚本**不依赖仓库其他文件**：所有模板（compose.dev/prod、floatctf.toml、Caddyfile、
 # systemd 单元、uninstall.sh）都内嵌在本文件里，运行时写出到 FLOATCTF_HOME。
 #
 # 两种用法（二选一，语义完全不同）：
@@ -247,7 +247,7 @@ check_user_layout() {
     fi
 
     local d
-    for d in bin web config/nginx data/postgres data/rustfs logs/api logs/nginx logs/rustfs runtime gameboxes; do
+    for d in bin web config/caddy data/postgres data/rustfs data/caddy data/caddy-config logs/api logs/rustfs runtime gameboxes; do
         mkdir -p "$FLOATCTF_HOME/$d"
     done
     chown root:"$FCTF_USER" "$FLOATCTF_HOME" >/dev/null 2>&1 || true
@@ -256,9 +256,9 @@ check_user_layout() {
     for run_dir in bin web data logs runtime gameboxes; do
         chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/$run_dir" >/dev/null 2>&1 || true
     done
-    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/nginx" >/dev/null 2>&1 || true
+    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy" >/dev/null 2>&1 || true
     chmod 750 "$FLOATCTF_HOME/config" >/dev/null 2>&1 || true
-    ok "布局就绪: $FLOATCTF_HOME/{bin,web,config/nginx,data/{postgres,rustfs},logs/{api,nginx,rustfs},runtime,gameboxes}"
+    ok "布局就绪: $FLOATCTF_HOME/{bin,web,config/caddy,data/{postgres,rustfs,caddy,caddy-config},logs/{api,rustfs},runtime,gameboxes}"
 
     if [ ! -f "$FLOATCTF_HOME/.initialized" ]; then
         printf 'FloatCTF host initialized at %s by %s\n' "$(date -Is 2>/dev/null || date)" "${SUDO_USER:-root}" \
@@ -345,6 +345,10 @@ volumes:
       name: floatctf-dev-db-data
     floatctf-rustfs-data:
       name: floatctf-dev-rustfs-data
+    floatctf-caddy-data:
+      name: floatctf-dev-caddy-data
+    floatctf-caddy-config:
+      name: floatctf-dev-caddy-config
 
 services:
     db:
@@ -361,20 +365,19 @@ services:
             - ${PROJECT_ROOT}/apps/api/src/sql/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
         restart: unless-stopped
 
-    nginx:
+    caddy:
         depends_on:
             - db
-        container_name: floatctf-dev-nginx
-        image: nginx:1.26-bookworm
+            - rustfs
+        container_name: floatctf-dev-caddy
+        image: caddy:2-alpine
         ports:
             - "7780:80"
         volumes:
-            - ${PROJECT_ROOT}/app/logs/nginx:/var/log/nginx
-            - ${PROJECT_ROOT}/app/api/challenges:/app/api/challenges:ro
-            - ${PROJECT_ROOT}/app/api/uploads:/app/api/uploads:ro
-            - ${PROJECT_ROOT}/app/api/weapons:/app/api/weapons:ro
-            - ${PROJECT_ROOT}/app/api/images:/app/api/images:ro
-            - ${PROJECT_ROOT}/infra/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+            - ${PROJECT_ROOT}/app/api/challenges:/srv/challenges:ro
+            - ${PROJECT_ROOT}/infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+            - floatctf-caddy-data:/data
+            - floatctf-caddy-config:/config
         extra_hosts:
             - "host.docker.internal:host-gateway"
         restart: unless-stopped
@@ -451,23 +454,26 @@ services:
             retries: 10
             start_period: 10s
 
-    nginx:
-        image: nginx:1.26-bookworm
-        container_name: floatctf-nginx
+    caddy:
+        image: caddy:2-alpine
+        container_name: floatctf-caddy
         restart: unless-stopped
         network_mode: host
+        env_file:
+            - ${FLOATCTF_HOME}/.env
         volumes:
-            - ${FLOATCTF_HOME}/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-            - ${FLOATCTF_HOME}/web:/usr/share/nginx/html:ro
-            - ${FLOATCTF_HOME}/runtime/challenges:/app/api/challenges:ro
-            - ${FLOATCTF_HOME}/logs/nginx:/var/log/nginx
+            - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
+            - ${FLOATCTF_HOME}/web:/srv/web:ro
+            - ${FLOATCTF_HOME}/runtime/challenges:/srv/challenges:ro
+            - ${FLOATCTF_HOME}/data/caddy:/data
+            - ${FLOATCTF_HOME}/data/caddy-config:/config
         depends_on:
             postgres:
                 condition: service_healthy
             rustfs:
                 condition: service_healthy
         healthcheck:
-            test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${HTTP_PORT:-80}/ >/dev/null || exit 1"]
+            test: ["CMD-SHELL", "caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1"]
             interval: 10s
             timeout: 3s
             retries: 10
@@ -481,7 +487,7 @@ COMPOSE_PROD_EOF
 write_config_template() {
     cat > "$FLOATCTF_HOME/.floatctf.toml.tmpl" <<'CONFIG_TMPL_EOF'
 [application]
-main_url = "http://${HOST_ADDRESS}:${HTTP_PORT}"
+main_url = "https://${SITE_ADDRESS}:${HTTPS_PORT}"
 
 [server]
 listen_ip = "0.0.0.0"
@@ -530,136 +536,52 @@ CONFIG_TMPL_EOF
     ok "已写出 config 模板"
 }
 
-write_nginx_template() {
-    cat > "$FLOATCTF_HOME/.nginx.conf.tmpl" <<'NGINX_TMPL_EOF'
-user nginx;
-worker_processes auto;
-worker_rlimit_nofile 100000;
-pid /var/run/nginx.pid;
-
-events {
-    worker_connections 4096;
-    multi_accept on;
+write_caddy_template() {
+    cat > "$FLOATCTF_HOME/.Caddyfile.tmpl" <<'CADDY_TMPL_EOF'
+{
+    http_port {$HTTP_PORT:80}
+    https_port {$HTTPS_PORT:443}
 }
 
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    charset utf-8;
-
-    upstream api_backend {
-        server 127.0.0.1:${API_PORT};
-        keepalive 64;
+{$SITE_ADDRESS} {
+    encode zstd gzip
+    log {
+        output stdout
     }
 
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        ''      "";
+    handle /api/* {
+        reverse_proxy 127.0.0.1:{$API_PORT:9090}
     }
 
-    log_format main
-        '$remote_addr - $remote_user [$time_local] '
-        '"$request" $status $body_bytes_sent '
-        '"$http_referer" "$http_user_agent" '
-        'upstream="$upstream_addr" '
-        'request_time=$request_time '
-        'upstream_time=$upstream_response_time';
+    handle_path /public/* {
+        rewrite * /floatctf-public{path}
+        reverse_proxy 127.0.0.1:{$RUSTFS_PORT:9000}
+    }
 
-    access_log /var/log/nginx/access.log main;
-    error_log /var/log/nginx/error.log info;
-
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65s;
-    keepalive_requests 10000;
-    reset_timedout_connection on;
-    server_tokens off;
-
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_min_length 1024;
-    gzip_comp_level 6;
-    gzip_buffers 16 8k;
-    gzip_http_version 1.1;
-    gzip_types
-        text/plain
-        text/css
-        text/xml
-        application/json
-        application/javascript
-        application/xml
-        application/xml+rss
-        application/wasm
-        image/svg+xml;
-
-    server {
-        listen ${HTTP_PORT};
-        listen [::]:${HTTP_PORT};
-        server_name _;
-
-        client_max_body_size 0;
-        client_body_buffer_size 1m;
-
-        proxy_connect_timeout 10s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-        proxy_request_buffering off;
-
-        location ^~ /api/ {
-            proxy_pass http://api_backend;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-Port $server_port;
-            proxy_cache_bypass $http_upgrade;
+    handle_path /private/* {
+        rewrite * /floatctf-private{path}
+        reverse_proxy 127.0.0.1:{$RUSTFS_PORT:9000} {
+            header_up Host 127.0.0.1:{$RUSTFS_PORT:9000}
         }
+    }
 
-        location ^~ /public/ {
-            rewrite ^/public/(.*)$ /floatctf-public/$1 break;
-            proxy_pass http://127.0.0.1:${RUSTFS_PORT};
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $http_host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
+    @challenge_attachment path_regexp challenge ^/static/challenges/([^/]+)/attachment/(.+)$
+    handle @challenge_attachment {
+        rewrite * /{re.challenge.1}/attachment/{re.challenge.2}
+        root * /srv/challenges
+        header X-Content-Type-Options nosniff
+        header Content-Disposition attachment
+        file_server
+    }
 
-        location ^~ /private/ {
-            rewrite ^/private/(.*)$ /floatctf-private/$1 break;
-            proxy_pass http://127.0.0.1:${RUSTFS_PORT};
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host 127.0.0.1:${RUSTFS_PORT};
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location ~ ^/static/challenges/([^/]+)/attachment/(.+)$ {
-            alias /app/api/challenges/$1/attachment/$2;
-            try_files $uri =404;
-            add_header X-Content-Type-Options nosniff always;
-            add_header Content-Disposition 'attachment' always;
-        }
-
-        location / {
-            root /usr/share/nginx/html;
-            index index.html;
-            try_files $uri $uri/ /index.html;
-        }
+    handle {
+        root * /srv/web
+        try_files {path} {path}/ /index.html
+        file_server
     }
 }
-NGINX_TMPL_EOF
-    ok "已写出 nginx 模板"
+CADDY_TMPL_EOF
+    ok "已写出 Caddy 模板"
 }
 
 write_systemd_units() {
@@ -694,7 +616,7 @@ API_SVC_EOF
 
     cat > /etc/systemd/system/floatctf-infra.service <<'INFRA_SVC_EOF'
 [Unit]
-Description=FloatCTF infrastructure containers (postgres, rustfs, nginx)
+Description=FloatCTF infrastructure containers (postgres, rustfs, caddy)
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -737,7 +659,7 @@ write_uninstall() {
 #   sudo ${FLOATCTF_HOME}/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
 #                                               （systemd、infra/赛事容器与网络、API 二进制、
 #                                               web 资产），但保留可恢复状态：
-#                                               data/{postgres,rustfs}, config/, .env,
+#                                               data/{postgres,rustfs,caddy,caddy-config}, config/, .env,
 #                                               runtime/, logs/, .initialized, 本卸载脚本。
 #   sudo ${FLOATCTF_HOME}/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
 #                                               （PG/RustFS 数据、config、secrets、runtime、
@@ -951,14 +873,14 @@ stop_infra_containers() {
         ( cd "$FCTF_ROOT" \
             && { docker compose -f compose.prod.yml down 2>/dev/null \
                  || docker compose -f compose.prod.yml stop 2>/dev/null \
-                 || docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true; } ) \
+                 || docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true; } ) \
             && ok "infra 容器已停止/移除（数据保留在 bind-mount）"
     else
         warn "未找到 $FCTF_ROOT/compose.prod.yml，跳过 compose down；尝试按名字精确停止"
-        docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true
+        docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true
     fi
     local c
-    for c in floatctf-postgres floatctf-rustfs floatctf-nginx; do
+    for c in floatctf-postgres floatctf-rustfs floatctf-caddy; do
         if [ -n "$(docker ps -aq --filter name="^${c}$" 2>/dev/null)" ]; then
             docker rm -f "$c" >/dev/null 2>&1 && ok "已移除容器 $c" || warn "移除容器 $c 失败（忽略）"
         fi
@@ -1005,6 +927,7 @@ safe_uninstall() {
 保留的数据（可恢复）:
   PostgreSQL 数据: $FCTF_ROOT/data/postgres
   RustFS 数据   : $FCTF_ROOT/data/rustfs
+  Caddy 证书数据: $FCTF_ROOT/data/caddy
   配置/密钥      : $FCTF_ROOT/config 与 $FCTF_ROOT/.env
   运行时工作目录 : $FCTF_ROOT/runtime
   日志          : $FCTF_ROOT/logs
@@ -1026,6 +949,7 @@ purge_confirm() {
     echo "你将永久删除全部 FloatCTF 自有数据，包括:"
     echo "  - PostgreSQL 数据        : $FCTF_ROOT/data/postgres"
     echo "  - RustFS 数据            : $FCTF_ROOT/data/rustfs"
+    echo "  - Caddy 证书/账户状态    : $FCTF_ROOT/data/caddy"
     echo "  - 配置 / 密钥            : $FCTF_ROOT/config, $FCTF_ROOT/.env"
     echo "  - API 二进制 / web / compose / runtime / 日志"
     echo "  - systemd 单元            floatctf-{api,infra}.service, floatctf.target"
@@ -1176,20 +1100,21 @@ env_set() { # key value
 precheck() {
     info "──── 部署：precheck ────"
     docker info >/dev/null 2>&1 || die "docker daemon 不可用"
-    local api_port pg_port rustfs_port http_port
+    local api_port pg_port rustfs_port http_port https_port
     api_port=$(env_get API_PORT 9090)
     pg_port=$(env_get POSTGRES_PORT 5433)
     rustfs_port=$(env_get RUSTFS_PORT 9000)
     http_port=$(env_get HTTP_PORT 80)
-    info "端口：API=$api_port PG=$pg_port RustFS=$rustfs_port HTTP=$http_port"
-    for port_spec in "$api_port" "$pg_port" "$rustfs_port" "$http_port"; do
+    https_port=$(env_get HTTPS_PORT 443)
+    info "端口：API=$api_port PG=$pg_port RustFS=$rustfs_port HTTP=$http_port HTTPS=$https_port"
+    for port_spec in "$api_port" "$pg_port" "$rustfs_port" "$http_port" "$https_port"; do
         if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port_spec}$"; then
             local owned=0
             if docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
                 | grep -qE "floatctf-(postgres|rustfs).*[:.]${port_spec}"; then
                 owned=1
             elif [ "$port_spec" = "$(env_get HTTP_PORT 80)" ] || [ "$port_spec" = "$(env_get HTTPS_PORT 443)" ]; then
-                [ -n "$(docker ps -q --filter name=^floatctf-nginx$ 2>/dev/null)" ] && owned=1
+                [ -n "$(docker ps -q --filter name=^floatctf-caddy$ 2>/dev/null)" ] && owned=1
             elif [ "$port_spec" = "$api_port" ]; then
                 systemctl -q is-active floatctf-api.service 2>/dev/null && owned=1
             fi
@@ -1204,8 +1129,11 @@ precheck() {
 }
 
 prepare_env() {
-    info "──── 部署：配置（.env + floatctf.toml + nginx.conf）────"
-    mkdir -p "$FLOATCTF_HOME/config/nginx" "$FLOATCTF_HOME/logs/{api,nginx,rustfs}"
+    info "──── 部署：配置（.env + floatctf.toml + Caddyfile）────"
+    mkdir -p "$FLOATCTF_HOME/config/caddy" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" "$FLOATCTF_HOME/logs/api" "$FLOATCTF_HOME/logs/rustfs"
+    local site_address
+    site_address=$(env_get SITE_ADDRESS "")
+    [ -n "$site_address" ] || die "生产部署必须设置 SITE_ADDRESS（例如 ctf.example.com），并将该域名 DNS 指向本机"
     if [ ! -f "$ENV_FILE" ]; then
         : > "$ENV_FILE"
         env_set POSTGRES_USER "${POSTGRES_USER:-postgres}"
@@ -1221,6 +1149,7 @@ prepare_env() {
         env_set HTTP_PORT "${HTTP_PORT:-80}"
         env_set HTTPS_PORT "${HTTPS_PORT:-443}"
         env_set HOST_ADDRESS "${HOST_ADDRESS:-127.0.0.1}"
+        env_set SITE_ADDRESS "$site_address"
         chmod 600 "$ENV_FILE"
         ok ".env 已生成（含新密钥，root 可读）"
     else
@@ -1231,6 +1160,7 @@ prepare_env() {
         env_set HTTP_PORT "$(env_get HTTP_PORT 80)"
         env_set HTTPS_PORT "$(env_get HTTPS_PORT 443)"
         env_set HOST_ADDRESS "$(env_get HOST_ADDRESS 127.0.0.1)"
+        env_set SITE_ADDRESS "$site_address"
         ok ".env 已存在，保留密钥并更新非敏感项"
     fi
     chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/data" "$FLOATCTF_HOME/logs" "$FLOATCTF_HOME/runtime" 2>/dev/null || true
@@ -1257,14 +1187,25 @@ prepare_configs() {
     # 先替换模板里的 FLOATCTF_HOME 占位符，再渲染。
     sed "s|\${FLOATCTF_HOME}|$FLOATCTF_HOME|g" "$FLOATCTF_HOME/.floatctf.toml.tmpl" > "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
     render "$FLOATCTF_HOME/.floatctf.toml.tmpl.real" "$FLOATCTF_HOME/config/floatctf.toml"
-    render "$FLOATCTF_HOME/.nginx.conf.tmpl" "$FLOATCTF_HOME/config/nginx/nginx.conf"
+    cp "$FLOATCTF_HOME/.Caddyfile.tmpl" "$FLOATCTF_HOME/config/caddy/Caddyfile"
     rm -f "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
-    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/nginx"
-    chmod 750 "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/nginx"
-    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/nginx/nginx.conf"
-    chmod 640 "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/nginx/nginx.conf"
-    mkdir -p "$FLOATCTF_HOME/config/nginx/keys"
-    ok "配置已写入（floatctf.toml + nginx.conf，密钥保留）"
+    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy"
+    chmod 750 "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy"
+    chown root:"$FCTF_USER" "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/caddy/Caddyfile"
+    chmod 640 "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/caddy/Caddyfile"
+    chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" 2>/dev/null || true
+    ok "配置已写入（floatctf.toml + Caddyfile；证书状态持久化在 data/caddy）"
+}
+
+validate_caddy_config() {
+    info "──── 部署：验证 Caddyfile ────"
+    docker run --rm \
+        --env-file "$ENV_FILE" \
+        -v "$FLOATCTF_HOME/config/caddy:/etc/caddy:ro" \
+        caddy:2-alpine \
+        caddy validate --config /etc/caddy/Caddyfile \
+        || die "Caddyfile 验证失败"
+    ok "Caddyfile 验证通过"
 }
 
 stage_release() {
@@ -1298,8 +1239,9 @@ run_deploy() {
     write_compose_dev
     write_compose_prod
     write_config_template
-    write_nginx_template
+    write_caddy_template
     prepare_configs
+    validate_caddy_config
     stage_release
     write_systemd_units
     install_systemd
@@ -1308,7 +1250,7 @@ run_deploy() {
 }
 
 # ============================================================================
-# 开发模式（--develop）：源码目录 + dev compose（nginx 反代 api:9090 / vite:3000）
+# 开发模式（--develop）：源码目录 + dev compose（Caddy 反代 api:9090 / vite:3000）
 # ============================================================================
 run_develop() {
     info "════ 开发模式（--develop）════"
@@ -1334,7 +1276,7 @@ run_develop() {
     cat <<EOF
 
 开发环境初始化完成（未启动任何容器/服务）。接下来手动启动：
-  mise run infra:up      # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + nginx:7780）
+  mise run infra:up      # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + caddy:7780）
   sudo mise run dev:api  # API → http://127.0.0.1:9090（host 网络需 root/CAP_NET_ADMIN）
   mise run dev:web       # Vite → http://127.0.0.1:3000
 

@@ -1,0 +1,51 @@
+# FloatCTF production Caddy configuration.
+# Caddy is the only public HTTP/HTTPS entrypoint and runs with network_mode: host.
+# SITE_ADDRESS must be a public DNS name for publicly trusted automatic HTTPS.
+{
+    http_port {$HTTP_PORT:80}
+    https_port {$HTTPS_PORT:443}
+}
+
+{$SITE_ADDRESS} {
+    encode zstd gzip
+    log {
+        output stdout
+    }
+
+    # API, SSE and WebSocket (including the web terminal).
+    handle /api/* {
+        reverse_proxy 127.0.0.1:{$API_PORT:9090}
+    }
+
+    # RustFS public bucket: /public/a.png -> /floatctf-public/a.png
+    handle_path /public/* {
+        rewrite * /floatctf-public{path}
+        reverse_proxy 127.0.0.1:{$RUSTFS_PORT:9000}
+    }
+
+    # RustFS private bucket. Presigned SigV4 URLs are generated for the internal
+    # endpoint, so the upstream Host must remain exactly 127.0.0.1:RUSTFS_PORT.
+    handle_path /private/* {
+        rewrite * /floatctf-private{path}
+        reverse_proxy 127.0.0.1:{$RUSTFS_PORT:9000} {
+            header_up Host 127.0.0.1:{$RUSTFS_PORT:9000}
+        }
+    }
+
+    # Challenge attachments are always downloaded and MIME-sniffing is disabled.
+    @challenge_attachment path_regexp challenge ^/static/challenges/([^/]+)/attachment/(.+)$
+    handle @challenge_attachment {
+        rewrite * /{re.challenge.1}/attachment/{re.challenge.2}
+        root * /srv/challenges
+        header X-Content-Type-Options nosniff
+        header Content-Disposition attachment
+        file_server
+    }
+
+    # Production SPA. try_files preserves history-mode routes on refresh.
+    handle {
+        root * /srv/web
+        try_files {path} {path}/ /index.html
+        file_server
+    }
+}

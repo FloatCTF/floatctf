@@ -12,7 +12,7 @@
 #   sudo /home/floatctf/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
 #                                               （systemd、infra/赛事容器与网络、API 二进制、
 #                                               web 资产），但保留可恢复状态：
-#                                               data/{postgres,rustfs}, config/, .env,
+#                                               data/{postgres,rustfs,caddy,caddy-config}, config/, .env,
 #                                               runtime/, logs/, .initialized, 本卸载脚本。
 #                                               语义：deploy → safe uninstall → deploy 应恢复相同的
 #                                               应用数据与密钥（用户/赛事/数据仍在）。
@@ -259,7 +259,7 @@ cleanup_nftables() {
 }
 
 # ============================================================================
-# 基础设施容器（postgres / rustfs / nginx）
+# 基础设施容器（postgres / rustfs / caddy）
 # ============================================================================
 stop_infra_containers() {
     info "── 停止/移除基础设施容器（compose down，保护 bind-mount 数据）──"
@@ -268,15 +268,15 @@ stop_infra_containers() {
         ( cd "$FCTF_ROOT" \
             && { docker compose -f compose.prod.yml down 2>/dev/null \
                  || docker compose -f compose.prod.yml stop 2>/dev/null \
-                 || docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true; } ) \
+                 || docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true; } ) \
             && ok "infra 容器已停止/移除（数据保留在 bind-mount）"
     else
         warn "未找到 $FCTF_ROOT/compose.prod.yml，跳过 compose down；尝试按名字精确停止"
-        docker stop floatctf-postgres floatctf-rustfs floatctf-nginx 2>/dev/null || true
+        docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true
     fi
     # 兜底：强制移除（别名命中检查，防误删无关容器）
     local c
-    for c in floatctf-postgres floatctf-rustfs floatctf-nginx; do
+    for c in floatctf-postgres floatctf-rustfs floatctf-caddy; do
         if [ -n "$(docker ps -aq --filter name="^${c}$" 2>/dev/null)" ]; then
             docker rm -f "$c" >/dev/null 2>&1 && ok "已移除容器 $c" || warn "移除容器 $c 失败（忽略）"
         fi
@@ -335,6 +335,7 @@ safe_uninstall() {
 保留的数据（可恢复）:
   PostgreSQL 数据: $FCTF_ROOT/data/postgres
   RustFS 数据   : $FCTF_ROOT/data/rustfs
+  Caddy 证书数据: $FCTF_ROOT/data/caddy
   配置/密钥      : $FCTF_ROOT/config 与 $FCTF_ROOT/.env
   运行时工作目录 : $FCTF_ROOT/runtime
   日志          : $FCTF_ROOT/logs
@@ -359,6 +360,7 @@ purge_confirm() {
     echo "你将永久删除全部 FloatCTF 自有数据，包括:"
     echo "  - PostgreSQL 数据        : $FCTF_ROOT/data/postgres"
     echo "  - RustFS 数据            : $FCTF_ROOT/data/rustfs"
+    echo "  - Caddy 证书/账户状态    : $FCTF_ROOT/data/caddy"
     echo "  - 配置 / 密钥            : $FCTF_ROOT/config, $FCTF_ROOT/.env"
     echo "  - API 二进制 / web / compose / runtime / 日志"
     echo "  - systemd 单元            floatctf-{api,infra}.service, floatctf.target"

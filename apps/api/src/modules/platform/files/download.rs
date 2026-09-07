@@ -31,7 +31,7 @@ pub async fn generate_presigned_download_url(
     Ok(presigned.uri().to_string())
 }
 
-/// 将 RustFS 私有桶（`floatctf-private`）预签名 GET URL 转换为 nginx `/private/`
+/// 将 RustFS 私有桶（`floatctf-private`）预签名 GET URL 转换为 Caddy `/private/`
 /// 代理路径，供浏览器直接访问。
 ///
 /// 输入（aws-sdk-s3 按 `[rustfs].endpoint_url` 生成的绝对签名 URL）：
@@ -69,7 +69,7 @@ pub fn private_presigned_proxy_path(signed_url: &str) -> Result<String> {
 
 /// 生成私有桶对象的浏览器代理下载路径（presign → `/private/` 转换一步到位）。
 ///
-/// 调用方无需关心 RustFS host、bucket 路径改写或 nginx 映射。
+/// 调用方无需关心 RustFS host、bucket 路径改写或 Caddy 映射。
 pub async fn presign_private_download_url(
     rustfs: WebRustfs,
     key: &str,

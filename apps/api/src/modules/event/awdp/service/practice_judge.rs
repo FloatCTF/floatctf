@@ -447,7 +447,7 @@ pub async fn deploy_judge(
             cpu_millis: Some(500),
             memory_bytes: Some(256 * 1024 * 1024),
             pids_limit: Some(128),
-            // 用户决策：与 nginx 一致使用 Docker 默认能力集（含 NET_BIND_SERVICE，data plane
+            // 用户决策：与入口代理一致使用 Docker 默认能力集（含 NET_BIND_SERVICE，data plane
             // 监听 80 无需特殊处理）；不再做 cap_drop ALL 收敛（plan §37 hardening 有意放松）。
             cap_drop: vec![],
             privileged: false,

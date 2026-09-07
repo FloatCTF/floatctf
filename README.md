@@ -92,7 +92,7 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 ```
 Browser
   ↓
-nginx（容器，network_mode: host）
+Caddy（容器，network_mode: host）
   ↓
 FloatCTF API（原生 systemd 进程）
   ├── PostgreSQL（容器）
@@ -105,7 +105,7 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 | 单元 | 内容 |
 | ----- | ---- |
 | `floatctf-api.service` | 原生 API 进程 |
-| `floatctf-infra.service` | postgres / rustfs / nginx 容器（`--wait` 就绪） |
+| `floatctf-infra.service` | postgres / rustfs / Caddy 容器（`--wait` 就绪） |
 | `floatctf.target` | 聚合目标 |
 
 > 开发模式仍可全部容器化运行（`mise run infra:up` + `dev:api`/`dev:web`），见「快速开始」。
@@ -130,7 +130,7 @@ systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程
 **全新主机（一键安装）**：
 
 ```bash
-sudo ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅写文件/建服务，不启动）
+sudo env SITE_ADDRESS=ctf.example.com ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅写文件/建服务，不启动）
 sudo systemctl start floatctf.target   # 手动启动（首次启动 postgres 自动初始化数据库）
 systemctl status floatctf.target
 ```
@@ -138,7 +138,7 @@ systemctl status floatctf.target
 **安装根**（默认 `/home/floatctf`，可用环境变量覆盖）：
 
 ```bash
-FLOATCTF_HOME=/opt/floatctf sudo ./scripts/install.sh
+sudo env FLOATCTF_HOME=/opt/floatctf SITE_ADDRESS=ctf.example.com ./scripts/install.sh
 ```
 
 **开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
@@ -201,7 +201,7 @@ cd floatctf
 
 API 配置由 TOML 文件提供：`mise` 通过 `FLOATCTF_CONFIG` 自动指向 `apps/api/config/development.toml`。按需修改其中的 `server`、`database`、`rustfs`、`auth` 等段落；敏感值（数据库密码、RustFS 密钥、JWT secret）不得提交到仓库。首次使用请确保该文件存在，缺失时按本机环境创建。
 
-PostgreSQL、RustFS、Nginx 等基础设施的端口与挂载配置见 `infra/compose/compose.dev.yml`。
+PostgreSQL、RustFS、Caddy 等基础设施的端口与挂载配置见 `infra/compose/compose.dev.yml`。
 
 ### 3. 启动开发环境
 
@@ -231,7 +231,7 @@ docker compose -f infra/compose/compose.dev.yml exec floatctf-dev-db \
 
 ### 4. 访问平台
 
-通过 Nginx 入口访问 http://localhost:7780 （`/` 转发到 Web，`/api/` 转发到 API）。Web 开发服务器也可直接访问 http://localhost:3000 。
+通过 Caddy 入口访问 http://localhost:7780 （`/` 转发到 Web，`/api/` 转发到 API）。Web 开发服务器也可直接访问 http://localhost:3000 。
 
 ## 功能展示
 
@@ -294,7 +294,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 | 容器技术 | Docker / Docker Compose                | 题目环境隔离与部署                   |
 | VPN      | WireGuard                              | AWD 竞赛网络隔离                     |
 | 身份认证 | JWT + Argon2                           | 令牌鉴权 + 高强度密码哈希            |
-| 反向代理 | Nginx 1.26                             | 静态文件服务与 API 代理              |
+| 反向代理 | Caddy 2                                | 自动 HTTPS、静态文件服务与 API 代理  |
 
 ## 技术亮点
 
@@ -315,7 +315,7 @@ floatctf/
 │   ├── fcmc/            # 共享 Rust crate / CLI
 │   ├── awd-flagserver/  # AWD FlagServer 独立服务
 │   └── awd-judgeserver/ # AWD JudgeServer 独立服务
-├── infra/               # Compose / Nginx / systemd / Docker 配置
+├── infra/               # Compose / Caddy / systemd / Docker 配置
 ├── scripts/             # 生命周期脚本：install / clean / uninstall
 ├── docs/                # 项目文档
 ├── INSTALL.md           # 生产安装与运维权威指南
@@ -334,7 +334,7 @@ floatctf/
 
 | 单元 | 内容 | 端口（默认，可经 `.env` 覆盖） |
 | ----- | ---- | ---- |
-| `floatctf-infra.service` | postgres / rustfs / nginx 容器 | PG 5433 / RustFS 9000,9001 / HTTP 80,443 |
+| `floatctf-infra.service` | postgres / rustfs / Caddy 容器 | PG 5433 / RustFS 9000,9001 / HTTP 80,443 |
 | `floatctf-api.service` | 原生 API 进程 | API 9090 |
 
 **开发模式**（`mise run infra:up` / `dev:api` / `dev:web`）：
@@ -343,7 +343,7 @@ floatctf/
 | ----------------- | ----------------- | ------------ | -------------------------------------------------------------------------------- |
 | `floatctf-dev-db` | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
 | `floatctf-dev-rustfs` | rustfs/rustfs | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
-| `floatctf-dev-nginx` | Nginx 1.26        | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
+| `floatctf-dev-caddy` | Caddy 2           | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
 | `floatctf-api`    | 本地 cargo 进程   | 9090         | 后端 API（开发模式），连接 PostgreSQL 和 RustFS                                  |
 
 ## 常用命令
@@ -370,8 +370,8 @@ mise run db:gen                   # 从数据库重新生成 SeaORM 实体与 We
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | API 无法连接数据库 | 检查 `apps/api/config/development.toml` 中 `database.url`；确认 PostgreSQL 运行中：`docker compose -f infra/compose/compose.dev.yml ps`             |
 | RustFS 连接问题    | 检查 TOML 中 `rustfs.endpoint_url` 是否与本机映射端口一致；确认容器运行中：`docker compose -f infra/compose/compose.dev.yml ps floatctf-dev-rustfs` |
-| Nginx 返回 502     | 确认 API（9090）与 Web（3000）开发进程已启动；Nginx 通过 `host.docker.internal` 访问宿主机端口                                                   |
-| SSL 证书错误       | 默认为自签名证书；将 `app/keys/fullchain.pem` 和 `app/keys/privkey.pem` 替换为正式证书                                                            |
+| Caddy 返回 502     | 确认 API（9090）与 Web（3000）开发进程已启动；Caddy 通过 `host.docker.internal` 访问宿主机端口                                                   |
+| HTTPS 证书错误     | 确认 `SITE_ADDRESS` 的 DNS 已指向本机，公网 80/443 可达，并查看 `docker compose -f /home/floatctf/compose.prod.yml logs caddy` |
 
 ## 常用开发命令
 

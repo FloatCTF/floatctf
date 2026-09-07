@@ -37,7 +37,7 @@
 ## 常用命令速查
 
 ```bash
-mise run infra:up / infra:logs / infra:down   # 基础设施（Postgres/RustFS/Nginx）
+mise run infra:up / infra:logs / infra:down   # 基础设施（Postgres/RustFS/Caddy）
 mise run dev:api / dev:web / dev              # 启动开发服务
 mise run db:migration:new <名称>               # 新建 SQL 迁移（文件内无 BEGIN/COMMIT）
 mise run db:migration:validate                # 校验迁移文件（不连库）
@@ -52,7 +52,7 @@ cargo test -p floatctf <关键词>                 # 跑指定单元测试
 
 ## 开发环境速记
 
-- API：`http://localhost:9090`（mise run dev:api）；Web：`http://localhost:3000`；统一入口 `http://localhost:7780`（Nginx）
+- API：`http://localhost:9090`（mise run dev:api）；Web：`http://localhost:3000`；统一入口 `http://localhost:7780`（Caddy）
 - 开发库：`postgres://postgres:postgres@127.0.0.1:5432/floatctf_db`（容器 floatctf-dev-db）
 - 对象存储：RustFS `http://127.0.0.1:9000`（桶 `floatctf-public` / `floatctf-private`）
 - 配置样例：`apps/api/config/development.toml`；启动日志：`WORK_DIR/logs/api/`（按天滚动，开发库 WORK_DIR=`../../app` → `app/logs/api/`）

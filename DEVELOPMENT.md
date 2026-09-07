@@ -14,7 +14,7 @@
 | | 生产安装 | 本地开发（本文档） |
 |---|---|---|
 | 起点 | **一行流下载 install.sh**，无需 clone 仓库 | **clone 仓库**后，用仓库里的 `install.sh --develop` |
-| 命令 | `curl -fsSL <install.sh URL> -o install.sh && sudo bash install.sh` | `git clone … && cd floatctf && sudo ./scripts/install.sh --develop` |
+| 命令 | `curl -fsSL <install.sh URL> -o install.sh && sudo env SITE_ADDRESS=ctf.example.com bash install.sh` | `git clone … && cd floatctf && sudo ./scripts/install.sh --develop` |
 | 产物 | 下载 release 产物（API 二进制 + web dist + merged.sql） | 本地源码编译（cargo run + vite），三产物不下载 |
 | 文档 | [INSTALL.md](./INSTALL.md) | **本文档** |
 
@@ -30,7 +30,7 @@ FloatCTF 开发环境 = **主机网络能力 + dev 容器 + 本地编译的 API 
 ```
 浏览器
   ↓
-nginx（dev 容器，127.0.0.1:7780）
+Caddy（dev 容器，127.0.0.1:7780）
   ├── /api/  → 127.0.0.1:9090   （本地 cargo run 的 API 进程）
   └── /      → 127.0.0.1:3000   （本地 Vite dev server）
 ```
@@ -41,7 +41,7 @@ nginx（dev 容器，127.0.0.1:7780）
 |------|------|------|
 | `floatctf-dev-db` | PostgreSQL 17，首次启动用 merged.sql 自动初始化 | 5432 |
 | `floatctf-dev-rustfs` | S3 兼容对象存储 | 9000 / 9001 |
-| `floatctf-dev-nginx` | 反向代理（`/api/`→9090，`/`→3000） | 7780 |
+| `floatctf-dev-caddy` | 反向代理（`/api/`→9090，`/`→3000） | 7780 |
 
 > 关键：开发与生产**主机初始化完全一致**（`network_runtime = host`，nftables +
 > WireGuard + 转发 + br_netfilter + floatctf 用户/布局）。区别只在「产物来源」：
@@ -95,7 +95,7 @@ sudo ./scripts/install.sh --develop       # 完整主机初始化（只写文件
 然后**手动**起开发环境（dev 容器 + 开发服务）：
 
 ```bash
-mise run infra:up         # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + nginx:7780）
+mise run infra:up         # dev 容器（db 首次启动自动 initdb merged.sql + rustfs + caddy:7780）
 sudo mise run dev:api     # API → 127.0.0.1:9090
 mise run dev:web          # Vite → 127.0.0.1:3000
 ```
@@ -106,7 +106,7 @@ mise run dev:web          # Vite → 127.0.0.1:3000
 
 ```bash
 mise run install
-mise run infra:up          # 起 dev 容器（db/rustfs/nginx）
+mise run infra:up          # 起 dev 容器（db/rustfs/Caddy）
 # 两个终端：
 sudo mise run dev:api
 mise run dev:web

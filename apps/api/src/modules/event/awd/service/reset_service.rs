@@ -13,11 +13,10 @@ use uuid::Uuid;
 
 use crate::entity::{
     awd_reset_records, awd_team_networks, event_gamebox_instances, event_instances,
-    sea_orm_active_enums::{AwdPhase, GameboxStatus, ScoreEventType},
+    sea_orm_active_enums::{AwdEventStatus, AwdPhase, GameboxStatus, ScoreEventType},
 };
 use crate::modules::event::awd::{
     AwdError, AwdResult,
-    domain::{AwdEventStatusExt, AwdPhaseExt, GameboxStatusExt},
     repo::{ban_repo, event_repo, gamebox_repo, round_repo, score_repo},
     service::{gamebox_service, score_service},
 };
@@ -64,8 +63,11 @@ pub fn check_reset_eligibility(
     has_active_round: bool,
     round_count: Option<i32>,
 ) -> AwdResult<()> {
-    // 1. Event must be Running (not Paused, not Finished, not Archived)
-    if !awd_event.status.is_active() {
+    // 1. Reset is stricter than the generic `is_active()` predicate: Paused is
+    // considered active for lifecycle/visibility purposes, but must never allow
+    // a mutating competition action such as GameBox reset. Check the canonical
+    // event status explicitly so an inconsistent/stale phase cannot bypass pause.
+    if awd_event.status != AwdEventStatus::Running {
         return Err(AwdError::Forbidden(
             "Event is not running (must be Running; Paused/Finished/Archived not allowed)".into(),
         ));

@@ -516,9 +516,13 @@ async fn all_check_success_sweeps_remaining_rounds_and_ends_run() {
     );
     backdate_patch_applied(&db, inst_id, 30).await;
 
-    let result = evaluation::all_check(&db, &docker, run_id, inst_id, sub)
-        .await
-        .expect("all check");
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        evaluation::all_check(&db, &docker, run_id, inst_id, sub),
+    )
+    .await
+    .expect("ALL Check must not deadlock on instance cleanup")
+    .expect("all check");
     assert_eq!(result.status, AwdpEvaluationStatus::Patched, "PATCHED");
     assert!(result.swept, "swept");
     assert_eq!(result.target_round, 1);

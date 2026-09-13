@@ -51,6 +51,7 @@ struct TestFixtures {
     event_id: Uuid,
     team_id: Uuid,
     event_gamebox_id: Uuid,
+    gamebox_id: Uuid,
     instance_id: Uuid,
     root_id: Uuid,
     user_id: Uuid,
@@ -92,7 +93,7 @@ impl TestFixtures {
         let _ = events::Entity::delete_by_id(self.event_id)
             .exec(&self.db)
             .await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+        let _ = gameboxes::Entity::delete_by_id(self.gamebox_id)
             .exec(&self.db)
             .await;
         let _ = users::Entity::delete_by_id(self.user_id)
@@ -123,7 +124,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let now = chrono::Utc::now();
     events::ActiveModel {
@@ -139,7 +140,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     awd_events::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -165,7 +166,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let port: i32 = 51000 + (Uuid::new_v4().as_u128() % 40000) as i32;
     let net_suffix = Uuid::new_v4()
@@ -183,14 +184,14 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
         infrastructure_subnet: Set("10.43.0.0/24".parse().unwrap()),
         flagserver_ip: Set("10.43.0.10".parse().unwrap()),
         judgeserver_ip: Set("10.43.0.11".parse().unwrap()),
-        wireguard_interface_name: Set(format!("wg_reset_{net_suffix}")),
+        wireguard_interface_name: Set(format!("wgr_{net_suffix}")),
         wireguard_listen_port: Set(port),
         docker_network_name: Set(format!("docker_reset_{net_suffix}")),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let team_id = Uuid::new_v4();
     event_teams::ActiveModel {
@@ -202,20 +203,20 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let gamebox_id = Uuid::new_v4();
     gameboxes::ActiveModel {
         id: Set(gamebox_id),
-        name: Set("reset-gb".into()),
-        safe_name: Set("reset-gb".into()),
+        name: Set(format!("reset-gb-{suffix}")),
+        safe_name: Set(format!("reset-gb-{suffix}")),
         category: Set("other".into()),
         hidden: Set(false),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let event_gamebox_id = Uuid::new_v4();
     awd_event_gameboxes::ActiveModel {
@@ -225,7 +226,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
         attack_score: Set(100),
         judge_down_penalty: Set(50),
         first_bonus: Set(50),
-        host_offset: Set(0),
+        host_offset: Set(5),
         enabled: Set(true),
         hidden: Set(false),
         cpu_millis: Set(500),
@@ -235,7 +236,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create instance
     let root_id = Uuid::new_v4();
@@ -251,6 +252,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     event_instances::ActiveModel {
         id: Set(root_id),
         event_id: Set(event_id),
+        owner_team_id: Set(Some(team_id)),
         container_name: Set(format!("container-reset-{cnt_suffix}")),
         container_id: Set(Some(format!("docker-reset-{cnt_suffix}"))),
         runtime_generation: Set(1),
@@ -258,7 +260,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     event_gamebox_instances::ActiveModel {
         id: Set(instance_id),
@@ -273,7 +275,7 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create active round
     let round_id = Uuid::new_v4();
@@ -289,13 +291,14 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     Some(TestFixtures {
         db,
         event_id,
         team_id,
         event_gamebox_id,
+        gamebox_id,
         instance_id,
         root_id,
         user_id,
@@ -307,408 +310,322 @@ async fn setup_test(free_reset_count: i32, extra_reset_penalty: i64) -> Option<T
 
 // ── Case A: old container still exists, recovery stops+recreates ──
 
-#[test]
-fn reset_recovery_case_a_old_container_exists() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(3, 100))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_recovery_case_a_old_container_exists() {
+    let Some(fixtures) = setup_test(3, 100).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Simulate: reset record created, instance Resetting, old container still there
+    // (crash before do_docker_reset was called)
 
-    rt.block_on(async {
-        // Simulate: reset record created, instance Resetting, old container still there
-        // (crash before do_docker_reset was called)
+    let reset_id = Uuid::new_v4();
+    awd_reset_records::ActiveModel {
+        id: Set(reset_id),
+        event_id: Set(fixtures.event_id),
+        team_id: Set(fixtures.team_id),
+        gamebox_instance_id: Set(fixtures.instance_id),
+        requested_by: Set(Some(fixtures.user_id)),
+        free_reset: Set(true),
+        status: Set("pending".into()),
+        ..Default::default()
+    }
+    .insert(&fixtures.db)
+    .await
+    .unwrap();
 
-        let reset_id = Uuid::new_v4();
-        awd_reset_records::ActiveModel {
-            id: Set(reset_id),
-            event_id: Set(fixtures.event_id),
-            team_id: Set(fixtures.team_id),
-            gamebox_instance_id: Set(fixtures.instance_id),
-            requested_by: Set(Some(fixtures.user_id)),
-            free_reset: Set(true),
-            status: Set("pending".into()),
-            ..Default::default()
-        }
-        .insert(&fixtures.db)
+    gamebox_repo::update_instance_status(
+        &fixtures.db,
+        fixtures.instance_id,
+        GameboxStatus::Resetting,
+    )
+    .await
+    .unwrap();
+
+    // Verify instance is Resetting
+    let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(inst.status, GameboxStatus::Resetting);
 
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Resetting,
-        )
+    // Verify reset record is pending
+    let record = awd_reset_records::Entity::find_by_id(reset_id)
+        .one(&fixtures.db)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(record.status, "pending");
 
-        // Verify instance is Resetting
-        let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(inst.status, GameboxStatus::Resetting);
+    // The actual Docker reset would be invoked by execute_reset/recover_in_flight_reset.
+    // Since we don't have a real Docker, we verify the state machine is correct:
+    // - Instance is Resetting ✓
+    // - Reset record is pending ✓
+    // - The recovery path would find the pending record and call do_docker_reset
+    // - do_docker_reset calls containers.reset_gamebox() which stops old + creates new
 
-        // Verify reset record is pending
-        let record = awd_reset_records::Entity::find_by_id(reset_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(record.status, "pending");
-
-        // The actual Docker reset would be invoked by execute_reset/recover_in_flight_reset.
-        // Since we don't have a real Docker, we verify the state machine is correct:
-        // - Instance is Resetting ✓
-        // - Reset record is pending ✓
-        // - The recovery path would find the pending record and call do_docker_reset
-        // - do_docker_reset calls containers.reset_gamebox() which stops old + creates new
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Case B: old container gone, new missing → recovery creates new ──
 
-#[test]
-fn reset_recovery_case_b_old_gone_new_missing() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(3, 100))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_recovery_case_b_old_gone_new_missing() {
+    let Some(fixtures) = setup_test(3, 100).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Simulate: reset record exists, instance Resetting, old container already removed
+    // (crash between stop_old and create_new)
 
-    rt.block_on(async {
-        // Simulate: reset record exists, instance Resetting, old container already removed
-        // (crash between stop_old and create_new)
+    let reset_id = Uuid::new_v4();
+    awd_reset_records::ActiveModel {
+        id: Set(reset_id),
+        event_id: Set(fixtures.event_id),
+        team_id: Set(fixtures.team_id),
+        gamebox_instance_id: Set(fixtures.instance_id),
+        requested_by: Set(Some(fixtures.user_id)),
+        free_reset: Set(true),
+        status: Set("pending".into()),
+        ..Default::default()
+    }
+    .insert(&fixtures.db)
+    .await
+    .unwrap();
 
-        let reset_id = Uuid::new_v4();
-        awd_reset_records::ActiveModel {
-            id: Set(reset_id),
-            event_id: Set(fixtures.event_id),
-            team_id: Set(fixtures.team_id),
-            gamebox_instance_id: Set(fixtures.instance_id),
-            requested_by: Set(Some(fixtures.user_id)),
-            free_reset: Set(true),
-            status: Set("pending".into()),
-            ..Default::default()
-        }
-        .insert(&fixtures.db)
+    gamebox_repo::update_instance_status(
+        &fixtures.db,
+        fixtures.instance_id,
+        GameboxStatus::Resetting,
+    )
+    .await
+    .unwrap();
+
+    // Verify state is consistent for recovery
+    let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(inst.status, GameboxStatus::Resetting);
 
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Resetting,
-        )
+    let record = awd_reset_records::Entity::find_by_id(reset_id)
+        .one(&fixtures.db)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(record.status, "pending");
 
-        // Verify state is consistent for recovery
-        let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(inst.status, GameboxStatus::Resetting);
+    // Recovery would: find pending record → call do_docker_reset
+    // → containers.reset_gamebox() creates new container
+    // → DB updates to Ready
 
-        let record = awd_reset_records::Entity::find_by_id(reset_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(record.status, "pending");
-
-        // Recovery would: find pending record → call do_docker_reset
-        // → containers.reset_gamebox() creates new container
-        // → DB updates to Ready
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Case C: new container exists, DB still Resetting → finalize ──
 
-#[test]
-fn reset_recovery_case_c_new_exists_db_resetting() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(3, 100))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_recovery_case_c_new_exists_db_resetting() {
+    let Some(fixtures) = setup_test(3, 100).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Simulate: reset record exists, instance Resetting, new container already created
+    // (crash after container created but before DB finalized)
 
-    rt.block_on(async {
-        // Simulate: reset record exists, instance Resetting, new container already created
-        // (crash after container created but before DB finalized)
+    let reset_id = Uuid::new_v4();
+    awd_reset_records::ActiveModel {
+        id: Set(reset_id),
+        event_id: Set(fixtures.event_id),
+        team_id: Set(fixtures.team_id),
+        gamebox_instance_id: Set(fixtures.instance_id),
+        requested_by: Set(Some(fixtures.user_id)),
+        free_reset: Set(true),
+        status: Set("pending".into()),
+        ..Default::default()
+    }
+    .insert(&fixtures.db)
+    .await
+    .unwrap();
 
-        let reset_id = Uuid::new_v4();
-        awd_reset_records::ActiveModel {
-            id: Set(reset_id),
-            event_id: Set(fixtures.event_id),
-            team_id: Set(fixtures.team_id),
-            gamebox_instance_id: Set(fixtures.instance_id),
-            requested_by: Set(Some(fixtures.user_id)),
-            free_reset: Set(true),
-            status: Set("pending".into()),
-            ..Default::default()
-        }
-        .insert(&fixtures.db)
+    gamebox_repo::update_instance_status(
+        &fixtures.db,
+        fixtures.instance_id,
+        GameboxStatus::Resetting,
+    )
+    .await
+    .unwrap();
+
+    // Verify state
+    let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(inst.status, GameboxStatus::Resetting);
 
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Resetting,
-        )
-        .await
-        .unwrap();
+    // Recovery would: find pending record → call do_docker_reset
+    // → containers.reset_gamebox() detects existing container
+    // → DB finalizes: Ready + update_runtime_root + reset record completed
 
-        // Verify state
-        let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(inst.status, GameboxStatus::Resetting);
-
-        // Recovery would: find pending record → call do_docker_reset
-        // → containers.reset_gamebox() detects existing container
-        // → DB finalizes: Ready + update_runtime_root + reset record completed
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Reset penalty: idempotent via reset:{reset_id} ──
 
-#[test]
-fn reset_penalty_idempotent() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(0, 50)) // free_reset_count=0, penalty=50
-    {
-        Some(f) => f,
-        None => return,
-    };
+#[tokio::test]
+async fn reset_penalty_idempotent() {
+    let Some(fixtures) = setup_test(0, 50).await else {
+        return;
+    }; // free_reset_count=0, penalty=50
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    use floatctf::modules::event::awd::repo::score_repo;
 
-    rt.block_on(async {
-        use floatctf::modules::event::awd::repo::score_repo;
+    let reset_id = Uuid::new_v4();
+    let idempotency_key = format!("reset:{}", reset_id);
 
-        let reset_id = Uuid::new_v4();
-        let idempotency_key = format!("reset:{}", reset_id);
+    // Write penalty once
+    score_repo::create_score_event(
+        &fixtures.db,
+        fixtures.event_id,
+        None,
+        fixtures.team_id,
+        ScoreEventType::ResetPenalty,
+        -50,
+        &idempotency_key,
+        None,
+        None,
+        None,
+        Some("excess reset penalty"),
+    )
+    .await
+    .unwrap();
 
-        // Write penalty once
-        score_repo::create_score_event(
-            &fixtures.db,
-            fixtures.event_id,
-            None,
-            fixtures.team_id,
-            ScoreEventType::ResetPenalty,
-            -50,
-            &idempotency_key,
-            None,
-            None,
-            None,
-            Some("excess reset penalty"),
-        )
+    // Try to write again (same key) — should be idempotent
+    let result = score_repo::create_score_event(
+        &fixtures.db,
+        fixtures.event_id,
+        None,
+        fixtures.team_id,
+        ScoreEventType::ResetPenalty,
+        -50,
+        &idempotency_key,
+        None,
+        None,
+        None,
+        Some("excess reset penalty"),
+    )
+    .await;
+
+    // Should succeed (idempotent) or fail with duplicate
+    // The idempotency key ensures at most one penalty
+    assert!(result.is_ok() || result.unwrap_err().to_string().contains("duplicate"));
+
+    // Count ResetPenalty events
+    let count = awd_score_events::Entity::find()
+        .filter(awd_score_events::Column::EventId.eq(fixtures.event_id))
+        .filter(awd_score_events::Column::TeamId.eq(fixtures.team_id))
+        .filter(awd_score_events::Column::EventType.eq(ScoreEventType::ResetPenalty))
+        .all(&fixtures.db)
         .await
-        .unwrap();
+        .unwrap()
+        .len();
 
-        // Try to write again (same key) — should be idempotent
-        let result = score_repo::create_score_event(
-            &fixtures.db,
-            fixtures.event_id,
-            None,
-            fixtures.team_id,
-            ScoreEventType::ResetPenalty,
-            -50,
-            &idempotency_key,
-            None,
-            None,
-            None,
-            Some("excess reset penalty"),
-        )
-        .await;
+    assert_eq!(count, 1, "Exactly one ResetPenalty per reset record");
 
-        // Should succeed (idempotent) or fail with duplicate
-        // The idempotency key ensures at most one penalty
-        assert!(result.is_ok() || result.unwrap_err().to_string().contains("duplicate"));
-
-        // Count ResetPenalty events
-        let count = awd_score_events::Entity::find()
-            .filter(awd_score_events::Column::EventId.eq(fixtures.event_id))
-            .filter(awd_score_events::Column::TeamId.eq(fixtures.team_id))
-            .filter(awd_score_events::Column::EventType.eq(ScoreEventType::ResetPenalty))
-            .all(&fixtures.db)
-            .await
-            .unwrap()
-            .len();
-
-        assert_eq!(count, 1, "Exactly one ResetPenalty per reset record");
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Reset identity preservation: same instance_id, same IP ──
 
-#[test]
-fn reset_preserves_logical_identity() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(3, 100))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_preserves_logical_identity() {
+    let Some(fixtures) = setup_test(3, 100).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Record original identity
+    let (inst_before, root_before) =
+        gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+            .await
+            .unwrap()
+            .unwrap();
 
-    rt.block_on(async {
-        // Record original identity
-        let (inst_before, root_before) =
-            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-                .await
-                .unwrap()
-                .unwrap();
+    let original_id = inst_before.id;
+    let original_ip = inst_before.gamebox_ip.to_string();
+    let original_team = inst_before.team_id;
+    let original_event_gamebox = inst_before.event_gamebox_id;
 
-        let original_id = inst_before.id;
-        let original_ip = inst_before.gamebox_ip.to_string();
-        let original_team = inst_before.team_id;
-        let original_event_gamebox = inst_before.event_gamebox_id;
-
-        // Simulate reset completion (mark as Ready without actual Docker)
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Ready,
-        )
+    // Simulate reset completion (mark as Ready without actual Docker)
+    gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Ready)
         .await
         .unwrap();
 
-        // Verify identity preserved
-        let (inst_after, _root_after) =
-            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-                .await
-                .unwrap()
-                .unwrap();
+    // Verify identity preserved
+    let (inst_after, _root_after) =
+        gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+            .await
+            .unwrap()
+            .unwrap();
 
-        assert_eq!(inst_after.id, original_id, "instance_id preserved");
-        assert_eq!(
-            inst_after.gamebox_ip.to_string(),
-            original_ip,
-            "GameBox IP preserved"
-        );
-        assert_eq!(inst_after.team_id, original_team, "team_id preserved");
-        assert_eq!(
-            inst_after.event_gamebox_id, original_event_gamebox,
-            "event_gamebox_id preserved"
-        );
+    assert_eq!(inst_after.id, original_id, "instance_id preserved");
+    assert_eq!(
+        inst_after.gamebox_ip.to_string(),
+        original_ip,
+        "GameBox IP preserved"
+    );
+    assert_eq!(inst_after.team_id, original_team, "team_id preserved");
+    assert_eq!(
+        inst_after.event_gamebox_id, original_event_gamebox,
+        "event_gamebox_id preserved"
+    );
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Immediate post-reset eligibility: no protection ──
 
-#[test]
-fn reset_immediate_eligibility_no_protection() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(3, 100))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_immediate_eligibility_no_protection() {
+    let Some(fixtures) = setup_test(3, 100).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Simulate reset just completed
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Ready,
-        )
+    // Simulate reset just completed
+    gamebox_repo::update_instance_status(&fixtures.db, fixtures.instance_id, GameboxStatus::Ready)
         .await
         .unwrap();
 
-        // Verify eligibility check passes immediately (no protection window)
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .is_some();
+    // Verify eligibility check passes immediately (no protection window)
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .is_some();
 
-        let result = reset_service::check_reset_eligibility(
-            &awd_event,
-            fixtures.team_id,
-            has_active,
-            awd_event.round_count,
-        );
-        assert!(
-            result.is_ok(),
-            "Reset should be eligible immediately after previous reset"
-        );
+    let result = reset_service::check_reset_eligibility(
+        &awd_event,
+        fixtures.team_id,
+        has_active,
+        awd_event.round_count,
+    );
+    assert!(
+        result.is_ok(),
+        "Reset should be eligible immediately after previous reset"
+    );
 
-        // Verify no protection timestamp exists
-        let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            inst.status,
-            GameboxStatus::Ready,
-            "Instance is Ready, not protected"
-        );
+    // Verify no protection timestamp exists
+    let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        inst.status,
+        GameboxStatus::Ready,
+        "Instance is Ready, not protected"
+    );
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }

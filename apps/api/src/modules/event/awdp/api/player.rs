@@ -36,13 +36,15 @@ async fn resolve_subject(ctx: &ReqCtx, event_id: Uuid, user_id: Uuid) -> Result<
         .await?
         .ok_or_else(|| AppError::NotFound("event not found".into()))?;
     if event.participant_mode == ParticipantMode::Team {
-        let membership =
-            crate::modules::event::common::infrastructure::event_repository::find_user_team_membership(
-                ctx.db.get_ref(), event_id, user_id,
+        let team_id =
+            crate::modules::event::awdp::service::authorization::require_event_team_participant(
+                ctx.db.get_ref(),
+                event_id,
+                user_id,
             )
-            .await?
-            .ok_or_else(|| AppError::Forbidden("you are not in any team for this event".into()))?;
-        Ok(Subject::team(membership.team_id))
+            .await
+            .map_err(AppError::from)?;
+        Ok(Subject::team(team_id))
     } else {
         // Individual：必须已注册（event_users 行；join_event 或管理员预注册）。
         crate::modules::event::awdp::service::authorization::require_event_participant(
@@ -622,7 +624,7 @@ pub async fn event_stream(
     let user = user.into_inner();
 
     // ── 授权：赛事参与者 ──
-    let event = match events::Entity::find_by_id(event_id)
+    let _event = match events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await
     {
@@ -630,27 +632,8 @@ pub async fn event_stream(
         _ => return actix_web::HttpResponse::NotFound().finish(),
     };
 
-    if event.participant_mode == ParticipantMode::Team {
-        let membership = crate::modules::event::common::infrastructure::event_repository::find_user_team_membership(
-            ctx.db.get_ref(), event_id, user.id,
-        )
-        .await
-        .ok()
-        .flatten();
-        if membership.is_none() {
-            return actix_web::HttpResponse::Forbidden().finish();
-        }
-    } else {
-        let ok = crate::modules::event::awdp::service::authorization::require_event_participant(
-            ctx.db.get_ref(),
-            event_id,
-            user.id,
-        )
-        .await
-        .is_ok();
-        if !ok {
-            return actix_web::HttpResponse::Forbidden().finish();
-        }
+    if resolve_subject(&ctx, event_id, user.id).await.is_err() {
+        return actix_web::HttpResponse::Forbidden().finish();
     }
 
     let rx = hub.subscribe();

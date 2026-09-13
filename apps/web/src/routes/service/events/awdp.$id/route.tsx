@@ -1,14 +1,14 @@
 import { RocketIcon } from "@primer/octicons-react";
 import { Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute, useMatchRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { createContext } from "react";
 
 import { serviceApi } from "@/api";
+import { RouterUnderlineNavItem } from "@/components/RouterUnderlineNavItem";
 import { AwdpEventProgress } from "@/components/awdp/AwdpEventProgress";
 import { useAwdpEventStream } from "@/hooks/useAwdpEventStream";
-import { AppLink } from "@/navigation";
 import { ServiceRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/service/events/awdp/$id")({
@@ -27,17 +27,10 @@ function RouterNavItem({
 	id: string;
 	children: React.ReactNode;
 }) {
-	const matchRoute = useMatchRoute();
-	// TanStack 路径类型严格；动态 AWDP 子路由需断言。
-	const path = to as never;
-	const params = { id } as never;
-	const isActive = matchRoute({ to: path, params, fuzzy: false });
 	return (
-		<AppLink style={{ textDecoration: "none" }} to={path} params={params}>
-			<UnderlineNav.Item aria-current={isActive ? "page" : undefined}>
-				{children}
-			</UnderlineNav.Item>
-		</AppLink>
+		<RouterUnderlineNavItem to={to} params={{ id }}>
+			{children}
+		</RouterUnderlineNavItem>
 	);
 }
 

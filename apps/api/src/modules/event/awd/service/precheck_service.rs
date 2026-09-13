@@ -260,7 +260,7 @@ pub async fn run_precheck(
     // dockerd 重启会重建其 iptables 表导致规则丢失 → 预检必须能发现并提示
     // 重新部署修复（fail-closed：缺失则 precheck 失败，不允许带病开赛）。
     let docker_forward_missing =
-        crate::modules::event::awd::infrastructure::firewall::DockerForwardRuntime::new()
+        crate::modules::event::awd::infrastructure::firewall::HelperDockerForwardRuntime::new()
             .check_access(
                 &crate::modules::event::awd::infrastructure::firewall::DockerForwardAccessSpec {
                     wg_interface: event_network.wireguard_interface_name.clone(),

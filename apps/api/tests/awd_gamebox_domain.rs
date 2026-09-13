@@ -98,24 +98,43 @@ async fn seed_running_event(db: &sea_orm::DatabaseConnection, tag: &str) -> Uuid
     .await
     .expect("insert awd_events");
 
-    awd_event_networks::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
-        allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
-        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
-        wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
-        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
-        flagserver_ip: Set("10.42.0.2".parse().unwrap()),
-        judgeserver_ip: Set("10.42.0.3".parse().unwrap()),
-        wireguard_interface_name: Set(format!("fawg_{}", &event_id.simple().to_string()[..8])),
-        wireguard_listen_port: Set(52000 + (event_id.as_bytes()[0] as i32) % 1000),
-        docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
-        locked_at: Set(None),
-        ..Default::default()
+    // wireguard_listen_port 全库唯一；撞号时换端口重试。
+    let mut inserted = false;
+    for _attempt in 0..16 {
+        let result = awd_event_networks::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            event_id: Set(event_id),
+            allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
+            gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+            wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
+            infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+            flagserver_ip: Set("10.42.0.2".parse().unwrap()),
+            judgeserver_ip: Set("10.42.0.3".parse().unwrap()),
+            wireguard_interface_name: Set(format!("fawg_{}", &event_id.simple().to_string()[..8])),
+            wireguard_listen_port: Set(30000 + (Uuid::new_v4().as_u128() % 60000) as i32),
+            docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
+            locked_at: Set(None),
+            ..Default::default()
+        }
+        .insert(db)
+        .await;
+        match result {
+            Ok(_) => {
+                inserted = true;
+                break;
+            }
+            Err(err) => {
+                let msg = err.to_string().to_lowercase();
+                if msg.contains("wireguard_listen_port")
+                    && (msg.contains("duplicate key") || msg.contains("unique constraint"))
+                {
+                    continue;
+                }
+                panic!("insert awd_event_networks: {err}");
+            }
+        }
     }
-    .insert(db)
-    .await
-    .expect("insert awd_event_networks");
+    assert!(inserted, "insert awd_event_networks: 16 次端口重试均失败");
 
     event_id
 }

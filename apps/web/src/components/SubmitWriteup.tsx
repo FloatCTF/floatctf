@@ -50,9 +50,16 @@ export function SubmitWriteup({
 		const selected = e.target.files?.[0];
 		if (!selected) return;
 
-		// 只允许 pdf
+		// 客户端提前拦截，服务端仍会校验 PDF magic 与 50MB 上限。
+		// 注意：后端 `#[multipart(limit = "50MB")]` 按十进制解析为 50,000,000 字节（非 50MiB），
+		// 客户端使用同一数值避免“本地放行、服务端 413”的边界错位。
 		if (!selected.name.toLowerCase().endsWith(".pdf")) {
 			setMessage({ type: "error", text: "只支持 pdf 文件" });
+			setTimeout(() => setMessage(null), 3000);
+			return;
+		}
+		if (selected.size > 50_000_000) {
+			setMessage({ type: "error", text: "Writeup 最大支持 50MB（50,000,000 字节）" });
 			setTimeout(() => setMessage(null), 3000);
 			return;
 		}

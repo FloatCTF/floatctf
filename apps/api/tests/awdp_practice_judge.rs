@@ -409,7 +409,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
         "judge 必须在 data 网络: {judge_networks:?}"
     );
     assert!(
-        judge_networks.contains(&"fctf-awdp-control".to_string()),
+        judge_networks.contains(&"fctf-platform-control".to_string()),
         "judge 必须在 control 网络: {judge_networks:?}"
     );
 
@@ -464,7 +464,7 @@ async fn judge_on_both_networks_gamebox_data_only() {
         "GameBox 必须在 data 网络: {inst_networks:?}"
     );
     assert!(
-        !inst_networks.contains(&"fctf-awdp-control".to_string()),
+        !inst_networks.contains(&"fctf-platform-control".to_string()),
         "GameBox 禁止加入 control 网络: {inst_networks:?}"
     );
 

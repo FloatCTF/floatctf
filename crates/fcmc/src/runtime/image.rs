@@ -256,9 +256,14 @@ impl ImageRuntime for DockerContainerRuntime {
             .dockerfile(&dockerfile)
             .rm(true);
 
-        if !req.labels.is_empty() {
-            builder = builder.labels(&req.labels);
-        }
+        // fcmc 构建出的镜像天然属于 FloatCTF 管理域。该标签既让 helper 能对
+        // build 后的 tag/push/remove 做 ownership gating，也会随 push/pull 保留，
+        // 因而 fcmc 直连 Docker 构建后再交给平台使用时仍能被 helper 识别。
+        let mut labels = req.labels.clone();
+        labels
+            .entry("io.floatctf.managed".to_string())
+            .or_insert_with(|| "true".to_string());
+        builder = builder.labels(&labels);
 
         // --proxy：注入 host-gateway 与 HTTP(S)/ALL_PROXY build args（供 apt/curl 等走代理）。
         if let Some(ref proxy) = req.build_proxy {

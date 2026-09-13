@@ -57,6 +57,8 @@ pub async fn create_setting(
         ..Default::default()
     };
     let setting = setting.insert(ctx.db.get_ref()).await?;
+    // 新写入的设置需立即生效：失效 Redis 缓存后再解析（resolve 会重读 map）。
+    crate::infrastructure::settings::invalidate_settings_cache().await;
     let resolved_value = resolve_setting_value(ctx.db.get_ref(), &setting.value).await;
 
     ctx.log
@@ -118,6 +120,8 @@ pub async fn patch_setting(
         m_setting.protected = Set(p);
     });
     let setting = m_setting.update(ctx.db.get_ref()).await?;
+    // 编辑后立即生效：失效 Redis 缓存后再解析（resolve 会重读 map）。
+    crate::infrastructure::settings::invalidate_settings_cache().await;
     let resolved_value = resolve_setting_value(ctx.db.get_ref(), &setting.value).await;
 
     ctx.log

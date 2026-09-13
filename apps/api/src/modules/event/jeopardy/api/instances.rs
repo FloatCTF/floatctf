@@ -338,13 +338,30 @@ pub async fn get_instance(
     let instance_id = instance_id.into_inner();
     let user = user.into_inner();
 
-    let (model, runtime) = event_challenge_instance::Entity::find_by_id(instance_id)
-        .filter(event_challenge_instance::Column::UserId.eq(user.id))
-        .find_also_related(event_instances::Entity)
+    // 与 launch/destroy 使用同一 participant 授权语义。Team 实例的 user_id
+    // 只是最初启动者，不能阻止当前同队成员查看共享实例。
+    let seed = event_challenge_instance::Entity::find_by_id(instance_id)
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
-    let runtime = runtime.ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+    let event = events::Entity::find_by_id(seed.event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound("event for instance not found".into()))?;
+    let event_ctx = EventContextBuilder::new()
+        .db(ctx.db.clone())
+        .docker(ctx.docker.clone())
+        .user(user)
+        .event(event)
+        .build()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("build event context:{e}")))?;
+    let (model, runtime) =
+        jeopardy_instance::find_instance_by_challenge_id(&event_ctx, seed.challenge_id)
+            .await
+            .map_err(|e| AppError::BadRequest(format!("get instance:{e}")))?
+            .filter(|(model, _)| model.id == instance_id)
+            .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
 
     let mut dto = InstancesDto::from_pair(&model, &runtime);
     dto.flag.clear();
@@ -427,9 +444,9 @@ pub async fn destroy_instance(
     let user = user.into_inner();
     let instance_id = instance_id.into_inner();
 
-    // 加载实例以解析所属赛事（练习或竞赛）。
+    // 先只按实例 ID 解析所属赛事；具体授权由应用层按 participant subject 完成。
+    // Team 实例的 user_id 仅记录最初启动者，不能据此拒绝同队成员销毁共享实例。
     let instance = event_challenge_instance::Entity::find_by_id(instance_id)
-        .filter(event_challenge_instance::Column::UserId.eq(user.id))
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;

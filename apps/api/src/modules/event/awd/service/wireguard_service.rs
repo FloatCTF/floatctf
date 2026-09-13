@@ -5,7 +5,6 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::core::config::AwdStaticConfig;
 use crate::entity::{
     awd_event_networks, awd_events, awd_team_networks, awd_wireguard_peers,
     sea_orm_active_enums::WgPeerStatus,
@@ -77,7 +76,6 @@ pub async fn ensure_peer_for_user(
     db: &DatabaseConnection,
     crypto: &AwdCrypto,
     network: &dyn AwdNetworkRuntime,
-    awd_config: &AwdStaticConfig,
     event_id: Uuid,
     user_id: Uuid,
     team_id: Uuid,
@@ -152,31 +150,18 @@ pub async fn ensure_peer_for_user(
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
-    // Host peer add when AWD_HOST_NETWORK is enabled (mirrors HostNetworkRuntime selection).
-    let allowed = assigned_ip.clone();
-    add_peer_on_host(
-        awd_config.network_runtime == "host",
-        &event_network.wireguard_interface_name,
-        &kp.public_key,
-        &allowed,
-    )
-    .await?;
+    // Peer 写入宿主 WireGuard 接口统一经过 AwdNetworkRuntime；生产/开发由 helper 执行特权操作。
+    network
+        .add_peer(
+            PeerIdentity {
+                interface: event_network.wireguard_interface_name,
+                public_key: kp.public_key.clone(),
+            },
+            &assigned_ip,
+        )
+        .await?;
 
-    let _network = network;
     Ok((peer, kp.private_key))
-}
-
-async fn add_peer_on_host(
-    enabled: bool,
-    iface: &str,
-    public_key: &str,
-    allowed_ips: &str,
-) -> AwdResult<()> {
-    if enabled {
-        use crate::modules::event::awd::system::{command::RealCommandRunner, wireguard};
-        wireguard::add_peer(&RealCommandRunner, iface, public_key, allowed_ips).await?;
-    }
-    Ok(())
 }
 
 fn decrypt_peer_private_key(

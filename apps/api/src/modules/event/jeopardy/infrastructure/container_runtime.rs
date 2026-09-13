@@ -97,18 +97,51 @@ impl InstanceRuntime for DockerInstanceRuntime {
 
         let (container_spec, container_port) = challenge_container_spec(spec, identifier);
         let handle = self.runtime.create_and_start(container_spec).await?;
-        let state = self.runtime.inspect_container(&handle.container_id).await?;
-        state
-            .published_ports
-            .get(&container_port)
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("Host port not found for {container_port}"))
+        finalize_launch(&self.runtime, &handle, &container_port).await
     }
 
     async fn stop_and_remove(&self, identifier: &str) -> anyhow::Result<()> {
         self.runtime
             .stop_and_remove(identifier, IMMEDIATE_STOP_TIMEOUT)
             .await
+    }
+}
+
+/// `create_and_start` 之后的端口解析（inspect + published_ports 提取）。
+///
+/// create_and_start 已经产生外部副作用：inspect 失败或期望端口缺失时必须
+/// `stop_and_remove` 补偿，避免上层还没拿到"launch 成功"就遗留无 DB 记录的容器。
+pub async fn finalize_launch(
+    runtime: &dyn ContainerRuntime,
+    handle: &fcmc::ContainerHandle,
+    container_port: &str,
+) -> anyhow::Result<u16> {
+    let result = async {
+        let state = runtime.inspect_container(&handle.container_id).await?;
+        state
+            .published_ports
+            .get(container_port)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("Host port not found for {container_port}"))
+    }
+    .await;
+
+    match result {
+        Ok(port) => Ok(port),
+        Err(error) => {
+            if let Err(cleanup_error) = runtime
+                .stop_and_remove(&handle.container_id, IMMEDIATE_STOP_TIMEOUT)
+                .await
+            {
+                tracing::warn!(
+                    container_id = %handle.container_id,
+                    container_port,
+                    error = %cleanup_error,
+                    "failed to compensate Jeopardy runtime after launch finalization failure"
+                );
+            }
+            Err(error)
+        }
     }
 }
 

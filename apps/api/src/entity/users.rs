@@ -194,13 +194,4 @@ impl Related<super::logs::Entity> for Entity {
     }
 }
 
-impl Related<super::events::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::event_users::Relation::Events.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_users::Relation::Users.def().rev())
-    }
-}
-
 impl ActiveModelBehavior for ActiveModel {}

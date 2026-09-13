@@ -1,6 +1,5 @@
 use crate::api::prelude::*;
 use actix_web::get;
-use bollard::Docker;
 
 #[allow(deprecated)]
 use bollard::container::ListContainersOptions;
@@ -67,7 +66,7 @@ pub struct DockerInformation {
 }
 /// GET /api/admin/monitor
 #[get("/monitor")]
-pub async fn get_sys_info(_: SuperAdminJwtGuard) -> UniResult<SystemInformation> {
+pub async fn get_sys_info(_: SuperAdminJwtGuard, ctx: ReqCtx) -> UniResult<SystemInformation> {
     // ---------- 系统信息 ----------
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -161,7 +160,7 @@ pub async fn get_sys_info(_: SuperAdminJwtGuard) -> UniResult<SystemInformation>
     network_interfaces.sort_by(|a, b| a.name.cmp(&b.name));
 
     // ---------- Docker 信息 ----------
-    let docker = Docker::connect_with_local_defaults().unwrap();
+    let docker = ctx.docker.get_ref();
 
     // 镜像
     #[allow(deprecated)]

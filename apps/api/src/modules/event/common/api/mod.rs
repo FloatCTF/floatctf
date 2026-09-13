@@ -55,6 +55,7 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
         .service(player::leave_event)
         .service(player::create_team)
         .service(player::join_team)
+        .service(player::leave_team)
         .service(player::quit_team);
 }
 

@@ -7,7 +7,8 @@
 //! - `DATABASE_URL` (default `postgres://postgres:postgres@127.0.0.1:5432/floatctf_db`)
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
+    QueryFilter, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -45,14 +46,25 @@ fn base_awd_event(event_id: Uuid, _tag: &str) -> awd_events::ActiveModel {
 }
 
 /// Event Network fixture（新模型）：网络配置独立固化。
-async fn seed_event_network<C: ConnectionTrait + Send>(
-    conn: &C,
-    event_id: Uuid,
-    tag: &str,
-) -> awd_event_networks::Model {
+async fn seed_event_network<C: ConnectionTrait + Send>(conn: &C, event_id: Uuid, tag: &str) {
+    // wireguard_listen_port 全库唯一；本函数在测试事务内执行，插入失败会污染
+    // 事务无法重试，因此先 SELECT 预检端口空闲再插入（60000 端口空间撞号概率极低）。
     let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
-    let wg_port = 5_0000 + Uuid::new_v4().as_u128() as i32 % 1000;
-    awd_event_networks::ActiveModel {
+    let mut wg_port = 0i32;
+    for _attempt in 0..16 {
+        let candidate = 30000 + (Uuid::new_v4().as_u128() % 60000) as i32;
+        let taken = awd_event_networks::Entity::find()
+            .filter(awd_event_networks::Column::WireguardListenPort.eq(candidate))
+            .count(conn)
+            .await
+            .expect("check port");
+        if taken == 0 {
+            wg_port = candidate;
+            break;
+        }
+    }
+    assert!(wg_port != 0, "16 次端口预检均撞号");
+    let net = awd_event_networks::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(event_id),
         allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
@@ -70,10 +82,8 @@ async fn seed_event_network<C: ConnectionTrait + Send>(
         )),
         locked_at: Set(None),
         ..Default::default()
-    }
-    .insert(conn)
-    .await
-    .expect("insert awd_event_networks")
+    };
+    net.insert(conn).await.expect("insert awd_event_networks");
 }
 
 async fn seed_event<C: ConnectionTrait + Send>(conn: &C, tag: &str) -> (Uuid, awd_events::Model) {

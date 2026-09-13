@@ -32,6 +32,11 @@ fn db_url() -> String {
         .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db".into())
 }
 
+/// 全局扫描型函数（terminalize_past_deadline / reclaim_expired_leases / claim_tasks）
+/// 会跨事件 terminalize 任务：并行测试互踩会让对方 affected 集合为空、
+/// 或抢先消费 deadline terminalize 断言。这些测试必须串行。
+static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
     match sea_orm::Database::connect(&db_url()).await {
         Ok(db) => Some(db),
@@ -73,22 +78,41 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, round_count: i3
     };
     awd.insert(db).await.expect("insert awd_events");
 
-    let wg_port = 25000 + (Uuid::new_v4().as_u128() % 60000) as i32;
-    let net = awd_event_networks::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
-        allocation_mode: Set(AwdNetworkAllocationMode::Automatic),
-        wireguard_interface_name: Set(format!("fcw_{}", &Uuid::new_v4().simple().to_string()[..8])),
-        wireguard_listen_port: Set(wg_port),
-        wireguard_cidr: Set("10.200.0.0/16".parse().unwrap()),
-        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
-        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
-        flagserver_ip: Set("10.42.0.10/32".parse().unwrap()),
-        judgeserver_ip: Set("10.42.0.11/32".parse().unwrap()),
-        docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
-        ..Default::default()
-    };
-    net.insert(db).await.expect("insert event_network");
+    // 随机端口在并行 seed 时可能撞 wireguard_listen_port 唯一约束；冲突换端口重试。
+    let mut net = None;
+    for _ in 0..16 {
+        let candidate = awd_event_networks::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            event_id: Set(event_id),
+            allocation_mode: Set(AwdNetworkAllocationMode::Automatic),
+            wireguard_interface_name: Set(format!(
+                "fcw_{}",
+                &Uuid::new_v4().simple().to_string()[..8]
+            )),
+            wireguard_listen_port: Set(25000 + (Uuid::new_v4().as_u128() % 60000) as i32),
+            wireguard_cidr: Set("10.200.0.0/16".parse().unwrap()),
+            gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+            infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+            flagserver_ip: Set("10.42.0.10/32".parse().unwrap()),
+            judgeserver_ip: Set("10.42.0.11/32".parse().unwrap()),
+            docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
+            ..Default::default()
+        };
+        match candidate.insert(db).await {
+            Ok(inserted) => {
+                net = Some(inserted);
+                break;
+            }
+            Err(err)
+                if err.to_string().contains("wireguard_listen_port")
+                    && err.to_string().contains("duplicate key") =>
+            {
+                continue;
+            }
+            Err(e) => panic!("insert event_network: {e}"),
+        }
+    }
+    let _ = net.expect("insert event_network");
 
     event_id
 }
@@ -570,6 +594,7 @@ async fn last_task_judge_error_finishes_event() {
 #[tokio::test]
 async fn pending_task_deadline_terminalizes_to_judge_error_and_finishes() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "deadline", 2).await;
@@ -1363,6 +1388,7 @@ async fn networkerror_settlement_resume_no_new_round() {
 #[tokio::test]
 async fn lease_reclaim_exhausted_last_task_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "lease-reclaim", 2).await;
@@ -1449,6 +1475,7 @@ async fn lease_reclaim_exhausted_last_task_finishes_event() {
 #[tokio::test]
 async fn claim_deadline_last_task_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "claim-deadline", 2).await;
@@ -1723,6 +1750,7 @@ async fn batch_deadline_handler_duplicate_is_idempotent() {
 #[tokio::test]
 async fn older_round_terminalized_by_real_path_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "older-real", 5).await;
@@ -1884,6 +1912,7 @@ async fn score_freeze_after_real_down_finalization() {
 #[tokio::test]
 async fn real_last_down_result_scores_before_finished() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "real-down", 2).await;
@@ -2005,6 +2034,7 @@ async fn real_last_down_result_scores_before_finished() {
 #[tokio::test]
 async fn judge_claim_reclaim_exhausted_last_task_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "claim-reclaim", 2).await;
@@ -2082,6 +2112,7 @@ async fn judge_claim_reclaim_exhausted_last_task_finishes_event() {
 #[tokio::test]
 async fn judge_claim_deadline_last_task_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "claim-deadline2", 2).await;
@@ -2167,6 +2198,7 @@ async fn judge_claim_deadline_last_task_finishes_event() {
 #[tokio::test]
 async fn judge_result_handler_scores_down_before_finished() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "handler-down", 2).await;
@@ -2297,6 +2329,7 @@ async fn judge_result_handler_scores_down_before_finished() {
 #[tokio::test]
 async fn judge_claim_handler_reclaim_exhausted_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "hc-reclaim", 2).await;
@@ -2396,6 +2429,7 @@ async fn judge_claim_handler_reclaim_exhausted_finishes_event() {
 #[tokio::test]
 async fn judge_claim_handler_deadline_finishes_event() {
     let db = connect_or_skip().await;
+    let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = db else { return };
 
     let event_id = seed_event(&db, "hc-deadline", 2).await;

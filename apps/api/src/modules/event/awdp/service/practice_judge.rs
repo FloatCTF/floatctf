@@ -482,9 +482,9 @@ pub async fn deploy_judge(
         Err(e) => return Err(AwdpError::Docker(format!("deploy judge: {e}"))),
     };
 
-    // 4. 加入 control 网络（internal=true；GameBox 无权加入）。
-    //    注意：control 网络无出站 → JudgeServer 到宿主 API 走 data 网络网关
-    //    （PLATFORM_INTERNAL_URL 由配置给出，host firewall 限制 GameBox 访问）。
+    // 4. 加入平台 control 网络（internal=true；GameBox 无权加入）。
+    //    生产 API 容器也固定接入该网络，JudgeServer 通过 PLATFORM_INTERNAL_URL
+    //    直接回调 API；开发原生 API 仍可配置 data 网络网关地址。
     if let Err(e) = docker
         .connect_network(
             CONTROL_NETWORK_NAME,
@@ -598,10 +598,22 @@ async fn running_judge_env_matches(
         .as_ref()
         .and_then(|c| c.image.clone())
         .is_some_and(|img| img == config.practice_judgeserver_image);
-    image_matches
-        && get("PLATFORM_INTERNAL_URL=") == Some(config.platform_internal_url.trim())
-        && get("EVENT_ID=") == Some(want_event.as_str())
-        && get("WORKER_ID=") == Some(want_worker.as_str())
+    let platform_matches =
+        get("PLATFORM_INTERNAL_URL=") == Some(config.platform_internal_url.trim());
+    let event_matches = get("EVENT_ID=") == Some(want_event.as_str());
+    let worker_matches = get("WORKER_ID=") == Some(want_worker.as_str());
+    let matches = image_matches && platform_matches && event_matches && worker_matches;
+    if !matches {
+        warn!(
+            container = %container_name,
+            image_matches,
+            platform_matches,
+            event_matches,
+            worker_matches,
+            "AWDP judge env/image drift detected"
+        );
+    }
+    matches
 }
 
 /// 清理赛事网络资源（finish 后 best-effort）：停/删 judge 容器 → 删 ACL 表 → 删网络 → 标记 released。

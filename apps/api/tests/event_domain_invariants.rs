@@ -14,12 +14,12 @@ use uuid::Uuid;
 
 use floatctf::entity::{
     awd_events, awd_network_allocations, challenges, event_challenge_instance, event_instances,
-    event_teams, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+    event_teams, event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
     sea_orm_active_enums::{
         AwdEventStatus, AwdNetworkAllocationKind, AwdPhase, EventFamily, EventPurpose,
-        ParticipantMode,
+        ParticipantMode, SettingValueType,
     },
-    users,
+    settings, users,
 };
 use floatctf::modules::event::common::application::admin_service::{
     self as common_admin, PatchEventRequest,
@@ -85,6 +85,36 @@ where
         Err(e) => {
             let _ = exec_sql(txn, &format!("ROLLBACK TO SAVEPOINT {name}")).await;
             Err(e)
+        }
+    }
+}
+
+async fn ensure_jeopardy_instance_settings(db: &sea_orm::DatabaseConnection) {
+    use sea_orm::sea_query::OnConflict;
+
+    for (key, value, value_type) in [
+        ("NODE_IP", "127.0.0.1", SettingValueType::String),
+        ("HTTP_PREFIX", "http://", SettingValueType::String),
+        ("INSTANCE_DESTROY_DELAY", "60", SettingValueType::Integer),
+    ] {
+        let result = settings::Entity::insert(settings::ActiveModel {
+            key: Set(key.to_string()),
+            value: Set(value.to_string()),
+            r#type: Set(value_type),
+            description: Set("integration test fallback".to_string()),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::column(settings::Column::Key)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec(db)
+        .await;
+        if let Err(err) = result
+            && !matches!(err, sea_orm::DbErr::RecordNotInserted)
+        {
+            panic!("ensure instance setting: {err}");
         }
     }
 }
@@ -755,6 +785,14 @@ async fn solved_challenge_ids_include_individual_and_team_solves() {
     let ev = seed_jeopardy_event(&txn, ParticipantMode::Team, "sol-team").await;
     let team = seed_team(&txn, ev.id, "sol-team").await;
     for (i, uid) in [a.id, b.id].iter().enumerate() {
+        event_users::ActiveModel {
+            event_id: Set(ev.id),
+            user_id: Set(*uid),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await
+        .expect("team event enrollment");
         event_team_members::ActiveModel {
             event_id: Set(ev.id),
             team_id: Set(team.id),
@@ -810,16 +848,13 @@ async fn practice_relaunch_after_destroy_removes_completed_row() {
         }
     };
 
-    use floatctf::modules::event::jeopardy::{
-        application::instance_service::InstanceService,
-        infrastructure::container_runtime::DockerInstanceRuntime,
-    };
+    use floatctf::modules::event::jeopardy::application::instance_service::InstanceService;
 
     let practice = ensure_practice_jeopardy_event(&db)
         .await
         .expect("practice event");
     let user = seed_user(&db, "relaunch").await;
-    let mut ch = seed_challenge(&db, "relaunch").await;
+    let ch = seed_challenge(&db, "relaunch").await;
     challenges::ActiveModel {
         id: Set(ch.id),
         flag_type: Set(Some("static".into())),
@@ -830,6 +865,11 @@ async fn practice_relaunch_after_destroy_removes_completed_row() {
     .update(&db)
     .await
     .expect("make static non-docker challenge");
+
+    // Fresh integration-test databases have migrations but no API bootstrap, so the
+    // dynamic settings consumed by InstanceService are not seeded yet. Insert only
+    // missing defaults; never overwrite caller-owned/dev values when this test is run directly.
+    ensure_jeopardy_instance_settings(&db).await;
 
     let service = InstanceService::with_docker(db.clone(), docker);
 

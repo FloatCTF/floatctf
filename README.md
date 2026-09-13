@@ -31,28 +31,17 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [生产安装与部署](#生产安装与部署)
 - [发布渠道（crates.io / GitHub Release）](#发布渠道cratesio--github-release)
 - [开发指南](#开发指南)
-- [环境初始化](#环境初始化)
-- [快速开始](#快速开始)
-  - [1. 克隆项目](#1-克隆项目)
-  - [2. 配置服务（TOML）](#2-配置服务toml)
-  - [3. 启动开发环境](#3-启动开发环境)
-  - [4. 访问平台](#4-访问平台)
 - [功能展示](#功能展示)
-  - [用户端](#用户端)
-  - [管理端](#管理端)
 - [核心功能](#核心功能)
-  - [用户端](#用户端-1)
-  - [管理端](#管理端-1)
 - [AWD 攻防对抗](#awd-攻防对抗)
 - [技术栈](#技术栈)
 - [技术亮点](#技术亮点)
 - [目录结构](#目录结构)
 - [服务说明](#服务说明)
-- [常用命令](#常用命令)
 - [常用开发命令](#常用开发命令)
+- [故障排查](#故障排查)
 - [运维速查](#运维速查)
 - [AI 开发手册](#ai-开发手册)
-- [故障排查](#故障排查)
 - [许可证](#许可证)
 
 ## 简述
@@ -71,6 +60,8 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 | `crates/fcmc`                                                          | 共享容器管理与出题工具（crates.io: `cargo install fcmc`） |
 | `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
 | `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
+| `crates/helper-protocol`                                             | API ↔ helper Host RPC 协议                  |
+| `crates/floatctf-helper`                                             | Docker + 网络宿主控制面守护进程             |
 | [floatctf-develop](https://github.com/FloatCTF/floatctf-develop)       | 开发环境（DevContainer）                  |
 | [floatctf-installer](https://github.com/FloatCTF/floatctf-installer)   | 主机安装脚本                              |
 | [floatctf-challenges](https://github.com/FloatCTF/floatctf-challenges) | 题目仓库                                  |
@@ -87,151 +78,138 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 
 ## 架构说明
 
-生产部署是「原生进程 + Docker 容器」的混合架构：
+FloatCTF 采用「容器化应用面 + 独立宿主控制面」架构。生产 API、PostgreSQL、Redis、RustFS、Caddy 都由 Docker Compose 管理；只有需要操作宿主 Docker/网络的 `floatctf-helper` 常驻 systemd：
 
-```
-Browser
+```text
+Internet
   ↓
-Caddy（容器，network_mode: host）
-  ↓
-FloatCTF API（原生 systemd 进程）
-  ├── PostgreSQL（容器）
-  ├── RustFS（容器）
-  └── AWD Runtime（GameBox / FlagServer / JudgeServer + nftables + WireGuard）
+Caddy container :80/:443
+  ├── Web static
+  ├── /api/* ───────────────► FloatCTF API container :9090
+  └── object paths ─────────► RustFS
+                                   │
+FloatCTF API container            ├── PostgreSQL / Redis / RustFS（Compose DNS）
+  ├── non-root / cap_drop=ALL / read-only rootfs
+  ├── /run/floatctf/helper-control.sock ───────► Host RPC
+  └── /run/floatctf/helper-docker.sock ► Docker policy proxy
+                                              ↓
+                                        floatctf-helper
+                                        ├── docker group → Docker Engine
+                                        └── CAP_NET_ADMIN
+                                            ├── WireGuard
+                                            ├── nftables
+                                            ├── conntrack
+                                            └── Docker FORWARD
 ```
 
-systemd 为 **2 个服务 + 1 个聚合目标**（不是 3 个独立守护进程）：
+生产 systemd 只管理宿主 helper 与 Compose 生命周期：
 
 | 单元 | 内容 |
-| ----- | ---- |
-| `floatctf-api.service` | 原生 API 进程 |
-| `floatctf-infra.service` | postgres / rustfs / Caddy 容器（`--wait` 就绪） |
-| `floatctf.target` | 聚合目标 |
+| --- | --- |
+| `floatctf-helper.service` | 宿主控制面：Docker group + `CAP_NET_ADMIN` |
+| `floatctf-infra.service` | `docker compose up/down`：API + PostgreSQL + Redis + RustFS + Caddy |
+| `floatctf.target` | 聚合整个平台 |
 
-> 开发模式仍可全部容器化运行（`mise run infra:up` + `dev:api`/`dev:web`），见「快速开始」。
+API 不发布宿主 9090 端口。Caddy 在 Compose 网络中直接访问 `api:9090`；FlagServer/JudgeServer 通过独立 internal 网络 `fctf-platform-control` 访问 API 固定地址 `10.42.8.2:9090`，GameBox 不加入该网络。开发仍使用原生 `watchexec + setpriv` API，以保留快速热重载，同时与生产保持相同的 helper 权限边界。
+
+Redis 与 PostgreSQL、RustFS 一样属于 API 的必需基础设施。API 启动时会主动 `PING` Redis，失败即停止启动；Redis 当前承载 realtime 跨节点扇出/全局 sequence、AWD 分布式限流、Web Terminal 一次性票据、scheduler 即时唤醒和 settings 热点缓存。
 
 ## 环境要求
 
-**生产部署**（见 [INSTALL.md](./INSTALL.md)）：
+生产和完整开发环境都需要 Linux、systemd、Docker + Compose、nftables、WireGuard、iproute2、conntrack、iptables，以及 IPv4 转发和 `br_netfilter`。自动安装路径当前验证于 Arch Linux。
 
-- systemd Linux（Arch 已完整真实验证）
-- Docker + Docker Compose
-- nftables、WireGuard（wireguard-tools）、iproute2
-- IPv4 转发 + `br_netfilter`（`install.sh` 自动检查/持久化）
-
-**开发环境**：Docker 与 Docker Compose、约 10GB 可用磁盘空间。
+完整要求与宿主内核参数见 [INSTALL.md](./INSTALL.md) 和 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
 ## 生产安装与部署
 
-> 完整权威指南见 **[INSTALL.md](./INSTALL.md)**。以下是极简入口。
-> `install.sh` 是**单文件自包含**安装器：内嵌所有模板，下载 3 个 release 产物
-> （API 二进制 + 前端 dist + merged.sql）后一键部署。
+权威指南见 **[INSTALL.md](./INSTALL.md)**。Release 提供 4 个部署产物：
 
-**全新主机（一键安装）**：
+```text
+floatctf
+floatctf-helper
+web-dist.tar.gz
+merged.sql
+```
+
+全新主机：
 
 ```bash
-sudo env SITE_ADDRESS=ctf.example.com ./scripts/install.sh   # 下载 3 产物 + 主机初始化(幂等) + 部署（仅写文件/建服务，不启动）
-sudo systemctl start floatctf.target   # 手动启动（首次启动 postgres 自动初始化数据库）
+curl -fsSL   https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh   -o install.sh
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh
+sudo systemctl start floatctf.target
 systemctl status floatctf.target
 ```
 
-**安装根**（默认 `/home/floatctf`，可用环境变量覆盖）：
+默认安装根为 `/home/floatctf`，可用 `FLOATCTF_HOME` 覆盖。安装器创建 `floatctf` 和 `floatctf-helper` 系统身份，用 release `floatctf` 二进制本地构建 `floatctf/api:<version>` runtime image，并以 `floatctf` 的 numeric UID/GID 运行 API 容器；helper 独占 Docker 与网络宿主权限。
+
+卸载：
 
 ```bash
-sudo env FLOATCTF_HOME=/opt/floatctf SITE_ADDRESS=ctf.example.com ./scripts/install.sh
+sudo /home/floatctf/uninstall.sh
+sudo /home/floatctf/uninstall.sh --purge
 ```
-
-**开发模式（源码目录）**：在 clone 后的源码目录运行，检测是源码 → 完整主机初始化
-（同生产，含 nftables/WireGuard/host 网络），三产物不下载不装配，也**不启动** dev
-容器：
-
-```bash
-sudo ./scripts/install.sh --develop
-# 之后手动起开发环境：mise run infra:up（dev 容器）+ sudo mise run dev:api（host 需 root）
-#                     + mise run dev:web，入口 http://127.0.0.1:7780
-```
-
-**卸载**：
-
-```bash
-sudo /home/floatctf/uninstall.sh          # 安全卸载（保留 PG/RustFS 数据、config、secrets）
-sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认 PURGE FLOATCTF）
-```
-
-`install.sh` 每次部署都会内嵌生成 `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`
-（root:floatctf 0750）。`scripts/clean.sh` 可清理源码签出里的再生构建产物。
-
-> 现代部署请使用 `install.sh` / `clean.sh` / `uninstall.sh` 这套生命周期脚本。
 
 ## 发布渠道（crates.io / GitHub Release）
 
-FloatCTF 提供两条获取工具/二进制的渠道：
-
-- **crates.io**：`fcmc` 已发布到 [crates.io](https://crates.io/crates/fcmc)，`cargo install fcmc`
-  即可安装出题/容器管理工具；后端 crate `floatctf` 亦已具备发布元数据。
-- **GitHub Release**：打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物
-  （`floatctf` API 二进制 + `web-dist.tar.gz` 前端 + `merged.sql` 数据库初始化），
-  由 `install.sh` 下载部署。
-
-> crates.io 发布流程与顺序（先 `fcmc` 后 `floatctf`）见 `chore/crates-io-publish-guide.md`。
+- **crates.io**：`fcmc` 可通过 `cargo install fcmc` 安装。
+- **GitHub Release**：`v*` tag 触发 `.github/workflows/release.yml`，构建 API binary、helper、Web 静态文件和 fresh-production `merged.sql`。CI 还会实际构建一次生产 API runtime image；部署时 installer 用同一 Dockerfile 在目标机生成 `floatctf/api:<version>`。
 
 ## 开发指南
 
-完整的本地开发说明（人工开发 + Agent 协同开发、mise 环境与 sudo 坑、CAP_NET_ADMIN、
-数据库迁移、常用命令）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+FloatCTF 只有一套完整开发环境。详细说明见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
 
-## 环境初始化
-
-仓库级开发命令由 `mise` 管理。先安装仓库固定版本的 Rust、Node 和 pnpm，然后执行：
+首次：
 
 ```bash
-mise run install
-```
+curl https://mise.run | sh
+# 按 mise 提示激活 shell
 
-## 快速开始
-
-### 1. 克隆项目
-
-```bash
 git clone https://github.com/FloatCTF/floatctf.git
 cd floatctf
+mise run setup
 ```
 
-### 2. 配置服务（TOML）
+`setup` 会准备固定工具链、Docker / WireGuard / nftables、系统用户和 `floatctf-helper`。首次加入 `docker` / `floatctf` 组后重新登录一次。
 
-API 配置由 TOML 文件提供：`mise` 通过 `FLOATCTF_CONFIG` 自动指向 `apps/api/config/development.toml`。按需修改其中的 `server`、`database`、`rustfs`、`auth` 等段落；敏感值（数据库密码、RustFS 密钥、JWT secret）不得提交到仓库。首次使用请确保该文件存在，缺失时按本机环境创建。
-
-PostgreSQL、RustFS、Caddy 等基础设施的端口与挂载配置见 `infra/compose/compose.dev.yml`。
-
-### 3. 启动开发环境
-
-推荐用 `install.sh --develop` 一键起开发环境（完整主机初始化 + dev 容器 + merged.sql 初始化）：
+日常开发只运行：
 
 ```bash
-sudo ./scripts/install.sh --develop
-# 之后手动起开发服务（两个终端）：
-sudo mise run dev:api    # API → http://127.0.0.1:9090（host 网络需 root）
-mise run dev:web         # Vite → http://127.0.0.1:3000
+mise run dev
 ```
 
-> 详细开发指南（人工开发 / Agent 协同开发、mise 环境、sudo 与 CAP_NET_ADMIN）见
-> **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+它会依次启动并等待 PostgreSQL / Redis / RustFS / Caddy，自动应用 migrations，然后启动 API watchexec 和 Vite HMR。
 
-也可以手动分步：`mise run infra:up` + `mise run dev:api` + `mise run dev:web`。
-数据库 Schema 变更通过 SQL 迁移管理（`apps/api/src/sql/migrations/`）：
+常用命令：
 
 ```bash
-mise run db:migration:new <迁移名称>  # 新建迁移 SQL 模板
-mise run db:migration:merge           # 重新生成合并脚本 merged.sql
-# 将新迁移应用到开发库（迁移文件为幂等 SQL）
-docker compose -f infra/compose/compose.dev.yml exec floatctf-dev-db \
-  psql -U postgres -d floatctf_db -v ON_ERROR_STOP=1 \
-  -f /dev/stdin < apps/api/src/sql/migrations/<新迁移>.sql
+mise run dev                 # 完整开发环境
+mise run dev:down            # 停止开发基础设施
+mise run dev:reset           # 清空开发数据并重建
+mise run dev:logs            # 基础设施日志
+mise run check               # fmt + lint + test
 ```
 
-### 4. 访问平台
+数据库 Schema 变更：
 
-通过 Caddy 入口访问 http://localhost:7780 （`/` 转发到 Web，`/api/` 转发到 API）。Web 开发服务器也可直接访问 http://localhost:3000 。
+```bash
+mise run db:migration:new <名称>
+mise run db:migration:validate
+mise run db:migration:apply
+mise run db:gen
+```
+
+`merged.sql` 由 release 流程生成，日常开发启动直接从 migrations 构建 fresh DB。
+
+开发地址：
+
+| 服务 | 地址 |
+| --- | --- |
+| 统一入口 | `http://0.0.0.0:7780`（局域网使用宿主机 IP） |
+| API（监听） | `0.0.0.0:9090`（本机直连仍用 `http://127.0.0.1:9090`） |
+| Vite（监听） | `0.0.0.0:13000`（本机直连仍用 `http://127.0.0.1:13000`） |
+| RustFS Console | `http://127.0.0.1:9001` |
+
+内置开发账号：用户端用户名 `1000000`、密码 `testuser`（昵称 `testuser`）；管理端 `/admin` 使用 `sysadmin` / `FloatCTF@2025`。
 
 ## 功能展示
 
@@ -302,106 +280,96 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — `scripts/install.sh` 一键安装（下载 release tarball → 主机初始化(幂等) → 部署 → systemd → API）；`clean.sh`/`uninstall.sh` 完善生命周期
+- **一键部署** — `scripts/install.sh` 下载 4 个 release 产物、构建非 root API runtime image、创建 internal control network、渲染 Compose/Caddy/TOML，并由 systemd 管理 helper + Compose 生命周期；`uninstall.sh` 完整覆盖安全卸载与 purge
 
 ## 目录结构
 
 ```text
 floatctf/
 ├── apps/
-│   ├── api/             # Rust API（config/ 为 TOML 配置，src/sql/migrations/ 为 SQL 迁移）
-│   └── web/             # React 前端
+│   ├── api/                    # Rust / Actix Web API
+│   └── web/                    # React 前端
 ├── crates/
-│   ├── fcmc/            # 共享 Rust crate / CLI
-│   ├── awd-flagserver/  # AWD FlagServer 独立服务
-│   └── awd-judgeserver/ # AWD JudgeServer 独立服务
-├── infra/               # Compose / Caddy / systemd / Docker 配置
-├── scripts/             # 生命周期脚本：install / clean / uninstall
-├── docs/                # 项目文档
-├── INSTALL.md           # 生产安装与运维权威指南
-├── app/                 # 运行时数据（日志、上传、题目文件，git 忽略）
-├── Cargo.toml           # Rust workspace
-├── Cargo.lock           # 唯一 Rust lockfile
-├── package.json         # 根 pnpm 入口
-├── pnpm-workspace.yaml  # pnpm workspace
-├── pnpm-lock.yaml       # 唯一前端 lockfile
-└── mise.toml            # 统一任务入口
+│   ├── fcmc/                   # 容器管理 / 出题工具
+│   ├── awd-flagserver/         # AWD FlagServer
+│   ├── awd-judgeserver/        # AWD JudgeServer
+│   ├── helper-protocol/        # API ↔ helper Host RPC 协议
+│   └── floatctf-helper/        # Docker + 网络宿主控制面
+├── infra/                      # Compose / Caddy / 配置
+├── scripts/                    # setup / install / dev / clean 生命周期脚本
+├── docs/                       # 项目文档
+├── DEVELOPMENT.md              # 开发权威指南
+├── INSTALL.md                  # 生产安装与运维权威指南
+├── Cargo.toml                  # Rust workspace
+├── pnpm-workspace.yaml         # pnpm workspace
+└── mise.toml                   # 统一开发任务入口
 ```
 
 ## 服务说明
 
-**生产部署**（systemd，`/home/floatctf`）：
+生产：
 
-| 单元 | 内容 | 端口（默认，可经 `.env` 覆盖） |
-| ----- | ---- | ---- |
-| `floatctf-infra.service` | postgres / rustfs / Caddy 容器 | PG 5433 / RustFS 9000,9001 / HTTP 80,443 |
-| `floatctf-api.service` | 原生 API 进程 | API 9090 |
+| 组件 | 身份 | 说明 |
+| --- | --- | --- |
+| `floatctf-helper.service` | `floatctf-helper` + docker group + `CAP_NET_ADMIN` | 唯一宿主高权限控制面 |
+| `floatctf-infra.service` | systemd/root | 管理生产 Compose 生命周期 |
+| `floatctf-api` container | numeric `floatctf` UID/GID，`cap_drop=ALL` | API；只访问 helper sockets，不挂 Docker socket |
+| `floatctf-postgres` / `redis` / `rustfs` / `caddy` | Docker Compose | 数据面与公网入口 |
+| `floatctf.target` | systemd | 聚合 helper + Compose stack |
 
-**开发模式**（`mise run infra:up` / `dev:api` / `dev:web`）：
+开发：
 
-| 服务              | 镜像              | 端口         | 说明                                                                             |
-| ----------------- | ----------------- | ------------ | -------------------------------------------------------------------------------- |
-| `floatctf-dev-db` | PostgreSQL 17     | 5432         | 数据库，持久化卷 `pgdata`                                                        |
-| `floatctf-dev-rustfs` | rustfs/rustfs | 9000 / 9001  | S3 兼容对象存储；`floatctf-public`（公共资源）、`floatctf-private`（Writeups）   |
-| `floatctf-dev-caddy` | Caddy 2           | 7780         | 反向代理：`/` → Web(3000)、`/api/` → API(9090)、`/public/`、`/private/` → RustFS |
-| `floatctf-api`    | 本地 cargo 进程   | 9090         | 后端 API（开发模式），连接 PostgreSQL 和 RustFS                                  |
-
-## 常用命令
-
-基础设施生命周期通过 mise 任务管理：
-
-```bash
-mise run infra:up
-mise run infra:logs
-mise run infra:down
+```text
+mise run dev
+├── Docker Compose: PostgreSQL / Redis / RustFS / Caddy
+├── floatctf-helper.service（宿主 systemd，setup 一次性安装）
+├── API（当前开发者 UID + watchexec；启动时丢弃 docker group）
+└── Web（Vite HMR）
 ```
-
-数据库迁移与模型生成：
-
-```bash
-mise run db:migration:new <名称>  # 新建 SQL 迁移
-mise run db:migration:merge       # 重新生成 merged.sql
-mise run db:gen                   # 从数据库重新生成 SeaORM 实体与 Web 类型
-```
-
-## 故障排查
-
-| 问题               | 排查方向                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| API 无法连接数据库 | 检查 `apps/api/config/development.toml` 中 `database.url`；确认 PostgreSQL 运行中：`docker compose -f infra/compose/compose.dev.yml ps`             |
-| RustFS 连接问题    | 检查 TOML 中 `rustfs.endpoint_url` 是否与本机映射端口一致；确认容器运行中：`docker compose -f infra/compose/compose.dev.yml ps floatctf-dev-rustfs` |
-| Caddy 返回 502     | 确认 API（9090）与 Web（3000）开发进程已启动；Caddy 通过 `host.docker.internal` 访问宿主机端口                                                   |
-| HTTPS 证书错误     | 确认 `SITE_ADDRESS` 的 DNS 已指向本机，公网 80/443 可达，并查看 `docker compose -f /home/floatctf/compose.prod.yml logs caddy` |
 
 ## 常用开发命令
 
 ```bash
-mise run install       # 安装依赖
-mise run dev:web       # 启动前端
-mise run fmt           # Rust 格式检查
-mise run lint          # Rust 与 Web 静态检查
-mise run test          # Rust 与 Web 测试
-mise run check         # 完整检查
-mise run build         # 构建 Rust 与 Web
+mise run setup
+mise run dev
+mise run dev:down
+mise run dev:reset
+mise run dev:logs
+mise run fmt
+mise run lint
+mise run test
+mise run check
+mise run build
 ```
 
-数据库迁移是显式操作：新建见 `mise run db:migration:new`，合并见 `mise run db:migration:merge`，并将生成的 SQL 手动应用到数据库（见上文「3. 启动开发环境」）。
+## 故障排查
+
+| 问题 | 排查方向 |
+| --- | --- |
+| API 报 helper unavailable | `systemctl status floatctf-helper`，检查两个 helper socket 与 API 容器 `/run/floatctf` 挂载 |
+| 开发 Compose Docker permission denied | setup 后重新登录，确认开发者在 `docker` 组；API 子进程会丢弃该组 |
+| helper socket permission denied | 开发确认当前用户在 `floatctf` 组；生产确认 API numeric GID 与宿主 `floatctf` GID 一致 |
+| API 无法连接数据库 | 开发检查 `floatctf-dev-db`；生产检查 `docker compose ... ps postgres` 与 Compose DNS |
+| 开发 Caddy 502 | 确认 API 9090 / Vite 13000 已完成启动 |
+| 生产 Caddy 502 | `docker compose -f /home/floatctf/compose.prod.yml logs -f api caddy` |
+| 生产 HTTPS 失败 | 检查 `SITE_ADDRESS`、DNS、80/443 与 `floatctf-caddy` 日志 |
 
 ## 运维速查
 
-生产环境生命周期命令（完整指南见 [INSTALL.md](./INSTALL.md)）：
-
 ```bash
-systemctl status floatctf.target        # 平台整体状态
-sudo systemctl restart floatctf-api     # 重启 API
-sudo systemctl restart floatctf-infra   # 重启 infra 容器
-journalctl -fu floatctf-api             # 查看 API 日志
+systemctl status floatctf.target
+systemctl status floatctf-helper
+systemctl status floatctf-infra
+sudo systemctl restart floatctf-helper
+sudo systemctl restart floatctf-infra
+journalctl -fu floatctf-helper floatctf-infra
 
-sudo /home/floatctf/uninstall.sh        # 安全卸载（保留数据/密钥）
-sudo /home/floatctf/uninstall.sh --purge  # 永久删除全部 FloatCTF 数据（需确认）
+docker compose -f /home/floatctf/compose.prod.yml ps
+docker compose -f /home/floatctf/compose.prod.yml logs -f api caddy
+
+sudo /home/floatctf/uninstall.sh
+sudo /home/floatctf/uninstall.sh --purge
 ```
-
-清理源码构建产物：`./scripts/clean.sh`（`--all` 额外清理依赖与开发运行时数据）。
 
 ## AI 开发手册
 

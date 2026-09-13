@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import MDEditor from "@uiw/react-md-editor";
 import dayjs from "dayjs";
-import { type FormEvent, useState } from "react";
+import { Fragment, type FormEvent, useState } from "react";
 import { match } from "ts-pattern";
 
 import { serviceApi } from "@/api";
@@ -185,12 +185,11 @@ function RouteComponent() {
 												{myTeam?.team.id}
 											</dd>
 											{myTeam?.members.map((member) => (
-												<>
-													<dt key={member.member.user_id} className="font-bold">
+												<Fragment key={member.member.user_id}>
+													<dt className="font-bold">
 														{member.member.role}
 													</dt>
 													<dd
-														key={member.member.user_id}
 														className="font-medium break-all"
 													>
 														{member.member_name} @{" "}
@@ -199,7 +198,7 @@ function RouteComponent() {
 															.local()
 															.format("YYYY-MM-DD HH:mm:ss")}
 													</dd>
-												</>
+												</Fragment>
 											))}
 										</dl>
 										{status === "upcoming" && (

@@ -40,7 +40,7 @@ pub const EVENT_PRACTICE_AWDP: Uuid = Uuid::from_u128(2);
 /// [`EVENT_PRACTICE_AWDP`] 的语义键（`events.system_key` 部分唯一）。
 pub const EVENT_PRACTICE_AWDP_SYSTEM_KEY: &str = "awdp-practice";
 
-/// 平台启动类调度任务种子列表：`(主键, 显示名, task_key 字符串, 触发类型)`。
+/// 平台系统调度任务种子列表：`(主键, 显示名, task_key 字符串, 触发类型)`。
 ///
 /// `task_key` 须与 [`crate::scheduler::task_key::TaskKey`] 的入库字符串一致。
 pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static str, &'static str)]
@@ -56,7 +56,7 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
             SCHED_CLEAN_INSTANCES,
             "实例清理",
             "system.practice.clean",
-            "startup",
+            "cron",
         ),
         (
             SCHED_CLEAN_RUSTFS,
@@ -65,6 +65,16 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
             "cron",
         ),
     ]
+}
+
+/// 平台种子 cron 的权威表达式。实例清理每 30 秒收敛到期/failed runtime；
+/// RustFS 清理保持低频，每小时运行一次。
+pub fn system_task_cron_expr(task_key: &str) -> Option<&'static str> {
+    match task_key {
+        "system.practice.clean" => Some("*/30 * * * * *"),
+        "platform.rustfs.clean" => Some("0 0 * * * *"),
+        _ => None,
+    }
 }
 
 /// 平台系统任务（SystemTask）固定主键集合：即 [`startup_scheduled_task_seeds`] 的 id。

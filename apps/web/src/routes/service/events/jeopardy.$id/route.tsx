@@ -1,12 +1,12 @@
-import { AppLink } from "@/navigation";
 import { RocketIcon } from "@primer/octicons-react";
 import { ProgressBar, Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute, useMatchRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { useEffect, useState } from "react";
 
-import { eventInfoQueryOptions } from "@/api/queries";
+import { eventInfoQueryOptions } from "@/api/queries/service/events";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 import { DatetimeToShow } from "@/util";
 import dayjs from "dayjs";
 import { ServiceRouteGuard } from "../../route";
@@ -26,10 +26,6 @@ function RouteComponent() {
 	const eventInfo = data?.data;
 
 	useTitle(`${eventInfo?.event.title ?? "Event"} | FloatCTF`);
-
-	if (isLoading) {
-		return <Spinner size="large" />;
-	}
 
 	if (isLoading) {
 		return <Spinner size="large" />;
@@ -83,25 +79,6 @@ function RouteComponent() {
 	);
 }
 
-export type RouterNavItemProps = {
-	to: string;
-	// biome-ignore lint/suspicious/noExplicitAny: <explanation>
-	params?: Record<string, any>;
-	children: React.ReactNode;
-};
-
-export function RouterNavItem({ to, params, children }: RouterNavItemProps) {
-	const matchRoute = useMatchRoute();
-	const isActive = matchRoute({ to, params, fuzzy: false });
-
-	return (
-		<AppLink style={{ textDecoration: "none" }} to={to} params={params}>
-			<UnderlineNav.Item aria-current={isActive ? "page" : undefined}>
-				{children}
-			</UnderlineNav.Item>
-		</AppLink>
-	);
-}
 type RemainingTimerProps = {
 	start_at: string;
 	end_at: string;

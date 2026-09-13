@@ -1,0 +1,34 @@
+# FloatCTF privileged host control plane.
+[Unit]
+Description=FloatCTF privileged host control plane
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=floatctf-helper
+Group=floatctf
+SupplementaryGroups=docker
+RuntimeDirectory=floatctf
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/libexec/floatctf-helper
+# Type=simple only means the process was spawned; wait until both Unix sockets are
+# actually bound so `systemctl start/restart` and dependent units have real readiness.
+ExecStartPost=/bin/sh -c 'until [ -S /run/floatctf/helper-control.sock ] && [ -S /run/floatctf/helper-docker.sock ]; do sleep 0.05; done'
+TimeoutStartSec=10s
+Restart=on-failure
+RestartSec=2
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

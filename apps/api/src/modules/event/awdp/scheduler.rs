@@ -196,5 +196,7 @@ pub async fn seed_awdp_recurring_tasks(db: &sea_orm::DatabaseConnection) -> anyh
         .await?;
         info!("[Init] Seeded recurring task {}", key.as_str());
     }
+    // Redis 唤醒：seed 出的近期 cron 任务立即通知引擎。
+    crate::scheduler::notify_scheduled();
     Ok(())
 }

@@ -8,7 +8,8 @@ use std::str::FromStr;
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionError,
+    TransactionTrait, sea_query::LockType,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -131,6 +132,32 @@ fn require_team_mode(event: &events::Model) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+fn require_roster_mutable(event: &events::Model) -> Result<(), AppError> {
+    if !event.allow_join {
+        return Err(AppError::BadRequest(
+            "event roster is closed by the administrator".to_string(),
+        ));
+    }
+
+    use crate::modules::event::common::domain::time_state::{
+        EventTimeStatus, event_time_status_of,
+    };
+    match event_time_status_of(event, Utc::now()) {
+        EventTimeStatus::NotStarted => Ok(()),
+        EventTimeStatus::Ongoing | EventTimeStatus::Ended => Err(AppError::BadRequest(
+            "event roster is locked after the event starts".to_string(),
+        )),
+    }
+}
+
+fn map_transaction_error<T>(result: Result<T, TransactionError<AppError>>) -> Result<T, AppError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(TransactionError::Transaction(error)) => Err(error),
+        Err(TransactionError::Connection(error)) => Err(error.into()),
+    }
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────
@@ -322,7 +349,7 @@ pub async fn get_challenge_instance(
     event_id: Uuid,
     challenge_id: Uuid,
     user: users::Model,
-) -> Result<crate::modules::event::jeopardy::api::InstancesDto, AppError> {
+) -> Result<Option<crate::modules::event::jeopardy::api::InstancesDto>, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
@@ -338,102 +365,151 @@ pub async fn get_challenge_instance(
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    let result = jeopardy_instance::get_instance_by_challenge_id(&event_ctx, challenge_id)
+    let result = jeopardy_instance::find_instance_by_challenge_id(&event_ctx, challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))?;
+        .map_err(|e| AppError::BadRequest(format!("find_instance_by_challenge_id error: {}", e)))?;
 
-    Ok(crate::modules::event::jeopardy::api::InstancesDto::from_pair(&result.0, &result.1))
+    Ok(result.map(|(instance, runtime)| {
+        crate::modules::event::jeopardy::api::InstancesDto::from_pair(&instance, &runtime)
+    }))
 }
 
 // ── Team membership workflows ─────────────────────────────────────────────
 
-/// 创建战队并以队长加入（仅赛前）。返回战队模型。
+/// 创建战队并以队长加入（仅报名开放且赛前）。
+///
+/// team / event_users / membership 三行必须原子写入；否则任一步失败都会产生半报名状态。
 pub async fn create_team(
     db: &WebDb,
     event_id: Uuid,
     user_id: Uuid,
     name: String,
 ) -> Result<event_teams::Model, AppError> {
-    let event = events::Entity::find_by_id(event_id)
-        .filter(events::Column::Hidden.eq(false))
-        .one(db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+    let result = db
+        .get_ref()
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .filter(events::Column::Hidden.eq(false))
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    require_team_mode(&event)?;
+                let membership = event_team_members::Entity::find()
+                    .filter(event_team_members::Column::EventId.eq(event_id))
+                    .filter(event_team_members::Column::UserId.eq(user_id))
+                    .one(tx)
+                    .await?;
+                if membership.is_some() {
+                    return Err(AppError::BadRequest("already joined team".to_string()));
+                }
 
-    match EventStatus::check_web(db, &event.id).await? {
-        EventStatus::Ongoing | EventStatus::Ended => {
-            return Err(AppError::BadRequest("Event has not yet begun".to_string()));
-        }
-        EventStatus::NotStarted => {}
-    }
+                let team = event_teams::ActiveModel {
+                    name: Set(name),
+                    event_id: Set(event_id),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
 
-    let event_user = event_users::Entity::find_by_id((event_id, user_id))
-        .one(db.get_ref())
-        .await?;
+                // Historical versions could leave an event_users row without membership.
+                // Reuse it instead of trapping the user; new writes always stay atomic.
+                if event_users::Entity::find_by_id((event_id, user_id))
+                    .one(tx)
+                    .await?
+                    .is_none()
+                {
+                    event_users::ActiveModel {
+                        event_id: Set(event_id),
+                        user_id: Set(user_id),
+                        ..Default::default()
+                    }
+                    .insert(tx)
+                    .await?;
+                }
 
-    if event_user.is_some() {
-        return Err(AppError::BadRequest("already joined team".to_string()));
-    }
+                event_team_members::ActiveModel {
+                    event_id: Set(event_id),
+                    user_id: Set(user_id),
+                    team_id: Set(team.id),
+                    role: Set(EventTeamMemberRole::Captain),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
 
-    let team = event_teams::ActiveModel {
-        name: Set(name),
-        event_id: Set(event_id),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
-
-    event_users::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
-
-    event_team_members::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        team_id: Set(team.id),
-        role: Set(EventTeamMemberRole::Captain),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
-
-    Ok(team)
+                Ok(team)
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
-/// 队长退出 → 删除战队；队员退出 → 移除成员关系。同时离开 event_users。
+/// 队长退出 → 删除战队并注销整队；队员退出 → 仅注销本人。
+/// 所有 roster 变更仅允许在报名开放且赛事开始前发生。
 pub async fn quit_team(
     db: &DatabaseConnection,
     event_id: Uuid,
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    if team_member.role == EventTeamMemberRole::Captain {
-        let team = event_teams::Entity::find_by_id(team_id)
-            .one(db)
-            .await?
-            .ok_or(AppError::NotFound("team not found".to_string()))?;
-        team.delete(db).await?;
-    } else {
-        team_member.delete(db).await?;
-    }
+                let team_member =
+                    event_team_members::Entity::find_by_id((event_id, team_id, user_id))
+                        .one(tx)
+                        .await?
+                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
 
-    let event_user = event_users::Entity::find_by_id((event_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the event".to_string()))?;
-    event_user.delete(db).await?;
-    Ok(())
+                let team = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("team not found".to_string()))?;
+
+                if team_member.role == EventTeamMemberRole::Captain {
+                    let member_ids: Vec<Uuid> = event_team_members::Entity::find()
+                        .filter(event_team_members::Column::EventId.eq(event_id))
+                        .filter(event_team_members::Column::TeamId.eq(team_id))
+                        .all(tx)
+                        .await?
+                        .into_iter()
+                        .map(|member| member.user_id)
+                        .collect();
+
+                    team.delete(tx).await?;
+                    if !member_ids.is_empty() {
+                        event_users::Entity::delete_many()
+                            .filter(event_users::Column::EventId.eq(event_id))
+                            .filter(event_users::Column::UserId.is_in(member_ids))
+                            .exec(tx)
+                            .await?;
+                    }
+                } else {
+                    team_member.delete(tx).await?;
+                    event_users::Entity::delete_many()
+                        .filter(event_users::Column::EventId.eq(event_id))
+                        .filter(event_users::Column::UserId.eq(user_id))
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 pub async fn join_team(
@@ -442,43 +518,64 @@ pub async fn join_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<event_teams::Model, AppError> {
-    let event = events::Entity::find_by_id(event_id)
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
-    require_team_mode(&event)?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .filter(events::Column::Hidden.eq(false))
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?;
+                let existing_membership = event_team_members::Entity::find()
+                    .filter(event_team_members::Column::EventId.eq(event_id))
+                    .filter(event_team_members::Column::UserId.eq(user_id))
+                    .one(tx)
+                    .await?;
+                if existing_membership.is_some() {
+                    return Err(AppError::BadRequest("already joined team".to_string()));
+                }
 
-    if team_member.is_some() {
-        return Err(AppError::BadRequest("already joined team".to_string()));
-    }
-    let event_team = event_teams::Entity::find_by_id(team_id)
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("team not found".to_string()))?;
+                let event_team = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("team not found".to_string()))?;
 
-    event_team_members::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        team_id: Set(event_team.id),
-        role: Set(EventTeamMemberRole::Member),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
+                // Create/reuse enrollment first. The event_users PK serializes concurrent
+                // first joins; the DB membership unique constraint is the final race guard.
+                if event_users::Entity::find_by_id((event_id, user_id))
+                    .one(tx)
+                    .await?
+                    .is_none()
+                {
+                    event_users::ActiveModel {
+                        event_id: Set(event_id),
+                        user_id: Set(user_id),
+                        ..Default::default()
+                    }
+                    .insert(tx)
+                    .await?;
+                }
 
-    event_users::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
+                event_team_members::ActiveModel {
+                    event_id: Set(event_id),
+                    user_id: Set(user_id),
+                    team_id: Set(event_team.id),
+                    role: Set(EventTeamMemberRole::Member),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
 
-    Ok(event_team)
+                Ok(event_team)
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 pub async fn leave_team(
@@ -487,17 +584,47 @@ pub async fn leave_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    if team_member.role == EventTeamMemberRole::Captain {
-        return Err(AppError::BadRequest("Captain can't leave team".to_string()));
-    }
+                let team_member =
+                    event_team_members::Entity::find_by_id((event_id, team_id, user_id))
+                        .one(tx)
+                        .await?
+                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
 
-    team_member.delete(db).await?;
-    Ok(())
+                if team_member.role == EventTeamMemberRole::Captain {
+                    return Err(AppError::BadRequest("Captain can't leave team".to_string()));
+                }
+
+                let team_exists = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .is_some();
+                if !team_exists {
+                    return Err(AppError::NotFound("team not found".to_string()));
+                }
+
+                team_member.delete(tx).await?;
+                event_users::Entity::delete_many()
+                    .filter(event_users::Column::EventId.eq(event_id))
+                    .filter(event_users::Column::UserId.eq(user_id))
+                    .exec(tx)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 // ── Join / leave event (solo) ─────────────────────────────────────────────
@@ -514,6 +641,15 @@ pub async fn join_event(
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
     require_competition(&event)?;
+
+    // Team-mode events enroll through create_team / join_team. Inserting only
+    // event_users here creates a half-joined player with no team membership and
+    // makes the subsequent team operation collide on the event_users PK.
+    if event.participant_mode != ParticipantMode::Individual {
+        return Err(AppError::BadRequest(
+            "team events must be joined by creating or joining a team".to_string(),
+        ));
+    }
 
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow join".to_string()));
@@ -547,6 +683,12 @@ pub async fn leave_event(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+    require_competition(&event)?;
+    if event.participant_mode != ParticipantMode::Individual {
+        return Err(AppError::BadRequest(
+            "team events must be left through the team workflow".to_string(),
+        ));
+    }
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow leave".to_string()));
     }
@@ -627,7 +769,7 @@ pub async fn own_writeup_file_url(
     db: &WebDb,
     event_id: Uuid,
     user: &users::Model,
-) -> Result<String, AppError> {
+) -> Result<Option<String>, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
@@ -635,8 +777,7 @@ pub async fn own_writeup_file_url(
 
     jeopardy_writeup::own_writeup_file_url(db, &event, user)
         .await
-        .map_err(|e| AppError::BadRequest(format!("{}", e)))?
-        .ok_or(AppError::NotFound("Has no wp".into()))
+        .map_err(|e| AppError::BadRequest(format!("{}", e)))
 }
 
 // ── Filter helpers for list endpoints (keep FilterMapping construction here) ─

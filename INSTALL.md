@@ -1,327 +1,790 @@
 # FloatCTF 安装与部署
 
-> 权威的用户安装 / 运维 / 生命周期指南。覆盖：架构概览、环境要求、全新安装、
-> 重部署 / 升级、发布构建、systemd 管理、Docker 运维、开发与生产差异、清理、
-> 卸载、备份与故障排查。
+本文档是 FloatCTF **生产安装、容器化部署、systemd 运维、权限模型和生命周期管理**的权威说明。本地源码开发见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
-## 架构概览
+## 1. 生产拓扑
 
-FloatCTF 生产部署采用「原生进程 + Docker 容器」的混合架构：
+生产环境把普通应用面全部收进 Docker Compose，宿主只保留一个高权限控制面 `floatctf-helper`：
 
-**Host（原生）**
-- FloatCTF API（Rust 二进制，systemd 服务）
-- Docker（容器运行时）
-- nftables（赛事隔离防火墙）
-- WireGuard（选手接入隧道）
+```text
+Internet
+   │
+   ▼
+Caddy container :80/:443
+   ├── Web static
+   ├── /api/* ───────────────► API container :9090
+   └── object paths ─────────► RustFS :9000
 
-**Containers（infra，`floatctf-infra`）**
-- PostgreSQL（持久化数据）
-- RustFS（S3 兼容对象存储）
-- Caddy（反向代理 + 静态文件，`network_mode: host`）
+Compose default network
+   ├── API
+   ├── PostgreSQL
+   ├── Redis
+   ├── RustFS
+   └── Caddy
 
-**Dynamic AWD（赛事运行时）**
-- GameBox（选手靶机）
-- FlagServer / JudgeServer（赛事基础设施容器）
-- 赛事 Docker 网络 + WireGuard 接口 + nftables 表（随赛事动态创建）
+API container
+   ├── non-root numeric floatctf UID:GID
+   ├── cap_drop=ALL
+   ├── no-new-privileges
+   ├── read-only root filesystem
+   ├── /run/floatctf/helper-control.sock ─────────► Host RPC
+   └── /run/floatctf/helper-docker.sock ─► Docker policy proxy
+                                                │
+                                                ▼
+                                      floatctf-helper.service
+                                      ├── docker group → Docker Engine
+                                      └── CAP_NET_ADMIN
+                                          ├── WireGuard
+                                          ├── nftables
+                                          ├── conntrack
+                                          └── Docker FORWARD
+```
 
-**systemd**
-- `floatctf-api.service` — 原生 API 进程
-- `floatctf-infra.service` — infra 容器（postgres + rustfs + Caddy）
-- `floatctf.target` — 聚合目标（2 服务 + 1 target，**不是** 3 个独立守护进程）
+API **不发布宿主 9090 端口**。公网入口只有 Caddy 的 HTTP/HTTPS。Caddy 在 Compose default network 内直接访问 `api:9090`。
 
-## 环境要求
+AWD/AWDP 内部服务使用额外的 control plane：
 
-| 能力 | 用途 | 缺失时 |
-|------|------|--------|
-| systemd Linux | 服务托管 | 不支持 |
-| Docker | 全部容器 | `install.sh` 报错并退出 |
-| Docker Compose（v2 插件） | infra 编排 | `install.sh` 报错并退出 |
-| nftables | 赛事隔离防火墙 | `install.sh` 报错并退出 |
-| WireGuard / wireguard-tools | 选手接入隧道 | `install.sh` 报错并退出 |
-| iproute2 | 接口 / 路由 | `install.sh` 报错并退出 |
+```text
+fctf-platform-control
+subnet   : 10.42.8.0/24
+internal : true
+API      : 10.42.8.2
 
-Phase 9 真实主机验证要求以下内核设置（`install.sh` 自动检查并持久化）：
+API ───────────────┐
+FlagServer ────────┼── fctf-platform-control
+JudgeServer ───────┘
 
-- `net.ipv4.ip_forward=1` → `/etc/sysctl.d/99-floatctf.conf`
-- `br_netfilter` 模块 → `/etc/modules-load.d/floatctf-br-netfilter.conf`
-- `net.bridge.bridge-nf-call-{ip,ip6}tables=1` → `/etc/sysctl.d/99-floatctf.conf`
+GameBox ───────────── 不加入该网络
+```
 
-**已验证平台**：Arch Linux（pacman）真实主机验收全 PASS。Debian/Fedora/RHEL 的
-`install.sh` 安装路径未硬编码（避免盲装），需手动安装上述能力后重试 —— 请勿宣称
-未经验证的发行版受支持。
+因此 FlagServer/JudgeServer 可以回调 `http://10.42.8.2:9090`，同时不需要把 API 端口暴露到宿主公网接口。赛事 data network、GameBox 隔离和 WireGuard 仍按各赛制自己的网络模型运行。
 
-## 全新安装（Fresh Host，一行流）
+---
 
-生产安装**无需 clone 仓库**：直接下载单文件 `install.sh` 并运行（脚本自包含，内嵌所有
-模板，运行时下载 3 个 release 产物并部署）：
+## 2. systemd 与 Compose 的职责
+
+生产 systemd 只管理两个 service 和一个 target：
+
+| 单元 | 身份 | 用途 |
+|---|---|---|
+| `floatctf-helper.service` | `floatctf-helper` + docker group + `CAP_NET_ADMIN` | 唯一宿主高权限控制面 |
+| `floatctf-infra.service` | systemd/root | 执行生产 `docker compose up/down` |
+| `floatctf.target` | systemd target | 聚合 helper + Compose stack |
+
+`floatctf-api.service` 已退出当前架构。安装器会清理旧版 native API unit，避免同一台机器出现两份 API。
+
+Compose 管理：
+
+```text
+floatctf-api
+floatctf-postgres
+floatctf-redis
+floatctf-rustfs
+floatctf-caddy
+```
+
+`floatctf-infra.service` 依赖 `floatctf-helper.service`，确保 API 启动前 helper socket 已经可用。
+
+---
+
+## 3. API 容器安全边界
+
+生产 API service 使用以下约束：
+
+```yaml
+user: "${FLOATCTF_UID}:${FLOATCTF_GID}"
+cap_drop:
+  - ALL
+security_opt:
+  - no-new-privileges:true
+read_only: true
+tmpfs:
+  - /tmp:rw,noexec,nosuid,nodev,size=64m
+```
+
+只挂载：
+
+```text
+config/floatctf.toml -> /etc/floatctf/floatctf.toml 只读
+runtime/             -> /var/lib/floatctf/runtime 可写
+/run/floatctf/       -> /run/floatctf 只读目录挂载
+```
+
+API 容器不会挂载：
+
+```text
+/var/run/docker.sock
+/
+/dev
+/proc host namespace
+宿主任意目录
+```
+
+`floatctf` 系统用户仍会在宿主创建。它的 numeric UID/GID 被写进 `.env`，Compose 用这组数字运行 API 容器。这样 `/run/floatctf/helper*.sock` 的 `floatctf` group 权限无需在容器内创建同名组，也能正确生效。
+
+---
+
+## 4. helper 的两个接口
+
+### 4.1 Host RPC
+
+```text
+/run/floatctf/helper-control.sock
+owner: floatctf-helper
+ group: floatctf
+ mode : 0660
+```
+
+协议由 `crates/helper-protocol` 定义。当前 Host RPC 覆盖：
+
+```text
+WireGuard interface / peer
+nftables FloatCTF-owned tables
+conntrack flush
+host route observation
+Docker FORWARD compatibility rules
+health ping
+```
+
+Host RPC 只接受结构化操作，不提供任意 shell/command RPC。
+
+### 4.2 Docker policy proxy
+
+```text
+/run/floatctf/helper-docker.sock
+owner: floatctf-helper
+ group: floatctf
+ mode : 0660
+```
+
+API 的 Bollard client 把它当作 Docker-compatible Unix socket。helper 再访问真实 `/var/run/docker.sock`。
+
+主要策略：
+
+```text
+容器 create
+  deny privileged
+  deny host bind/mount
+  deny Devices / DeviceRequests
+  deny CapAdd
+  deny host/container network
+  deny host PID/IPC/UTS/Cgroup/User namespace
+  deny arbitrary sysctl
+  named network 只允许 fctf-* / floatctf-*
+  inject floatctf.managed=true
+
+网络 create
+  bridge only
+  name 必须 fctf-* / floatctf-*
+  inject floatctf.managed=true
+
+已有容器/网络 mutation
+  require FloatCTF ownership
+
+image tag / push / delete
+  require FloatCTF managed image label
+```
+
+Docker group 本身具有极高宿主控制能力，因此 `floatctf-helper` 是高信任控制面。API 只拥有 helper 暴露的受限能力。
+
+---
+
+## 5. 环境要求
+
+自动安装路径当前验证于 **Arch Linux + systemd**。需要：
+
+- Docker Engine + Docker Compose v2
+- nftables
+- wireguard-tools
+- iproute2
+- conntrack tools
+- iptables（Docker FORWARD 兼容规则）
+- PostgreSQL client
+- curl / tar / openssl
+- systemd
+
+需要的宿主网络参数：
+
+```text
+net.ipv4.ip_forward=1
+br_netfilter
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+```
+
+安装器会持久化 FloatCTF 需要的 sysctl/modules 配置。
+
+---
+
+## 6. Release 产物与 API image
+
+`v*` tag 触发 `.github/workflows/release.yml`，发布四个部署产物：
+
+```text
+floatctf            API release binary
+floatctf-helper     host control plane binary
+web-dist.tar.gz     Web static dist
+merged.sql          fresh PostgreSQL bootstrap
+```
+
+仍然发布原始 API binary，是为了让安装器无需依赖外部容器 registry。部署阶段会使用：
+
+```text
+infra/docker/api/Dockerfile
+        +
+release floatctf binary
+        ↓
+floatctf/api:<version>
+```
+
+Release CI 固定 Ubuntu 24.04 runner，并实际构建一次 production runtime image，校验 image 默认用户为非 root。目标机 installer 再以同一 Dockerfile 本地构建对应版本 image。
+
+`merged.sql` 由 migrations 确定性生成，只用于 fresh production database。
+
+---
+
+## 7. Fresh install
+
+生产机无需 clone 仓库：
 
 ```bash
-curl -fsSL https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh -o install.sh
+curl -fsSL \
+  https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh \
+  -o install.sh
+
 sudo env SITE_ADDRESS=ctf.example.com bash install.sh
 ```
 
-或指定 3 个 release 产物 URL（默认是 fake 占位，需替换为真实地址或显式传入）：
+显式指定 release 产物：
 
 ```bash
 sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
-  --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
+  --version <版本> \
+  --api-url <floatctf-url> \
+  --helper-url <floatctf-helper-url> \
+  --web-url <web-dist.tar.gz-url> \
+  --migrate-url <merged.sql-url>
 ```
 
-`SITE_ADDRESS` 必须填写已解析到部署主机的公网域名。Caddy 使用该域名自动申请并续签 ACME 证书，并自动处理 HTTP → HTTPS 跳转；无需 Certbot 或手动证书文件。
+等价环境变量：
 
-部署完成后（`install.sh` **只写文件、创建服务，不启动**），手动启动整平台：
+```text
+FLOATCTF_API_URL
+FLOATCTF_HELPER_URL
+FLOATCTF_WEB_URL
+FLOATCTF_MIGRATE_URL
+FLOATCTF_VERSION
+```
+
+默认安装根：
+
+```text
+/home/floatctf
+```
+
+覆盖：
 
 ```bash
-sudo systemctl start floatctf.target   # 首次启动 postgres 自动用 merged.sql 初始化数据库
-systemctl status floatctf.target
+sudo env \
+  FLOATCTF_HOME=/opt/floatctf \
+  SITE_ADDRESS=ctf.example.com \
+  bash install.sh
 ```
 
-> `install.sh` 是**单文件自包含**安装器：内嵌所有模板，部署时内嵌生成
-> `uninstall.sh` 到 `$FLOATCTF_HOME/uninstall.sh`（root:floatctf 0750）。
-> 安装根默认 `/home/floatctf`，可用 `FLOATCTF_HOME` 环境变量覆盖。
->
-> 本地开发（clone 仓库 + 源码编译 + dev compose）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**，
-> 不走本节的生产安装流程。
+安装流程：
 
-## install.sh —— 生产安装（单文件自包含，一行流）
-
-`install.sh` 合并了主机初始化 + 下载 + 部署，**不依赖仓库其他文件**（模板全部内嵌）。
-三阶段：
-
-```
-1. 主机初始化（幂等） → 2. 下载 3 产物 → 3. 部署
-   （docker/nftables/WG/       （API 二进制 +       （渲染配置 → 装配 → 写
-    转发/br_netfilter/           前端 dist +          systemd 单元 + enable；
-    用户/布局，已存在即 skip）    merged.sql）         不启动任何服务）
-```
-
-**主机初始化（幂等，逐项补齐）**：
-- 检查 Linux 环境 / 内核版本（拒绝容器内运行）
-- 检查 Docker daemon（含创建/删除临时网络验证）
-- 检查 nftables（含创建/删除临时表验证）
-- 检查 WireGuard（含创建/删除临时接口验证）
-- 检查并启用 IPv4 转发、`br_netfilter`、bridge netfilter sysctls（持久化到 FloatCTF 自有文件）
-- 创建 `floatctf` 系统服务用户 + 加入 `docker` 组（`runuser` 实测组生效）
-- 创建 `$FLOATCTF_HOME` 运行布局 + 写 `.initialized` 完成标记
-
-以上每项都幂等：**已存在/已做过就跳过**（不依赖 `.initialized` 单点标记），
-重跑安全。
-
-**安装根**：默认 `/home/floatctf`，可经环境变量覆盖（所有路径相对它）：
-
-```bash
-sudo env FLOATCTF_HOME=/opt/floatctf SITE_ADDRESS=ctf.example.com bash install.sh
+```text
+host precheck / initialization
+        ↓
+create floatctf + floatctf-helper users/groups
+        ↓
+floatctf-helper joins docker group
+        ↓
+download 4 release artifacts
+        ↓
+render TOML / Caddyfile / compose
+        ↓
+install root-owned helper
+        ↓
+build floatctf/api:<version> locally
+        ↓
+create/validate fctf-platform-control
+        ↓
+validate production Compose
+        ↓
+write helper + infra + target systemd units
+        ↓
+enable units（不启动整个平台）
 ```
 
-**下载 3 个 release 产物**：默认 fake 占位地址，可经 `--*-url` 或环境变量覆盖：
+安装器会移除旧版 `/etc/systemd/system/floatctf-api.service`，避免 native API 与新 API container 冲突。
 
-```bash
-sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
-  --api-url <bin-url> --web-url <dist-url> --migrate-url <sql-url>
-# 或环境变量：SITE_ADDRESS / FLOATCTF_API_URL / FLOATCTF_WEB_URL / FLOATCTF_MIGRATE_URL
+---
+
+## 8. 安装位置
+
+默认布局：
+
+```text
+/home/floatctf/
+├── image/
+│   └── api/
+│       ├── Dockerfile
+│       └── floatctf          # image build input
+├── web/
+├── config/
+│   ├── floatctf.toml
+│   └── caddy/Caddyfile
+├── data/
+│   ├── postgres/
+│   ├── redis/
+│   ├── rustfs/
+│   ├── caddy/
+│   └── caddy-config/
+├── logs/
+├── runtime/
+├── gameboxes/
+├── compose.prod.yml
+├── merged.sql
+├── .env
+└── uninstall.sh
 ```
 
-**部署（仅全新安装，只写文件、不启动服务）**：首部署生成密钥（DB 密码 / RustFS
-密钥 / JWT secret）写入 `$FLOATCTF_HOME/.env` 与 `config/floatctf.toml`，装配
-bin/web/merged.sql，写出 systemd 单元并 `enable`（不 `start`），内嵌生成
-`$FLOATCTF_HOME/uninstall.sh`。数据库初始化推迟到首次 `systemctl start floatctf.target`：
-postgres 容器挂载 `merged.sql` 到 `docker-entrypoint-initdb.d`，空数据目录首次启动时
-自动建库。
+helper 单独安装：
 
-> **只做全新安装**：`merged.sql` 是 fresh-DB bootstrap，只适用于空库。
-> 已有数据的升级（forward-only 迁移）后续单独实现。
->
-> AWD 服务镜像（`floatctf/awd-flagserver` / `awd-judgeserver`）暂不在 install.sh
-> 构建，需另行准备（TODO：registry 拉取或本地 docker build）。
-
-## 发布构建与 crates.io
-
-CI 打 `v*` tag 触发 `.github/workflows/release.yml`，产出 3 个产物：
-`floatctf`（API 二进制）、`web-dist.tar.gz`（前端）、`merged.sql`（数据库初始化，
-由 `mise run db:migration:merge` 生成），供 `install.sh` 下载部署。
-
-### crates.io 发布（出题工具 / 平台二进制分发）
-
-`fcmc`（出题 / 容器管理工具）已发布到 crates.io，可直接安装：
-
-```bash
-cargo install fcmc
+```text
+/usr/local/libexec/floatctf-helper
+owner: root:root
+mode : 0755
 ```
 
-平台后端 crate `floatctf` 亦已具备发布元数据。发布顺序须**先 `fcmc` 后 `floatctf`**
-（后者依赖前者）。发布流程与命令见 `chore/crates-io-publish-guide.md`。
+生产 API binary 只作为 Docker build context 输入使用，不直接作为宿主 service 执行。
 
-> crates.io 发布与「GitHub Release 产物」是两条独立渠道：
-> 前者分发 Rust crate（经 `cargo install`），后者产出平台部署用的 3 个产物
-> （bin + web + merged.sql），供 `install.sh` 使用。
+---
 
-## systemd 管理
+## 9. `.env` 与 TOML
 
-**整平台**：
+应用配置仍然以 TOML 为唯一业务配置入口：
+
+```text
+$FLOATCTF_HOME/config/floatctf.toml
+```
+
+`.env` 由 installer 维护两类部署数据：
+
+1. 用来渲染 TOML/Caddy 的 secrets/部署参数；
+2. 仅供 Compose 使用的 `VERSION`、`FLOATCTF_HOME`、`FLOATCTF_UID`、`FLOATCTF_GID`。
+
+API 容器不会把整份 `.env` 注入进进程；API 进程只收到 `FLOATCTF_CONFIG=/etc/floatctf/floatctf.toml`。
+
+生产 TOML 关键值：
+
+```toml
+[server]
+work_dir = "/var/lib/floatctf/runtime"
+listen_ip = "0.0.0.0"
+listen_port = 9090
+
+[docker]
+socket_path = "/run/floatctf/helper-docker.sock"
+
+[database]
+url = "postgres://...@postgres:5432/..."
+
+[rustfs]
+endpoint_url = "http://rustfs:9000"
+
+[redis]
+url = "redis://redis:6379/"
+
+[realtime]
+channel = "floatctf:realtime"
+
+[awd]
+network_runtime = "helper"
+platform_internal_url = "http://10.42.8.2:9090"
+platform_internal_network = "fctf-platform-control"
+
+[awdp]
+platform_internal_url = "http://10.42.8.2:9090"
+```
+
+`network_runtime = "noop"` 只用于 test/mock。
+
+---
+
+## 10. 生产网络边界
+
+### 10.1 Compose default network
+
+API、Caddy、PostgreSQL、Redis、RustFS 使用 Compose DNS：
+
+```text
+api:9090
+postgres:5432
+redis:6379
+rustfs:9000
+```
+
+Caddy 的 `/api/*` 直接代理 `api:9090`，不经过宿主 9090。RustFS 使用 path-style S3，并保持 `RUSTFS_SERVER_DOMAINS` 未设置；启用 virtual-host domains 会让 Compose 主机名 `rustfs:9000` 被误判为 bucket 名，导致 API 初始化 bucket 失败。
+
+Redis 是 API **必需基础设施**：生产 Compose 会等待 `redis` healthcheck 通过后再启动 API；API bootstrap 随后主动 `PING` Redis，连接失败时 fail-fast，不进入 HTTP serving。它承担 realtime 跨节点扇出/全局 sequence、AWD 分布式限流、Web Terminal 一次性 ticket、scheduler 即时唤醒与 settings 热点缓存。
+
+### 10.2 运维端口
+
+默认仍将以下服务只发布到 loopback，便于宿主备份/诊断：
+
+```text
+PostgreSQL 127.0.0.1:5433
+Redis      127.0.0.1:6380
+RustFS     127.0.0.1:9000/9001
+```
+
+### 10.3 `fctf-platform-control`
+
+installer 创建：
+
+```text
+name      fctf-platform-control
+driver    bridge
+internal  true
+subnet    10.42.8.0/24
+ip-range  10.42.8.128/25
+label     io.floatctf.managed=true
+```
+
+`.2` 保留给 API container。自动地址分配从 `.128/25` 进行，避免 JudgeServer 动态 IP 与 API 固定地址竞争。
+
+该网络声明为 Compose `external`。这样赛事 FlagServer/JudgeServer 可以在 Compose 生命周期之外加入它，`docker compose down` 也不会误删仍被动态业务容器使用的 control network。
+
+旧版使用 `fctf-awdp-control` 占用同一 `10.42.8.0/24`。installer 在新网络不存在时会识别旧网络；仅当它是 internal、subnet/managed label 匹配且已经没有连接容器时自动删除旧网络并创建 `fctf-platform-control`。如果旧 Judge 仍连接其中，部署会 fail-fast，要求先停止旧 Judge，避免在线迁移时强行断网。
+
+---
+
+## 11. 启动与运维
+
+安装完成后：
 
 ```bash
 sudo systemctl start floatctf.target
-sudo systemctl stop floatctf.target
-sudo systemctl restart floatctf.target
-systemctl status floatctf.target
 ```
 
-**仅 API**：
+查看 systemd：
 
 ```bash
-sudo systemctl restart floatctf-api
-systemctl status floatctf-api
-journalctl -fu floatctf-api
+systemctl status floatctf.target
+systemctl status floatctf-helper
+systemctl status floatctf-infra
 ```
 
-**仅基础设施**：
+查看 Compose：
+
+```bash
+cd /home/floatctf
+docker compose -f compose.prod.yml ps
+```
+
+日志：
+
+```bash
+journalctl -fu floatctf-helper floatctf-infra
+
+docker compose -f /home/floatctf/compose.prod.yml logs -f api
+docker compose -f /home/floatctf/compose.prod.yml logs -f caddy
+docker compose -f /home/floatctf/compose.prod.yml logs -f postgres redis rustfs
+```
+
+重启 API：
+
+```bash
+docker compose -f /home/floatctf/compose.prod.yml restart api
+```
+
+重启整个 Compose 应用面：
 
 ```bash
 sudo systemctl restart floatctf-infra
-systemctl status floatctf-infra
 ```
 
-- `floatctf-infra`：postgres + rustfs + Caddy 容器（`docker compose up -d --wait`）
-- `floatctf-api`：原生 API 进程（`After=floatctf-infra`）
-- `floatctf.target`：聚合目标
-
-## Docker 运维（infra 容器）
+重启 helper：
 
 ```bash
-docker compose -f /home/floatctf/compose.prod.yml ps
-docker compose -f /home/floatctf/compose.prod.yml logs
-docker compose -f /home/floatctf/compose.prod.yml logs -f postgres
-docker compose -f /home/floatctf/compose.prod.yml logs -f rustfs
-docker compose -f /home/floatctf/compose.prod.yml logs -f caddy
+sudo systemctl restart floatctf-helper
 ```
 
-修改 `/home/floatctf/config/caddy/Caddyfile` 后，先验证再热重载：
+整个平台：
 
 ```bash
-docker compose -f /home/floatctf/compose.prod.yml exec caddy \
-  caddy validate --config /etc/caddy/Caddyfile
-docker compose -f /home/floatctf/compose.prod.yml exec caddy \
-  caddy reload --config /etc/caddy/Caddyfile
+sudo systemctl restart floatctf.target
 ```
 
-Caddy 的 ACME 证书与账户状态保存在 `/home/floatctf/data/caddy`，运行配置状态保存在 `/home/floatctf/data/caddy-config`；容器重建会复用这些数据。
+---
 
-## 开发 vs 生产
+## 12. 启动验收
 
-> 本地开发完整指南（人工开发 / Agent 协同）见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+helper：
 
-两者主机初始化**完全一致**（`network_runtime = host`，nftables + WireGuard + 转发 +
-br_netfilter + floatctf 用户/布局），区别只在「产物来源与运行形态」：
+```bash
+id floatctf
+id floatctf-helper
 
-| | 开发（`--develop`） | 生产（完整安装） |
+systemctl show floatctf-helper \
+  -p User \
+  -p Group \
+  -p SupplementaryGroups \
+  -p AmbientCapabilities \
+  -p CapabilityBoundingSet
+
+ls -l /run/floatctf/helper-control.sock /run/floatctf/helper-docker.sock
+```
+
+目标：
+
+```text
+floatctf:
+  docker group absent
+
+floatctf-helper:
+  primary/shared group = floatctf
+  supplementary docker group present
+  CAP_NET_ADMIN present
+
+helper sockets:
+  group = floatctf
+  mode = 0660
+```
+
+API container：
+
+```bash
+docker inspect floatctf-api \
+  --format 'User={{.Config.User}} CapAdd={{json .HostConfig.CapAdd}} CapDrop={{json .HostConfig.CapDrop}} Readonly={{.HostConfig.ReadonlyRootfs}} SecurityOpt={{json .HostConfig.SecurityOpt}}'
+
+docker inspect floatctf-api \
+  --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}={{$v.IPAddress}} {{end}}'
+```
+
+期望看到：
+
+```text
+CapDrop=[ALL]
+Readonly=true
+SecurityOpt 包含 no-new-privileges:true
+fctf-platform-control = 10.42.8.2
+```
+
+确认 API 没有宿主 Docker socket mount：
+
+```bash
+docker inspect floatctf-api --format '{{json .Mounts}}' | grep '/var/run/docker.sock' && echo ERROR || echo OK
+```
+
+---
+
+## 13. Fresh database
+
+空 PostgreSQL data dir 第一次启动时：
+
+```text
+$FLOATCTF_HOME/merged.sql
+```
+
+挂载到：
+
+```text
+/docker-entrypoint-initdb.d/00-init.sql
+```
+
+fresh install 一次性建立 schema、seed 和 migration history。
+
+已有生产数据库只能通过 forward-only migration 升级。禁止修改历史 migration、手写 `schema_migrations` 或用新的 `merged.sql` 覆盖已有数据库。
+
+数据库规则见 [docs/agents/DATABASE.md](./docs/agents/DATABASE.md)。
+
+---
+
+## 14. Caddy / 域名
+
+安装必须提供：
+
+```bash
+SITE_ADDRESS=ctf.example.com
+```
+
+Caddy 是唯一公网应用入口：
+
+```text
+HTTP/HTTPS
+Web static
+/api reverse proxy → api:9090
+RustFS object routes → rustfs:9000
+challenge attachments
+```
+
+更换域名后重跑安装器重新渲染 Caddy/TOML，并检查动态 setting `MAIN_URL`。
+
+---
+
+## 15. helper Docker ownership
+
+helper 对新创建的 Docker 资源写入 ownership label：
+
+```text
+floatctf.managed=true
+```
+
+生产 API runtime image 还带：
+
+```text
+io.floatctf.managed=true
+```
+
+FloatCTF 业务网络名称保留：
+
+```text
+fctf-*
+floatctf-*
+```
+
+helper 会拒绝通过应用 API 修改普通宿主容器和普通 Docker 网络。这项约束同样适用于管理员 Docker 页面。
+
+---
+
+## 16. 开发与生产对照
+
+| 项目 | 开发 | 生产 |
 |---|---|---|
-| 主机初始化 | ✅ 完整（含 nftables/WG/host） | ✅ 完整 |
-| API 二进制 | 本地 `cargo run`（源码编译） | 下载 release 产物 |
-| 前端 | Vite dev server（3000，热更新） | 下载 web dist（静态） |
-| 数据库初始化 | 源码 merged.sql（dev compose initdb） | 下载 merged.sql（postgres 首次启动自动 initdb） |
-| Caddy | dev compose，反代 api:9090 / vite:3000，入口 7780 | prod compose，host 网络 80/443 |
-| systemd | 不装 | floatctf-infra/api/target |
-| 运行身份 | `sudo mise run dev:api`（root，需 CAP_NET_ADMIN） | systemd floatctf 用户 + AmbientCapabilities |
+| 主入口 | `mise run dev` | `systemctl start floatctf.target` |
+| API 载体 | native `watchexec + setpriv` | Docker Compose container |
+| API UID | 当前开发者 | 宿主 `floatctf` numeric UID |
+| API docker group | 启动时显式丢弃 | 无 |
+| API capabilities | 全部丢弃 | `cap_drop=ALL` |
+| API NoNewPrivileges | yes | yes |
+| API rootfs | host process | read-only container rootfs |
+| 宿主控制面 | helper systemd | helper systemd |
+| Host RPC | `/run/floatctf/helper-control.sock` | 同左 |
+| Docker proxy | `/run/floatctf/helper-docker.sock` | 同左 |
+| PostgreSQL/Redis/RustFS/Caddy | Compose | Compose |
+| API build | debug + watch | release binary → local runtime image |
+| Web | Vite HMR | Caddy static dist |
+| fresh DB | migrations | `merged.sql` |
+| API host port | `127.0.0.1:9090` | 不发布 |
 
-生产流量模型：
+两种环境保持同一**权限边界**，只选择不同的进程载体来优化各自目标：开发追求热重载，生产追求隔离和可复制部署。
 
+---
+
+## 17. 安全卸载
+
+安装器生成：
+
+```text
+$FLOATCTF_HOME/uninstall.sh
 ```
-Player → WireGuard → nftables → Docker 网络 → GameBox
-```
 
-## clean.sh —— 清理源码构建产物
+安全卸载：
 
 ```bash
-./scripts/clean.sh        # 清理可再生构建产物
-./scripts/clean.sh --all  # 额外清理依赖安装与开发运行时数据
+sudo /home/floatctf/uninstall.sh
 ```
 
-**只影响当前源码签出**的再生构建产物：
+它会停止并清理：
 
-- 默认：`target/`、`apps/web/dist/`、`release/`、`scripts/__pycache__/`
-- `--all` 额外：`node_modules/`、`apps/web/node_modules/`、`app/`（开发 WORK_DIR）
+```text
+production Compose containers
+FloatCTF managed API runtime images
+helper service + helper binary
+GameBox / FlagServer / JudgeServer
+fctf-platform-control 与赛事网络
+WireGuard interfaces
+nftables tables
+Docker FORWARD compatibility rules
+可再生 web/image build context/compose/merged.sql
+```
 
-**绝不影响**：运行中的 FloatCTF、数据库、RustFS 数据、配置、systemd、生产容器、
-nftables、WireGuard、宿主路由、`/home/floatctf`。幂等，重复运行安全。
+同时保留：
 
-## uninstall.sh —— 卸载
+```text
+PostgreSQL data
+RustFS data
+config
+.env
+runtime
+logs
+uninstall.sh
+```
+
+卸载器保留旧 `floatctf-api.service` 和 `fctf-awdp-control` 的清理分支，仅用于迁移旧安装。
+
+---
+
+## 18. Purge
+
+永久删除：
 
 ```bash
-sudo /home/floatctf/uninstall.sh              # SAFE UNINSTALL
-sudo /home/floatctf/uninstall.sh --purge      # 永久删除全部 FloatCTF 数据
-sudo /home/floatctf/uninstall.sh --purge --yes  # 跳过确认（非交互）
+sudo /home/floatctf/uninstall.sh --purge
 ```
 
-### 安全卸载（保留可恢复状态）
-
-移除：systemd 单元、infra 与赛事容器/网络、API 二进制、web 资产、可再生产物。
-
-**保留**：`data/postgres`、`data/rustfs`、`data/caddy`、`data/caddy-config`、`config/`、`.env`（密钥）、`runtime/`、
-`logs/`、`.initialized`、`uninstall.sh` 本身（生命周期/恢复工具，保留并文档化）。
-
-语义：`deploy → safe uninstall → deploy` 恢复相同数据与密钥（用户/赛事/数据仍在；
-API 启动时 `recover_all` 自动重建 AWD 动态资源）。
-
-### 永久删除（--purge）
-
-**不可撤销**。删除：PostgreSQL/RustFS 数据、config/secrets、runtime、日志、API
-二进制、web、compose、systemd 单元、动态赛事资源、sysctl/modules 文件、
-`floatctf` 服务用户、`/home/floatctf`（含本脚本）。
-
-默认要求输入 `PURGE FLOATCTF`（不接受简单 y/N）；`--yes` 跳过确认（仅非交互）。
-
-> **强烈警告**：`--purge` 永久销毁 PostgreSQL / RustFS / 配置 / 密钥，不可恢复。
-
-**共享宿主依赖永不卸载**：Docker / docker compose / nftables 包 / wireguard-tools /
-iproute2 / systemd。绝不触碰无关 Docker 对象、WG 接口、nftables 状态、路由、
-libvirt、Incus、其他应用。
-
-**sysctl/modules 说明**：purge 仅移除 FloatCTF 自有持久化文件
-（`/etc/sysctl.d/99-floatctf.conf`、`/etc/modules-load.d/floatctf-br-netfilter.conf`），
-**不自动关闭** IPv4 转发 / `br_netfilter`（可能被其他负载依赖）；如需关闭请手动评估。
-
-## 备份
-
-`--purge` 或大版本升级前请先备份。平台**不提供自动备份**（不要假设存在）。
-
-最小备份集：
-
-- **PostgreSQL**：`/home/floatctf/data/postgres`（建议 `pg_dump`，见下）
-- **RustFS**：`/home/floatctf/data/rustfs`
-- **Caddy ACME 状态**：`/home/floatctf/data/caddy`（证书、账户与续签状态；迁移主机时一并备份）
-- **配置/密钥**：`/home/floatctf/config/` 与 `/home/floatctf/.env`
+非交互：
 
 ```bash
-# PostgreSQL 逻辑备份示例（容器内）
-docker exec floatctf-postgres pg_dump -U postgres -d floatctf_db -Fc \
-  > floatctf-$(date +%F).dump
+sudo /home/floatctf/uninstall.sh --purge --yes
 ```
 
-## 故障排查
+Purge 还删除：
+
+```text
+floatctf user/group
+floatctf-helper user
+FloatCTF systemd units
+FloatCTF sysctl/modules-load files
+$FLOATCTF_HOME
+```
+
+清理逻辑只匹配 FloatCTF naming/label contract，不执行全局 `nft flush ruleset`，也不会删除无关 Docker/WireGuard/nftables 资源。
+
+---
+
+## 19. 备份
+
+至少备份：
+
+```text
+$FLOATCTF_HOME/data/postgres
+$FLOATCTF_HOME/data/rustfs
+$FLOATCTF_HOME/config
+$FLOATCTF_HOME/.env
+```
+
+PostgreSQL 逻辑备份示例：
 
 ```bash
-systemctl status floatctf.target
-systemctl status floatctf-api
-systemctl status floatctf-infra
-
-journalctl -fu floatctf-api
-journalctl -fu floatctf-infra
-
-docker compose -f /home/floatctf/compose.prod.yml ps
-docker compose -f /home/floatctf/compose.prod.yml logs
-
-docker info
-wg show
-nft list table inet floatctf_awd
+docker exec floatctf-postgres \
+  pg_dump -U postgres -d floatctf_db \
+  > floatctf-db-$(date +%F).sql
 ```
 
-> **安全红线**：切勿运行 `nft flush ruleset`、`docker system prune`、
-> `docker network prune` —— 会破坏无关资源。
+生产升级前先完成可恢复备份。
 
-## 术语速查
+---
 
-| 术语 | 含义 |
-|------|------|
-| `install.sh` | 生产安装（单文件自包含：下载 3 产物 + 主机初始化(幂等) + 部署）；`--develop` 为开发模式 |
-| `clean.sh` | 清理源码签出里的再生构建产物 |
-| `uninstall.sh` | 移除已部署的 FloatCTF（safe / purge） |
+## 20. 故障排查
+
+| 现象 | 检查 |
+|---|---|
+| API container 启动时报 helper unavailable | `systemctl status floatctf-helper`、检查 `/run/floatctf` mount 和 socket GID |
+| API Docker ping 失败 | helper 日志、`helper-docker.sock`、helper docker group |
+| API Docker 返回 403 | Docker 操作超出 helper policy 或对象无 FloatCTF ownership |
+| API 容器直接拥有 Docker socket | 属于部署错误；检查 `docker inspect floatctf-api` mounts |
+| AWD Flag/Judge 回调 API 失败 | 检查 `fctf-platform-control`、API `.2` 地址、infra 容器是否加入该网络 |
+| AWDP Judge 回调 API 失败 | 同上，并检查 `PLATFORM_INTERNAL_URL` |
+| AWD WG/nft 失败 | helper 日志、`ip_forward`、`br_netfilter`、`CAP_NET_ADMIN` |
+| Caddy 502 | `docker compose ... ps` 与 `docker compose ... logs api caddy` |
+| PostgreSQL 失败 | `docker logs floatctf-postgres` |
+| API 因 Redis 启动失败 | `docker logs floatctf-redis`、`docker exec floatctf-redis redis-cli ping`；Redis 必须 healthy 且 API bootstrap PING 成功 |
+| Caddy/TLS 失败 | `docker logs floatctf-caddy`，检查 DNS / 80 / 443 |
+| fresh DB 初始化失败 | PostgreSQL logs + release `merged.sql` |
+| external control network missing | 重新执行 installer 的部署阶段，或检查 `docker network inspect fctf-platform-control` |
+
+生产验收标准：**API container 为非 root、无 capabilities、无真实 Docker socket；`floatctf-helper` 是唯一拥有 Docker group/CAP_NET_ADMIN 的 FloatCTF 进程；PostgreSQL/Redis/RustFS 均为必需基础设施，其中 Redis 还必须通过 API bootstrap PING 门禁。**

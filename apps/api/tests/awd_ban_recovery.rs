@@ -48,9 +48,11 @@ async fn connect_or_skip() -> Option<sea_orm::DatabaseConnection> {
 struct TestFixtures {
     db: sea_orm::DatabaseConnection,
     event_id: Uuid,
+    awd_event_id: Uuid,
     team_a_id: Uuid,
     team_b_id: Uuid,
     event_gamebox_id: Uuid,
+    gamebox_id: Uuid,
     instance_a_id: Uuid,
     instance_b_id: Uuid,
     user_id: Uuid,
@@ -102,7 +104,7 @@ impl TestFixtures {
         let _ = events::Entity::delete_by_id(self.event_id)
             .exec(&self.db)
             .await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+        let _ = gameboxes::Entity::delete_by_id(self.gamebox_id)
             .exec(&self.db)
             .await;
         let _ = users::Entity::delete_by_id(self.user_id)
@@ -133,7 +135,7 @@ async fn setup_test() -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create event
     let now = chrono::Utc::now();
@@ -150,11 +152,12 @@ async fn setup_test() -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create AWD event
+    let awd_event_id = Uuid::new_v4();
     awd_events::ActiveModel {
-        id: Set(Uuid::new_v4()),
+        id: Set(awd_event_id),
         event_id: Set(event_id),
         status: Set(AwdEventStatus::Running),
         phase: Set(AwdPhase::Attack),
@@ -177,7 +180,7 @@ async fn setup_test() -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create event network
     let port: i32 = 50000 + (Uuid::new_v4().as_u128() % 40000) as i32;
@@ -196,14 +199,14 @@ async fn setup_test() -> Option<TestFixtures> {
         infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
         flagserver_ip: Set("10.42.0.10".parse().unwrap()),
         judgeserver_ip: Set("10.42.0.11".parse().unwrap()),
-        wireguard_interface_name: Set(format!("wg_test_{net_suffix}")),
+        wireguard_interface_name: Set(format!("wgb_{net_suffix}")),
         wireguard_listen_port: Set(port),
         docker_network_name: Set(format!("docker_test_{net_suffix}")),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create teams
     let team_a_id = Uuid::new_v4();
@@ -218,22 +221,22 @@ async fn setup_test() -> Option<TestFixtures> {
         }
         .insert(&db)
         .await
-        .ok()?;
+        .expect("insert AWD test fixture");
     }
 
     // Create gamebox
     let gamebox_id = Uuid::new_v4();
     gameboxes::ActiveModel {
         id: Set(gamebox_id),
-        name: Set("test-gb".into()),
-        safe_name: Set("test-gb".into()),
+        name: Set(format!("test-gb-{suffix}")),
+        safe_name: Set(format!("test-gb-{suffix}")),
         category: Set("other".into()),
         hidden: Set(false),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let event_gamebox_id = Uuid::new_v4();
     awd_event_gameboxes::ActiveModel {
@@ -243,7 +246,7 @@ async fn setup_test() -> Option<TestFixtures> {
         attack_score: Set(100),
         judge_down_penalty: Set(50),
         first_bonus: Set(50),
-        host_offset: Set(0),
+        host_offset: Set(5),
         enabled: Set(true),
         hidden: Set(false),
         cpu_millis: Set(500),
@@ -253,7 +256,7 @@ async fn setup_test() -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     // Create instances (root + ext)
     let mut instance_a_id = Uuid::nil();
@@ -276,6 +279,7 @@ async fn setup_test() -> Option<TestFixtures> {
         event_instances::ActiveModel {
             id: Set(root_id),
             event_id: Set(event_id),
+            owner_team_id: Set(Some(tid)),
             container_name: Set(format!("container-{cnt_suffix}")),
             container_id: Set(Some(format!("docker-{cnt_suffix}"))),
             runtime_generation: Set(1),
@@ -283,7 +287,7 @@ async fn setup_test() -> Option<TestFixtures> {
         }
         .insert(&db)
         .await
-        .ok()?;
+        .expect("insert AWD test fixture");
 
         // Extension (event_gamebox_instances)
         event_gamebox_instances::ActiveModel {
@@ -299,7 +303,7 @@ async fn setup_test() -> Option<TestFixtures> {
         }
         .insert(&db)
         .await
-        .ok()?;
+        .expect("insert AWD test fixture");
     }
 
     // Create active round
@@ -316,14 +320,16 @@ async fn setup_test() -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     Some(TestFixtures {
         db,
         event_id,
+        awd_event_id,
         team_a_id,
         team_b_id,
         event_gamebox_id,
+        gamebox_id,
         instance_a_id,
         instance_b_id,
         user_id,
@@ -333,335 +339,256 @@ async fn setup_test() -> Option<TestFixtures> {
 
 // ── Banned target: flag issue ──
 
-#[test]
-fn banned_target_flag_issue_rejected() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn banned_target_flag_issue_rejected() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Ban Team B
+    ban_repo::create_ban(
+        &fixtures.db,
+        fixtures.event_id,
+        fixtures.team_b_id,
+        Some("test ban"),
+        Some(fixtures.round_id),
+        None,
+    )
+    .await
+    .unwrap();
 
-    rt.block_on(async {
-        // Ban Team B
-        ban_repo::create_ban(
-            &fixtures.db,
-            fixtures.event_id,
-            fixtures.team_b_id,
-            Some("test ban"),
-            Some(fixtures.round_id),
-            None,
-        )
-        .await
-        .unwrap();
+    // Try to issue flag for Team B's instance
+    let result = flag_service::issue_flag(
+        &fixtures.db,
+        flag_service::FlagIssueContext {
+            event_id: fixtures.event_id,
+            round_id: fixtures.round_id,
+            gamebox_instance_id: fixtures.instance_b_id,
+            source_ip: "10.42.2.5".into(),
+        },
+        &[0u8; 32],
+        "FLAG{",
+    )
+    .await;
 
-        // Try to issue flag for Team B's instance
-        let result = flag_service::issue_flag(
-            &fixtures.db,
-            flag_service::FlagIssueContext {
-                event_id: fixtures.event_id,
-                round_id: fixtures.round_id,
-                gamebox_instance_id: fixtures.instance_b_id,
-                source_ip: "10.42.2.5".into(),
-            },
-            &[0u8; 32],
-            "FLAG{",
-        )
-        .await;
+    assert!(
+        result.is_err(),
+        "Flag issue for banned target should be rejected"
+    );
 
-        assert!(
-            result.is_err(),
-            "Flag issue for banned target should be rejected"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Banned target: flag submission ──
 
-#[test]
-fn banned_victim_submission_rejected() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn banned_victim_submission_rejected() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    use floatctf::modules::event::awd::domain::flag;
 
-    rt.block_on(async {
-        use floatctf::modules::event::awd::domain::flag;
+    // Create a flag for Team B
+    let flag = flag::generate_flag(
+        &[0u8; 32],
+        &fixtures.event_id.to_string(),
+        &fixtures.round_id.to_string(),
+        &fixtures.instance_b_id.to_string(),
+        "FLAG{",
+    );
+    let flag_hash = flag::hash_flag(&flag);
 
-        // Create a flag for Team B
-        let flag = flag::generate_flag(
-            &[0u8; 32],
-            &fixtures.event_id.to_string(),
-            &fixtures.round_id.to_string(),
-            &fixtures.instance_b_id.to_string(),
-            "FLAG{",
-        );
-        let flag_hash = flag::hash_flag(&flag);
+    flag_repo::find_or_create_issue(
+        &fixtures.db,
+        fixtures.event_id,
+        fixtures.round_id,
+        fixtures.instance_b_id,
+        &flag_hash,
+    )
+    .await
+    .unwrap();
 
-        flag_repo::find_or_create_issue(
-            &fixtures.db,
-            fixtures.event_id,
-            fixtures.round_id,
-            fixtures.instance_b_id,
-            &flag_hash,
-        )
-        .await
-        .unwrap();
+    // Ban Team B
+    ban_repo::create_ban(
+        &fixtures.db,
+        fixtures.event_id,
+        fixtures.team_b_id,
+        Some("test ban"),
+        Some(fixtures.round_id),
+        None,
+    )
+    .await
+    .unwrap();
 
-        // Ban Team B
-        ban_repo::create_ban(
-            &fixtures.db,
-            fixtures.event_id,
-            fixtures.team_b_id,
-            Some("test ban"),
-            Some(fixtures.round_id),
-            None,
-        )
-        .await
-        .unwrap();
+    // Team A tries to submit Team B's flag — should be rejected
+    let result = flag_service::validate_submission(
+        &fixtures.db,
+        fixtures.event_id,
+        &flag,
+        fixtures.team_a_id,
+        fixtures.user_id,
+    )
+    .await;
 
-        // Team A tries to submit Team B's flag — should be rejected
-        let result = flag_service::validate_submission(
-            &fixtures.db,
-            fixtures.event_id,
-            &flag,
-            fixtures.team_a_id,
-            fixtures.user_id,
-        )
-        .await;
+    assert!(
+        result.is_err(),
+        "Submission against banned victim should be rejected"
+    );
 
-        assert!(
-            result.is_err(),
-            "Submission against banned victim should be rejected"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── In-flight judge: ban check blocks scoring ──
 
-#[test]
-fn inflight_judge_ban_active() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn inflight_judge_ban_active() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Ban Team B
+    ban_repo::create_ban(
+        &fixtures.db,
+        fixtures.event_id,
+        fixtures.team_b_id,
+        Some("test ban"),
+        Some(fixtures.round_id),
+        None,
+    )
+    .await
+    .unwrap();
 
-    rt.block_on(async {
-        // Ban Team B
-        ban_repo::create_ban(
-            &fixtures.db,
-            fixtures.event_id,
-            fixtures.team_b_id,
-            Some("test ban"),
-            Some(fixtures.round_id),
-            None,
-        )
+    // Verify ban is active
+    let ban = ban_repo::find_active_ban(&fixtures.db, fixtures.event_id, fixtures.team_b_id)
         .await
         .unwrap();
+    assert!(ban.is_some(), "Team B should be banned");
 
-        // Verify ban is active
-        let ban = ban_repo::find_active_ban(&fixtures.db, fixtures.event_id, fixtures.team_b_id)
-            .await
-            .unwrap();
-        assert!(ban.is_some(), "Team B should be banned");
+    // Verify: the judge_result handler in internal.rs now checks ban state
+    // before scoring. The actual scoring would be blocked by the ban check.
+    // We verify the infrastructure is correct: ban is active, team is banned.
 
-        // Verify: the judge_result handler in internal.rs now checks ban state
-        // before scoring. The actual scoring would be blocked by the ban check.
-        // We verify the infrastructure is correct: ban is active, team is banned.
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── No auto-restart: missing GameBox is NOT recreated ──
 
-#[test]
-fn missing_gamebox_not_auto_recreated() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn missing_gamebox_not_auto_recreated() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Mark instance as Missing (simulating container stopped)
+    gamebox_repo::update_instance_status(
+        &fixtures.db,
+        fixtures.instance_a_id,
+        GameboxStatus::Missing,
+    )
+    .await
+    .unwrap();
 
-    rt.block_on(async {
-        // Mark instance as Missing (simulating container stopped)
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_a_id,
-            GameboxStatus::Missing,
-        )
+    // Verify status is Missing, not auto-recreated
+    let (instance, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_a_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(
+        instance.status,
+        GameboxStatus::Missing,
+        "GameBox should remain Missing, not auto-recreated"
+    );
 
-        // Verify status is Missing, not auto-recreated
-        let (instance, _root) =
-            gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_a_id)
-                .await
-                .unwrap()
-                .unwrap();
-        assert_eq!(
-            instance.status,
-            GameboxStatus::Missing,
-            "GameBox should remain Missing, not auto-recreated"
-        );
+    // Event should still be Running (not paused)
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        awd_event.status,
+        AwdEventStatus::Running,
+        "Event should remain Running despite missing GameBox"
+    );
 
-        // Event should still be Running (not paused)
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            awd_event.status,
-            AwdEventStatus::Running,
-            "Event should remain Running despite missing GameBox"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Reset eligibility: Pause blocks reset ──
 
-#[test]
-fn reset_rejected_during_pause() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_rejected_during_pause() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Pause the event
+    let txn = fixtures.db.begin().await.unwrap();
+    event_repo::transition_event(
+        &txn,
+        fixtures.awd_event_id,
+        AwdEventStatus::Running,
+        AwdEventStatus::Paused,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
 
-    rt.block_on(async {
-        // Pause the event
-        let txn = fixtures.db.begin().await.unwrap();
-        event_repo::transition_event(
-            &txn,
-            fixtures.event_id,
-            AwdEventStatus::Running,
-            AwdEventStatus::Paused,
-            Default::default(),
-        )
+    // Verify: reset eligibility check rejects Paused
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
         .await
+        .unwrap()
         .unwrap();
-        txn.commit().await.unwrap();
+    let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .is_some();
 
-        // Verify: reset eligibility check rejects Paused
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .is_some();
+    let result = floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
+        &awd_event,
+        fixtures.team_a_id,
+        has_active,
+        awd_event.round_count,
+    );
+    assert!(result.is_err(), "Reset should be rejected during Pause");
 
-        let result = floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
-            &awd_event,
-            fixtures.team_a_id,
-            has_active,
-            awd_event.round_count,
-        );
-        assert!(result.is_err(), "Reset should be rejected during Pause");
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Final settlement: Reset rejected ──
 
-#[test]
-fn reset_rejected_in_final_settlement() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test())
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn reset_rejected_in_final_settlement() {
+    let Some(fixtures) = setup_test().await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+    // Complete the active round (simulating final settlement state)
+    round_repo::update_round_status(&fixtures.db, fixtures.round_id, RoundStatus::Completed)
+        .await
         .unwrap();
 
-    rt.block_on(async {
-        // Complete the active round (simulating final settlement state)
-        round_repo::update_round_status(&fixtures.db, fixtures.round_id, RoundStatus::Completed)
-            .await
-            .unwrap();
+    // Verify: no active round, final settlement
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .is_some();
 
-        // Verify: no active round, final settlement
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        let has_active = round_repo::find_active_round(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .is_some();
+    let result = floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
+        &awd_event,
+        fixtures.team_a_id,
+        has_active,
+        awd_event.round_count,
+    );
+    assert!(
+        result.is_err(),
+        "Reset should be rejected during final settlement"
+    );
 
-        let result = floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
-            &awd_event,
-            fixtures.team_a_id,
-            has_active,
-            awd_event.round_count,
-        );
-        assert!(
-            result.is_err(),
-            "Reset should be rejected during final settlement"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }

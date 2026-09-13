@@ -3,10 +3,16 @@ node = "26.5.1"
 pnpm = "11.20.0"
 python = "3"
 rust = "1.97.1"
+"cargo:watchexec-cli" = "2.7.2"
 
 [env]
 PROJECT_ROOT = "{{config_root}}"
 FLOATCTF_CONFIG = "{{config_root}}/apps/api/config/development.toml"
+
+# 新开发机一次性初始化：工具链 + 项目依赖 + Docker/WireGuard/nftables + helper。
+[tasks.setup]
+description = "初始化完整 FloatCTF 开发宿主"
+run = "./scripts/setup-dev.sh"
 
 # 初始化依赖
 [tasks.install]
@@ -56,9 +62,14 @@ docker compose \
 
 # 后端
 [tasks."dev:api"]
-description = "启动 API 开发服务器"
-dir = "apps/api"
-run = "cargo run"
+description = "启动 API 开发服务器并在 Rust/TOML 修改后自动重启（API 进程丢弃 docker 组）"
+run = """
+watchexec --restart --exts rs,toml \
+  --watch apps/api \
+  --watch crates/fcmc \
+  --watch crates/helper-protocol \
+  -- ./scripts/dev-api-run.sh
+"""
 
 # 前端
 [tasks."dev:web"]
@@ -66,11 +77,30 @@ description = "启动 Web 开发服务器"
 dir = "apps/web"
 run = "pnpm dev"
 
-# 同时启动 API 和 Web
+# 唯一开发入口：基础设施 healthy → migrations → API watch + Vite。
 [tasks.dev]
-description = "启动完整本地开发环境"
+description = "启动完整 FloatCTF 开发环境（含 AWD 控制面）"
 depends = ["infra:up"]
 run = "./scripts/dev.sh"
+
+[tasks."dev:down"]
+description = "停止开发基础设施（helper 作为宿主控制面保持运行）"
+run = [
+  { task = "infra:down" },
+]
+
+[tasks."dev:reset"]
+description = "清空开发数据、重建基础设施并重新应用 migrations"
+run = [
+  { task = "infra:reset" },
+  { task = "db:migration:apply" },
+]
+
+[tasks."dev:logs"]
+description = "查看开发基础设施日志"
+run = [
+  { task = "infra:logs" },
+]
 
 # Rust 格式检查
 [tasks.fmt]
@@ -89,7 +119,7 @@ run = [
 [tasks.test]
 description = "执行 Rust 和 Web 测试"
 run = [
-    "cargo test --workspace",
+    "./scripts/test-rust.sh",
     "pnpm --filter @floatctf/web test",
 ]
 

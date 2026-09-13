@@ -1,7 +1,7 @@
 use crate::api::prelude::*;
 
 use crate::{
-    entity::{event_teams, event_writeup, events},
+    entity::{event_team_members, event_teams, event_users, event_writeup, events},
     modules::event::{
         common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::{
@@ -12,6 +12,7 @@ use crate::{
 };
 use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text};
 use aws_sdk_s3::primitives::ByteStream;
+use tokio::io::AsyncReadExt;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SubmitFlagRequest {
@@ -70,7 +71,7 @@ pub async fn submit_flag(
                 &event_ctx.event,
                 "INFO",
                 "SUBMIT_FLAG",
-                json!({"flag": sfr.flag, "instance_id": sfr.instance_id}),
+                json!({"instance_id": sfr.instance_id, "accepted": true}),
                 Some(event_ctx.user.id),
                 event_ctx.team.as_ref().map(|t| t.id),
                 Some(&ctx.req),
@@ -82,8 +83,8 @@ pub async fn submit_flag(
                 "INFO",
                 "SUBMIT",
                 "SUBMIT_FLAG",
-                format!("提交 Flag: {}", sfr.flag).as_str(),
-                json!({"instance_id": sfr.instance_id}),
+                "提交 Flag 成功",
+                json!({"instance_id": sfr.instance_id, "accepted": true}),
                 event_ctx.user.id.into(),
                 None,
                 Some(&ctx.req),
@@ -96,9 +97,10 @@ pub async fn submit_flag(
 
 #[derive(Debug, MultipartForm)]
 pub struct WriteupForm {
-    #[multipart(limit = "1024MB")]
+    #[multipart(limit = "50MB")]
     writeup_pdf: TempFile,
     event_id: Text<Uuid>,
+    /// 兼容旧前端。授权主体始终由服务端根据 event_id + current user 解析。
     team_id: Option<Text<Uuid>>,
 }
 
@@ -113,29 +115,94 @@ pub async fn submit_writeup(
     let user = user.into_inner();
 
     let event_id = form.event_id.into_inner();
+    let requested_team_id = form.team_id.map(|x| x.into_inner());
 
-    // 写入文件
-    let writeup_file = form.writeup_pdf;
-    let team_id = form.team_id.map(|x| x.into_inner());
-    let writeup_file_name = {
-        if let Some(team_id) = team_id.clone() {
-            let team = event_teams::Entity::find_by_id(team_id)
-                .one(ctx.db.get_ref())
-                .await?
-                .ok_or(AppError::NotFound("no team".into()))?;
-            format!("{}/{}/{}.pdf", event_id, team.id, team.name)
-        } else {
-            format!("{}/{}/{}.pdf", event_id, user.id, user.nickname)
+    // 所有权只由服务端解析，避免客户端伪造 team_id 覆盖其他队伍对象。
+    let event = events::Entity::find_by_id(event_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or(AppError::NotFound("event not found".to_string()))?;
+    if event.purpose != crate::entity::sea_orm_active_enums::EventPurpose::Competition {
+        return Err(AppError::BadRequest(
+            "Writeup submission is only available for competition events".into(),
+        ));
+    }
+
+    let event_user = event_users::Entity::find_by_id((event_id, user.id))
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::Forbidden("User has not joined this event".into()))?;
+    if event_user.banned {
+        return Err(AppError::Forbidden("User is banned from this event".into()));
+    }
+
+    let (team_id, writeup_file_name) = if event.participant_mode
+        == crate::entity::sea_orm_active_enums::ParticipantMode::Team
+    {
+        let membership = event_team_members::Entity::find()
+            .filter(event_team_members::Column::EventId.eq(event_id))
+            .filter(event_team_members::Column::UserId.eq(user.id))
+            .one(ctx.db.get_ref())
+            .await?
+            .ok_or_else(|| AppError::Forbidden("User is not a member of an event team".into()))?;
+
+        if requested_team_id.is_some_and(|id| id != membership.team_id) {
+            return Err(AppError::Forbidden(
+                "Requested team does not match the authenticated user's event team".into(),
+            ));
         }
+
+        let team = event_teams::Entity::find_by_id(membership.team_id)
+            .one(ctx.db.get_ref())
+            .await?
+            .ok_or_else(|| AppError::NotFound("event team not found".into()))?;
+        if team.event_id != event_id {
+            return Err(AppError::Forbidden(
+                "Team does not belong to this event".into(),
+            ));
+        }
+        if team.banned {
+            return Err(AppError::Forbidden("Team is banned from this event".into()));
+        }
+
+        (
+            Some(team.id),
+            format!("{}/{}/{}.pdf", event_id, team.id, team.name),
+        )
+    } else {
+        if requested_team_id.is_some() {
+            return Err(AppError::BadRequest(
+                "team_id is invalid for an individual event".into(),
+            ));
+        }
+        (
+            None,
+            format!("{}/{}/{}.pdf", event_id, user.id, user.nickname),
+        )
     };
 
-    let s3_key = format!("writeups/{}", writeup_file_name);
+    let writeup_file = form.writeup_pdf;
+    let path = writeup_file.file.path();
 
-    let body = ByteStream::from(
-        tokio::fs::read(&writeup_file.file.path())
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to read writeup file: {}", e)))?,
-    );
+    // 只读取文件头做类型校验，避免把整个文件加载进内存。
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to open writeup file: {e}")))?;
+    let mut magic = [0_u8; 5];
+    file.read_exact(&mut magic)
+        .await
+        .map_err(|_| AppError::BadRequest("Writeup must be a valid PDF file".into()))?;
+    if &magic != b"%PDF-" {
+        return Err(AppError::BadRequest(
+            "Writeup must be a valid PDF file".into(),
+        ));
+    }
+    drop(file);
+
+    let s3_key = format!("writeups/{writeup_file_name}");
+    let body = ByteStream::from_path(path)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to stream writeup file: {e}")))?;
 
     ctx.rustfs
         .put_object()
@@ -170,11 +237,6 @@ pub async fn submit_writeup(
     )
     .exec(ctx.db.get_ref())
     .await?;
-
-    let event = events::Entity::find_by_id(event_id)
-        .one(ctx.db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
 
     ctx.log
         .add_event_log(

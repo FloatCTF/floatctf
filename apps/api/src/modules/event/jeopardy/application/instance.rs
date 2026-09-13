@@ -13,6 +13,7 @@ use crate::entity::{
 use crate::modules::event::jeopardy::application::{
     common,
     context::{EventContext, ModeInstanceResult},
+    instance_service::InstanceService,
     participant::{resolve_participant, resolve_team_id_for_user},
 };
 use crate::modules::event::jeopardy::domain::policy::JeopardyPolicy;
@@ -136,7 +137,31 @@ pub async fn launch_instance(
 /// 销毁当前主体拥有的运行中实例。
 pub async fn destroy_instance(ctx: &EventContext, instance_id: Uuid) -> Result<()> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
-    common::destroy_instance(&ctx.db, &ctx.docker, instance_id, &ctx.user).await
+    let participant = resolve_participant(ctx).await?;
+    let service =
+        InstanceService::with_docker(ctx.db.get_ref().clone(), ctx.docker.get_ref().clone());
+    let destroyed = match participant.subject {
+        SolveSubject::User => {
+            service
+                .destroy_owned(instance_id, participant.user_id)
+                .await?
+        }
+        SolveSubject::Team => {
+            service
+                .destroy_team_owned(
+                    instance_id,
+                    ctx.event.id,
+                    participant.team_id.expect("team participant"),
+                )
+                .await?
+        }
+    };
+    if !destroyed {
+        return Err(anyhow!(
+            "instance is not running or does not belong to this participant"
+        ));
+    }
+    Ok(())
 }
 
 /// 列出当前参赛主体可见的运行中实例。
@@ -220,11 +245,11 @@ pub async fn get_instances(ctx: &EventContext) -> Result<Vec<ModeInstanceResult>
     }
 }
 
-/// 当前参赛范围内某题的运行中实例。
-pub async fn get_instance_by_challenge_id(
+/// 当前参赛范围内某题的运行中实例；没有运行中实例时返回 `None`。
+pub async fn find_instance_by_challenge_id(
     ctx: &EventContext,
     challenge_id: Uuid,
-) -> Result<(event_challenge_instance::Model, event_instances::Model)> {
+) -> Result<Option<(event_challenge_instance::Model, event_instances::Model)>> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
 
@@ -249,9 +274,21 @@ pub async fn get_instance_by_challenge_id(
         ),
     };
 
-    let (instance, runtime) = q.one(db).await?.ok_or_else(|| anyhow!("no instance"))?;
-    let runtime = runtime.ok_or_else(|| anyhow!("no runtime for instance"))?;
-    Ok((instance, runtime))
+    match q.one(db).await? {
+        Some((instance, Some(runtime))) => Ok(Some((instance, runtime))),
+        Some((_instance, None)) => Err(anyhow!("no runtime for instance")),
+        None => Ok(None),
+    }
+}
+
+/// 当前参赛范围内某题的运行中实例；严格版本，缺失时返回错误。
+pub async fn get_instance_by_challenge_id(
+    ctx: &EventContext,
+    challenge_id: Uuid,
+) -> Result<(event_challenge_instance::Model, event_instances::Model)> {
+    find_instance_by_challenge_id(ctx, challenge_id)
+        .await?
+        .ok_or_else(|| anyhow!("no instance"))
 }
 
 /// 当前用户的逐题解题状态（战队模式按战队作用域）。

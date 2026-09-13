@@ -2,11 +2,15 @@
 
 pub mod docker_forward;
 pub mod env;
+pub mod helper;
 pub mod nftables;
 pub mod render;
 
-pub use docker_forward::{DockerForwardAccessSpec, DockerForwardRuntime};
+pub use docker_forward::{
+    DockerForwardAccessSpec, DockerForwardRuntime, HelperDockerForwardRuntime,
+};
 pub use env::HostFirewallEnvironment;
+pub use helper::HelperFirewallRuntime;
 pub use nftables::NftablesFirewallRuntime;
 pub use render::{NftObjectName, ObservedFirewallState, TABLE_NAME};
 

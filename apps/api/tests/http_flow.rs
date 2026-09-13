@@ -83,7 +83,6 @@ async fn admin_login_and_list_endpoints() {
         "/api/admin/weapons",
         "/api/admin/announcements",
         "/api/admin/challenge_sets",
-        "/api/admin/instances",
         "/api/admin/scheduled_tasks",
         "/api/admin/logs",
         "/api/admin/super_admin",
@@ -103,6 +102,81 @@ async fn admin_login_and_list_endpoints() {
         assert_eq!(status, 200, "{path} http status, body={body}");
         assert_eq!(code, Some(0), "{path} business code, body={body}");
     }
+}
+
+#[tokio::test]
+async fn admin_docker_network_create_delete_roundtrip() {
+    if !api_reachable().await {
+        return;
+    }
+    let (Some(user), Some(pass)) = (env("FLOATCTF_TEST_ADMIN"), env("FLOATCTF_TEST_ADMIN_PASS"))
+    else {
+        eprintln!("skip flow: set FLOATCTF_TEST_ADMIN + FLOATCTF_TEST_ADMIN_PASS for admin checks");
+        return;
+    };
+    let token = login_admin(&user, &pass)
+        .await
+        .expect("admin login should return JWT");
+
+    let id = Uuid::new_v4();
+    let name = format!("fctf-api-e2e-{}", &id.simple().to_string()[..8]);
+    let octet = (id.as_bytes()[0] % 200) + 20;
+    let subnet = format!("198.19.{octet}.0/24");
+    let gateway = format!("198.19.{octet}.1");
+
+    let create = client()
+        .post(format!("{}/api/admin/docker/networks", base_url()))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": name,
+            "subnet": subnet,
+            "gateway": gateway,
+            "driver": "bridge"
+        }))
+        .send()
+        .await
+        .expect("create network request");
+    let (status, code, body) = json_code(create).await;
+    assert_eq!(status, 200, "create network http status, body={body}");
+    assert_eq!(code, Some(0), "create network business code, body={body}");
+
+    let list = client()
+        .get(format!(
+            "{}/api/admin/docker/networks?limit=500",
+            base_url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("list networks request");
+    let (status, code, body) = json_code(list).await;
+    assert_eq!(status, 200, "list networks http status, body={body}");
+    assert_eq!(code, Some(0), "list networks business code, body={body}");
+    let network_id = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                (item.get("name").and_then(|v| v.as_str()) == Some(name.as_str()))
+                    .then(|| item.get("id").and_then(|v| v.as_str()))
+                    .flatten()
+            })
+        })
+        .expect("created network must be visible through admin API")
+        .to_string();
+
+    let delete = client()
+        .delete(format!(
+            "{}/api/admin/docker/networks/{network_id}",
+            base_url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("delete network request");
+    let (status, code, body) = json_code(delete).await;
+    assert_eq!(status, 200, "delete network http status, body={body}");
+    assert_eq!(code, Some(0), "delete network business code, body={body}");
 }
 
 #[tokio::test]

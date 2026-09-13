@@ -942,8 +942,24 @@ pub async fn all_check(
     }
 
     let lock = InstanceAdvisoryLock::acquire(db, instance_id).await?;
-    let result = all_check_locked(db, docker, &run, instance_id, subject).await;
+    let result = all_check_locked(db, docker, &run, instance_id).await;
     lock.release().await;
+
+    // Successful ALL Check marks the run Ended while the target instance lock is
+    // still held. Runtime cleanup must happen only after releasing that lock:
+    // stop_all_run_instances acquires the same per-instance advisory lock itself.
+    // Re-entering it from another pooled PostgreSQL connection deadlocks forever.
+    if matches!(&result, Ok(done) if done.swept) {
+        if let Err(e) = crate::modules::event::awdp::service::runtime::stop_all_run_instances(
+            db, docker, run.id,
+        )
+        .await
+        {
+            // Cleanup is best-effort just like the previous per-instance loop;
+            // scoring and the terminal run state are already durable.
+            tracing::warn!(run_id = %run.id, error = %e, "ALL Check runtime cleanup skipped");
+        }
+    }
     result
 }
 
@@ -952,7 +968,6 @@ async fn all_check_locked(
     docker: &Docker,
     run: &crate::entity::awdp_runs::Model,
     instance_id: Uuid,
-    subject: Subject,
 ) -> AwdpResult<AllCheckResult> {
     use crate::entity::sea_orm_active_enums::AwdpEvaluationStatus as S;
 
@@ -1021,26 +1036,8 @@ async fn all_check_locked(
     result.swept = true;
     result.swept_rounds = swept;
 
-    // 比赛直接结束：停止全部实例（保留逻辑实例/端点）+ run → Ended。
-    let views = crate::modules::event::awdp::service::runtime::list_instances(db, run.id).await?;
-    for v in views {
-        if let Err(e) = crate::modules::event::awdp::service::runtime::stop_instance(
-            db,
-            docker,
-            v.instance_id,
-            subject,
-        )
-        .await
-        {
-            // best-effort：容器停止失败不阻塞计分/结束。
-            tracing::warn!(
-                run_id = %run.id,
-                instance_id = %v.instance_id,
-                error = %e,
-                "ALL Check stop instance skipped"
-            );
-        }
-    }
+    // 先将 run 置为终态，再由外层释放当前 instance lock 后做容器清理。
+    // 这样终态先封住后续玩家动作，又不会在同一请求内二次获取同一 advisory lock。
     run_repo::end_practice_session(db, run.id).await?;
     Ok(result)
 }

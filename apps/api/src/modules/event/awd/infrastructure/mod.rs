@@ -4,6 +4,10 @@ pub mod firewall;
 pub mod network;
 pub mod persistence;
 
-pub use firewall::{FirewallRuntime, NftablesFirewallRuntime, NoopFirewallRuntime};
-pub use network::{AwdNetworkRuntime, HostNetworkRuntime, NoopNetworkRuntime};
+pub use firewall::{
+    FirewallRuntime, HelperFirewallRuntime, NftablesFirewallRuntime, NoopFirewallRuntime,
+};
+pub use network::{
+    AwdNetworkRuntime, HelperNetworkRuntime, HostNetworkRuntime, NoopNetworkRuntime,
+};
 pub use persistence::{AwdPersistedEnum, Persist};

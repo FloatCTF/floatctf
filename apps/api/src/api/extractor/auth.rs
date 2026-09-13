@@ -1,6 +1,6 @@
 //! 鉴权相关请求提取器与守卫。
 
-use crate::core::security::jwt::validate_jwt;
+use crate::core::security::jwt::{Role, validate_jwt};
 use crate::entity::{super_admin, users};
 use crate::infrastructure::WebDb;
 use actix_web::FromRequest;
@@ -39,11 +39,13 @@ impl FromRequest for UserJwtGuard {
                 if token.starts_with("Bearer ") {
                     let jwt = token.trim_start_matches("Bearer ").trim().to_string();
                     if let Ok(claims) = validate_jwt(jwt) {
-                        if let Ok(Some(user)) = users::Entity::find_by_id(claims.sub)
-                            .one(db.get_ref())
-                            .await
-                        {
-                            return Ok(UserJwtGuard(user));
+                        if claims.role == Role::User {
+                            if let Ok(Some(user)) = users::Entity::find_by_id(claims.sub)
+                                .one(db.get_ref())
+                                .await
+                            {
+                                return Ok(UserJwtGuard(user));
+                            }
                         }
                     }
                 }
@@ -73,11 +75,14 @@ impl FromRequest for SuperAdminJwtGuard {
                 if token.starts_with("Bearer ") {
                     let jwt = token.trim_start_matches("Bearer ").trim().to_string();
                     if let Ok(claims) = validate_jwt(jwt) {
-                        if let Ok(Some(super_admin)) = super_admin::Entity::find_by_id(claims.sub)
-                            .one(db.get_ref())
-                            .await
-                        {
-                            return Ok(SuperAdminJwtGuard(super_admin));
+                        if claims.role == Role::SuperAdmin {
+                            if let Ok(Some(super_admin)) =
+                                super_admin::Entity::find_by_id(claims.sub)
+                                    .one(db.get_ref())
+                                    .await
+                            {
+                                return Ok(SuperAdminJwtGuard(super_admin));
+                            }
                         }
                     }
                 }

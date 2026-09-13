@@ -3,9 +3,11 @@
 pub mod engine;
 mod handlers;
 mod task_key;
+pub mod wake;
 
 pub use engine::{TaskHandler, TaskRegistry, TaskScheduler, recover_recurring_task};
 pub use handlers::{
     CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
 };
 pub use task_key::TaskKey;
+pub use wake::notify_scheduled;

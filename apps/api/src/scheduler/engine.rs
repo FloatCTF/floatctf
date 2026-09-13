@@ -85,6 +85,14 @@ impl TaskScheduler {
         }
     }
 
+    /// 立即拉取一次到期任务（Redis wake 唤醒路径入口，见 `scheduler/wake.rs`）。
+    ///
+    /// 与 5s 轮询共用 `fetch_and_run`（`FOR UPDATE SKIP LOCKED`），
+    /// 并发调用 / 多节点同时唤醒都安全；拉空等价于一次廉价空扫描。
+    pub async fn poll_once(&self) -> Result<()> {
+        self.fetch_and_run().await
+    }
+
     async fn fetch_and_run(&self) -> Result<()> {
         // 这里的 SQL 变化：NOW() + INTERVAL '5 seconds'
         // 提前把未来 5 秒内要执行的任务全部锁住并取出来
@@ -399,18 +407,43 @@ impl TaskScheduler {
             let exists = scheduled_tasks::Entity::find_by_id(id)
                 .one(self.db.get_ref())
                 .await?;
+            let cron_expr = crate::core::system_ids::system_task_cron_expr(task_key);
 
-            if exists.is_none() {
+            if let Some(existing) = exists {
+                let expected_cron = cron_expr.map(str::to_string);
+                let schedule_changed =
+                    existing.trigger_type != trigger_type || existing.cron_expr != expected_cron;
+                if schedule_changed {
+                    let mut model = existing.into_active_model();
+                    model.task_name = ActiveValue::Set(name.to_string());
+                    model.task_key = ActiveValue::Set(task_key.to_string());
+                    model.trigger_type = ActiveValue::Set(trigger_type.to_string());
+                    model.cron_expr = ActiveValue::Set(expected_cron);
+                    model.protected = ActiveValue::Set(true);
+                    model.status = ActiveValue::Set("pending".to_string());
+                    model.execute_at = ActiveValue::Set(Some(Utc::now().into()));
+                    model.updated_at = ActiveValue::Set(Utc::now().into());
+                    model.update(self.db.get_ref()).await?;
+                    info!("[Init] 系统任务 '{}' 调度契约已修复", name);
+                }
+            } else {
                 warn!("[Init] 数据库中未发现基础任务 '{}'，正在初始化...", name);
-
+                let now = Utc::now();
                 let startup_model = scheduled_tasks::ActiveModel {
                     id: ActiveValue::Set(id),
                     task_name: ActiveValue::Set(name.to_string()),
                     task_key: ActiveValue::Set(task_key.to_string()),
                     trigger_type: ActiveValue::Set(trigger_type.to_string()),
                     status: ActiveValue::Set("pending".to_string()),
-                    created_at: ActiveValue::Set(Utc::now().into()),
-                    updated_at: ActiveValue::Set(Utc::now().into()),
+                    protected: ActiveValue::Set(true),
+                    cron_expr: ActiveValue::Set(cron_expr.map(str::to_string)),
+                    execute_at: ActiveValue::Set(if trigger_type == "cron" {
+                        Some(now.into())
+                    } else {
+                        None
+                    }),
+                    created_at: ActiveValue::Set(now.into()),
+                    updated_at: ActiveValue::Set(now.into()),
                     ..Default::default()
                 };
 

@@ -1500,6 +1500,28 @@ async fn individual_membership_required_for_competition() {
     )
     .await
     .expect("已加入放行");
+
+    // 已加入但被管理员封禁 → Forbidden；AWDP overview / 实例控制共用该门禁。
+    let user_c = seed_user(&db, "member-banned").await;
+    floatctf::entity::event_users::ActiveModel {
+        event_id: Set(event.id),
+        user_id: Set(user_c),
+        points: Set(0.0),
+        banned: Set(true),
+        joined_at: Set(chrono::Utc::now().into()),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let err = floatctf::modules::event::awdp::service::authorization::require_event_participant(
+        &db, event.id, user_c,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, floatctf::modules::event::awdp::AwdpError::Forbidden(_)),
+        "被封禁参与者必须 Forbidden: {err}"
+    );
     let _ = user_a;
 
     let _ = events::Entity::delete_by_id(event.id).exec(&db).await;

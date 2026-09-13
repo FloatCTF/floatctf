@@ -18,6 +18,8 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::event_team_members::Entity")]
+    EventTeamMembers,
     #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
@@ -34,6 +36,12 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Users,
+}
+
+impl Related<super::event_team_members::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventTeamMembers.def()
+    }
 }
 
 impl Related<super::events::Entity> for Entity {

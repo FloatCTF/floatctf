@@ -17,6 +17,7 @@ import {
 	vi,
 } from "vitest";
 
+import { serviceApi } from "@/api";
 import type { AwdpOverview } from "@/api/awdp";
 import { awdpPlayerApi } from "@/api/awdp";
 
@@ -43,10 +44,27 @@ beforeAll(() => {
 
 beforeEach(() => {
 	vi.setSystemTime(new Date(now));
+	// 动态 refetch 场景也会读取赛事墙钟；统一 mock，保证单元测试不访问真实 /api。
+	vi.spyOn(serviceApi.events, "get").mockResolvedValue({
+		code: 0,
+		message: "ok",
+		data: {
+			event: {
+				id: "evt-1",
+				start_time: new Date(now - 3600_000).toISOString(),
+				end_time: new Date(now + 7200_000).toISOString(),
+			} as never,
+			joined: true,
+			team_result: null,
+		} as never,
+	});
 });
 
 afterEach(() => {
 	cleanup();
+	// deadline/refetch 测试使用 fake timers；清掉组件卸载后仍排队的 tick，避免 spy
+	// 恢复以后异步任务误触真实 `/api/events/:id/awdp`。
+	vi.clearAllTimers();
 	vi.restoreAllMocks();
 });
 
@@ -303,18 +321,16 @@ describe("AwdpEventProgress", () => {
 	});
 
 	it("pending + start 早已过期（卡死无 run）：补抓一次后停止 2s 高频轮询", async () => {
-		const spy = vi
-			.spyOn(awdpPlayerApi, "overview")
-			.mockResolvedValue({
-				code: 0,
-				message: "ok",
-				data: makeOverview({
-					phase: "pending",
-					started_at: null,
-					break_ends_at: null,
-					next_action_at: null,
-				}),
-			});
+		const spy = vi.spyOn(awdpPlayerApi, "overview").mockResolvedValue({
+			code: 0,
+			message: "ok",
+			data: makeOverview({
+				phase: "pending",
+				started_at: null,
+				break_ends_at: null,
+				next_action_at: null,
+			}),
+		});
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});

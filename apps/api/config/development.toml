@@ -11,6 +11,9 @@ work_dir = "../../app"
 # Change this value in production. It must be at least 16 characters.
 jwt_secret = "floatctf-development-secret-change-me"
 
+[docker]
+socket_path = "/run/floatctf/helper-docker.sock"
+
 [database]
 url = "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db"
 
@@ -32,9 +35,12 @@ web_terminal = true
 unsafe_sql_admin = true
 
 [awd]
-network_runtime = "host"
+network_runtime = "helper"
 flagserver_image = "floatctf/awd-flagserver:latest"
 judgeserver_image = "floatctf/awd-judgeserver:latest"
+# 原生开发 API 不加入 platform control network；这里只提供 scheme+port，部署时 host
+# 会替换为各赛事 infra bridge gateway，从容器侧回调宿主 API。
+platform_internal_url = "http://127.0.0.1:9090"
 
 [awdp]
 # AWDP 练习 JudgeServer：部署到练习专用 docker 子网（fctf-awdp-practice）。
@@ -58,6 +64,9 @@ push = false
 insecure = false
 build_timeout_secs = 600
 
+[redis]
+# Redis 是 API 必需基础设施：realtime / 限流 / terminal ticket / scheduler wake / settings cache 共用。
+url = "redis://127.0.0.1:6379/"
+
 [realtime]
-# redis_url = "redis://127.0.0.1:6379"
-# redis_channel = "floatctf:realtime"
+channel = "floatctf:realtime"

@@ -6,7 +6,7 @@ import { createContext } from "react";
 import { adminApi } from "@/api";
 import { awdpAdminApi } from "@/api/awdp";
 import { type Events, ParticipantMode } from "@/entity";
-import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 
 export const Route = createFileRoute("/admin/events/awdp/$id")({
 	component: RouteComponent,

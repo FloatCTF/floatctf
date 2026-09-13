@@ -105,6 +105,8 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             }
         }
     }
+    // seed 可能补入新 key：失效缓存，避免其他节点最多 60s 看不到新设置。
+    invalidate_settings_cache().await;
 }
 
 /// [`seed_default_settings`] 的向后兼容别名。
@@ -114,9 +116,84 @@ pub async fn init_settings(db: &DbConn, config: &AppConfig) {
 }
 
 /// 加载全部 settings，得到 `key -> 原始 value` 映射。
+/// settings 原始 map 的 Redis 缓存 key / TTL。Redis 是 API 必需基础设施。
+///
+/// `get_setting` / `resolve_setting_value` 每次调用都会全表加载 settings，
+/// 限流热路径（每次 flag 提交都会 `check` → `get_setting`）也在其中；
+/// Redis 缓存整张原始 map（`{{KEY}}` 模板解析仍在内存完成，不受缓存影响），
+/// 写入方（upsert / admin 编辑 / seed）主动失效，TTL 兑底多节点最终一致。
+const SETTINGS_CACHE_KEY: &str = "floatctf:settings:map";
+const SETTINGS_CACHE_TTL_SECS: u64 = 60;
+
 async fn load_settings_map(db: &DbConn) -> HashMap<String, String> {
+    if let Some(client) = crate::infrastructure::redis::client() {
+        if let Some(cached) = settings_cache_get(client).await {
+            return cached;
+        }
+        let map = load_settings_map_from_db(db).await;
+        settings_cache_set(client, &map).await;
+        return map;
+    }
+    load_settings_map_from_db(db).await
+}
+
+async fn load_settings_map_from_db(db: &DbConn) -> HashMap<String, String> {
     let rows = settings::Entity::find().all(db).await.unwrap_or_default();
     rows.into_iter().map(|s| (s.key, s.value)).collect()
+}
+
+/// 读缓存：命中返回 Some（含空 map）；Redis 故障/未命中返回 None（降级 DB，不报错）。
+async fn settings_cache_get(client: &::redis::Client) -> Option<HashMap<String, String>> {
+    let op = async {
+        use ::redis::AsyncCommands;
+        let mut conn = client.get_multiplexed_async_connection().await?;
+        let raw: Option<String> = conn.get(SETTINGS_CACHE_KEY).await?;
+        match raw {
+            Some(json) => serde_json::from_str::<HashMap<String, String>>(&json)
+                .map(Some)
+                .map_err(|e| anyhow::anyhow!(e)),
+            None => Ok(None),
+        }
+    };
+    match op.await {
+        Ok(map) => map,
+        Err(error) => {
+            tracing::debug!(%error, "settings Redis 缓存读取失败（降级 DB）");
+            None
+        }
+    }
+}
+
+/// 回填缓存（best-effort：失败仅 debug 日志，不影响主流程）。
+async fn settings_cache_set(client: &::redis::Client, map: &HashMap<String, String>) {
+    let op = async {
+        use ::redis::AsyncCommands;
+        let raw = serde_json::to_string(map)?;
+        let mut conn = client.get_multiplexed_async_connection().await?;
+        let _: () = conn
+            .set_ex(SETTINGS_CACHE_KEY, raw, SETTINGS_CACHE_TTL_SECS)
+            .await?;
+        Ok::<(), anyhow::Error>(())
+    };
+    if let Err(error) = op.await {
+        tracing::debug!(%error, "settings Redis 缓存写入失败（忽略）");
+    }
+}
+
+/// 主动失效 settings 缓存：upsert / admin 编辑 / seed 后调用。
+/// Redis 启动后短暂故障时静默；读取可回源 DB，失效失败由 TTL 兜底。
+pub async fn invalidate_settings_cache() {
+    if let Some(client) = crate::infrastructure::redis::client() {
+        let op = async {
+            use ::redis::AsyncCommands;
+            let mut conn = client.get_multiplexed_async_connection().await?;
+            let _: () = conn.del(SETTINGS_CACHE_KEY).await?;
+            Ok::<(), anyhow::Error>(())
+        };
+        if let Err(error) = op.await {
+            tracing::debug!(%error, "settings Redis 缓存失效失败（靠 TTL 兑底）");
+        }
+    }
 }
 
 /// 按数据库 settings 解析 `value` 中的 `{{KEY}}` 引用。
@@ -247,6 +324,8 @@ pub async fn upsert_setting(db: &DbConn, key: &str, value: &str) -> Result<(), a
     )
     .exec(db)
     .await?;
+    // 写后失效缓存：本进程与其他节点的下一次读取都回源 DB。
+    invalidate_settings_cache().await;
     Ok(())
 }
 
@@ -338,6 +417,45 @@ mod tests {
             "open {A} close"
         );
         assert_eq!(resolve_value_with_map("{{A", &m), "{{A");
+    }
+
+    #[tokio::test]
+    async fn redis_settings_cache_roundtrip() {
+        let Ok(url) = std::env::var("TEST_REDIS_URL") else {
+            eprintln!("skip: TEST_REDIS_URL not set (settings cache test)");
+            return;
+        };
+        if url.trim().is_empty() {
+            return;
+        }
+        let client = redis::Client::open(url.as_str()).expect("redis client");
+        let mut conn = client
+            .get_multiplexed_async_connection()
+            .await
+            .expect("redis connection");
+        let _: () = redis::cmd("DEL")
+            .arg(SETTINGS_CACHE_KEY)
+            .query_async(&mut conn)
+            .await
+            .expect("clear cache");
+
+        let expected = map(&[("WORK_DIR", "/srv/floatctf"), ("LIMIT", "42")]);
+        settings_cache_set(&client, &expected).await;
+        let got = settings_cache_get(&client).await.expect("cache hit");
+        assert_eq!(got, expected);
+
+        let ttl: i64 = redis::cmd("TTL")
+            .arg(SETTINGS_CACHE_KEY)
+            .query_async(&mut conn)
+            .await
+            .expect("ttl");
+        assert!(ttl > 0 && ttl <= SETTINGS_CACHE_TTL_SECS as i64);
+
+        let _: () = redis::cmd("DEL")
+            .arg(SETTINGS_CACHE_KEY)
+            .query_async(&mut conn)
+            .await
+            .expect("cleanup cache");
     }
 
     #[test]

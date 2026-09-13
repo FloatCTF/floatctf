@@ -134,6 +134,12 @@ pub async fn create_awd_event(
     let model = crate::entity::awd_events::ActiveModel {
         id: Set(awd_id),
         event_id: Set(event_id),
+        // Persist every runtime field accepted by the first Configure POST. These
+        // two nullable/default-backed fields were historically omitted here, so
+        // POST returned success while round_count stayed NULL and initial_score
+        // silently fell back to 0. PATCH already handled both correctly.
+        round_count: Set(b.config.round_count),
+        initial_score: Set(b.config.initial_score.unwrap_or(0)),
         round_duration_secs: Set(b
             .config
             .round_duration_secs
@@ -743,11 +749,12 @@ pub async fn rotate_tokens(
     .await
     .map_err(AppError::from)?;
     let network_name = event_network.docker_network_name.clone();
-    // Phase 9.1：rotate 重建容器时同样注入本赛事派生端点（旧事件桥被清理后
-    // 固定 platform_internal_url 失效，报告 §2.4）。
-    let internal_platform_url =
-        crate::modules::event::awd::domain::network::derive_event_internal_platform_url(
+    // 与 deploy 保持同一回调路径：生产容器化使用固定 control network URL；
+    // 原生开发模式继续按赛事 infra 网关派生。
+    let (internal_platform_url, internal_platform_networks) =
+        crate::modules::event::awd::domain::network::resolve_internal_platform_endpoint(
             &ctx.config.awd.platform_internal_url,
+            ctx.config.awd.platform_internal_network.as_deref(),
             &event_network.infrastructure_subnet.to_string(),
         )
         .map_err(AppError::from)?;
@@ -766,6 +773,7 @@ pub async fn rotate_tokens(
         ctx.config.awd.flagserver_image.clone(),
         fs_token_str,
         &internal_platform_url,
+        &internal_platform_networks,
     )
     .await?;
     rollout_infra_container(
@@ -779,6 +787,7 @@ pub async fn rotate_tokens(
         ctx.config.awd.judgeserver_image.clone(),
         js_token_str,
         &internal_platform_url,
+        &internal_platform_networks,
     )
     .await?;
 
@@ -835,6 +844,7 @@ async fn rollout_infra_container(
     image_ref: String,
     token: String,
     platform_internal_url: &str,
+    additional_networks: &[String],
 ) -> UniResult<()> {
     let container_name = format!("fctf-{}-{}", kind, &event_id.to_string()[..8]);
 
@@ -855,6 +865,7 @@ async fn rollout_infra_container(
             image_ref,
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
+            additional_networks: additional_networks.to_vec(),
             env: {
                 // flagserver 与 judgeserver 都需要 PLATFORM_INTERNAL_URL 回调平台
                 // （与 deploy_service 保持一致；flagserver 缺失时回退 127.0.0.1:8080 → 503）。

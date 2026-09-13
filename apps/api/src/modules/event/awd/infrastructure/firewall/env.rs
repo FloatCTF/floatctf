@@ -3,9 +3,14 @@
 //! 记录宿主 Netfilter/firewall 环境（非密钥，用于故障排查与 capability 判定）。
 //! 最终正确性由 Precheck 的 connectivity probe 验证（Phase 2），这里只做事实收集。
 
-use crate::modules::event::awd::{
-    AwdResult,
-    system::command::{CommandRunner, RealCommandRunner},
+use helper_protocol::Request;
+
+use crate::{
+    infrastructure::helper::HelperClient,
+    modules::event::awd::{
+        AwdResult,
+        system::command::{CommandRunner, RealCommandRunner},
+    },
 };
 
 /// 宿主防火墙环境快照（非密钥）。
@@ -58,43 +63,14 @@ pub async fn discover_environment() -> HostFirewallEnvironment {
     env
 }
 
-/// 判定宿主是否具备 native nftables 能力（P1-12）。
-///
-/// 判定项（§5.21）：
-/// 1. `nft` binary 存在；
-/// 2. kernel nf_tables 可用（`nft list tables` 成功 → 有 netlink 权限）；
-/// 3. CAP_NET_ADMIN / root helper（通过第 2 项隐式验证）。
-///
-/// 缺任一 → `Unsupported`，**不自动 fallback iptables**。
+/// 判定宿主网络控制面是否可用。正常运行时的权限探针由 `floatctf-helper` 承担，
+/// API 自身无需 CAP_NET_ADMIN。
 pub async fn check_host_capability() -> AwdResult<HostNetworkCapability> {
-    let runner = RealCommandRunner;
-
-    let version = runner
-        .run("nft", &["--version".into()])
-        .await
-        .map_err(|e| {
-            crate::modules::event::awd::AwdError::Network(format!("nft binary unavailable: {e}"))
-        })?;
-    if version.exit_code != 0 {
-        return Ok(HostNetworkCapability::Unsupported(format!(
-            "nft binary present but --version failed (exit {})",
-            version.exit_code
-        )));
+    let client = HelperClient::new(helper_protocol::DEFAULT_CONTROL_SOCKET_PATH);
+    match client.call(Request::Ping).await {
+        Ok(_) => Ok(HostNetworkCapability::Supported),
+        Err(error) => Ok(HostNetworkCapability::Unsupported(format!(
+            "floatctf-helper unavailable: {error}"
+        ))),
     }
-
-    // 真正需要权限的调用：nft list tables 需要 nf_tables + CAP_NET_ADMIN
-    let probe = runner
-        .run("nft", &["list".into(), "tables".into()])
-        .await
-        .map_err(|e| {
-            crate::modules::event::awd::AwdError::Network(format!("nft invocation failed: {e}"))
-        })?;
-    if probe.exit_code != 0 {
-        return Ok(HostNetworkCapability::Unsupported(format!(
-            "nft list tables failed (exit {}): {} — missing nf_tables or CAP_NET_ADMIN",
-            probe.exit_code, probe.stderr
-        )));
-    }
-
-    Ok(HostNetworkCapability::Supported)
 }

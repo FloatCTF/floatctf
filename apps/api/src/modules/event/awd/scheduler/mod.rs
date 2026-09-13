@@ -86,6 +86,8 @@ pub async fn schedule_auto_precheck<C: ConnectionTrait + Send>(
     .insert(db)
     .await?;
 
+    // Redis 唤醒：自动预检任务排入后立即通知引擎。
+    crate::scheduler::notify_scheduled();
     Ok(Some(task))
 }
 
@@ -139,6 +141,8 @@ pub async fn replace_auto_precheck_schedule<C: ConnectionTrait + Send>(
             .update(db)
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
+            // 重排到更近的时间时，立即唤醒引擎以免等 5s 轮询。
+            crate::scheduler::notify_scheduled();
         }
         (Some(task), None) => {
             scheduled_tasks::Entity::delete_by_id(task.id)
@@ -202,6 +206,8 @@ pub async fn schedule_event_start<C: ConnectionTrait + Send>(
     .insert(db)
     .await?;
 
+    // Redis 唤醒：开赛任务排入后立即通知引擎（近期开赛时尤其重要）。
+    crate::scheduler::notify_scheduled();
     Ok(Some(task))
 }
 
@@ -301,6 +307,8 @@ pub async fn replace_event_start_schedule<C: ConnectionTrait + Send>(
             .update(db)
             .await
             .map_err(|e| AwdError::Database(e.to_string()))?;
+            // 重排到更近的时间时，立即唤醒引擎以免等 5s 轮询。
+            crate::scheduler::notify_scheduled();
         }
         (Some(task), None) => {
             scheduled_tasks::Entity::delete_by_id(task.id)
@@ -685,6 +693,8 @@ pub async fn schedule_hardening_end<C: ConnectionTrait + Send>(
     }
     .insert(txn)
     .await?;
+    // Redis 唤醒：HardeningEnd 排入后立即通知引擎。
+    crate::scheduler::notify_scheduled();
     Ok(())
 }
 
@@ -825,6 +835,8 @@ pub async fn restore_batch_deadlines<C: ConnectionTrait + Send>(
             }
             .insert(db)
             .await?;
+            // Redis 唤醒：恢复出的 deadline 任务立即通知引擎。
+            crate::scheduler::notify_scheduled();
             restored += 1;
         }
     }

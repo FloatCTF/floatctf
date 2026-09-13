@@ -86,6 +86,8 @@ async fn schedule_round_task<C: ConnectionTrait + Send>(
     }
     .insert(txn)
     .await?;
+    // Redis 唤醒：RoundStart/End 排入后立即通知引擎（事务内发布安全，见 wake.rs）。
+    crate::scheduler::notify_scheduled();
     Ok(())
 }
 
@@ -624,6 +626,8 @@ async fn schedule_batch_deadline_task<C: ConnectionTrait + Send>(
     }
     .insert(txn)
     .await?;
+    // Redis 唤醒：Judge batch deadline 排入后立即通知引擎。
+    crate::scheduler::notify_scheduled();
     Ok(())
 }
 

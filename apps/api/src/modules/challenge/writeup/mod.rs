@@ -26,12 +26,7 @@ pub async fn get_challenge_writeup(
         .one(ctx.db.get_ref())
         .await?;
 
-    match writeup {
-        Some(writeup) => UniResponse::ok(Some(writeup.into())).into(),
-        None => {
-            AppError::NotFound(format!("Writeup for challenge {} not found", challenge_id)).into()
-        }
-    }
+    UniResponse::ok(writeup.map(Into::into)).into()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

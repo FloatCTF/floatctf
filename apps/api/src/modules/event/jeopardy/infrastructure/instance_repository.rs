@@ -4,7 +4,8 @@
 //! 运行时身份（容器名/状态/过期）在 `instances`；查询一律 join。
 
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect,
+    ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QuerySelect,
 };
 use uuid::Uuid;
 
@@ -36,14 +37,49 @@ pub async fn find_owned_running(
     Ok(Some((instance, runtime)))
 }
 
-/// 清理候选：runtime_state ∈ {running, failed}。
+/// 查找某赛事战队拥有的运行中实例。
+///
+/// 团队实例只在创建时记录实际启动者 `user_id`，但整个战队共享该实例；因此团队成员
+/// 的销毁/解题后清理必须按 `(event_id, team_id)` 授权，不能按启动者用户 ID 授权。
+pub async fn find_team_running(
+    db: &DatabaseConnection,
+    instance_id: Uuid,
+    event_id: Uuid,
+    team_id: Uuid,
+) -> Result<Option<InstanceRow>, sea_orm::DbErr> {
+    let row = event_challenge_instance::Entity::find_by_id(instance_id)
+        .filter(event_challenge_instance::Column::EventId.eq(event_id))
+        .filter(event_challenge_instance::Column::TeamId.eq(team_id))
+        .find_also_related(event_instances::Entity)
+        .one(db)
+        .await?;
+    let Some((instance, runtime)) = row else {
+        return Ok(None);
+    };
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    if runtime.runtime_state != "running" {
+        return Ok(None);
+    }
+    Ok(Some((instance, runtime)))
+}
+
+/// 清理候选：已过期的 running 实例，以及需要重试收敛的 failed 实例。
+/// 活跃且未过期的 running 实例必须在 API 重启/滚动发布时保留。
 pub async fn list_cleanup_candidates(
     db: &DatabaseConnection,
 ) -> Result<Vec<InstanceRow>, sea_orm::DbErr> {
+    let now = chrono::Utc::now().fixed_offset();
     let rows = event_challenge_instance::Entity::find()
         .filter(
-            event_instances::Column::RuntimeState
-                .is_in(["running".to_string(), "failed".to_string()]),
+            Condition::any()
+                .add(event_instances::Column::RuntimeState.eq("failed"))
+                .add(
+                    Condition::all()
+                        .add(event_instances::Column::RuntimeState.eq("running"))
+                        .add(event_instances::Column::ExpiresAt.lte(now)),
+                ),
         )
         .find_also_related(event_instances::Entity)
         .all(db)

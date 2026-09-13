@@ -376,9 +376,8 @@ pub fn print_check_result(result: &CheckResult) {
 pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,
-        ResourceLimits,
+        ResourceLimits, connect_preferred,
     };
-    use bollard::Docker;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let meta_path = dir.join("meta.toml");
@@ -397,7 +396,9 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
         &cfg.version,
     );
 
-    let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
+    let (docker, _) = connect_preferred()
+        .await
+        .context("Failed to connect to Docker")?;
 
     let rt = DockerContainerRuntime::new(docker.clone());
     // 容器名必须合法（仅 [a-zA-Z0-9_.-]），故用 safe_name 而非显示名。
@@ -502,9 +503,8 @@ pub async fn check_challenge_runtime(dir: &Path) -> Result<()> {
 pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
     use crate::runtime::{
         ContainerRuntime, ContainerSpec, DockerContainerRuntime, ImageRuntime, PortBinding,
-        ResourceLimits,
+        ResourceLimits, connect_preferred,
     };
-    use bollard::Docker;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let meta_path = dir.join("meta.toml");
@@ -517,7 +517,9 @@ pub async fn check_gamebox_runtime(dir: &Path) -> Result<()> {
     let image_ref =
         build_artifact_image_ref(ArtifactKind::GameBox, "floatctf", &safe_name, &cfg.version);
 
-    let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
+    let (docker, _) = connect_preferred()
+        .await
+        .context("Failed to connect to Docker")?;
 
     let rt = DockerContainerRuntime::new(docker.clone());
     let container_name = format!("fcmc_check_gb_{safe_name}");

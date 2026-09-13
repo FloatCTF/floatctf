@@ -57,6 +57,8 @@ pub async fn create_scheduled_task(
     };
 
     let task = new_task.insert(ctx.db.get_ref()).await?;
+    // Redis 唤醒：新建任务立即可见，不等 5s 轮询。
+    crate::scheduler::notify_scheduled();
 
     ctx.log
         .add_log(
@@ -153,6 +155,8 @@ pub async fn patch_scheduled_task(
     m_task.updated_at = Set(Utc::now().into());
 
     let task = m_task.update(ctx.db.get_ref()).await?;
+    // Redis 唤醒：编辑可能把 execute_at 提前，立即拉取一次。
+    crate::scheduler::notify_scheduled();
     UniResponse::ok(Some(task.into())).into()
 }
 
@@ -289,6 +293,8 @@ pub async fn run_scheduled_task(
     m_task.updated_at = Set(Utc::now().into());
 
     let task = m_task.update(ctx.db.get_ref()).await?;
+    // Redis 唤醒：Run once 是人机交互路径，毫秒级响应而不是最坏 5s。
+    crate::scheduler::notify_scheduled();
 
     ctx.log
         .add_log(

@@ -427,22 +427,33 @@ pub async fn reset_instance(
     subject: Subject,
     flag_prefix: &str,
 ) -> AwdpResult<InstanceView> {
-    // 归属校验先行（拒绝未授权触发 reset）。
-    let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    // 快速归属校验先行，未授权请求不参与实例锁竞争。
+    let (instance, _) = instance_repo::find_by_instance_id(db, instance_id).await?;
     assert_owner(&instance, subject)?;
-    let run = run_repo::require_by_id(db, ext.run_id).await?;
 
-    // 比赛次数限制 + 阶段限制：仅 Fix 阶段允许手动 Reset。
-    check_reset_allowed(&run, &ext)?;
-
+    // 次数门禁、pristine 重建与 reset_count 记账必须处在同一把实例锁内。
+    // 否则两个并发 Reset 都可能在锁外读到 count=2 并同时越过 3 次上限。
     let lock = super::lock::InstanceAdvisoryLock::acquire(db, instance_id).await?;
-    let result = reset_instance_unchecked(db, docker, jwt_secret, instance_id, flag_prefix).await;
-    lock.release().await;
+    let result = async {
+        // 拿锁后重新读取权威状态：phase/reset_count 可能在等待锁期间发生变化。
+        let (instance, ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+        assert_owner(&instance, subject)?;
+        let run = run_repo::require_by_id(db, ext.run_id).await?;
+        check_reset_allowed(&run, &ext)?;
 
-    // 成功后才递增计数（docker 失败不消耗次数）。
-    if result.is_ok() && run.gamebox_id.is_none() {
-        instance_repo::increment_reset_count(db, instance_id).await?;
+        let mut view =
+            reset_instance_unchecked(db, docker, jwt_secret, instance_id, flag_prefix).await?;
+
+        // 成功后才递增计数（Docker 失败不消耗次数），并把最新计数同步到本次
+        // HTTP 返回的 view；此前返回的是 reset 前加载的 ext，导致 DB=1 但响应仍为 0。
+        if run.gamebox_id.is_none() {
+            let ext = instance_repo::increment_reset_count(db, instance_id).await?;
+            view.reset_count = ext.reset_count;
+        }
+        Ok(view)
     }
+    .await;
+    lock.release().await;
     result
 }
 
@@ -558,21 +569,96 @@ async fn remove_and_wait(
     }
 }
 
+/// 停止并移除一个 run 下全部运行中的 GameBox 容器，并把逻辑实例标记为 stopped。
+///
+/// 赛事结束清理必须先完成本步骤，再删除 JudgeServer / event data network；否则 Docker
+/// 会因仍有 active endpoint 拒绝删除网络。逐实例持 advisory lock，避免与玩家 stop/reset
+/// 或阶段 reset 并发；单实例失败会继续清理其它实例，最后返回聚合错误。
+pub async fn stop_all_run_instances(
+    db: &DatabaseConnection,
+    docker: &Docker,
+    run_id: Uuid,
+) -> AwdpResult<usize> {
+    let rows = instance_repo::list_for_run(db, run_id).await?;
+    let runtime = DockerContainerRuntime::new(docker.clone());
+    let mut stopped = 0usize;
+    let mut errors = Vec::new();
+
+    for (snapshot, _ext) in rows {
+        let lock = match super::lock::InstanceAdvisoryLock::acquire(db, snapshot.id).await {
+            Ok(lock) => lock,
+            Err(e) => {
+                errors.push(format!("{}: lock: {e}", snapshot.id));
+                continue;
+            }
+        };
+
+        let result: AwdpResult<bool> = async {
+            // 锁内重读，避免等待期间其它动作已经改变 runtime_state / generation。
+            let (instance, _) = instance_repo::find_by_instance_id(db, snapshot.id).await?;
+            if instance.runtime_state != "running" {
+                return Ok(false);
+            }
+
+            // auto_remove 是异步的；等容器真正从 daemon 消失后，赛事网络才可安全删除。
+            remove_and_wait(&runtime, &instance.container_name, 15).await?;
+            instance_repo::update_runtime_state(
+                db,
+                instance.id,
+                "stopped",
+                None,
+                instance.runtime_generation,
+            )
+            .await?;
+            Ok(true)
+        }
+        .await;
+        lock.release().await;
+
+        match result {
+            Ok(true) => stopped += 1,
+            Ok(false) => {}
+            Err(e) => errors.push(format!("{}: {e}", snapshot.id)),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(stopped)
+    } else {
+        Err(AwdpError::Docker(format!(
+            "failed to stop {} AWDP run instance(s): {}",
+            errors.len(),
+            errors.join("; ")
+        )))
+    }
+}
+
 /// 停止实例（保留逻辑实例与端点分配）。
+///
+/// stop 后同一逻辑实例允许立即 start，因此这里必须等待 `auto_remove` 容器从 Docker
+/// daemon 真正消失；否则下一次同名 create 会与仍在 removing 的旧容器竞态。停止、
+/// runtime_state 更新也与 reset/赛事结束清理共用实例 advisory lock。
 pub async fn stop_instance(
     db: &DatabaseConnection,
     docker: &Docker,
     instance_id: Uuid,
     subject: Subject,
 ) -> AwdpResult<()> {
-    let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
-    assert_owner(&instance, subject)?;
-    if instance.runtime_state == "running" {
+    // 未授权请求先快速失败，不占实例锁。
+    let (snapshot, _) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    assert_owner(&snapshot, subject)?;
+
+    let lock = super::lock::InstanceAdvisoryLock::acquire(db, instance_id).await?;
+    let result = async {
+        // 锁内重读：等待锁期间实例可能已被 reset/stop/finish 改变。
+        let (instance, _) = instance_repo::find_by_instance_id(db, instance_id).await?;
+        assert_owner(&instance, subject)?;
+        if instance.runtime_state != "running" {
+            return Ok(());
+        }
+
         let runtime = DockerContainerRuntime::new(docker.clone());
-        runtime
-            .stop_and_remove(&instance.container_name, fcmc::IMMEDIATE_STOP_TIMEOUT)
-            .await
-            .map_err(|e| AwdpError::Docker(format!("stop instance: {e}")))?;
+        remove_and_wait(&runtime, &instance.container_name, 15).await?;
         instance_repo::update_runtime_state(
             db,
             instance_id,
@@ -581,8 +667,11 @@ pub async fn stop_instance(
             instance.runtime_generation,
         )
         .await?;
+        Ok(())
     }
-    Ok(())
+    .await;
+    lock.release().await;
+    result
 }
 
 /// 校验归属（Team 成员共享实例）。

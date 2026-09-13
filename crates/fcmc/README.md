@@ -290,6 +290,19 @@ fcmc build --proxy 10.0.0.1:7890  # → 原样使用
 
 ---
 
+## Docker 连接策略
+
+`fcmc` 作为独立 CLI / SDK 使用时优先检查 `/run/floatctf/helper-docker.sock`：
+
+- helper socket 存在：通过 `floatctf-helper` 的 Docker policy proxy 访问 Docker；
+- helper socket 不存在：fallback 到 Bollard 的本机 Docker 默认连接；
+- helper socket 已存在但不可访问或后端异常：直接报错，不静默 fallback，避免绕过已经建立的权限边界。
+
+FloatCTF 平台 API 不使用这个自动 fallback；生产与标准开发配置都会显式连接 helper socket。
+因此 fcmc 仍可脱离 FloatCTF 单独使用，同时平台运行时保持严格的 helper 权限模型。
+
+---
+
 ## 运行时检查
 
 `fcmc check --runtime` 在静态检查通过后：

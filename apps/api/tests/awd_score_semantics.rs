@@ -171,28 +171,47 @@ async fn setup_test(
 
     // Event network
     let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
-    let wg_port = 30000 + (Uuid::new_v4().as_u128() % 60000) as i32;
-    awd_event_networks::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
-        allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
-        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
-        wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
-        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
-        flagserver_ip: Set("10.42.0.10".parse().unwrap()),
-        judgeserver_ip: Set("10.42.0.11".parse().unwrap()),
-        wireguard_interface_name: Set(wg_iface),
-        wireguard_listen_port: Set(wg_port),
-        docker_network_name: Set(format!(
-            "fctf-awd-{}",
-            &Uuid::new_v4().simple().to_string()[..8]
-        )),
-        locked_at: Set(None),
-        ..Default::default()
+    // wireguard_listen_port 有全库唯一约束；并行测试可能撞号，冲突时换端口重试。
+    let mut inserted = false;
+    for _attempt in 0..16 {
+        let wg_port = 30000 + (Uuid::new_v4().as_u128() % 60000) as i32;
+        let result = awd_event_networks::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            event_id: Set(event_id),
+            allocation_mode: Set(sea_orm_active_enums::AwdNetworkAllocationMode::Automatic),
+            gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+            wireguard_cidr: Set("172.31.0.0/16".parse().unwrap()),
+            infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+            flagserver_ip: Set("10.42.0.10".parse().unwrap()),
+            judgeserver_ip: Set("10.42.0.11".parse().unwrap()),
+            wireguard_interface_name: Set(wg_iface.clone()),
+            wireguard_listen_port: Set(wg_port),
+            docker_network_name: Set(format!(
+                "fctf-awd-{}",
+                &Uuid::new_v4().simple().to_string()[..8]
+            )),
+            locked_at: Set(None),
+            ..Default::default()
+        }
+        .insert(db)
+        .await;
+        match result {
+            Ok(_) => {
+                inserted = true;
+                break;
+            }
+            Err(err) => {
+                let msg = err.to_string().to_lowercase();
+                if msg.contains("wireguard_listen_port")
+                    && (msg.contains("duplicate key") || msg.contains("unique constraint"))
+                {
+                    continue;
+                }
+                panic!("insert awd_event_networks: {err}");
+            }
+        }
     }
-    .insert(db)
-    .await
-    .expect("insert awd_event_networks");
+    assert!(inserted, "insert awd_event_networks: 16 次端口重试均失败");
 
     // Teams
     let mut team_ids = Vec::new();

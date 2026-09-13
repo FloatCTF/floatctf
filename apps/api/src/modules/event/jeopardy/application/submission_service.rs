@@ -27,6 +27,12 @@ pub struct JeopardySubmissionService {
     docker: Docker,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScoreOutcome {
+    AlreadySolved,
+    Scored { team_id: Option<Uuid> },
+}
+
 impl JeopardySubmissionService {
     pub fn new(db: DatabaseConnection, docker: Docker) -> Self {
         Self { db, docker }
@@ -34,26 +40,50 @@ impl JeopardySubmissionService {
 
     /// Validate flag, award points + insert solve atomically, then destroy the instance.
     pub async fn submit(&self, req: JeopardySubmitRequest) -> Result<()> {
-        let scored = self.score_in_transaction(&req).await?;
+        let outcome = self.score_in_transaction(&req).await?;
 
-        if scored {
-            // Post-commit side effect: never roll back the solve if Docker fails.
+        if let ScoreOutcome::Scored { team_id } = outcome {
+            // Post-commit side effect: never roll back the solve if Docker cleanup fails.
+            // Team instances belong to the team subject, even when a different member launched it.
             let instances = InstanceService::with_docker(self.db.clone(), self.docker.clone());
-            if let Err(e) = instances.destroy_owned(req.instance_id, req.user_id).await {
-                error!(
-                    instance_id = %req.instance_id,
-                    user_id = %req.user_id,
-                    error = %e,
-                    "failed to destroy instance after successful flag submit; solve retained"
-                );
+            let destroyed = match team_id {
+                Some(team_id) => {
+                    instances
+                        .destroy_team_owned(req.instance_id, req.event_id, team_id)
+                        .await
+                }
+                None => instances.destroy_owned(req.instance_id, req.user_id).await,
+            };
+            match destroyed {
+                Ok(true) => {}
+                Ok(false) => {
+                    error!(
+                        instance_id = %req.instance_id,
+                        event_id = %req.event_id,
+                        user_id = %req.user_id,
+                        ?team_id,
+                        "successful flag submit could not find its running instance for cleanup; solve retained"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        instance_id = %req.instance_id,
+                        event_id = %req.event_id,
+                        user_id = %req.user_id,
+                        ?team_id,
+                        error = %e,
+                        "failed to destroy instance after successful flag submit; solve retained"
+                    );
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Returns `true` when a new solve was recorded (instance should be destroyed).
-    async fn score_in_transaction(&self, req: &JeopardySubmitRequest) -> Result<bool> {
+    /// Returns the participant subject for a newly recorded solve so post-commit cleanup can use
+    /// the same ownership decision as scoring.
+    async fn score_in_transaction(&self, req: &JeopardySubmitRequest) -> Result<ScoreOutcome> {
         // Settings are stable for the request; load outside the short scoring txn.
         let decay = get_setting(&self.db, "EVENT_SCORE_DECAY")
             .await?
@@ -95,6 +125,10 @@ impl JeopardySubmissionService {
             ),
         };
 
+        // 串行化同一赛事题目的计分窗口：重复解检查、动态分值 solve_count、
+        // solve 插入共享同一把事务锁，跨进程也保持确定顺序。
+        repo::lock_event_challenge(&txn, req.event_id, challenge.id).await?;
+
         if repo::already_solved(
             &txn,
             req.event_id,
@@ -106,7 +140,7 @@ impl JeopardySubmissionService {
         .await?
         {
             txn.commit().await?;
-            return Ok(false);
+            return Ok(ScoreOutcome::AlreadySolved);
         }
 
         let base_points = repo::find_event_challenge_points(&txn, req.event_id, challenge.id)
@@ -140,13 +174,13 @@ impl JeopardySubmissionService {
             Err(err) if is_unique_violation(&err.to_string()) => {
                 // Concurrent submit won the race — treat as already scored.
                 txn.rollback().await.ok();
-                return Ok(false);
+                return Ok(ScoreOutcome::AlreadySolved);
             }
             Err(e) => return Err(e.into()),
         }
 
         txn.commit().await?;
-        Ok(true)
+        Ok(ScoreOutcome::Scored { team_id })
     }
 }
 
@@ -183,6 +217,16 @@ mod team_duplicate_solve_tests {
                 return;
             }
         };
+
+        // This unit test must be self-contained on a freshly migrated database.
+        // Production seeds these dynamic settings during bootstrap; the test used
+        // to pass only because the shared development DB happened to contain them.
+        crate::infrastructure::settings::upsert_setting(&db, "EVENT_SCORE_DECAY", "500")
+            .await
+            .expect("seed score decay");
+        crate::infrastructure::settings::upsert_setting(&db, "EVENT_SCORE_MIN_PERCENT", "0.45")
+            .await
+            .expect("seed score minimum");
 
         let tag = Uuid::new_v4().simple().to_string();
         let now = Utc::now();

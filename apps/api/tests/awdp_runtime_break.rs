@@ -756,7 +756,7 @@ async fn team_shares_instance_and_score() {
     // team + 两个成员。
     use fcmc::ContainerRuntime;
 
-    use floatctf::entity::{event_team_members, event_teams};
+    use floatctf::entity::{event_team_members, event_teams, event_users};
     let team_id = Uuid::new_v4();
     let now = chrono::Utc::now().into();
     event_teams::ActiveModel {
@@ -775,6 +775,14 @@ async fn team_shares_instance_and_score() {
     .unwrap();
     let uids = [seed_user(&db, "m1").await, seed_user(&db, "m2").await];
     for (i, uid) in uids.iter().enumerate() {
+        event_users::ActiveModel {
+            event_id: Set(event.id),
+            user_id: Set(*uid),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
         event_team_members::ActiveModel {
             event_id: Set(event.id),
             team_id: Set(team_id),

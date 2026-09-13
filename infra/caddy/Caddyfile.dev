@@ -1,5 +1,5 @@
 # FloatCTF development Caddy configuration.
-# The compose service publishes container port 80 as localhost:7780.
+# The compose service publishes container port 80 on all host IPv4 interfaces at :7780.
 http:// {
     encode zstd gzip
     log {
@@ -32,6 +32,6 @@ http:// {
     }
 
     handle {
-        reverse_proxy host.docker.internal:3000
+        reverse_proxy host.docker.internal:13000
     }
 }

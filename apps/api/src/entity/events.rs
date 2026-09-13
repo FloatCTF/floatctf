@@ -178,13 +178,4 @@ impl Related<super::challenges::Entity> for Entity {
     }
 }
 
-impl Related<super::users::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::event_users::Relation::Users.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::event_users::Relation::Events.def().rev())
-    }
-}
-
 impl ActiveModelBehavior for ActiveModel {}

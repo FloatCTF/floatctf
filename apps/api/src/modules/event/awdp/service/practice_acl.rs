@@ -19,13 +19,15 @@
 //! 应用为 best-effort：`nft` 不可用 / 无权限时仅告警跳过（练习沙箱不阻塞实例启动）；
 //! 规则一旦生效由 host/control plane 强制，不信任容器内规则。
 
-use std::process::Stdio;
-
+use helper_protocol::Request;
 use tracing::warn;
 
-use crate::modules::event::awdp::{
-    AwdpError, AwdpResult,
-    domain::judge::{CONTROL_NETWORK_NAME, PRACTICE_DYNAMIC_POOL, PRACTICE_JUDGE_PORT},
+use crate::{
+    infrastructure::helper::HelperClient,
+    modules::event::awdp::{
+        AwdpError, AwdpResult,
+        domain::judge::{CONTROL_NETWORK_NAME, PRACTICE_DYNAMIC_POOL, PRACTICE_JUDGE_PORT},
+    },
 };
 
 /// 宿主管控端口黑名单（GameBox → host 一律 DROP）。按项目常见端口收敛，
@@ -85,68 +87,33 @@ pub fn bridge_iface_for_network(network_id: &str) -> String {
     format!("br-{short}")
 }
 
-/// 应用 nftables 规则集（best-effort：`nft -c` 校验 → `nft -f` 原子应用）。
-///
-/// - `nft` 不存在 / 权限不足 → `Ok(false)`（跳过，告警由调用方记录）；
-/// - 语法错误 → `Err`（配置问题需人工介入，不静默）。
+/// 应用 nftables 规则集。API 始终以普通用户运行，规则通过 `floatctf-helper` 原子应用。
 pub async fn apply_ruleset(ruleset: &str) -> AwdpResult<bool> {
-    let nft = match tokio::process::Command::new("nft").arg("-v").output().await {
-        Ok(o) if o.status.success() => "nft".to_string(),
-        Ok(_) => {
-            warn!("[PracticeACL] nft 不可用，跳过 data plane ACL");
-            return Ok(false);
-        }
-        Err(e) => {
-            warn!(error = %e, "[PracticeACL] nft 启动失败，跳过 data plane ACL");
-            return Ok(false);
-        }
-    };
+    let table_name = ruleset
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("table inet "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| AwdpError::Internal("AWDP ACL ruleset 缺少 table inet 声明".into()))?;
 
-    // 先写临时规则文件，再 `nft -c -f` 校验、`nft -f` 应用（与 AWD 防火墙同流程）。
-    let tmp = std::env::temp_dir().join(format!("fctf-awdp-acl-{}.nft", uuid::Uuid::new_v4()));
-    if let Err(e) = tokio::fs::write(&tmp, ruleset).await {
-        // best-effort：临时目录/写盘异常（如 TMPDIR 指向不存在目录）不阻断练习沙箱启动。
-        warn!(error = %e, tmp = %tmp.display(), "[PracticeACL] 写临时规则文件失败，跳过 data plane ACL");
-        return Ok(false);
-    }
-
-    let check = tokio::process::Command::new(&nft)
-        .args(["-c", "-f"])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .output()
+    let client = HelperClient::new(helper_protocol::DEFAULT_CONTROL_SOCKET_PATH);
+    match client
+        .call_empty(Request::ApplyNftTable {
+            table: table_name.to_string(),
+            ruleset: ruleset.to_string(),
+            ensure_bridge_netfilter: true,
+        })
         .await
-        .map_err(|e| AwdpError::Internal(format!("nft -c run: {e}")))?;
-    if !check.status.success() {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        let stderr = String::from_utf8_lossy(&check.stderr).trim().to_string();
-        if stderr.contains("Operation not permitted")
-            || stderr.contains("Permission denied")
-            || stderr.contains("cache initialization failed")
-        {
-            // 无 CAP_NET_ADMIN：连语法校验都需要 netlink 权限 → best-effort 跳过。
-            warn!(error = %stderr, "[PracticeACL] nft 无权限，跳过 data plane ACL");
-            return Ok(false);
+    {
+        Ok(()) => {
+            tracing::info!("[PracticeACL] data plane nftables rules applied via helper");
+            Ok(true)
         }
-        return Err(AwdpError::Internal(format!("nft -c 校验失败: {stderr}")));
+        Err(error) => {
+            warn!(error = %error, "[PracticeACL] helper 应用 ACL 失败，跳过 data plane ACL");
+            Ok(false)
+        }
     }
-
-    let apply = tokio::process::Command::new(&nft)
-        .args(["-f"])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .map_err(|e| AwdpError::Internal(format!("nft -f run: {e}")))?;
-    let _ = tokio::fs::remove_file(&tmp).await;
-    if !apply.status.success() {
-        // 无权限 / 权限提升失败 → best-effort 跳过（练习沙箱）。
-        let stderr = String::from_utf8_lossy(&apply.stderr).trim().to_string();
-        warn!(error = %stderr, "[PracticeACL] nft 应用失败（可能无权限），跳过 data plane ACL");
-        return Ok(false);
-    }
-    tracing::info!("[PracticeACL] data plane nftables rules applied");
-    Ok(true)
 }
 
 /// 完整 ACL 编排：解析 data 网络 bridge 接口 → 渲染 → 应用（best-effort）。
@@ -210,47 +177,27 @@ async fn network_dynamic_pool(docker: &bollard::Docker, network_name: &str) -> O
     first.ip_range.clone().or(first.subnet.clone())
 }
 
-/// 删除赛事 nftables ACL 表（best-effort；表不存在视为成功）。
+/// 删除赛事 nftables ACL 表（best-effort；表不存在由 helper 幂等处理）。
 pub async fn remove_acl_table(table_name: &str) -> AwdpResult<bool> {
-    let nft = match tokio::process::Command::new("nft")
-        .args(["-v"])
-        .output()
+    let client = HelperClient::new(helper_protocol::DEFAULT_CONTROL_SOCKET_PATH);
+    match client
+        .call_empty(Request::DeleteNftTable {
+            table: table_name.to_string(),
+        })
         .await
     {
-        Ok(o) if o.status.success() => "nft".to_string(),
-        _ => {
-            warn!("[PracticeACL] nft 不可用，跳过 ACL 表删除");
-            return Ok(false);
-        }
-    };
-    let out = tokio::process::Command::new(&nft)
-        .args(["delete", "table", "inet", table_name])
-        .output()
-        .await;
-    match out {
-        Ok(o) if o.status.success() => {
-            tracing::info!("[PracticeACL] nftables table {table_name} deleted");
+        Ok(()) => {
+            tracing::info!("[PracticeACL] nftables table {table_name} deleted via helper");
             Ok(true)
         }
-        Ok(_) => {
-            // 表不存在（No such file or directory）视为已删除。
-            let stderr = String::from_utf8_lossy(&out.unwrap().stderr)
-                .trim()
-                .to_string();
-            if stderr.contains("No such file") || stderr.contains("does not exist") {
-                return Ok(true);
-            }
-            warn!(error = %stderr, "[PracticeACL] nft 删除表失败（best-effort）");
-            Ok(false)
-        }
-        Err(e) => {
-            warn!(error = %e, "[PracticeACL] nft 删除表启动失败（best-effort）");
+        Err(error) => {
+            warn!(error = %error, "[PracticeACL] helper 删除 ACL 表失败（best-effort）");
             Ok(false)
         }
     }
 }
 
-/// control 网络幂等 ensure（internal=true：GameBox 无权加入，仅 JudgeServer 使用）。
+/// 平台 control 网络幂等 ensure（internal=true：API/基础设施/Judge 使用，GameBox 无权加入）。
 #[allow(deprecated)] // bollard CreateNetworkOptions
 pub async fn ensure_control_network(docker: &bollard::Docker) -> AwdpResult<String> {
     use fcmc::ContainerRuntime;

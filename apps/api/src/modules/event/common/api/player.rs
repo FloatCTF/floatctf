@@ -117,7 +117,7 @@ pub async fn get_event_challenge_instance(
         user,
     )
     .await?;
-    UniResponse::ok(Some(instance)).into()
+    UniResponse::ok(instance).into()
 }
 
 /// POST /api/events/{event_id}/team
@@ -314,7 +314,9 @@ pub async fn get_own_wp(
     event_id: Path<Uuid>,
 ) -> UniResult<String> {
     let user = user.into_inner();
-    let file_url = svc::own_writeup_file_url(&ctx.db, *event_id, &user).await?;
+    let Some(file_url) = svc::own_writeup_file_url(&ctx.db, *event_id, &user).await? else {
+        return UniResponse::ok(None).into();
+    };
     let proxy_url = presign_private_download_url(ctx.rustfs, &file_url, 5 * 60)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to generate signed URL: {}", e)))?;

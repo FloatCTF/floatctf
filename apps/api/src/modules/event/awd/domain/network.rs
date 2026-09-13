@@ -359,6 +359,33 @@ pub fn derive_event_internal_platform_url(
     Ok(format!("{scheme}://{gateway}:{port}"))
 }
 
+/// 解析基础设施容器访问平台 internal API 的最终 URL 与额外 control 网络。
+///
+/// - `control_network=None`：原生开发模式，按赛事 infra gateway 派生 host；
+/// - `control_network=Some(...)`：生产容器化模式，使用固定 URL，并把 Flag/Judge
+///   额外接入指定 internal Docker network。
+pub fn resolve_internal_platform_endpoint(
+    base: &str,
+    control_network: Option<&str>,
+    infrastructure_subnet: &str,
+) -> crate::modules::event::awd::AwdResult<(String, Vec<String>)> {
+    if let Some(network) = control_network.map(str::trim).filter(|v| !v.is_empty()) {
+        let url = base.trim();
+        if url.is_empty() {
+            return Err(crate::modules::event::awd::AwdError::Validation(
+                "awd.platform_internal_url is required when platform_internal_network is set"
+                    .into(),
+            ));
+        }
+        return Ok((url.to_string(), vec![network.to_string()]));
+    }
+
+    Ok((
+        derive_event_internal_platform_url(base, infrastructure_subnet)?,
+        vec![],
+    ))
+}
+
 /// 从模板 URL 解析 scheme 与端口（host 会被派生替换，不读取）。
 /// 模板缺失（空）或未显式端口时回退 `http` / `8080`（config 默认 listen port）。
 fn parse_platform_url_base(base: &str) -> (String, u16) {
@@ -554,6 +581,35 @@ mod tests {
     #[test]
     fn derive_internal_url_invalid_subnet_rejected() {
         assert!(derive_event_internal_platform_url("http://x:9091", "garbage").is_err());
+    }
+
+    #[test]
+    fn resolve_internal_endpoint_uses_control_network_in_production() {
+        let (url, networks) = resolve_internal_platform_endpoint(
+            "http://10.42.8.2:9090",
+            Some("fctf-platform-control"),
+            "10.99.0.0/24",
+        )
+        .unwrap();
+        assert_eq!(url, "http://10.42.8.2:9090");
+        assert_eq!(networks, vec!["fctf-platform-control"]);
+    }
+
+    #[test]
+    fn resolve_internal_endpoint_keeps_dev_gateway_behavior() {
+        let (url, networks) =
+            resolve_internal_platform_endpoint("http://127.0.0.1:9090", None, "10.12.34.0/24")
+                .unwrap();
+        assert_eq!(url, "http://10.12.34.1:9090");
+        assert!(networks.is_empty());
+    }
+
+    #[test]
+    fn resolve_internal_endpoint_rejects_empty_production_url() {
+        assert!(
+            resolve_internal_platform_endpoint("", Some("fctf-platform-control"), "garbage")
+                .is_err()
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub struct CleanRunningInstancesHandler {
 #[async_trait]
 impl TaskHandler for CleanRunningInstancesHandler {
     fn trigger_type(&self) -> &'static str {
-        "startup"
+        "cron"
     }
     fn task_key(&self) -> TaskKey {
         TaskKey::CleanInstances
@@ -37,7 +37,7 @@ impl TaskHandler for CleanRunningInstancesHandler {
         let report = service.cleanup_running().await?;
 
         for instance_id in report.completed {
-            info!("{} Killed instance {}", self.task_key(), instance_id);
+            info!("{} cleaned instance {}", self.task_key(), instance_id);
         }
         let failed_count = report.failed.len();
         for failure in report.failed {

@@ -10,7 +10,7 @@
 #
 # 两个模式：
 #   sudo /home/floatctf/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
-#                                               （systemd、infra/赛事容器与网络、API 二进制、
+#                                               （systemd、生产 Compose 容器/赛事资源、API image、
 #                                               web 资产），但保留可恢复状态：
 #                                               data/{postgres,rustfs,caddy,caddy-config}, config/, .env,
 #                                               runtime/, logs/, .initialized, 本卸载脚本。
@@ -18,7 +18,7 @@
 #                                               应用数据与密钥（用户/赛事/数据仍在）。
 #   sudo /home/floatctf/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
 #                                               （PG/RustFS 数据、config、secrets、runtime、
-#                                               日志、API 二进制、web、compose、systemd 单元、
+#                                               日志、API image/build context、web、compose、systemd 单元、
 #                                               动态赛事资源、sysctl/modules 文件、floatctf 用户、
 #                                               /home/floatctf、本脚本自身）。需输入确认文本
 #                                               "PURGE FLOATCTF"（除非 --yes）。
@@ -31,6 +31,8 @@ set -Eeuo pipefail
 
 FCTF_ROOT="${FLOATCTF_HOME:-${FCTF_ROOT:-/home/floatctf}}"
 FCTF_USER="floatctf"
+FCTF_HELPER_USER="floatctf-helper"
+HELPER_INSTALL_PATH="/usr/local/libexec/floatctf-helper"
 
 info() { printf '%s[INFO]%s %s\n'  "$(tput setaf 4 2>/dev/null || true)" "$(tput sgr0 2>/dev/null || true)" "$*"; }
 ok()   { printf '%s[ OK ]%s %s\n'  "$(tput setaf 2 2>/dev/null || true)" "$(tput sgr0 2>/dev/null || true)" "$*"; }
@@ -106,7 +108,9 @@ run_purge_via_temp() {
 #   - 赛事 JudgeServer 容器   : fctf-judgeserver-<8hex>
 #   - 赛事 Docker 网络        : fctf-awd-<8hex>
 #   - GameBox 容器            : 携带 awd.event_id / awd.resource_kind 标签
-#   - AWDP Docker 网络        : fctf-awdp-practice / fctf-awdp-control / fctf-awdp-<12hex>
+#   - 平台 control 网络       : fctf-platform-control
+#   - AWDP Docker 网络        : fctf-awdp-practice / fctf-awdp-<12hex>
+#     （旧版 fctf-awdp-control 仅作卸载兼容清理）
 #   - AWDP JudgeServer 容器   : fctf-awdp-practice-judge / fctf-awdp-judge-<12hex>
 #   - nftables 表             : inet floatctf_awd（全局）+ floatctf_awdp_*（AWDP）
 #   - Docker 反欺骗放行规则   : 严格按 fawg_ 接口 / fctfawd 桥 / 赛事 CIDR 限定
@@ -124,7 +128,7 @@ require_tools() {
 }
 
 # 名字是否为 FloatCTF 自有可安全删除的接证对象（拒绝通配/元字符）。
-valid_fctf_name() { [[ "$1" =~ ${AWK_NAME_OK} ]] && [[ "$1" == fawg_* || "$1" == fctfawd* || "$1" == fctf-awd-* || "$1" == fctf-flagserver-* || "$1" == fctf-judgeserver-* || "$1" == fctf-awdp-* ]]; }
+valid_fctf_name() { [[ "$1" =~ ${AWK_NAME_OK} ]] && [[ "$1" == fawg_* || "$1" == fctfawd* || "$1" == fctf-platform-control || "$1" == fctf-awd-* || "$1" == fctf-flagserver-* || "$1" == fctf-judgeserver-* || "$1" == fctf-awdp-* ]]; }
 
 systemctl_stop_units() {
     info "── 停止并停用 FloatCTF systemd 单元 ──"
@@ -134,19 +138,24 @@ systemctl_stop_units() {
         return
     fi
     systemctl stop floatctf.target 2>/dev/null || true
-    systemctl disable floatctf.target floatctf-infra.service floatctf-api.service 2>/dev/null || true
-    systemctl stop floatctf-api.service floatctf-infra.service 2>/dev/null || true
+    systemctl disable floatctf.target floatctf-infra.service floatctf-helper.service 2>/dev/null || true
+    systemctl stop floatctf-helper.service floatctf-infra.service 2>/dev/null || true
+    # 旧版 native API unit 只作迁移兼容清理。
+    systemctl disable --now floatctf-api.service 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
-    systemctl reset-failed floatctf.target floatctf-infra.service floatctf-api.service 2>/dev/null || true
+    systemctl reset-failed floatctf.target floatctf-infra.service floatctf-helper.service floatctf-api.service 2>/dev/null || true
     ok "systemd 单元已停止/停用"
 }
 
-# 先停 API，从源头停止接受应用流量 + 停止 recover_all 重建动态资源。
+# 先移除生产 API 容器，从源头停止接受应用流量 + 停止 recover_all 重建动态资源。
 stop_api_first() {
+    if command -v docker >/dev/null 2>&1; then
+        docker rm -f floatctf-api >/dev/null 2>&1 || true
+    fi
+    # 旧版 native API unit / binary 只作迁移兼容清理。
     if command -v systemctl >/dev/null 2>&1; then
         systemctl stop floatctf-api.service 2>/dev/null || true
     fi
-    # 兜底：可能存在直接进程（开发误装），按可执行路径精确终止，不 kill 无关进程。
     if [ -x "$FCTF_ROOT/bin/floatctf" ]; then
         pkill -f "^$FCTF_ROOT/bin/floatctf" 2>/dev/null || true
     fi
@@ -188,7 +197,7 @@ cleanup_awd_named_containers() {
 cleanup_docker_networks() {
     info "── 清理赛事 Docker 网络（名字前缀限定）──"
     local pat c x
-    for c in fctf-awd- fctf-awdp-practice fctf-awdp-control fctf-awdp-; do
+    for c in fctf-platform-control fctf-awd- fctf-awdp-practice fctf-awdp-control fctf-awdp-; do
         pat="${c}*"
         while read -r x; do
             [ -n "$x" ] || continue
@@ -259,35 +268,49 @@ cleanup_nftables() {
 }
 
 # ============================================================================
-# 基础设施容器（postgres / rustfs / caddy）
+# 生产 Compose 容器（API / postgres / redis / rustfs / caddy）
 # ============================================================================
 stop_infra_containers() {
-    info "── 停止/移除基础设施容器（compose down，保护 bind-mount 数据）──"
+    info "── 停止/移除生产 Compose 容器（保护 bind-mount 数据）──"
     if [ -f "$FCTF_ROOT/compose.prod.yml" ] && [ -d "$FCTF_ROOT" ]; then
         # 用系统 docker compose 插件；无 -> 尝试 docker-compose。
         ( cd "$FCTF_ROOT" \
             && { docker compose -f compose.prod.yml down 2>/dev/null \
                  || docker compose -f compose.prod.yml stop 2>/dev/null \
-                 || docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true; } ) \
-            && ok "infra 容器已停止/移除（数据保留在 bind-mount）"
+                 || docker stop floatctf-api floatctf-postgres floatctf-redis floatctf-rustfs floatctf-caddy 2>/dev/null || true; } ) \
+            && ok "生产容器已停止/移除（持久数据保留）"
     else
         warn "未找到 $FCTF_ROOT/compose.prod.yml，跳过 compose down；尝试按名字精确停止"
-        docker stop floatctf-postgres floatctf-rustfs floatctf-caddy 2>/dev/null || true
+        docker stop floatctf-api floatctf-postgres floatctf-redis floatctf-rustfs floatctf-caddy 2>/dev/null || true
     fi
-    # 兜底：强制移除（别名命中检查，防误删无关容器）
+    # 兜底：强制移除（精确名字，防误删无关容器）
     local c
-    for c in floatctf-postgres floatctf-rustfs floatctf-caddy; do
+    for c in floatctf-api floatctf-postgres floatctf-redis floatctf-rustfs floatctf-caddy; do
         if [ -n "$(docker ps -aq --filter name="^${c}$" 2>/dev/null)" ]; then
             docker rm -f "$c" >/dev/null 2>&1 && ok "已移除容器 $c" || warn "移除容器 $c 失败（忽略）"
         fi
     done
 }
 
+remove_api_images() {
+    info "── 移除 FloatCTF API runtime images ──"
+    local id
+    while read -r id; do
+        [ -n "$id" ] || continue
+        if [ "$(docker image inspect -f '{{ index .Config.Labels "io.floatctf.managed" }}' "$id" 2>/dev/null)" = "true" ]; then
+            docker image rm -f "$id" >/dev/null 2>&1 || warn "删除 API image $id 失败（忽略）"
+        else
+            warn "floatctf/api image $id 无 managed label，跳过"
+        fi
+    done < <(docker image ls --filter 'reference=floatctf/api:*' -q 2>/dev/null | sort -u)
+    ok "API runtime image 清理完成"
+}
+
 remove_application_artifacts() {
     info "── 移除可运行应用产物（保留 data/config/.env/runtime/logs）──"
-    # 只删可再生产物：bin/、web/、compose.dev.yml、compose.prod.yml；保留持久/可恢复状态。
+    # image/ 是生产 API build context；bin/ 仅为旧版 native API 兼容清理。
     local p
-    for p in "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml"; do
+    for p in "$FCTF_ROOT/image" "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml" "$FCTF_ROOT/merged.sql" "$HELPER_INSTALL_PATH"; do
         if [ -e "$p" ] || [ -L "$p" ]; then
             rm -rf -- "$p" && ok "已移除 $p" || warn "移除 $p 失败（忽略）"
         fi
@@ -325,7 +348,8 @@ safe_uninstall() {
     systemctl_stop_units
     # 4. infra 容器（保数据）
     stop_infra_containers
-    # 5. 移除可运行应用产物
+    # 5. 移除可再生 API image 与应用产物
+    remove_api_images
     remove_application_artifacts
 
     ok "FloatCTF 已卸载。"
@@ -362,13 +386,13 @@ purge_confirm() {
     echo "  - RustFS 数据            : $FCTF_ROOT/data/rustfs"
     echo "  - Caddy 证书/账户状态    : $FCTF_ROOT/data/caddy"
     echo "  - 配置 / 密钥            : $FCTF_ROOT/config, $FCTF_ROOT/.env"
-    echo "  - API 二进制 / web / compose / runtime / 日志"
-    echo "  - systemd 单元            floatctf-{api,infra}.service, floatctf.target"
+    echo "  - API image/build context / web / compose / runtime / 日志"
+    echo "  - systemd 单元            floatctf-{helper,infra}.service, floatctf.target（含旧 api unit 兼容清理）"
     echo "  - 动态赛事资源            GameBox/FlagServer/JudgeServer 容器、赛事网络、"
     echo "                             WireGuard 接口、nftables 表、转发规则"
     echo "  - sysctl/modules 文件      /etc/sysctl.d/99-floatctf.conf,"
     echo "                              /etc/modules-load.d/floatctf-br-netfilter.conf"
-    echo "  - floatctf 服务用户"
+    echo "  - floatctf / floatctf-helper 服务用户"
     echo "  - 安装根目录               $FCTF_ROOT（含本卸载脚本）"
     echo ""
     echo "此操作不可撤销。如要继续，请输入: PURGE FLOATCTF"
@@ -390,16 +414,18 @@ purge_remove_dynamic() {
 purge_remove_systemd_units() {
     info "── 移除 FloatCTF systemd 单元 ──"
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop floatctf.target floatctf-api.service floatctf-infra.service 2>/dev/null || true
-        systemctl disable floatctf.target floatctf-api.service floatctf-infra.service 2>/dev/null || true
+        systemctl stop floatctf.target floatctf-api.service floatctf-helper.service floatctf-infra.service 2>/dev/null || true
+        systemctl disable floatctf.target floatctf-api.service floatctf-helper.service floatctf-infra.service 2>/dev/null || true
         rm -f /etc/systemd/system/floatctf-api.service \
+              /etc/systemd/system/floatctf-helper.service \
               /etc/systemd/system/floatctf-infra.service \
               /etc/systemd/system/floatctf.target
         systemctl daemon-reload 2>/dev/null || true
-        systemctl reset-failed floatctf.target floatctf-infra.service floatctf-api.service 2>/dev/null || true
+        systemctl reset-failed floatctf.target floatctf-infra.service floatctf-helper.service floatctf-api.service 2>/dev/null || true
         ok "FloatCTF systemd 单元已移除"
     else
         rm -f /etc/systemd/system/floatctf-api.service \
+              /etc/systemd/system/floatctf-helper.service \
               /etc/systemd/system/floatctf-infra.service \
               /etc/systemd/system/floatctf.target
         ok "无 systemctl，直接移除单元文件"
@@ -427,7 +453,15 @@ purge_remove_sysctl_modules() {
 }
 
 purge_remove_user() {
-    info "── 移除 floatctf 服务用户 ──"
+    info "── 移除 FloatCTF 服务用户 ──"
+    if id "$FCTF_HELPER_USER" >/dev/null 2>&1; then
+        userdel "$FCTF_HELPER_USER" 2>/dev/null \
+            && ok "已移除用户 $FCTF_HELPER_USER" \
+            || warn "userdel $FCTF_HELPER_USER 失败（可能仍有进程占用）"
+    else
+        ok "用户 $FCTF_HELPER_USER 不存在"
+    fi
+
     if id "$FCTF_USER" >/dev/null 2>&1; then
         # 校验确为 FloatCTF 创建：家目录是该安装根、nologin、system 用户。
         local home shell
@@ -444,6 +478,12 @@ purge_remove_user() {
     else
         ok "用户 $FCTF_USER 不存在"
     fi
+
+    if getent group "$FCTF_USER" >/dev/null 2>&1; then
+        groupdel "$FCTF_USER" 2>/dev/null \
+            && ok "已移除系统组 $FCTF_USER" \
+            || warn "groupdel $FCTF_USER 失败（可能仍被账户使用）"
+    fi
     # 绝不删除 docker 组或无关用户。
 }
 
@@ -451,15 +491,18 @@ purge_run() {
     info "==== 永久删除（purge）===="
     purge_confirm
 
+    # 先移除生产 API，阻止 recovery/scheduler 继续重建资源。
+    stop_api_first
     # 动态赛事资源（所有权限定）
     purge_remove_dynamic
     # systemd 单元
     purge_remove_systemd_units
-    # infra 容器（保数据到最后一刻：purge 会紧接着删除数据目录）
+    # 生产容器（保数据到最后一刻：purge 会紧接着删除数据目录）
     stop_infra_containers
+    remove_api_images
     # 主机初始化文件
     purge_remove_sysctl_modules
-    # 删除安装根目录（含 PG/RustFS 数据、config、secrets、bin、web、runtime、日志、
+    # 删除安装根目录（含 PG/RustFS 数据、config、secrets、image、web、runtime、日志、
     # compose、.initialized、本脚本）。用临时文件夹承载 FCTF_ROOT 以彻底删除，随后遗留
     # 的空父目录不删（可能为系统原有 /home）。
     if [ -e "$FCTF_ROOT" ]; then

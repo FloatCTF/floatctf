@@ -3,11 +3,13 @@
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
 };
+use std::collections::BTreeMap;
+
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::entity::{
-    awd_wireguard_peers,
+    awd_runtime_resources, awd_wireguard_peers,
     sea_orm_active_enums::{AwdEventStatus, WgPeerStatus},
 };
 use crate::modules::event::awd::{
@@ -46,27 +48,67 @@ pub async fn archive_event(
         ));
     }
 
-    // 1. Stop and remove all GameBox containers
-    // pair：容器实现/名称在归一化根（event_instances）。
+    // 1. Stop and remove every event-owned container before removing its Docker network.
+    //
+    // GameBox runtime roots are persisted in event_instances; FlagServer/JudgeServer are
+    // persisted in awd_runtime_resources.  The live label scan additionally catches stale
+    // or orphaned containers that survived a previous partial cleanup.  Docker refuses to
+    // remove a network while any endpoint is still attached, so infra containers must be
+    // explicit cleanup targets rather than relying on network deletion to cascade.
+    let mut container_targets: BTreeMap<String, String> = BTreeMap::new();
+
     let instances = gamebox_repo::find_instances_by_event(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?;
-
     for (_, root) in &instances {
-        let target = root
-            .container_id
-            .as_deref()
-            .unwrap_or(root.container_name.as_str());
-        if let Err(e) = containers.stop_container(target).await {
+        container_targets.insert(
+            root.container_name.clone(),
+            root.container_id
+                .clone()
+                .unwrap_or_else(|| root.container_name.clone()),
+        );
+    }
+
+    let infra_resources = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(
+            awd_runtime_resources::Column::ResourceType
+                .is_in(["flagserver".to_string(), "judgeserver".to_string()]),
+        )
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    for resource in infra_resources {
+        let target = resource
+            .resource_name
+            .clone()
+            .unwrap_or_else(|| resource.resource_id.clone());
+        container_targets.insert(resource.resource_id, target);
+    }
+
+    match containers.list_event_containers(event_id).await {
+        Ok(live) => {
+            for state in live {
+                container_targets.insert(state.container_name, state.container_id);
+            }
+        }
+        Err(e) => warn!(
+            "[Archive] list event containers for {} failed: {} — continuing with persisted targets",
+            event_id, e
+        ),
+    }
+
+    for (container_name, target) in container_targets {
+        if let Err(e) = containers.stop_container(&target).await {
             info!(
                 "[Archive] stop {} ({}): {} — continuing remove",
-                target, root.container_name, e
+                target, container_name, e
             );
         }
-        if let Err(e) = containers.remove_container(target).await {
+        if let Err(e) = containers.remove_container(&target).await {
             info!(
                 "[Archive] remove {} ({}): {} — continuing",
-                target, root.container_name, e
+                target, container_name, e
             );
         }
     }
@@ -113,7 +155,7 @@ pub async fn archive_event(
     // 3.5 Remove Docker 29 anti-spoof bypass rules（Phase 9.1，幂等还原；
     // 必须在桥/接口删除前移除——规则按接口名匹配，不依赖接口存在）。
     if let Some(net) = event_network.as_ref() {
-        crate::modules::event::awd::infrastructure::firewall::DockerForwardRuntime::new()
+        crate::modules::event::awd::infrastructure::firewall::HelperDockerForwardRuntime::new()
             .remove_access(
                 &crate::modules::event::awd::infrastructure::firewall::DockerForwardAccessSpec {
                     wg_interface: net.wireguard_interface_name.clone(),
@@ -136,7 +178,6 @@ pub async fn archive_event(
     }
 
     // 4. Remove Docker network（Observed ID 属 awd_runtime_resources，§14）
-    use crate::entity::awd_runtime_resources;
     let docker_network_id = awd_runtime_resources::Entity::find()
         .filter(awd_runtime_resources::Column::EventId.eq(event_id))
         .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))

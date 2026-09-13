@@ -4,11 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import MDEditor from "@uiw/react-md-editor";
 import dayjs from "dayjs";
-import { type FormEvent, useMemo, useState } from "react";
+import { Fragment, type FormEvent, useMemo, useState } from "react";
 import { match } from "ts-pattern";
 
 import { serviceApi } from "@/api";
-import { eventInfoQueryOptions } from "@/api/queries";
+import { eventInfoQueryOptions } from "@/api/queries/service/events";
 import { SubmitWriteup, useMsgInlineBanner } from "@/components";
 import { ParticipantMode } from "@/entity";
 import type { EventInfo } from "..";
@@ -233,12 +233,11 @@ function RouteComponent() {
 											</dd>
 
 											{eventData.team_result?.members.map((member) => (
-												<>
-													<dt key={member.member.user_id} className="font-bold">
+												<Fragment key={member.member.user_id}>
+													<dt className="font-bold">
 														{member.member.role}
 													</dt>
 													<dd
-														key={member.member.user_id}
 														className="font-medium  break-all"
 													>
 														{member.member_name} @{" "}
@@ -247,7 +246,7 @@ function RouteComponent() {
 															.local()
 															.format("YYYY-MM-DD HH:mm:ss")}
 													</dd>
-												</>
+												</Fragment>
 											))}
 										</dl>
 										{/* 已加入未开始 */}
@@ -342,7 +341,9 @@ function RouteComponent() {
 						<dd className="font-medium break-all">{ev.id}</dd>
 
 						<dt className="font-bold">Type</dt>
-						<dd className="font-medium">{ev.family} / {ev.participant_mode}</dd>
+						<dd className="font-medium">
+							{ev.family} / {ev.participant_mode}
+						</dd>
 
 						<dt className="font-bold">Start</dt>
 						<dd className="font-medium">{formatDate(ev.start_time)}</dd>

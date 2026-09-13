@@ -5,7 +5,7 @@
 
 pub mod api;
 pub mod application;
-pub(crate) mod domain;
+pub mod domain;
 pub mod infrastructure;
 
 // crate 内部调用方的便捷再导出

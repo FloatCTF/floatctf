@@ -1,13 +1,17 @@
 //! AWD 网络运行时编排。
 
 use async_trait::async_trait;
+use helper_protocol::{EventNetworkObservation, Request};
 use uuid::Uuid;
 
-use crate::modules::event::awd::{
-    AwdResult,
-    system::{
-        command::{CommandRunner, RealCommandRunner},
-        conntrack, wireguard,
+use crate::{
+    infrastructure::helper::HelperClient,
+    modules::event::awd::{
+        AwdResult,
+        system::{
+            command::{CommandRunner, RealCommandRunner},
+            conntrack, wireguard,
+        },
     },
 };
 
@@ -248,7 +252,109 @@ mod tests {
     }
 }
 
-/// 无宿主权限环境的空操作运行时（CI / 本地 API）。
+/// 通过 Unix socket 调用特权 `floatctf-helper` 的生产/开发实现。
+/// API 进程本身保持普通用户权限，WireGuard/conntrack/宿主路由操作集中在 helper。
+pub struct HelperNetworkRuntime {
+    client: HelperClient,
+}
+
+impl HelperNetworkRuntime {
+    pub fn new(socket_path: impl Into<String>) -> Self {
+        Self {
+            client: HelperClient::new(socket_path),
+        }
+    }
+
+    fn network_error(err: anyhow::Error) -> crate::modules::event::awd::AwdError {
+        crate::modules::event::awd::AwdError::Network(err.to_string())
+    }
+}
+
+#[async_trait]
+impl AwdNetworkRuntime for HelperNetworkRuntime {
+    async fn ensure_wireguard(&self, desired: WireGuardDesiredState) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::EnsureWireguard {
+                interface: desired.interface,
+                private_key: desired.private_key,
+                listen_port: desired.listen_port,
+                address: desired.address,
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn remove_wireguard(&self, interface: &str) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::RemoveWireguard {
+                interface: interface.to_string(),
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn revoke_peer(&self, peer: PeerIdentity) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::RemoveWireguardPeer {
+                interface: peer.interface,
+                public_key: peer.public_key,
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn add_peer(&self, peer: PeerIdentity, allowed_ips: &str) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::AddWireguardPeer {
+                interface: peer.interface,
+                public_key: peer.public_key,
+                allowed_ips: allowed_ips.to_string(),
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn clear_event_connections(&self, event: EventNetworkIdentity) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::FlushConntrack {
+                cidr: event.gamebox_cidr,
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn clear_team_connections(&self, team: TeamNetworkIdentity) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::FlushConntrack {
+                cidr: team.gamebox_subnet,
+            })
+            .await
+            .map_err(Self::network_error)
+    }
+
+    async fn inspect(&self, event: EventNetworkIdentity) -> AwdResult<NetworkObservedState> {
+        let interface =
+            crate::modules::event::awd::domain::network::wireguard_interface_name(&event.event_id);
+        let observed: EventNetworkObservation = self
+            .client
+            .call_data(Request::InspectEventNetwork { interface })
+            .await
+            .map_err(Self::network_error)?;
+        Ok(NetworkObservedState {
+            wireguard_interface_up: observed.wireguard_interface_up,
+            notes: observed.notes,
+        })
+    }
+
+    async fn list_host_route_cidrs(&self) -> AwdResult<Vec<String>> {
+        self.client
+            .call_data(Request::ListHostRouteCidrs)
+            .await
+            .map_err(Self::network_error)
+    }
+}
+
+/// 无宿主权限环境的空操作运行时（unit test / mock）。
 pub struct NoopNetworkRuntime;
 
 #[async_trait]

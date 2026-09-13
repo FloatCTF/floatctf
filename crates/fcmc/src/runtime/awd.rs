@@ -32,6 +32,8 @@ pub struct InfrastructureContainerSpec {
     pub image_ref: String,
     pub network_name: String,
     pub fixed_ip: String,
+    /// 额外 control-plane 网络；主 data 网络仍由 `network_name` 决定。
+    pub additional_networks: Vec<String>,
     pub env: Vec<String>,
     pub cpu_millis: Option<i64>,
     pub memory_bytes: Option<i64>,
@@ -254,6 +256,27 @@ impl AwdContainerRuntime for DockerRuntime {
                 healthcheck: None,
             })
             .await?;
+
+        for network in &spec.additional_networks {
+            let result = self
+                .docker
+                .connect_network(
+                    network,
+                    bollard::network::ConnectNetworkOptions::<String> {
+                        container: handle.container_id.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            if let Err(error) = result {
+                let _ = rt.stop_and_remove_immediate(&handle.container_id).await;
+                return Err(anyhow::anyhow!(
+                    "connect infrastructure container {} to control network {}: {error}",
+                    handle.container_name,
+                    network
+                ));
+            }
+        }
 
         Ok(ContainerHandle {
             container_id: handle.container_id,

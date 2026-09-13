@@ -82,5 +82,9 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             .service(operations::docker::delete_network),
     );
 
-    cfg.service(scope("/terminal").service(operations::terminal::terminal_ws));
+    cfg.service(
+        scope("/terminal")
+            .service(operations::terminal::create_terminal_session)
+            .service(operations::terminal::terminal_ws),
+    );
 }

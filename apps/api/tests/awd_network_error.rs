@@ -57,6 +57,7 @@ struct TestFixtures {
     event_id: Uuid,
     awd_event_id: Uuid, // internal awd_events PK
     team_id: Uuid,
+    gamebox_id: Uuid,
     user_id: Uuid,
     round_id: Uuid,
     instance_id: Uuid,
@@ -99,7 +100,7 @@ impl TestFixtures {
         let _ = events::Entity::delete_by_id(self.event_id)
             .exec(&self.db)
             .await;
-        let _ = gameboxes::Entity::delete_by_id(self.event_id)
+        let _ = gameboxes::Entity::delete_by_id(self.gamebox_id)
             .exec(&self.db)
             .await;
         let _ = users::Entity::delete_by_id(self.user_id)
@@ -129,7 +130,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let now = chrono::Utc::now();
     events::ActiveModel {
@@ -145,7 +146,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let hardening_ends_at = if phase == AwdPhase::Hardening {
         Some((now + chrono::Duration::seconds(300)).into())
@@ -179,7 +180,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let port: i32 = 52000 + (Uuid::new_v4().as_u128() % 40000) as i32;
     let net_suffix = Uuid::new_v4()
@@ -197,14 +198,14 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
         infrastructure_subnet: Set("10.44.0.0/24".parse().unwrap()),
         flagserver_ip: Set("10.44.0.10".parse().unwrap()),
         judgeserver_ip: Set("10.44.0.11".parse().unwrap()),
-        wireguard_interface_name: Set(format!("wg_neterr_{net_suffix}")),
+        wireguard_interface_name: Set(format!("wne_{net_suffix}")),
         wireguard_listen_port: Set(port),
         docker_network_name: Set(format!("docker_neterr_{net_suffix}")),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let team_id = Uuid::new_v4();
     event_teams::ActiveModel {
@@ -216,20 +217,20 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let gamebox_id = Uuid::new_v4();
     gameboxes::ActiveModel {
         id: Set(gamebox_id),
-        name: Set("neterr-gb".into()),
-        safe_name: Set("neterr-gb".into()),
+        name: Set(format!("neterr-gb-{suffix}")),
+        safe_name: Set(format!("neterr-gb-{suffix}")),
         category: Set("other".into()),
         hidden: Set(false),
         ..Default::default()
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let event_gamebox_id = Uuid::new_v4();
     awd_event_gameboxes::ActiveModel {
@@ -239,7 +240,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
         attack_score: Set(100),
         judge_down_penalty: Set(50),
         first_bonus: Set(50),
-        host_offset: Set(0),
+        host_offset: Set(5),
         enabled: Set(true),
         hidden: Set(false),
         cpu_millis: Set(500),
@@ -249,7 +250,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let root_id = Uuid::new_v4();
     let instance_id = Uuid::new_v4();
@@ -263,6 +264,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     event_instances::ActiveModel {
         id: Set(root_id),
         event_id: Set(event_id),
+        owner_team_id: Set(Some(team_id)),
         container_name: Set(format!("container-neterr-{cnt_suffix}")),
         container_id: Set(Some(format!("docker-neterr-{cnt_suffix}"))),
         runtime_generation: Set(1),
@@ -270,7 +272,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     event_gamebox_instances::ActiveModel {
         id: Set(instance_id),
@@ -285,7 +287,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
     }
     .insert(&db)
     .await
-    .ok()?;
+    .expect("insert AWD test fixture");
 
     let round_id = if with_round {
         let round_id = Uuid::new_v4();
@@ -301,7 +303,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
         }
         .insert(&db)
         .await
-        .ok()?;
+        .expect("insert AWD test fixture");
         round_id
     } else {
         Uuid::nil()
@@ -312,6 +314,7 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
         event_id,
         awd_event_id,
         team_id,
+        gamebox_id,
         user_id,
         round_id,
         instance_id,
@@ -320,496 +323,364 @@ async fn setup_test(phase: AwdPhase, with_round: bool) -> Option<TestFixtures> {
 
 // ── Hardening Freeze: NetworkError preserves remaining time ──
 
-#[test]
-fn network_error_freezes_hardening_remaining_time() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Hardening, false))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn network_error_freezes_hardening_remaining_time() {
+    let Some(fixtures) = setup_test(AwdPhase::Hardening, false).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Verify persisted state
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
+    // Verify persisted state
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
 
-        assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
-        assert_eq!(awd_event.paused_phase, Some(AwdPhase::Hardening));
-        assert!(
-            awd_event.pause_remaining_secs.unwrap_or(0) > 0,
-            "Remaining time should be preserved"
-        );
-        assert!(
-            awd_event.hardening_ends_at.is_none(),
-            "hardening_ends_at should be cleared"
-        );
+    assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
+    assert_eq!(awd_event.paused_phase, Some(AwdPhase::Hardening));
+    assert!(
+        awd_event.pause_remaining_secs.unwrap_or(0) > 0,
+        "Remaining time should be preserved"
+    );
+    assert!(
+        awd_event.hardening_ends_at.is_none(),
+        "hardening_ends_at should be cleared"
+    );
 
-        // Verify phase is Pause (NetworkError uses Pause firewall rules)
-        assert_eq!(awd_event.phase, AwdPhase::Pause);
+    // Verify phase is Pause (NetworkError uses Pause firewall rules)
+    assert_eq!(awd_event.phase, AwdPhase::Pause);
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Stale HardeningEnd does not advance during NetworkError ──
 
-#[test]
-fn stale_hardening_end_does_not_advance_network_error() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Hardening, false))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn stale_hardening_end_does_not_advance_network_error() {
+    let Some(fixtures) = setup_test(AwdPhase::Hardening, false).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Simulate stale HardeningEnd handler delivery
-        // The handler checks status != Running || phase != Hardening → skips
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
+    // Simulate stale HardeningEnd handler delivery
+    // The handler checks status != Running || phase != Hardening → skips
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
 
-        // Verify the handler would skip: status is NetworkError, not Running
-        assert_ne!(awd_event.status, AwdEventStatus::Running);
-        assert_eq!(awd_event.phase, AwdPhase::Pause);
+    // Verify the handler would skip: status is NetworkError, not Running
+    assert_ne!(awd_event.status, AwdEventStatus::Running);
+    assert_eq!(awd_event.phase, AwdPhase::Pause);
 
-        // Verify no Round 1 exists
-        let rounds = awd_rounds::Entity::find()
-            .filter(awd_rounds::Column::EventId.eq(fixtures.event_id))
-            .all(&fixtures.db)
-            .await
-            .unwrap();
-        assert!(
-            rounds.is_empty(),
-            "No rounds should exist during NetworkError"
-        );
+    // Verify no Round 1 exists
+    let rounds = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(fixtures.event_id))
+        .all(&fixtures.db)
+        .await
+        .unwrap();
+    assert!(
+        rounds.is_empty(),
+        "No rounds should exist during NetworkError"
+    );
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Hardening Resume: uses saved remaining time ──
 
-#[test]
-fn network_error_hardening_resume_uses_saved_remaining_time() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Hardening, false))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn network_error_hardening_resume_uses_saved_remaining_time() {
+    let Some(fixtures) = setup_test(AwdPhase::Hardening, false).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError (saves paused_phase=Hardening, remaining≈300s)
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError (saves paused_phase=Hardening, remaining≈300s)
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Verify healthy infra does NOT auto-resume
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
-
-        // Admin Resume
-        let network = NoopNetworkRuntime;
-        let firewall = NoopFirewallRuntime;
-        let publisher = NoopEventPublisher;
-
-        event_service::resume_event(
-            &fixtures.db,
-            &network,
-            &firewall,
-            &publisher,
-            fixtures.event_id,
-        )
+    // Verify healthy infra does NOT auto-resume
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
         .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
+
+    // Admin Resume
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
+
+    event_service::resume_event(
+        &fixtures.db,
+        &network,
+        &firewall,
+        &publisher,
+        fixtures.event_id,
+    )
+    .await
+    .unwrap();
+
+    // Verify resumed state
+    let resumed = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
         .unwrap();
 
-        // Verify resumed state
-        let resumed = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
+    assert_eq!(resumed.status, AwdEventStatus::Running);
+    assert_eq!(resumed.phase, AwdPhase::Hardening);
+    assert!(
+        resumed.hardening_ends_at.is_some(),
+        "hardening_ends_at should be rebuilt from saved remaining time"
+    );
+    assert_eq!(
+        resumed.pause_remaining_secs,
+        Some(0),
+        "pause_remaining_secs should be cleared after resume"
+    );
 
-        assert_eq!(resumed.status, AwdEventStatus::Running);
-        assert_eq!(resumed.phase, AwdPhase::Hardening);
-        assert!(
-            resumed.hardening_ends_at.is_some(),
-            "hardening_ends_at should be rebuilt from saved remaining time"
-        );
-        assert_eq!(
-            resumed.pause_remaining_secs,
-            Some(0),
-            "pause_remaining_secs should be cleared after resume"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Attack Round Freeze: NetworkError preserves round remaining time ──
 
-#[test]
-fn network_error_freezes_active_round() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Attack, true))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn network_error_freezes_active_round() {
+    let Some(fixtures) = setup_test(AwdPhase::Attack, true).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Verify event state
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
-        assert_eq!(awd_event.paused_phase, Some(AwdPhase::Attack));
-        assert!(
-            awd_event.pause_remaining_secs.unwrap_or(0) > 0,
-            "Remaining time should be preserved"
-        );
+    // Verify event state
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
+    assert_eq!(awd_event.paused_phase, Some(AwdPhase::Attack));
+    assert!(
+        awd_event.pause_remaining_secs.unwrap_or(0) > 0,
+        "Remaining time should be preserved"
+    );
 
-        // Verify round is paused
-        let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(round.status, RoundStatus::Paused);
-        assert!(
-            round.remaining_secs.unwrap_or(0) > 0,
-            "Round remaining_secs should be preserved"
-        );
+    // Verify round is paused
+    let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
+        .one(&fixtures.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(round.status, RoundStatus::Paused);
+    assert!(
+        round.remaining_secs.unwrap_or(0) > 0,
+        "Round remaining_secs should be preserved"
+    );
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Stale RoundEnd does not progress during NetworkError ──
 
-#[test]
-fn stale_round_end_does_not_progress_network_error() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Attack, true))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn stale_round_end_does_not_progress_network_error() {
+    let Some(fixtures) = setup_test(AwdPhase::Attack, true).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Verify the RoundEnd handler would skip:
-        // AwdRoundEndHandler checks ev.status == AwdEventStatus::NetworkError → skips
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
+    // Verify the RoundEnd handler would skip:
+    // AwdRoundEndHandler checks ev.status == AwdEventStatus::NetworkError → skips
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
 
-        // Round is still Paused, not Completed
-        let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(round.status, RoundStatus::Paused);
+    // Round is still Paused, not Completed
+    let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
+        .one(&fixtures.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(round.status, RoundStatus::Paused);
 
-        // No Round 2 exists
-        let round_count = awd_rounds::Entity::find()
-            .filter(awd_rounds::Column::EventId.eq(fixtures.event_id))
-            .all(&fixtures.db)
-            .await
-            .unwrap()
-            .len();
-        assert_eq!(round_count, 1, "Only Round 1 should exist");
+    // No Round 2 exists
+    let round_count = awd_rounds::Entity::find()
+        .filter(awd_rounds::Column::EventId.eq(fixtures.event_id))
+        .all(&fixtures.db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(round_count, 1, "Only Round 1 should exist");
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Attack Round Resume: uses saved remaining time ──
 
-#[test]
-fn network_error_round_resume_uses_saved_remaining_time() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Attack, true))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn network_error_round_resume_uses_saved_remaining_time() {
+    let Some(fixtures) = setup_test(AwdPhase::Attack, true).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // No auto-resume
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
-
-        // Admin Resume
-        let network = NoopNetworkRuntime;
-        let firewall = NoopFirewallRuntime;
-        let publisher = NoopEventPublisher;
-
-        event_service::resume_event(
-            &fixtures.db,
-            &network,
-            &firewall,
-            &publisher,
-            fixtures.event_id,
-        )
+    // No auto-resume
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(awd_event.status, AwdEventStatus::NetworkError);
 
-        // Verify resumed state
-        let resumed = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(resumed.status, AwdEventStatus::Running);
-        assert_eq!(resumed.phase, AwdPhase::Attack);
-        assert_eq!(resumed.pause_remaining_secs, Some(0));
+    // Admin Resume
+    let network = NoopNetworkRuntime;
+    let firewall = NoopFirewallRuntime;
+    let publisher = NoopEventPublisher;
 
-        // Round is Active again
-        let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(round.status, RoundStatus::Active);
-        assert!(
-            round.scheduled_end_at.with_timezone(&chrono::Utc) > chrono::Utc::now(),
-            "scheduled_end_at should be set"
-        );
-        assert!(
-            round.remaining_secs.is_none(),
-            "remaining_secs should be cleared after resume"
-        );
+    event_service::resume_event(
+        &fixtures.db,
+        &network,
+        &firewall,
+        &publisher,
+        fixtures.event_id,
+    )
+    .await
+    .unwrap();
 
-        fixtures.cleanup().await;
-    });
+    // Verify resumed state
+    let resumed = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.status, AwdEventStatus::Running);
+    assert_eq!(resumed.phase, AwdPhase::Attack);
+    assert_eq!(resumed.pause_remaining_secs, Some(0));
+
+    // Round is Active again
+    let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
+        .one(&fixtures.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(round.status, RoundStatus::Active);
+    assert!(
+        round.scheduled_end_at.with_timezone(&chrono::Utc) > chrono::Utc::now(),
+        "scheduled_end_at should be set"
+    );
+    assert!(
+        round.remaining_secs.is_none(),
+        "remaining_secs should be cleared after resume"
+    );
+
+    fixtures.cleanup().await;
 }
 
 // ── Action Freeze: NetworkError blocks competition actions ──
 
-#[test]
-fn network_error_blocks_competition_actions() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Attack, true))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn network_error_blocks_competition_actions() {
+    let Some(fixtures) = setup_test(AwdPhase::Attack, true).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    rt.block_on(async {
-        // Trigger NetworkError
-        recovery_service::handle_network_error(
-            &fixtures.db,
-            fixtures.event_id,
-            "test network failure",
-        )
+    // Trigger NetworkError
+    recovery_service::handle_network_error(&fixtures.db, fixtures.event_id, "test network failure")
         .await
         .unwrap();
 
-        // Verify is_active() returns false for NetworkError
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(!awd_event.status.is_active());
+    // Verify is_active() returns false for NetworkError
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!awd_event.status.is_active());
 
-        // Verify reset eligibility check rejects NetworkError
-        let reset_result =
-            floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
-                &awd_event,
-                fixtures.team_id,
-                false, // no active round
-                awd_event.round_count,
-            );
-        assert!(
-            reset_result.is_err(),
-            "Reset should be rejected during NetworkError"
+    // Verify reset eligibility check rejects NetworkError
+    let reset_result =
+        floatctf::modules::event::awd::service::reset_service::check_reset_eligibility(
+            &awd_event,
+            fixtures.team_id,
+            false, // no active round
+            awd_event.round_count,
         );
+    assert!(
+        reset_result.is_err(),
+        "Reset should be rejected during NetworkError"
+    );
 
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }
 
 // ── Individual GameBox Failure Control ──
 
-#[test]
-fn individual_gamebox_failure_does_not_freeze_event() {
-    let fixtures = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(setup_test(AwdPhase::Attack, true))
-    {
-        Some(f) => f,
-        None => return,
+#[tokio::test]
+async fn individual_gamebox_failure_does_not_freeze_event() {
+    let Some(fixtures) = setup_test(AwdPhase::Attack, true).await else {
+        return;
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    // Mark one GameBox as Missing
+    gamebox_repo::update_instance_status(
+        &fixtures.db,
+        fixtures.instance_id,
+        GameboxStatus::Missing,
+    )
+    .await
+    .unwrap();
 
-    rt.block_on(async {
-        // Mark one GameBox as Missing
-        gamebox_repo::update_instance_status(
-            &fixtures.db,
-            fixtures.instance_id,
-            GameboxStatus::Missing,
-        )
+    // Event should still be Running
+    let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
         .await
+        .unwrap()
         .unwrap();
+    assert_eq!(
+        awd_event.status,
+        AwdEventStatus::Running,
+        "Event should remain Running despite individual GameBox failure"
+    );
 
-        // Event should still be Running
-        let awd_event = event_repo::find_by_event_id(&fixtures.db, fixtures.event_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            awd_event.status,
-            AwdEventStatus::Running,
-            "Event should remain Running despite individual GameBox failure"
-        );
+    // Round should still be Active
+    let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
+        .one(&fixtures.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        round.status,
+        RoundStatus::Active,
+        "Round should remain Active despite individual GameBox failure"
+    );
 
-        // Round should still be Active
-        let round = awd_rounds::Entity::find_by_id(fixtures.round_id)
-            .one(&fixtures.db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            round.status,
-            RoundStatus::Active,
-            "Round should remain Active despite individual GameBox failure"
-        );
+    // GameBox should NOT be auto-recreated
+    let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        inst.status,
+        GameboxStatus::Missing,
+        "GameBox should remain Missing, not auto-recreated"
+    );
 
-        // GameBox should NOT be auto-recreated
-        let (inst, _root) = gamebox_repo::find_instance_by_id(&fixtures.db, fixtures.instance_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            inst.status,
-            GameboxStatus::Missing,
-            "GameBox should remain Missing, not auto-recreated"
-        );
-
-        fixtures.cleanup().await;
-    });
+    fixtures.cleanup().await;
 }

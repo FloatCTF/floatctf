@@ -63,7 +63,7 @@ fn build_points(
         for (&owner_id, solves) in owner_solves_map {
             let score = owner_scores.entry(owner_id).or_insert(0.0);
             for solve in solves.iter().filter(|s| s.created_at == time) {
-                *score += solve.bonus_points;
+                *score += solve.obtained_points + solve.bonus_points;
             }
             let name = solves
                 .iter()

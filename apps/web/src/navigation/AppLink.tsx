@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { forwardRef } from "react";
 import { useNavigation } from "./NavigationContext";
 import type { CoordinatorNavigateOptions } from "./navigation-types";
 
@@ -19,25 +20,21 @@ import type { CoordinatorNavigateOptions } from "./navigation-types";
  * - defaultPreload="intent"（悬停/触摸意图预加载）
  * - Link 激活态（activeProps/inactiveProps）
  */
-export interface AppLinkProps {
+export interface AppLinkProps
+	extends Omit<
+		React.AnchorHTMLAttributes<HTMLAnchorElement>,
+		"href" | "children"
+	> {
 	/** 目标路由路径。外链（https://…、mailto:…）绕过 SPA。 */
 	to: string;
 	params?: Record<string, any>;
 	search?: Record<string, any>;
 	hash?: string;
 	preload?: false | "intent" | "viewport" | "render";
-	/** 链接 target。非 "_self" 时绕过协调器。 */
-	target?: string;
-	/** 下载链接——渲染为普通 a，绕过协调器。 */
-	download?: string | boolean;
 	/** 外部 href——渲染为普通 a，绕过协调器。 */
 	href?: string;
 	/** 强制整页刷新——绕过协调器。 */
 	reloadDocument?: boolean;
-	className?: string;
-	style?: React.CSSProperties;
-	"aria-current"?: React.AriaAttributes["aria-current"];
-	onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 	children?: React.ReactNode;
 }
 
@@ -58,77 +55,98 @@ function shouldBypass(
 	return false;
 }
 
-export function AppLink({
-	onClick,
-	children,
-	target,
-	download,
-	href,
-	reloadDocument,
-	style,
-	className,
-	"aria-current": ariaCurrent,
-	preload,
-	...navigateOpts
-}: AppLinkProps) {
-	const { navigateWithTransition } = useNavigation();
+export const AppLink = forwardRef<HTMLAnchorElement, AppLinkProps>(
+	function AppLink(
+		{
+			onClick,
+			children,
+			target,
+			download,
+			href,
+			reloadDocument,
+			style,
+			className,
+			"aria-current": ariaCurrent,
+			preload,
+			...rest
+		},
+		ref,
+	) {
+		const { navigateWithTransition } = useNavigation();
+		const { to, params, search, hash, ...anchorProps } = rest;
 
-	// download / 显式外链 → 普通 a 标签，不做 SPA 导航
-	if (download !== undefined || href !== undefined) {
-		return (
-			<a
-				href={href ?? navigateOpts.to}
-				download={
-					typeof download === "string" ? download : download ? "" : undefined
-				}
-				target={target}
-				style={style}
-				className={className}
-				onClick={onClick}
-			>
-				{children}
-			</a>
-		);
-	}
-
-	const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-		if (shouldBypass(event, { ...navigateOpts, target, reloadDocument })) {
-			onClick?.(event);
-			return;
+		// download / 显式外链 → 普通 a 标签，不做 SPA 导航。
+		if (download !== undefined || href !== undefined) {
+			return (
+				<a
+					{...anchorProps}
+					ref={ref}
+					href={href ?? to}
+					download={
+						typeof download === "string" ? download : download ? "" : undefined
+					}
+					target={target}
+					style={style}
+					className={className}
+					aria-current={ariaCurrent}
+					onClick={onClick}
+				>
+					{children}
+				</a>
+			);
 		}
 
-		// 拦截：阻止浏览器默认导航
-		event.preventDefault();
-		onClick?.(event);
+		const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+			if (
+				shouldBypass(event, {
+					...anchorProps,
+					to,
+					params,
+					search,
+					hash,
+					target,
+					reloadDocument,
+				})
+			) {
+				onClick?.(event);
+				return;
+			}
 
-		const navOpts: CoordinatorNavigateOptions = {
-			to: navigateOpts.to,
-			params: navigateOpts.params,
-			search: navigateOpts.search,
-			hash: navigateOpts.hash,
-			preload,
-			target,
-			reloadDocument,
+			// 拦截：阻止浏览器默认导航。
+			event.preventDefault();
+			onClick?.(event);
+
+			const navOpts: CoordinatorNavigateOptions = {
+				to,
+				params,
+				search,
+				hash,
+				preload,
+				target,
+				reloadDocument,
+			};
+
+			void navigateWithTransition(navOpts);
 		};
 
-		void navigateWithTransition(navOpts);
-	};
-
-	return (
-		<Link
-			to={navigateOpts.to}
-			params={navigateOpts.params as never}
-			search={navigateOpts.search as never}
-			hash={navigateOpts.hash}
-			target={target}
-			reloadDocument={reloadDocument}
-			preload={preload}
-			style={style}
-			className={className}
-			aria-current={ariaCurrent}
-			onClick={handleClick}
-		>
-			{children}
-		</Link>
-	);
-}
+		return (
+			<Link
+				{...anchorProps}
+				ref={ref}
+				to={to}
+				params={params as never}
+				search={search as never}
+				hash={hash}
+				target={target}
+				reloadDocument={reloadDocument}
+				preload={preload}
+				style={style}
+				className={className}
+				aria-current={ariaCurrent}
+				onClick={handleClick}
+			>
+				{children}
+			</Link>
+		);
+	},
+);

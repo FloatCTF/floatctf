@@ -18,7 +18,7 @@ use crate::modules::event::awd::{
     crypto::{AwdCrypto, EncryptedBlob},
     domain::{AwdEventStatusExt, Ipv4Cidr, instance_ip_for_offset},
     infrastructure::{
-        firewall::{DockerForwardAccessSpec, DockerForwardRuntime, FirewallRuntime},
+        firewall::{DockerForwardAccessSpec, FirewallRuntime, HelperDockerForwardRuntime},
         network::{AwdNetworkRuntime, WireGuardDesiredState},
     },
     repo::{event_gamebox_repo, event_network_repo, event_repo, gamebox_repo},
@@ -79,12 +79,13 @@ pub async fn deploy_event(
         let event_network = event_network_repo::require_by_event_id(db, event_id).await?;
         event_network_service::lock(db, event_id).await?;
 
-        // 0.5 每赛事内部平台端点（Phase 9.1，spec 授权）：固定 platform_internal_url
-        // 只对首个事件有效（网关随网段推进）。派生 = 事件 infra 网关 + 模板端口，
-        // 注入本赛事的 FlagServer/JudgeServer（不依赖旧事件桥存活）。
-        let internal_platform_url =
-            crate::modules::event::awd::domain::network::derive_event_internal_platform_url(
+        // 0.5 internal API 回调路径：原生开发模式继续经本赛事 infra 网关；
+        // 生产容器化模式把 API + infra 容器接入独立 control network，使用固定 URL，
+        // 从而无需把 API 端口发布到宿主公网接口。
+        let (internal_platform_url, internal_platform_networks) =
+            crate::modules::event::awd::domain::network::resolve_internal_platform_endpoint(
                 &awd_config.platform_internal_url,
+                awd_config.platform_internal_network.as_deref(),
                 &event_network.infrastructure_subnet.to_string(),
             )?;
 
@@ -106,6 +107,7 @@ pub async fn deploy_event(
             &awd_event.flagserver_token_ciphertext,
             &awd_event.flagserver_token_nonce,
             &internal_platform_url,
+            &internal_platform_networks,
         )
         .await?;
         ensure_infra_container(
@@ -121,6 +123,7 @@ pub async fn deploy_event(
             &awd_event.judgeserver_token_ciphertext,
             &awd_event.judgeserver_token_nonce,
             &internal_platform_url,
+            &internal_platform_networks,
         )
         .await?;
 
@@ -155,7 +158,7 @@ pub async fn deploy_event(
         // 先于 FloatCTF forward priority 1 执行；真实主机实测 + 复现，报告 §2.3/§2.6）。
         // 这里按赛事作用域幂等放行（raw 链首 ACCEPT + DOCKER-USER ACCEPT），
         // 隔离矩阵仍由 FloatCTF forward 链执行；archive 时 remove（幂等还原）。
-        let docker_forward = DockerForwardRuntime::new();
+        let docker_forward = HelperDockerForwardRuntime::new();
         docker_forward
             .ensure_access(&DockerForwardAccessSpec {
                 wg_interface: event_network.wireguard_interface_name.clone(),
@@ -323,6 +326,7 @@ async fn ensure_infra_container(
     token_ct: &Option<Vec<u8>>,
     token_nonce: &Option<Vec<u8>>,
     platform_internal_url: &str,
+    additional_networks: &[String],
 ) -> AwdResult<()> {
     let container_name = format!("fctf-{}-{}", kind, &event_id.to_string()[..8]);
     let resource_id = container_name.clone();
@@ -376,6 +380,7 @@ async fn ensure_infra_container(
             image_ref,
             network_name: network_name.to_string(),
             fixed_ip: fixed_ip.to_string(),
+            additional_networks: additional_networks.to_vec(),
             env: {
                 // flagserver 与 judgeserver 都通过 PLATFORM_INTERNAL_URL 回调平台
                 // （flagserver 需要它来 issue flag / judgeserver 需要它来 claim 任务）；

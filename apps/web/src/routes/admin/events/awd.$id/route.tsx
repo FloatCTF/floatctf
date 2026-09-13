@@ -17,7 +17,7 @@ import {
 } from "@/entity";
 import { useAdminAwdEventStream } from "@/hooks/useAdminAwdEventStream";
 import { AwdEventProgress, adminProgressState } from "@/components/awd/AwdEventProgress";
-import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 
 export const Route = createFileRoute("/admin/events/awd/$id")({
 	component: RouteComponent,

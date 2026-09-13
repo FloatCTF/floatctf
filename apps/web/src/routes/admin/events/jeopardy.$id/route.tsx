@@ -10,7 +10,7 @@ import {
     ParticipantMode,
     type Events,
 } from "@/entity";
-import { RouterNavItem } from "@/routes/service/events/jeopardy.$id/route";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 
 export const Route = createFileRoute("/admin/events/jeopardy/$id")({
     component: RouteComponent,

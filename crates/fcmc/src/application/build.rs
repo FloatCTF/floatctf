@@ -2,13 +2,11 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
-use bollard::Docker;
-
 use crate::metadata::{
     ArtifactKind, ChallengeMeta, GameBoxMeta, build_artifact_image_ref, build_gamebox_image_ref,
 };
-use crate::runtime::{DockerContainerRuntime, ImageBuildRequest, ImageRuntime};
+use crate::runtime::{DockerContainerRuntime, ImageBuildRequest, ImageRuntime, connect_preferred};
+use anyhow::{Context, Result};
 
 /// CLI 未提供 `-t/--tag` 时使用的默认 registry 前缀。
 /// 平台导入必须从配置传入显式 tag——禁止在 API 代码中写死。
@@ -53,7 +51,9 @@ pub async fn build_challenge(dir: &Path, tag: Option<&str>, proxy: Option<&str>)
         anyhow::bail!("Dockerfile not found: {:?}", src_dir.join("Dockerfile"));
     }
 
-    let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
+    let (docker, _) = connect_preferred()
+        .await
+        .context("Failed to connect to Docker")?;
     let rt = DockerContainerRuntime::new(docker);
 
     // Note: only `src/` is the build context — meta.toml / attachment/ are excluded.
@@ -117,7 +117,9 @@ pub async fn build_gamebox(dir: &Path, tag: Option<&str>, proxy: Option<&str>) -
         anyhow::bail!("Dockerfile not found: {:?}", src_dir.join("Dockerfile"));
     }
 
-    let docker = Docker::connect_with_defaults().context("Failed to connect to Docker")?;
+    let (docker, _) = connect_preferred()
+        .await
+        .context("Failed to connect to Docker")?;
     let rt = DockerContainerRuntime::new(docker);
 
     // Note: only `src/` is the build context — `judge/` is intentionally excluded.

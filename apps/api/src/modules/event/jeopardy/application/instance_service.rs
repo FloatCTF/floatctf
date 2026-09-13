@@ -117,7 +117,24 @@ impl InstanceService {
 
         let node_ip = get_setting(&self.db, "NODE_IP").await?;
         let http_prefix = get_setting(&self.db, "HTTP_PREFIX").await?;
+        let delay = get_setting(&self.db, "INSTANCE_DESTROY_DELAY")
+            .await?
+            .parse::<i64>()?;
+        if users::Entity::find_by_id(user_id)
+            .one(&self.db)
+            .await?
+            .is_none()
+        {
+            return Err(anyhow!("user not found: {}", user_id));
+        }
 
+        let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
+        let instance_id = Uuid::new_v4();
+        let now = Utc::now().fixed_offset();
+        let image_ref = runtime_spec.as_ref().map(|s| s.image_ref.clone());
+        let has_runtime = runtime_spec.is_some();
+
+        // Docker 是数据库事务外部副作用。后续 DB 持久化失败时必须补偿删除已启动容器。
         let content = match &runtime_spec {
             Some(spec) => {
                 let port = self.runtime.launch(spec, &identifier).await?;
@@ -129,50 +146,62 @@ impl InstanceService {
             None => "".into(),
         };
 
-        let delay = get_setting(&self.db, "INSTANCE_DESTROY_DELAY")
-            .await?
-            .parse::<i64>()?;
+        let persist_result: anyhow::Result<event_challenge_instance::Model> = async {
+            // 归一化实例：instances 为运行时根（容器名/状态/过期），event_challenge_instance 为题目关联（id 相同）。
+            let txn = self.db.begin().await?;
 
-        let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
-        let instance_id = Uuid::new_v4();
-        let now = Utc::now().fixed_offset();
+            event_instances::ActiveModel {
+                id: Set(instance_id),
+                event_id: Set(event_id),
+                owner_user_id: Set(Some(user_id)),
+                owner_team_id: Set(team_id),
+                image_ref: Set(image_ref),
+                container_id: Set(None),
+                container_name: Set(identifier.clone()),
+                runtime_state: Set("running".to_string()),
+                runtime_generation: Set(1),
+                created_at: Set(now),
+                started_at: Set(Some(now)),
+                stopped_at: Set(None),
+                expires_at: Set(Some(destroy_at.clone().into())),
+                updated_at: Set(now),
+            }
+            .insert(&txn)
+            .await?;
 
-        // 归一化实例：instances 为运行时根（容器名/状态/过期），event_challenge_instance 为题目关联（id 相同）。
-        let txn = self.db.begin().await?;
+            let new_instance = event_challenge_instance::ActiveModel {
+                id: Set(instance_id),
+                flag: Set(flag),
+                content: Set(content.into()),
+                user_id: Set(user_id),
+                challenge_id: Set(challenge_id),
+                event_id: Set(event_id),
+                team_id: Set(team_id),
+                ..Default::default()
+            }
+            .insert(&txn)
+            .await?;
 
-        event_instances::ActiveModel {
-            id: Set(instance_id),
-            event_id: Set(event_id),
-            owner_user_id: Set(Some(user_id)),
-            owner_team_id: Set(None),
-            image_ref: Set(runtime_spec.as_ref().map(|s| s.image_ref.clone())),
-            container_id: Set(None),
-            container_name: Set(identifier.clone()),
-            runtime_state: Set("running".to_string()),
-            runtime_generation: Set(1),
-            created_at: Set(now),
-            started_at: Set(Some(now)),
-            stopped_at: Set(None),
-            expires_at: Set(Some(destroy_at.clone().into())),
-            updated_at: Set(now),
+            txn.commit().await?;
+            Ok(new_instance)
         }
-        .insert(&txn)
-        .await?;
+        .await;
 
-        let new_instance = event_challenge_instance::ActiveModel {
-            id: Set(instance_id),
-            flag: Set(flag),
-            content: Set(content.into()),
-            user_id: Set(user_id),
-            challenge_id: Set(challenge_id),
-            event_id: Set(event_id),
-            team_id: Set(team_id),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
-
-        txn.commit().await?;
+        let new_instance = match persist_result {
+            Ok(instance) => instance,
+            Err(error) => {
+                if has_runtime {
+                    if let Err(cleanup_error) = self.runtime.stop_and_remove(&identifier).await {
+                        warn!(
+                            container = %identifier,
+                            error = %cleanup_error,
+                            "failed to compensate Jeopardy runtime after DB persistence failure"
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        };
 
         let mut res = new_instance;
         res.flag.clear();
@@ -180,10 +209,6 @@ impl InstanceService {
         // Auto-destroy after delay (best-effort background task).
         let service = self.clone();
         let d_id = res.id;
-        let d_user = users::Entity::find_by_id(user_id)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow!("user not found: {}", user_id))?;
 
         actix_web::rt::spawn(async move {
             let now = Utc::now();
@@ -191,7 +216,7 @@ impl InstanceService {
             match delay {
                 Ok(d) => {
                     actix_web::rt::time::sleep(d).await;
-                    if let Err(e) = service.destroy_owned(d_id, d_user.id).await {
+                    if let Err(e) = service.destroy_owned(d_id, user_id).await {
                         tracing::error!("[@destroy_auto]{}", e);
                     }
                 }
@@ -211,6 +236,26 @@ impl InstanceService {
     pub async fn destroy_owned(&self, instance_id: Uuid, user_id: Uuid) -> anyhow::Result<bool> {
         let Some((instance, runtime)) =
             repo::find_owned_running(&self.db, instance_id, user_id).await?
+        else {
+            return Ok(false);
+        };
+        self.destroy_model(instance, runtime).await?;
+        Ok(true)
+    }
+
+    /// Destroy a running instance owned by a team inside one event.
+    ///
+    /// Team instances are shared: `event_challenge_instance.user_id` is only the member who
+    /// originally launched it. Authorization therefore uses the stable `(event_id, team_id)`
+    /// subject so any current teammate can clean up the same runtime without widening access.
+    pub async fn destroy_team_owned(
+        &self,
+        instance_id: Uuid,
+        event_id: Uuid,
+        team_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        let Some((instance, runtime)) =
+            repo::find_team_running(&self.db, instance_id, event_id, team_id).await?
         else {
             return Ok(false);
         };
@@ -245,8 +290,13 @@ impl InstanceService {
         let result = self.remove_runtime_if_needed(&instance, &runtime).await;
         match result {
             Ok(()) => {
-                repo::transition_runtime_state(&self.db, instance.id, "running", "completed")
-                    .await?;
+                repo::transition_runtime_state(
+                    &self.db,
+                    instance.id,
+                    &runtime.runtime_state,
+                    "completed",
+                )
+                .await?;
                 Ok(())
             }
             Err(error) => {

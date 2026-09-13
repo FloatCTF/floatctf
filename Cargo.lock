@@ -1954,6 +1954,7 @@ name = "floatctf"
 version = "0.3.3"
 dependencies = [
  "actix-cors",
+ "actix-http",
  "actix-multipart",
  "actix-web",
  "actix-ws",
@@ -1970,6 +1971,7 @@ dependencies = [
  "fcmc",
  "flate2",
  "futures-util",
+ "helper-protocol",
  "hex",
  "hkdf",
  "hmac 0.12.1",
@@ -2044,6 +2046,23 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "floatctf-helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "helper-protocol",
+ "http-body-util",
+ "hyper 1.11.0",
+ "hyper-util",
+ "hyperlocal",
+ "ipnet",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2341,6 +2360,14 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "helper-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "hex"

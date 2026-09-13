@@ -15,9 +15,10 @@ pub use runtime::awd::{
 
 // ── Unified low-level runtime ──
 pub use runtime::{
-    ContainerFilter, ContainerRuntime, ContainerSpec, DEFAULT_STOP_TIMEOUT, DockerContainerRuntime,
-    ExecOptions, ExecOutcome, IMMEDIATE_STOP_TIMEOUT, MAX_COPY_BYTES, NetworkSpec, PortBinding,
-    ResourceLimits,
+    ContainerFilter, ContainerRuntime, ContainerSpec, DEFAULT_HELPER_DOCKER_SOCKET,
+    DEFAULT_STOP_TIMEOUT, DockerConnectionKind, DockerContainerRuntime, ExecOptions, ExecOutcome,
+    IMMEDIATE_STOP_TIMEOUT, MAX_COPY_BYTES, NetworkInspect, NetworkSpec, PortBinding,
+    ResourceLimits, connect_preferred,
 };
 
 // ── Image runtime ──

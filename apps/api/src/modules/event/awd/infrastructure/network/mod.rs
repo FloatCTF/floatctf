@@ -5,8 +5,9 @@ pub mod runtime;
 
 pub use keys::{WgKeyPair, generate_keypair, public_from_private};
 pub use runtime::{
-    AwdNetworkRuntime, EventNetworkIdentity, HostNetworkRuntime, NetworkObservedState,
-    NoopNetworkRuntime, PeerIdentity, TeamNetworkIdentity, WireGuardDesiredState,
+    AwdNetworkRuntime, EventNetworkIdentity, HelperNetworkRuntime, HostNetworkRuntime,
+    NetworkObservedState, NoopNetworkRuntime, PeerIdentity, TeamNetworkIdentity,
+    WireGuardDesiredState,
 };
 
 // Compatibility re-exports of the system command layer.

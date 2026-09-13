@@ -36,11 +36,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use helper_protocol::{DockerForwardCheck, Request};
 use tracing::warn;
 
-use crate::modules::event::awd::{
-    AwdError, AwdResult,
-    system::command::{CommandRunner, RealCommandRunner},
+use crate::{
+    infrastructure::helper::HelperClient,
+    modules::event::awd::{
+        AwdError, AwdResult,
+        system::command::{CommandRunner, RealCommandRunner},
+    },
 };
 
 /// iptables（iptables-nft）可执行文件名。
@@ -162,6 +166,64 @@ impl DockerForwardRuntime {
 }
 
 impl Default for DockerForwardRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// API 无特权运行时使用的 Docker 反欺骗兼容层。
+/// 所有 iptables-nft 写操作都经固定 Unix socket 交给 `floatctf-helper`。
+pub struct HelperDockerForwardRuntime {
+    client: HelperClient,
+}
+
+impl HelperDockerForwardRuntime {
+    pub fn new() -> Self {
+        Self {
+            client: HelperClient::new(helper_protocol::DEFAULT_CONTROL_SOCKET_PATH),
+        }
+    }
+
+    pub async fn ensure_access(&self, spec: &DockerForwardAccessSpec) -> AwdResult<()> {
+        self.client
+            .call_empty(Request::EnsureDockerForward {
+                wg_interface: spec.wg_interface.clone(),
+                bridge_name: spec.bridge_name.clone(),
+                gamebox_cidr: spec.gamebox_cidr.clone(),
+            })
+            .await
+            .map_err(|e| AwdError::Network(e.to_string()))
+    }
+
+    pub async fn check_access(&self, spec: &DockerForwardAccessSpec) -> AwdResult<Vec<String>> {
+        let check: DockerForwardCheck = self
+            .client
+            .call_data(Request::CheckDockerForward {
+                wg_interface: spec.wg_interface.clone(),
+                bridge_name: spec.bridge_name.clone(),
+                gamebox_cidr: spec.gamebox_cidr.clone(),
+            })
+            .await
+            .map_err(|e| AwdError::Network(e.to_string()))?;
+        Ok(check.missing)
+    }
+
+    pub async fn remove_access(&self, spec: &DockerForwardAccessSpec) {
+        if let Err(error) = self
+            .client
+            .call_empty(Request::RemoveDockerForward {
+                wg_interface: spec.wg_interface.clone(),
+                bridge_name: spec.bridge_name.clone(),
+                gamebox_cidr: spec.gamebox_cidr.clone(),
+            })
+            .await
+        {
+            warn!(error = %error, "[DockerForward] helper remove failed");
+        }
+    }
+}
+
+impl Default for HelperDockerForwardRuntime {
     fn default() -> Self {
         Self::new()
     }

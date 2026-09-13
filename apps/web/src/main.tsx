@@ -1,6 +1,8 @@
 import { BaseStyles, ThemeProvider } from "@primer/react";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { StrictMode } from "react";
+import isPropValid from "@emotion/is-prop-valid";
+import { StyleSheetManager } from "styled-components";
 import ReactDOM from "react-dom/client";
 import * as TanStackQueryProvider from "./integrations/tanstack-query/root-provider.tsx";
 import { RouteLoading } from "./components/RouteLoading.tsx";
@@ -50,13 +52,19 @@ if (rootElement && !rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <StrictMode>
-      <TanStackQueryProvider.Provider {...TanStackQueryProviderContext}>
-        <ThemeProvider>
-          <BaseStyles>
-            <RouterProvider router={router} />
-          </BaseStyles>
-        </ThemeProvider>
-      </TanStackQueryProvider.Provider>
+      <StyleSheetManager
+        shouldForwardProp={(propName, target) =>
+          typeof target !== "string" || isPropValid(propName)
+        }
+      >
+        <TanStackQueryProvider.Provider {...TanStackQueryProviderContext}>
+          <ThemeProvider>
+            <BaseStyles>
+              <RouterProvider router={router} />
+            </BaseStyles>
+          </ThemeProvider>
+        </TanStackQueryProvider.Provider>
+      </StyleSheetManager>
     </StrictMode>
   );
 }

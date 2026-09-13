@@ -5,7 +5,10 @@ pub mod docker;
 pub mod image;
 pub mod model;
 
-pub use docker::{ContainerRuntime, DockerContainerRuntime};
+pub use docker::{
+    ContainerRuntime, DEFAULT_HELPER_DOCKER_SOCKET, DockerConnectionKind, DockerContainerRuntime,
+    connect_preferred,
+};
 pub use image::{
     ImageBuildRequest, ImageBuildResult, ImageError, ImageInspect, ImageRuntime, RegistryAuth,
     image_repository, pick_repo_digest, split_image_ref,

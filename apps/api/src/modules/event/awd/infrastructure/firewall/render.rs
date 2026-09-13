@@ -64,7 +64,7 @@ pub fn render_table(desired: &DesiredFirewallState) -> String {
         "        type filter hook forward priority {FORWARD_PRIORITY}; policy accept;\n"
     ));
     out.push_str(
-        "        # managed by FloatCTF: restrictive DROP only; no iptables/Docker rules touched\n",
+        "        # managed by FloatCTF: restrictive DROP only, no iptables/Docker rules touched\n",
     );
     out.push_str("        ip saddr @banned_players_v4 drop\n");
     out.push_str("        ip6 saddr @banned_players_v6 drop\n");

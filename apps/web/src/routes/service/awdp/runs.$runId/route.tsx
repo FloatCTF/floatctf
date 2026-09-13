@@ -3,7 +3,7 @@ import { Outlet, createFileRoute } from "@tanstack/react-router";
 
 import { RunWriteupEditor } from "@/components/awdp/RunWriteupEditor";
 import { ServiceRouteGuard } from "@/routes/service/route";
-import { RouterNavItem } from "../../events/jeopardy.$id/route";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 
 export const Route = createFileRoute("/service/awdp/runs/$runId")({
 	component: RouteComponent,

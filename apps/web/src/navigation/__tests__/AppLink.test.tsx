@@ -82,6 +82,14 @@ function setup(initialPath: string, indexContent: React.ReactNode) {
 
 // ── 测试 ─────────────────────────────────────────────────────────────────────
 
+// jsdom 不实现浏览器整页/新标签导航；bypass 场景由消费方阻止默认跳转，
+// 测试只验证 AppLink 没有错误地调用 SPA coordinator。
+const preventBrowserNavigation = (
+	event: React.MouseEvent<HTMLAnchorElement>,
+) => {
+	event.preventDefault();
+};
+
 describe("AppLink", () => {
 	it("navigates on plain left click via coordinator", async () => {
 		const { router } = setup("/", <AppLink to="/about">Go About</AppLink>);
@@ -97,7 +105,12 @@ describe("AppLink", () => {
 	});
 
 	it("does NOT navigate on Ctrl+click (opens new tab)", async () => {
-		const { router } = setup("/", <AppLink to="/about">Go About</AppLink>);
+		const { router } = setup(
+			"/",
+			<AppLink to="/about" onClick={preventBrowserNavigation}>
+				Go About
+			</AppLink>,
+		);
 		const navigateSpy = vi.spyOn(router, "navigate");
 
 		const link = await screen.findByText("Go About");
@@ -108,7 +121,12 @@ describe("AppLink", () => {
 	});
 
 	it("does NOT navigate on Meta+click", async () => {
-		const { router } = setup("/", <AppLink to="/about">Go About</AppLink>);
+		const { router } = setup(
+			"/",
+			<AppLink to="/about" onClick={preventBrowserNavigation}>
+				Go About
+			</AppLink>,
+		);
 		const navigateSpy = vi.spyOn(router, "navigate");
 
 		const link = await screen.findByText("Go About");
@@ -119,7 +137,12 @@ describe("AppLink", () => {
 	});
 
 	it("does NOT navigate on Shift+click", async () => {
-		const { router } = setup("/", <AppLink to="/about">Go About</AppLink>);
+		const { router } = setup(
+			"/",
+			<AppLink to="/about" onClick={preventBrowserNavigation}>
+				Go About
+			</AppLink>,
+		);
 		const navigateSpy = vi.spyOn(router, "navigate");
 
 		const link = await screen.findByText("Go About");
@@ -130,7 +153,12 @@ describe("AppLink", () => {
 	});
 
 	it("does NOT navigate on middle click (button 1)", async () => {
-		const { router } = setup("/", <AppLink to="/about">Go About</AppLink>);
+		const { router } = setup(
+			"/",
+			<AppLink to="/about" onClick={preventBrowserNavigation}>
+				Go About
+			</AppLink>,
+		);
 		const navigateSpy = vi.spyOn(router, "navigate");
 
 		const link = await screen.findByText("Go About");
@@ -143,7 +171,7 @@ describe("AppLink", () => {
 	it("bypasses coordinator when target=_blank", async () => {
 		const { router } = setup(
 			"/",
-			<AppLink to="/about" target="_blank">
+			<AppLink to="/about" target="_blank" onClick={preventBrowserNavigation}>
 				External
 			</AppLink>,
 		);
@@ -159,7 +187,9 @@ describe("AppLink", () => {
 	it("bypasses coordinator for external URL to= (https://)", async () => {
 		const { router } = setup(
 			"/",
-			<AppLink to="https://example.com">ExtLink</AppLink>,
+			<AppLink to="https://example.com" onClick={preventBrowserNavigation}>
+				ExtLink
+			</AppLink>,
 		);
 		const navigateSpy = vi.spyOn(router, "navigate");
 
@@ -173,7 +203,11 @@ describe("AppLink", () => {
 	it("bypasses coordinator when download is set", async () => {
 		const { router } = setup(
 			"/",
-			<AppLink to="/file.pdf" download="file.pdf">
+			<AppLink
+				to="/file.pdf"
+				download="file.pdf"
+				onClick={preventBrowserNavigation}
+			>
 				Download
 			</AppLink>,
 		);
@@ -209,5 +243,24 @@ describe("AppLink", () => {
 
 		const link = await screen.findByRole("link", { name: "About Page" });
 		expect(link.getAttribute("href")).toBe("/about");
+	});
+
+	it("forwards ref and native anchor attributes", async () => {
+		const ref = { current: null as HTMLAnchorElement | null };
+		setup(
+			"/",
+			<AppLink
+				to="/about"
+				ref={ref}
+				data-testid="native-link"
+				aria-label="Native About"
+			>
+				About Page
+			</AppLink>,
+		);
+
+		const link = await screen.findByTestId("native-link");
+		expect(ref.current).toBe(link);
+		expect(link.getAttribute("aria-label")).toBe("Native About");
 	});
 });

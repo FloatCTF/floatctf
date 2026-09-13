@@ -4,7 +4,7 @@
 //! 1. **Source-scan assertion（始终执行）**：`api/internal.rs` 中每个 `#[post]`/`#[get]`
 //!    路由 handler 的第一个参数必须是 `auth: AwdInternalAuth` —— 防止新增 internal 端点
 //!    忘记加服务身份认证。
-//! 2. **Live-API 断言（soft-skip）**：若 `FLOATCTF_API_BASE` 可达，无 token 访问三个
+//! 2. **Live-API 断言（soft-skip）**：若 `FLOATCTF_API_BASE` 可达，无 token 访问当前
 //!    `/internal/awd/*` 端点必须 401。
 
 mod common;
@@ -85,8 +85,8 @@ fn every_internal_route_requires_internal_auth() {
     }
 
     assert!(
-        checked >= 3,
-        "expected at least 3 internal routes (issue_flag / judge_callback / event_health), found {checked}"
+        checked >= 4,
+        "expected at least 4 AWD internal routes, found {checked}"
     );
 }
 
@@ -96,8 +96,7 @@ async fn internal_endpoints_reject_missing_token() {
     if !api_reachable().await {
         return;
     }
-    // 固定假 event id（合法 UUID 格式，不存在的赛事 → auth 先于业务返回 401）
-    const EP: &str = "/internal/awd/events/00000000-0000-0000-0000-000000000000";
+    // 固定假 UUID（合法格式，不存在的资源 → auth 必须先于业务返回 401）。
     for (method, path) in [
         (
             Method::Post,
@@ -105,14 +104,17 @@ async fn internal_endpoints_reject_missing_token() {
         ),
         (
             Method::Post,
-            "/internal/awd/events/00000000-0000-0000-0000-000000000000/judge/callback",
+            "/internal/awd/events/00000000-0000-0000-0000-000000000000/judge/claim",
         ),
         (
-            Method::Get,
-            "/internal/awd/events/00000000-0000-0000-0000-000000000000/health",
+            Method::Post,
+            "/internal/awd/events/00000000-0000-0000-0000-000000000000/judge/tasks/00000000-0000-0000-0000-000000000000/heartbeat",
+        ),
+        (
+            Method::Post,
+            "/internal/awd/events/00000000-0000-0000-0000-000000000000/judge/tasks/00000000-0000-0000-0000-000000000000/result",
         ),
     ] {
-        let _ = EP;
         let route = Route {
             method,
             path,

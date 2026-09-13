@@ -1,5 +1,6 @@
 import { adminApi } from "@/api";
 import { GenericTable } from "@/components";
+import { UnderlineNavButton } from "@/components/UnderlineNavButton";
 import type { ScheduledTasks } from "@/entity";
 import { DatetimeToShow } from "@/util";
 import { CheckIcon, PlayIcon, XIcon } from "@primer/octicons-react";
@@ -326,24 +327,24 @@ function RouteComponent() {
 	return (
 		<>
 			<UnderlineNav aria-label="Scheduled tasks view">
-				<UnderlineNav.Item
-					aria-current={view === "service" ? "page" : undefined}
+				<UnderlineNavButton
+					current={view === "service"}
 					onClick={() => setView("service")}
 				>
 					ServiceTasks
-				</UnderlineNav.Item>
-				<UnderlineNav.Item
-					aria-current={view === "system" ? "page" : undefined}
+				</UnderlineNavButton>
+				<UnderlineNavButton
+					current={view === "system"}
 					onClick={() => setView("system")}
 				>
 					SystemTask
-				</UnderlineNav.Item>
-				<UnderlineNav.Item
-					aria-current={view === "event" ? "page" : undefined}
+				</UnderlineNavButton>
+				<UnderlineNavButton
+					current={view === "event"}
 					onClick={() => setView("event")}
 				>
 					EventTasks
-				</UnderlineNav.Item>
+				</UnderlineNavButton>
 			</UnderlineNav>
 			<GenericTable
 				subject={subject}

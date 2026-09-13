@@ -1,19 +1,17 @@
-# FloatCTF infrastructure (postgres/rustfs/caddy containers) — Phase 10.6.
-# 就绪语义：`docker compose up -d --wait` —— 所有服务 healthcheck 通过才算 ready，
-# 而不是"已启动"。floatctf-api.service After 本单元，保证 DB/RustFS/caddy 真正就绪。
 [Unit]
-Description=FloatCTF infrastructure containers (postgres, rustfs, caddy)
-Requires=docker.service
-After=docker.service network-online.target
+Description=FloatCTF production containers (API + data services + Caddy)
+Requires=docker.service floatctf-helper.service
+After=docker.service floatctf-helper.service network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=${FLOATCTF_HOME}
-ExecStart=/usr/bin/docker compose -f ${FLOATCTF_HOME}/compose.prod.yml up -d --wait
-ExecStop=/usr/bin/docker compose -f ${FLOATCTF_HOME}/compose.prod.yml down
+WorkingDirectory=/home/floatctf
+ExecStart=/usr/bin/docker compose -f /home/floatctf/compose.prod.yml up -d --wait
+ExecStop=/usr/bin/docker compose -f /home/floatctf/compose.prod.yml down
 TimeoutStartSec=300
+TimeoutStopSec=120
 
 [Install]
 WantedBy=floatctf.target

@@ -1,13 +1,15 @@
 //! Docker 运行时实现（bollard）。
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 
+use anyhow::Context;
 use async_trait::async_trait;
-use bollard::Docker;
 use bollard::query_parameters::{
     InspectContainerOptions, ListContainersOptions, RemoveContainerOptions, StopContainerOptions,
 };
+use bollard::{API_DEFAULT_VERSION, Docker};
 use futures_util::StreamExt;
 use tracing::{info, warn};
 
@@ -15,6 +17,40 @@ use super::model::{
     ContainerFilter, ContainerHandle, ContainerSpec, ContainerState, ExecOptions, ExecOutcome,
     MAX_COPY_BYTES, NetworkHandle, NetworkInspect, NetworkSpec,
 };
+
+/// FloatCTF helper 暴露的 Docker-compatible policy socket。
+///
+/// fcmc 作为独立 CLI/SDK 使用时会优先连接该 socket；只有当 socket 不存在时才
+/// fallback 到 Bollard 的本机 Docker 默认连接。若 socket 存在但不可用/权限错误，
+/// 直接报错，避免静默绕过 helper 的策略边界。
+pub const DEFAULT_HELPER_DOCKER_SOCKET: &str = "/run/floatctf/helper-docker.sock";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerConnectionKind {
+    Helper,
+    Direct,
+}
+
+/// 为 fcmc CLI/SDK 选择 Docker 连接：helper 存在则使用 helper；helper 不存在则直连 Docker。
+///
+/// 这是 fcmc 自身的可用性 fallback。FloatCTF API 生产路径仍应显式配置 helper socket，
+/// 不应通过本函数获得 direct fallback。
+pub async fn connect_preferred() -> anyhow::Result<(Docker, DockerConnectionKind)> {
+    if Path::new(DEFAULT_HELPER_DOCKER_SOCKET).exists() {
+        let docker =
+            Docker::connect_with_unix(DEFAULT_HELPER_DOCKER_SOCKET, 120, API_DEFAULT_VERSION)
+                .context("connect to FloatCTF helper Docker socket")?;
+        docker
+            .ping()
+            .await
+            .context("FloatCTF helper Docker socket exists but is unavailable")?;
+        return Ok((docker, DockerConnectionKind::Helper));
+    }
+
+    let docker = Docker::connect_with_defaults().context("connect to local Docker")?;
+    docker.ping().await.context("ping local Docker")?;
+    Ok((docker, DockerConnectionKind::Direct))
+}
 
 /// 统一 Docker 运行时，供 Jeopardy 实例、AWD 与 CLI 使用。
 #[async_trait]
@@ -91,7 +127,18 @@ impl DockerContainerRuntime {
     }
 
     pub fn from_defaults() -> anyhow::Result<Self> {
-        Ok(Self::new(Docker::connect_with_defaults()?))
+        let docker = if Path::new(DEFAULT_HELPER_DOCKER_SOCKET).exists() {
+            Docker::connect_with_unix(DEFAULT_HELPER_DOCKER_SOCKET, 120, API_DEFAULT_VERSION)?
+        } else {
+            Docker::connect_with_defaults()?
+        };
+        Ok(Self::new(docker))
+    }
+
+    /// fcmc CLI/SDK 推荐构造器：helper 可用时走 helper；helper socket 不存在时直连 Docker。
+    pub async fn from_preferred() -> anyhow::Result<(Self, DockerConnectionKind)> {
+        let (docker, kind) = connect_preferred().await?;
+        Ok((Self::new(docker), kind))
     }
 
     pub fn inner(&self) -> &Docker {

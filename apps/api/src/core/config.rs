@@ -24,6 +24,7 @@ pub struct AppConfig {
     /// Container image registry settings for GameBox package builds.
     pub registry: RegistryConfig,
     pub features: FeatureFlags,
+    pub redis: RedisConfig,
     pub realtime: RealtimeConfig,
     pub logging: LoggingConfig,
     /// 主站地址前缀（[application] main_url），作为 MAIN_URL 设置的 seed 默认值
@@ -45,8 +46,8 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone)]
 pub struct DockerConfig {
-    /// Reserved for future host/socket override; currently uses bollard defaults.
-    pub use_defaults: bool,
+    /// Docker-compatible policy proxy exposed by floatctf-helper.
+    pub socket_path: String,
 }
 
 /// GameBox 包导入管线的镜像仓库 / 推送设置。
@@ -96,17 +97,18 @@ pub struct PathConfig {
 pub struct AwdStaticConfig {
     /// Whether AWD crypto could be derived from the shared JWT secret material.
     pub crypto_from_app_secret: bool,
-    /// 网络 runtime 选择（P1-17）：`host` = HostNetworkRuntime + NftablesFirewallRuntime；
-    /// `noop` = 仅 unit test / dev mock（Noop 永远不允许 Verified）。
-    /// 取代旧 `host_network = true/false`；不新增 `firewall_backend` 开关。
+    /// 网络 runtime 选择：`helper` = 通过固定 Unix socket 调用特权 floatctf-helper；
+    /// `noop` 仅供 unit test / mock 使用（Noop 永远不允许 Verified）。
     pub network_runtime: String,
     pub flagserver_image: String,
     pub judgeserver_image: String,
-    /// JudgeServer/FlagServer 访问 FloatCTF internal API 的端点**模板**（容器视角，
-    /// `scheme://host:port`）。Phase 9.1 起 host 会被替换为各赛事 infra 网关
-    /// （`derive_event_internal_platform_url`，spec 授权）——固定 host 对网段推进的
-    /// 多赛事无效（旧事件桥网关被清理后失效）。模板只提供 scheme + 端口。
+    /// JudgeServer/FlagServer 访问 FloatCTF internal API 的端点（容器视角）。
+    /// 当 `platform_internal_network` 为空时，它作为 `scheme://host:port` 模板：
+    /// host 会按赛事替换为 infra 网关；配置 control network 时则使用固定 URL。
     pub platform_internal_url: String,
+    /// 可选的 Docker control network。生产 API 容器化时，infra 容器额外加入该
+    /// internal 网络并直接访问固定 `platform_internal_url`；开发原生 API 保持 None。
+    pub platform_internal_network: Option<String>,
 }
 
 /// AWDP（含练习）进程静态配置。
@@ -141,9 +143,15 @@ pub struct FeatureFlags {
 }
 
 #[derive(Debug, Clone)]
+pub struct RedisConfig {
+    /// Mandatory Redis endpoint used by realtime fan-out, distributed rate limiting,
+    /// terminal tickets, scheduler wakeups and settings cache.
+    pub url: Secret,
+}
+
+#[derive(Debug, Clone)]
 pub struct RealtimeConfig {
-    pub redis_url: Option<String>,
-    pub redis_channel: Option<String>,
+    pub channel: String,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +170,8 @@ struct TomlConfig {
     #[serde(default)]
     server: ServerToml,
     database: DatabaseToml,
+    #[serde(default)]
+    docker: DockerToml,
     rustfs: RustfsToml,
     #[serde(default)]
     auth: AuthToml,
@@ -175,6 +185,7 @@ struct TomlConfig {
     awdp: AwdpToml,
     #[serde(default)]
     registry: RegistryToml,
+    redis: RedisToml,
     #[serde(default)]
     realtime: RealtimeToml,
     #[serde(default)]
@@ -222,6 +233,24 @@ struct DatabaseToml {
 }
 
 #[derive(Debug, Deserialize)]
+struct DockerToml {
+    #[serde(default = "default_docker_socket_path")]
+    socket_path: String,
+}
+
+impl Default for DockerToml {
+    fn default() -> Self {
+        Self {
+            socket_path: default_docker_socket_path(),
+        }
+    }
+}
+
+fn default_docker_socket_path() -> String {
+    helper_protocol::DEFAULT_DOCKER_SOCKET_PATH.to_string()
+}
+
+#[derive(Debug, Deserialize)]
 struct RustfsToml {
     #[serde(default)]
     endpoint_url: String,
@@ -265,7 +294,7 @@ struct FeaturesToml {
 struct AwdToml {
     #[serde(default = "default_true")]
     crypto_from_app_secret: bool,
-    /// 默认 `noop`（dev/CI 无特权环境）；生产配置显式写 `host`。
+    /// 默认 `noop` 只用于未显式配置的测试场景；开发/生产配置显式写 `helper`。
     #[serde(default = "default_network_runtime")]
     network_runtime: String,
     #[serde(default = "default_flagserver_image")]
@@ -274,6 +303,8 @@ struct AwdToml {
     judgeserver_image: String,
     #[serde(default = "default_platform_internal_url")]
     platform_internal_url: String,
+    #[serde(default)]
+    platform_internal_network: Option<String>,
 }
 
 fn default_network_runtime() -> String {
@@ -288,6 +319,7 @@ impl Default for AwdToml {
             flagserver_image: default_flagserver_image(),
             judgeserver_image: default_judgeserver_image(),
             platform_internal_url: default_platform_internal_url(),
+            platform_internal_network: None,
         }
     }
 }
@@ -409,12 +441,27 @@ fn default_build_timeout_secs() -> u64 {
     600
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
+struct RedisToml {
+    url: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RealtimeToml {
-    #[serde(default)]
-    redis_url: Option<String>,
-    #[serde(default)]
-    redis_channel: Option<String>,
+    #[serde(default = "default_realtime_channel")]
+    channel: String,
+}
+
+impl Default for RealtimeToml {
+    fn default() -> Self {
+        Self {
+            channel: default_realtime_channel(),
+        }
+    }
+}
+
+fn default_realtime_channel() -> String {
+    "floatctf:realtime".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -453,6 +500,12 @@ impl AppConfig {
         let secret_access_key =
             required_value("rustfs.secret_access_key", file.rustfs.secret_access_key)?;
         let region = required_value("rustfs.region", file.rustfs.region)?;
+        let redis_url = required_value("redis.url", file.redis.url)?;
+        if !matches!(file.awd.network_runtime.as_str(), "helper" | "noop") {
+            anyhow::bail!(
+                "awd.network_runtime must be 'helper' (normal runtime) or 'noop' (tests only)"
+            );
+        }
 
         Ok(Self {
             server: ServerConfig {
@@ -463,7 +516,9 @@ impl AppConfig {
             database: DatabaseConfig {
                 url: Secret::new(database_url),
             },
-            docker: DockerConfig { use_defaults: true },
+            docker: DockerConfig {
+                socket_path: file.docker.socket_path,
+            },
             storage: StorageConfig {
                 endpoint_url,
                 access_key_id,
@@ -482,12 +537,19 @@ impl AppConfig {
             awd: AwdStaticConfig {
                 crypto_from_app_secret: file.awd.crypto_from_app_secret,
                 network_runtime: file.awd.network_runtime,
-                flagserver_image: file.awd.flagserver_image,
-                judgeserver_image: file.awd.judgeserver_image,
+                flagserver_image: warn_if_latest("awd.flagserver_image", file.awd.flagserver_image),
+                judgeserver_image: warn_if_latest(
+                    "awd.judgeserver_image",
+                    file.awd.judgeserver_image,
+                ),
                 platform_internal_url: file.awd.platform_internal_url,
+                platform_internal_network: non_empty(file.awd.platform_internal_network),
             },
             awdp: AwdpStaticConfig {
-                practice_judgeserver_image: file.awdp.practice_judgeserver_image,
+                practice_judgeserver_image: warn_if_latest(
+                    "awdp.practice_judgeserver_image",
+                    file.awdp.practice_judgeserver_image,
+                ),
                 practice_network_subnet: file.awdp.practice_network_subnet,
                 practice_judge_ip: file.awdp.practice_judge_ip,
                 network_pool: file.awdp.network_pool,
@@ -510,9 +572,11 @@ impl AppConfig {
                 enable_unsafe_sql_admin: file.features.unsafe_sql_admin,
                 enable_web_terminal: file.features.web_terminal,
             },
+            redis: RedisConfig {
+                url: Secret::new(redis_url),
+            },
             realtime: RealtimeConfig {
-                redis_url: non_empty(file.realtime.redis_url),
-                redis_channel: non_empty(file.realtime.redis_channel),
+                channel: required_value("realtime.channel", file.realtime.channel)?,
             },
             logging: LoggingConfig {
                 filter: file.logging.filter,
@@ -536,6 +600,8 @@ impl AppConfig {
             registry_push = self.registry.push,
             registry_build_timeout_secs = self.registry.build_timeout_secs,
             database_url = "Secret(***)",
+            redis_url = "Secret(***)",
+            realtime_channel = %self.realtime.channel,
             jwt_secret = "Secret(***)",
             "AppConfig loaded from TOML"
         );
@@ -581,6 +647,23 @@ fn default_log_filter() -> String {
 fn default_flagserver_image() -> String {
     "floatctf/awd-flagserver:latest".to_string()
 }
+
+/// 判别镜像引用是否为浮动 tag（`:latest` 或无 tag）。
+/// 生产部署必须钉版（install.sh 模板恒写 `${VERSION}`）；TOML 缺键时 serde 会
+/// 静默回退到 `:latest` 默认值——这里发出显式警告，避免"手写配置漏键 → 意外
+/// 拉到 latest"的无声漂移。仅警告不阻断：开发环境（development.toml）本就用 latest。
+fn warn_if_latest(field: &str, image: String) -> String {
+    let floating =
+        image.ends_with(":latest") || !image.rsplit('/').next().unwrap_or("").contains(':');
+    if floating {
+        tracing::warn!(
+            field,
+            image = %image,
+            "镜像配置未钉版（:latest/无 tag）：生产环境存在不可复现风险，请在 TOML 中显式指定版本 tag"
+        );
+    }
+    image
+}
 fn default_judgeserver_image() -> String {
     "floatctf/awd-judgeserver:latest".to_string()
 }
@@ -597,6 +680,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn warn_if_latest_flags_floating_tags() {
+        // 浮动 tag 与缺 tag 均视为未钉版（返回原值不变，仅告警副作用）
+        assert_eq!(
+            warn_if_latest("t", "floatctf/awd-flagserver:latest".to_string()),
+            "floatctf/awd-flagserver:latest"
+        );
+        assert_eq!(
+            warn_if_latest("t", "floatctf/awd-flagserver".to_string()),
+            "floatctf/awd-flagserver"
+        );
+        // 钉版 tag 原样返回
+        assert_eq!(
+            warn_if_latest("t", "floatctf/awd-flagserver:0.3.3".to_string()),
+            "floatctf/awd-flagserver:0.3.3"
+        );
+        // registry 带端口的镜像名不被误判（路径分段含 ':' 也算钉版）
+        assert_eq!(
+            warn_if_latest("t", "registry.local:5000/floatctf/judge:1.0".to_string()),
+            "registry.local:5000/floatctf/judge:1.0"
+        );
+    }
+
+    #[test]
     fn toml_config_loads_without_environment_variables() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -609,6 +715,10 @@ mod tests {
                 url = "postgres://localhost/db"
                 [auth]
                 jwt_secret = "a-development-secret"
+                [redis]
+                url = "redis://localhost:6379/"
+                [awd]
+                network_runtime = "helper"
                 [rustfs]
                 endpoint_url = "http://localhost:9000"
                 access_key_id = "access"
@@ -622,6 +732,37 @@ mod tests {
         assert_eq!(config.server.listen_port, 9000);
         assert_eq!(config.database.url.expose(), "postgres://localhost/db");
         assert_eq!(config.auth.jwt_secret.expose(), "a-development-secret");
+        assert_eq!(config.redis.url.expose(), "redis://localhost:6379/");
+        assert_eq!(config.realtime.channel, "floatctf:realtime");
+        assert_eq!(
+            config.docker.socket_path,
+            helper_protocol::DEFAULT_DOCKER_SOCKET_PATH
+        );
+        assert_eq!(config.awd.network_runtime, "helper");
+    }
+
+    #[test]
+    fn redis_url_is_required() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+                [database]
+                url = "postgres://localhost/db"
+                [auth]
+                jwt_secret = "a-development-secret"
+                [rustfs]
+                endpoint_url = "http://localhost:9000"
+                access_key_id = "access"
+                secret_access_key = "secret"
+                region = "local"
+            "#,
+        )
+        .unwrap();
+
+        let error = AppConfig::from_file(&path).unwrap_err().to_string();
+        assert!(error.contains("redis"));
     }
 
     #[test]

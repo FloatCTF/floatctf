@@ -7,15 +7,12 @@ license.workspace = true
 repository = "https://github.com/FloatCTF/floatctf"
 readme = "README.md"
 
-[features]
-default = []
-# Optional multi-node realtime fan-out via Redis pub/sub (REALTIME_REDIS_URL).
-realtime-redis = ["dep:redis"]
-
 [dependencies]
 fcmc = { path = "../../crates/fcmc", version = "1.2" }
-# Optional: enable with `--features realtime-redis` for multi-node SSE fan-out.
-redis = { version = "0.27", optional = true, default-features = false, features = [
+helper-protocol = { path = "../../crates/helper-protocol" }
+# Redis is a mandatory infrastructure dependency for realtime fan-out, distributed
+# rate limiting, terminal tickets, scheduler wakeups and settings cache.
+redis = { version = "0.27", default-features = false, features = [
   "tokio-comp",
   "aio",
 ] }
@@ -78,10 +75,11 @@ uuid = { version = "1.0", features = ["serde", "v4"] }
 url = "2"
 zip = "4.3.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["fs", "time"] }
+tokio = { version = "1", features = ["fs", "time", "net", "io-util"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [dev-dependencies]
+actix-http = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1.0"

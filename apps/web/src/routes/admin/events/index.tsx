@@ -13,7 +13,8 @@ import { useState } from "react";
 
 import { adminApi } from "@/api";
 import { EventStatusBadge, GenericTable } from "@/components";
-import { EventFamily, ParticipantMode, type Events } from "@/entity";
+import { UnderlineNavButton } from "@/components/UnderlineNavButton";
+import { EventFamily, type Events, ParticipantMode } from "@/entity";
 import { AppLink } from "@/navigation";
 import { AdminRouteGuard } from "@/routes/admin/route";
 import { DatetimeToShow } from "@/util";
@@ -92,30 +93,21 @@ function RouteComponent() {
 			renderCell: (row: Events) => {
 				if (row.family === EventFamily.Jeopardy) {
 					return (
-						<AppLink
-							to={"/admin/events/jeopardy/$id"}
-							params={{ id: row.id }}
-						>
+						<AppLink to={"/admin/events/jeopardy/$id"} params={{ id: row.id }}>
 							{row.id}
 						</AppLink>
 					);
 				}
 				if (row.family === EventFamily.Awd) {
 					return (
-						<AppLink
-							to={"/admin/events/awd/$id"}
-							params={{ id: row.id }}
-						>
+						<AppLink to={"/admin/events/awd/$id"} params={{ id: row.id }}>
 							{row.id}
 						</AppLink>
 					);
 				}
 				if (row.family === EventFamily.Awdp) {
 					return (
-						<AppLink
-							to={"/admin/events/awdp/$id"}
-							params={{ id: row.id }}
-						>
+						<AppLink to={"/admin/events/awdp/$id"} params={{ id: row.id }}>
 							{row.id}
 						</AppLink>
 					);
@@ -124,7 +116,12 @@ function RouteComponent() {
 			},
 		},
 		{ accessorKey: "family", header: "Family", field: "family", sortBy: true },
-		{ accessorKey: "participant_mode", header: "Participant", field: "participant_mode", sortBy: true },
+		{
+			accessorKey: "participant_mode",
+			header: "Participant",
+			field: "participant_mode",
+			sortBy: true,
+		},
 		{ accessorKey: "title", header: "Title", field: "title" },
 		{
 			accessorKey: "status",
@@ -254,7 +251,9 @@ function RouteComponent() {
 						<Select.Option value={ParticipantMode.Team}>team</Select.Option>
 					) : (
 						<>
-							<Select.Option value={ParticipantMode.Individual}>individual</Select.Option>
+							<Select.Option value={ParticipantMode.Individual}>
+								individual
+							</Select.Option>
 							<Select.Option value={ParticipantMode.Team}>team</Select.Option>
 						</>
 					)}
@@ -344,26 +343,35 @@ function RouteComponent() {
 			),
 		},
 	];
-	const filterKeys = ["id", "family", "purpose", "participant_mode", "title", "hidden", "allow_join"];
+	const filterKeys = [
+		"id",
+		"family",
+		"purpose",
+		"participant_mode",
+		"title",
+		"hidden",
+		"allow_join",
+	];
 	// NormalEvents / VirtualEvents 子菜单：普通赛事 vs 虚拟（训练）赛事。
 	const [view, setView] = useState<"normal" | "virtual">("normal");
 	const subject = view === "virtual" ? "VirtualEvents" : "Events";
-	const baseFilter = view === "virtual" ? "is_virtual:true" : "is_virtual:false";
+	const baseFilter =
+		view === "virtual" ? "is_virtual:true" : "is_virtual:false";
 	return (
 		<>
 			<UnderlineNav aria-label="Events view">
-				<UnderlineNav.Item
-					aria-current={view === "normal" ? "page" : undefined}
+				<UnderlineNavButton
+					current={view === "normal"}
 					onClick={() => setView("normal")}
 				>
 					NormalEvents
-				</UnderlineNav.Item>
-				<UnderlineNav.Item
-					aria-current={view === "virtual" ? "page" : undefined}
+				</UnderlineNavButton>
+				<UnderlineNavButton
+					current={view === "virtual"}
 					onClick={() => setView("virtual")}
 				>
 					VirtualEvents
-				</UnderlineNav.Item>
+				</UnderlineNavButton>
 			</UnderlineNav>
 			<GenericTable
 				subject={subject}
@@ -390,9 +398,7 @@ function RouteComponent() {
 				}}
 				mutationColumns={view === "normal" ? mutationColumns : undefined}
 				mutationData={view === "normal" ? mutationEvent : undefined}
-				defaultMutationData={
-					view === "normal" ? defaultEventData : undefined
-				}
+				defaultMutationData={view === "normal" ? defaultEventData : undefined}
 			/>
 		</>
 	);

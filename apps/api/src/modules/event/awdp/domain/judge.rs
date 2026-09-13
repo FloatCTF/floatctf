@@ -7,9 +7,9 @@ use uuid::Uuid;
 /// 练习专用 docker 子网名称（全部练习 GameBox 实例 + JudgeServer 所在，data plane）。
 pub const PRACTICE_NETWORK_NAME: &str = "fctf-awdp-practice";
 
-/// 练习 control plane docker 子网（internal=true；仅 JudgeServer 加入，GameBox 禁止加入）。
-/// FloatCTF API 宿主部署时经该子网网关/宿主绑定地址承接 internal API 调用。
-pub const CONTROL_NETWORK_NAME: &str = "fctf-awdp-control";
+/// 平台 control plane Docker 子网（internal=true；API + JudgeServer/FlagServer 使用，
+/// GameBox 禁止加入）。生产 API 容器固定接入该网络，所有内部回调无需发布宿主 API 端口。
+pub const CONTROL_NETWORK_NAME: &str = "fctf-platform-control";
 
 /// 练习子网动态池（/23 后半段 10.42.3.0/24）——GameBox 实例动态 IP 范围（nftables ACL 识别用）。
 pub const PRACTICE_DYNAMIC_POOL: &str = "10.42.3.0/24";

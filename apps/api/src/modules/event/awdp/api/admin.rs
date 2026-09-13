@@ -189,8 +189,13 @@ pub async fn finish_awdp_event(
     .await?;
     crate::modules::event::awdp::realtime::phase_changed(&state, event_id, "ended");
 
-    // 赛后清理（best-effort）：停/删赛事 judge 容器 → 删赛事网络 → 释放子网。
-    // 练习（虚拟赛事）不做清理；失败不阻断 finish（下轮 tick / 管理端可重试）。
+    // 赛后清理顺序必须是 GameBox → JudgeServer → event network。Docker network
+    // 仍挂有 GameBox endpoint 时无法删除；全部步骤 best-effort，不回滚已经提交的 Ended。
+    if let Err(e) =
+        runtime::stop_all_run_instances(ctx.db.get_ref(), ctx.docker.get_ref(), run.id).await
+    {
+        tracing::warn!(event_id = %event_id, run_id = %run.id, error = %e, "AWDP run instance cleanup failed (best-effort)");
+    }
     if let Err(e) = crate::modules::event::awdp::service::practice_judge::cleanup_event_network(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),

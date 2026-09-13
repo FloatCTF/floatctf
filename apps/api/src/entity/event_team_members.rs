@@ -21,12 +21,20 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(
         belongs_to = "super::event_teams::Entity",
-        from = "Column::TeamId",
-        to = "super::event_teams::Column::Id",
+        from = "(Column::EventId, Column::TeamId)",
+        to = "(super::event_teams::Column::EventId, super::event_teams::Column::Id)",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
     EventTeams,
+    #[sea_orm(
+        belongs_to = "super::event_users::Entity",
+        from = "(Column::EventId, Column::UserId)",
+        to = "(super::event_users::Column::EventId, super::event_users::Column::UserId)",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventUsers,
     #[sea_orm(
         belongs_to = "super::events::Entity",
         from = "Column::EventId",
@@ -48,6 +56,12 @@ pub enum Relation {
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
+    }
+}
+
+impl Related<super::event_users::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventUsers.def()
     }
 }
 

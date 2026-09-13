@@ -69,22 +69,40 @@ async fn seed_event(db: &sea_orm::DatabaseConnection, tag: &str, round_count: i3
 
     // Event Network
     let wg_iface = format!("fawg_{}", &Uuid::new_v4().simple().to_string()[..8]);
-    let wg_port = 40000 + (Uuid::new_v4().as_u128() % 55000) as i32;
-    let net = awd_event_networks::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        event_id: Set(event_id),
-        allocation_mode: Set(AwdNetworkAllocationMode::Automatic),
-        wireguard_interface_name: Set(wg_iface),
-        wireguard_listen_port: Set(wg_port),
-        wireguard_cidr: Set("10.200.0.0/16".parse().unwrap()),
-        gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
-        infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
-        flagserver_ip: Set("10.42.0.10/32".parse().unwrap()),
-        judgeserver_ip: Set("10.42.0.11/32".parse().unwrap()),
-        docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
-        ..Default::default()
-    };
-    net.insert(db).await.expect("insert event_network");
+    // 随机端口在并行 seed_event 时可能撞 wireguard_listen_port 唯一约束；
+    // 冲突时换一个端口重试，保持测试并行安全。
+    let mut net = None;
+    for _ in 0..16 {
+        let candidate = awd_event_networks::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            event_id: Set(event_id),
+            allocation_mode: Set(AwdNetworkAllocationMode::Automatic),
+            wireguard_interface_name: Set(wg_iface.clone()),
+            wireguard_listen_port: Set(40000 + (Uuid::new_v4().as_u128() % 55000) as i32),
+            wireguard_cidr: Set("10.200.0.0/16".parse().unwrap()),
+            gamebox_cidr: Set("10.42.0.0/16".parse().unwrap()),
+            infrastructure_subnet: Set("10.42.0.0/24".parse().unwrap()),
+            flagserver_ip: Set("10.42.0.10/32".parse().unwrap()),
+            judgeserver_ip: Set("10.42.0.11/32".parse().unwrap()),
+            docker_network_name: Set(format!("fctf-awd-{}", &event_id.to_string()[..8])),
+            ..Default::default()
+        };
+        match candidate.insert(db).await {
+            Ok(inserted) => {
+                net = Some(inserted);
+                break;
+            }
+            // 端口撞 wireguard_listen_port 唯一约束 → 换端口重试；其余错误直接失败。
+            Err(err)
+                if err.to_string().contains("wireguard_listen_port")
+                    && err.to_string().contains("duplicate key") =>
+            {
+                continue;
+            }
+            Err(e) => panic!("insert event_network: {e}"),
+        }
+    }
+    let _ = net.expect("insert event_network");
 
     event_id
 }

@@ -6,6 +6,7 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        python3-minimal \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 

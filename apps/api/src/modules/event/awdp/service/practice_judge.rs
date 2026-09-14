@@ -161,7 +161,10 @@ async fn ensure_fixed_network(
                 ip_range: dynamic_ip_range(&config.practice_network_subnet),
                 // 显式 gateway = 平台 internal API 地址（宿主桥绑定该 IP），
                 // 重建网络后 judge→platform 通路不漂移。
-                gateway: platform_url_gateway(&config.platform_internal_url),
+                gateway: platform_url_gateway(
+                    &config.platform_internal_url,
+                    &config.practice_network_subnet,
+                ),
                 ..Default::default()
             }]),
             ..Default::default()
@@ -214,9 +217,12 @@ async fn practice_network_matches(docker: &Docker, config: &AwdpStaticConfig) ->
         .as_deref()
         .and_then(|s| s.parse::<ipnetwork::Ipv4Network>().ok())
         == Some(want_subnet);
-    let gateway_ok = match platform_url_gateway(&config.platform_internal_url) {
+    let gateway_ok = match platform_url_gateway(
+        &config.platform_internal_url,
+        &config.practice_network_subnet,
+    ) {
         Some(want) => cfg.gateway.as_deref() == Some(want.as_str()),
-        None => true, // 配置无显式网关期望 → 不校验网关
+        None => true, // 配置无显式网关期望（或地址不在练习子网内）→ 不校验网关
     };
     subnet_ok && gateway_ok
 }
@@ -253,12 +259,19 @@ fn dynamic_ip_range(subnet: &str) -> Option<String> {
     Some(format!("{}/{}", Ipv4Addr::from(base + half), prefix + 1))
 }
 
-/// 从 `platform_internal_url` 提取主机 IP（练习网络显式 gateway）。
+/// 从 `platform_internal_url` 提取主机 IP，**仅当它落在练习子网内**时才作为练习网络的
+/// 显式 gateway。
 ///
-/// 宿主部署时平台 API 绑定在 data 网络网关地址上（config 注释契约）：
-/// 显式指定 gateway = 平台可达地址，保证 docker 重建练习网络后 judge→platform
-/// 通路不因网关漂移（默认取子网首地址）而断开。非 IP 主机名返回 None（docker 默认网关）。
-fn platform_url_gateway(url: &str) -> Option<String> {
+/// 宿主部署时平台 API 绑定在 data 网络网关地址上（config 注释契约）：显式指定
+/// gateway = 平台可达地址，保证 docker 重建练习网络后 judge→platform 通路不因网关漂移
+/// （默认取子网首地址）而断开。
+///
+/// 但 Docker 要求 gateway 必须属于该网络 subnet。生产 API 的基址是 platform control
+/// 网络的固定地址（`10.42.8.2`），不在练习子网（默认 `10.42.2.0/23`）内，强行当 gateway
+/// 会直接建网失败（`invalid gateway ... doesn't contain this address`）。此种情况返回
+/// `None` 交给 Docker 默认网关——判题容器随后由 `deploy_judge` 接入 control 网络，经
+/// `platform_internal_url` 直连 API，并不依赖练习网关。非 IP 主机名同样返回 None。
+fn platform_url_gateway(url: &str, practice_subnet: &str) -> Option<String> {
     let authority = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let authority = authority.split(['/', '?']).next()?;
     let host = authority
@@ -266,9 +279,9 @@ fn platform_url_gateway(url: &str) -> Option<String> {
         .filter(|(_, port)| port.parse::<u16>().is_ok())
         .map(|(h, _)| h)
         .unwrap_or(authority);
-    host.parse::<std::net::Ipv4Addr>()
-        .ok()
-        .map(|ip| ip.to_string())
+    let ip = host.parse::<std::net::Ipv4Addr>().ok()?;
+    let subnet = practice_subnet.parse::<ipnetwork::Ipv4Network>().ok()?;
+    subnet.contains(ip).then(|| ip.to_string())
 }
 
 /// 按 DB 行 ensure 赛事网络（网络不存在时按行内 subnet/dynamic_pool 创建）。
@@ -694,21 +707,45 @@ mod tests {
 
     #[test]
     fn platform_gateway_extracts_host_ip_only() {
+        const SUBNET: &str = "10.42.2.0/23";
         assert_eq!(
-            platform_url_gateway("http://10.42.2.128:9090").as_deref(),
+            platform_url_gateway("http://10.42.2.128:9090", SUBNET).as_deref(),
             Some("10.42.2.128")
         );
         assert_eq!(
-            platform_url_gateway("http://10.42.2.128").as_deref(),
+            platform_url_gateway("http://10.42.2.128", SUBNET).as_deref(),
             Some("10.42.2.128")
         );
         // 主机名（非 IP）→ 不设显式网关
-        assert_eq!(platform_url_gateway("https://api.example.com:9090"), None);
-        assert_eq!(platform_url_gateway(""), None);
+        assert_eq!(
+            platform_url_gateway("https://api.example.com:9090", SUBNET),
+            None
+        );
+        assert_eq!(platform_url_gateway("", SUBNET), None);
         // 无 scheme 也兼容
         assert_eq!(
-            platform_url_gateway("10.42.2.128:9090"),
+            platform_url_gateway("10.42.2.128:9090", SUBNET),
             Some("10.42.2.128".to_string())
+        );
+    }
+
+    /// 生产 API 基址是 platform control 网络地址（10.42.8.2），不在练习子网内；
+    /// 此时不得把它当 gateway（否则 Docker 拒绝建网，练习判题整体不可用）。
+    #[test]
+    fn platform_gateway_rejects_host_outside_practice_subnet() {
+        assert_eq!(
+            platform_url_gateway("http://10.42.8.2:9090", "10.42.2.0/23"),
+            None
+        );
+        // 网段边界：10.42.3.255 是 10.42.2.0/23 的最后一个地址，仍在网段内
+        assert_eq!(
+            platform_url_gateway("http://10.42.3.255:9090", "10.42.2.0/23").as_deref(),
+            Some("10.42.3.255")
+        );
+        // 非法子网 → 不做显式网关，交给 Docker 默认
+        assert_eq!(
+            platform_url_gateway("http://10.42.2.128:9090", "not-a-cidr"),
+            None
         );
     }
 }

@@ -1,4 +1,4 @@
-//! Weapon request / form DTOs.
+//! 武器库请求 / 表单 DTO。
 
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use serde::{Deserialize, Serialize};

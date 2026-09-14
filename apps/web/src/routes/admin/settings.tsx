@@ -3,9 +3,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
 
 import { adminApi } from "@/api";
+import type { SettingsDto } from "@/api/admin/settings";
 import { GenericTable } from "@/components";
 import { MyTruncate } from "@/components/Truncate";
-import { SettingValueType, type Settings } from "@/entity";
+import { SettingValueType } from "@/entity";
 import { DatetimeToShow } from "@/util";
 import { AdminRouteGuard } from "./route";
 
@@ -29,14 +30,14 @@ function RouteComponent() {
       accessorKey: "value",
       header: "Value",
       field: "value",
-      renderCell: (s: Settings) => <MyTruncate value={s.value} />,
+      renderCell: (s: SettingsDto) => <MyTruncate value={s.value} />,
     },
 
     {
       accessorKey: "resolved_value",
       header: "Resolved",
       field: "resolved_value",
-      renderCell: (s: Settings) => <MyTruncate value={s.resolved_value} />,
+      renderCell: (s: SettingsDto) => <MyTruncate value={s.resolved_value} />,
     },
 
     {
@@ -56,12 +57,12 @@ function RouteComponent() {
       header: "Updated At",
       field: "updated_at",
       sortBy: true,
-      renderCell: (row: Settings) => {
+      renderCell: (row: SettingsDto) => {
         return <span>{DatetimeToShow(row.updated_at)}</span>;
       },
     },
   ];
-  const mutationSetting = useReactive<Partial<Settings>>({
+  const mutationSetting = useReactive<Partial<SettingsDto>>({
     key: "",
     value: "",
     type: SettingValueType.String,

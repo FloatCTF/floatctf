@@ -1,8 +1,8 @@
 name = "test-challenge-no-docker"
+version = "1.0.0"
 author = "tester@example.com"
 category = "Crypto"
 description = "A challenge without Docker"
 
 [flag]
-value = "flag{crypto-flag}"
-env_var = "FLAG"
+type = "dynamic"

@@ -1,15 +1,15 @@
 /**
- * Navigation coordinator phases:
- * - idle: no active navigation
- * - preloading: preloadRoute is in progress
- * - committing: preload complete, navigating
+ * 导航协调器阶段：
+ * - idle：无进行中的导航
+ * - preloading：preloadRoute 进行中
+ * - committing：预加载完成，正在导航
  */
 export type NavigationPhase = "idle" | "preloading" | "committing";
 
 /**
- * Loose navigation options for the coordinator.
- * Type safety is enforced at call sites (AppLink props, useAppNavigate return).
- * The coordinator casts to the router's typed NavigateOptions internally.
+ * 协调器使用的宽松导航选项。
+ * 类型安全在调用点保证（AppLink props、useAppNavigate 返回值）。
+ * 协调器内部再转为 router 的类型化 NavigateOptions。
  */
 export interface CoordinatorNavigateOptions {
 	to: string;

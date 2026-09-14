@@ -12,6 +12,11 @@ export const Route = createFileRoute("/admin/discussions")({
     loader: AdminRouteGuard,
 });
 
+// admin 列表展示作者昵称（后端批量填充，缺失回落为 UUID）
+type DiscussionRow = Discussions & {
+    author_nickname?: string;
+};
+
 function RouteComponent() {
     useTitle("Discussions | FloatCTF");
 
@@ -31,9 +36,12 @@ function RouteComponent() {
             sortBy: true,
         },
         {
-            accessorKey: "author_id",
-            header: "Author ID",
+            accessorKey: "author_nickname",
+            header: "Author",
             field: "author_id",
+            renderCell: (row: DiscussionRow) => {
+                return <span>{row.author_nickname ?? row.author_id}</span>;
+            },
         },
         {
             accessorKey: "view_count",

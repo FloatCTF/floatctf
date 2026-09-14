@@ -1,13 +1,13 @@
-//! Application bootstrap — initialization and HTTP server startup.
+//! 应用引导：初始化与 HTTP 服务启动。
 //!
-//! This module contains the startup logic previously in `main.rs`,
-//! exposed as a library function for integration testing.
+//! 原 `main.rs` 中的启动逻辑集中于此，并以库函数形式暴露，供集成测试复用。
 
 pub mod routes;
 pub mod scheduler;
 pub mod state;
 
 use actix_cors::Cors;
+use actix_multipart::form::MultipartFormConfig;
 use actix_web::{App, HttpServer, middleware::Logger, web};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -20,17 +20,30 @@ use crate::{
         LogService, WebDb, WebDocker, WebRustfs, audit::AuditService, database, docker,
         seed_default_settings, storage,
     },
-    modules::event::EventModuleRegistry,
-    modules::event::awd_team::crypto::AwdCrypto,
+    modules::event::awd::crypto::AwdCrypto,
 };
 
 pub use state::{AppState, AwdDependencies};
 
-/// Initialize and run the FloatCTF HTTP server.
+/// 启动阶段致命错误（fail-fast）。
 ///
-/// This is the single entry point for both the binary and integration tests.
-/// Returns `Err` if initialization fails (database, Docker, or S3 connection).
-pub async fn run() -> std::io::Result<()> {
+/// Phase 0 P0-2：AWD crypto 初始化失败不允许降级运行（历史存在全零密钥回退，
+/// 攻击者可预测所有 token/flag）。`run()` 返回 Err 后由 `main` 打印原因并 `exit(1)`。
+#[derive(Debug, thiserror::Error)]
+pub enum BootstrapError {
+    #[error("AWD crypto initialization failed: {0}")]
+    Crypto(String),
+    #[error("floatctf-helper unavailable: {0}")]
+    Helper(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// 初始化并运行 FloatCTF HTTP 服务。
+///
+/// 二进制与集成测试共用的唯一入口。
+/// 初始化失败（数据库、Docker、S3 或 AWD 加密）时返回 `Err`。
+pub async fn run() -> Result<(), BootstrapError> {
     // Load all process-static settings from TOML — fail fast before touching infrastructure.
     let config_path = std::env::var_os("FLOATCTF_CONFIG")
         .map(std::path::PathBuf::from)
@@ -45,9 +58,10 @@ pub async fn run() -> std::io::Result<()> {
 
     // Set working directory: absolutize relative paths before chdir so later
     // derived paths (e.g. logs) don't double-apply the relative work_dir.
-    let work_dir_abs = std::env::current_dir()
-        .unwrap_or_default()
-        .join(&config.server.work_dir);
+    // 先记录启动目录：settings 里 `{{WORK_DIR}}/challenges` 等相对路径以它为锚。
+    let launch_dir = std::env::current_dir().unwrap_or_default();
+    crate::infrastructure::settings::set_launch_dir(launch_dir.clone());
+    let work_dir_abs = launch_dir.join(&config.server.work_dir);
     std::env::set_current_dir(&work_dir_abs)
         .unwrap_or_else(|e| panic!("failed to set WORK_DIR={}: {}", config.server.work_dir, e));
 
@@ -83,6 +97,17 @@ pub async fn run() -> std::io::Result<()> {
         }
     };
 
+    let redis = match crate::infrastructure::redis::connect(&config.redis).await {
+        Ok(redis) => redis,
+        Err(e) => {
+            error!("init redis failed: {}", e);
+            panic!("init redis failed: {}", e);
+        }
+    };
+    // 所有 Redis 业务共享同一个已 PING 验证的 client。
+    crate::infrastructure::redis::configure(redis.clone());
+    crate::scheduler::wake::configure(redis.clone());
+
     let docker: WebDocker = match docker::connect(&config.docker).await {
         Ok(docker) => web::Data::new(docker),
         Err(e) => {
@@ -103,24 +128,75 @@ pub async fn run() -> std::io::Result<()> {
     seed_default_settings(&db, &config).await;
     let log_service = LogService::new(db.clone());
     let audit_service = AuditService::new(log_service.clone());
-    // Realtime hub: local broadcast with optional Redis fan-out from TOML.
+    // Realtime hub：Redis 是必需总线；本地 hub 保留同节点低延迟和短暂故障连续性。
     let (broadcast_hub, publisher) = crate::infrastructure::realtime::build_realtime(
         256,
-        config.realtime.redis_url.as_deref(),
-        config.realtime.redis_channel.as_deref(),
+        redis.clone(),
+        &config.realtime.channel,
     );
 
-    // AWD host network runtime (shared by HTTP + scheduler).
+    // 开发与生产共享同一特权边界：API 普通用户运行，宿主网络操作通过 helper Unix socket。
+    if config.awd.network_runtime == "helper" {
+        crate::infrastructure::helper::HelperClient::new(
+            helper_protocol::DEFAULT_CONTROL_SOCKET_PATH,
+        )
+        .call(helper_protocol::Request::Ping)
+        .await
+        .map_err(|e| BootstrapError::Helper(e.to_string()))?;
+        info!("AWD host control enabled via floatctf-helper");
+    }
+
     let awd_network: Arc<
-        dyn crate::modules::event::awd_team::infrastructure::network::AwdNetworkRuntime,
-    > = if config.awd.host_network {
-        info!("AWD host network enabled — using HostNetworkRuntime");
+        dyn crate::modules::event::awd::infrastructure::network::AwdNetworkRuntime,
+    > = if config.awd.network_runtime == "helper" {
         Arc::new(
-            crate::modules::event::awd_team::infrastructure::network::HostNetworkRuntime::new(),
+            crate::modules::event::awd::infrastructure::network::HelperNetworkRuntime::new(
+                helper_protocol::DEFAULT_CONTROL_SOCKET_PATH,
+            ),
         )
     } else {
-        Arc::new(crate::modules::event::awd_team::infrastructure::network::NoopNetworkRuntime)
+        info!("AWD network_runtime=noop (tests/mock only)");
+        Arc::new(crate::modules::event::awd::infrastructure::network::NoopNetworkRuntime)
     };
+
+    let awd_firewall: Arc<
+        dyn crate::modules::event::awd::infrastructure::firewall::FirewallRuntime,
+    > = if config.awd.network_runtime == "helper" {
+        Arc::new(
+            crate::modules::event::awd::infrastructure::firewall::HelperFirewallRuntime::new(
+                helper_protocol::DEFAULT_CONTROL_SOCKET_PATH,
+            ),
+        )
+    } else {
+        Arc::new(crate::modules::event::awd::infrastructure::firewall::NoopFirewallRuntime)
+    };
+
+    // AWD crypto（fail-fast，Phase 0 P0-2）
+    let awd_crypto = Arc::new(
+        AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
+            .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
+    );
+
+    // AWD startup recovery（Phase 1 P1-16 接线）：
+    // Firewall Recovery 必须先于 AWD Scheduler（§5.14 启动顺序）。
+    // recover_all 失败不阻塞启动——记录错误，交由 Precheck/Start gate 判定。
+    {
+        let awd_containers_for_recovery: Arc<dyn fcmc::AwdContainerRuntime> =
+            Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
+        match crate::modules::event::awd::service::recovery_service::recover_all(
+            db.get_ref(),
+            awd_containers_for_recovery.as_ref(),
+            awd_network.as_ref(),
+            awd_firewall.as_ref(),
+            awd_crypto.as_ref(),
+            publisher.as_ref(),
+        )
+        .await
+        {
+            Ok(n) => info!("[Recovery] startup recovery complete: {n} resources reconciled"),
+            Err(e) => error!("[Recovery] startup recovery failed: {}", e),
+        }
+    }
 
     // Initialize scheduler
     let task_scheduler = scheduler::build_task_scheduler(
@@ -129,6 +205,10 @@ pub async fn run() -> std::io::Result<()> {
         rustfs.clone(),
         log_service.clone(),
         awd_network.clone(),
+        awd_firewall.clone(),
+        awd_crypto.clone(),
+        publisher.clone(),
+        config.clone(),
     )
     .await
     .expect("init startup handlers failed!");
@@ -145,45 +225,44 @@ pub async fn run() -> std::io::Result<()> {
         sc_clone.start_polling().await;
     });
 
+    // Redis 即时唤醒订阅；5s DB 轮询仅作为运行期 Redis 故障兜底。
+    crate::scheduler::wake::spawn_wake_listener(task_scheduler_arc.clone());
+
     // Create centralized AppState
+    let terminal_tickets = std::sync::Arc::new(
+        crate::modules::platform::operations::terminal::TerminalTicketStore::new(
+            std::time::Duration::from_secs(60),
+            redis.clone(),
+        ),
+    );
     let app_state = web::Data::new(AppState::new(
         config.clone(),
         db.get_ref().clone(),
         docker.get_ref().clone(),
         rustfs.get_ref().clone(),
+        redis.clone(),
         log_service.clone(),
-        audit_service,
+        audit_service.clone(),
         publisher.clone(),
         task_scheduler_arc.clone(),
-        EventModuleRegistry::new(),
+        terminal_tickets,
     ));
 
     // AWD container runtime + crypto
     let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
         Arc::new(fcmc::DockerRuntime::new(docker.get_ref().clone()));
 
-    let awd_deps = match AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes()) {
-        Ok(crypto) => web::Data::new(AwdDependencies {
-            crypto: Arc::new(crypto),
-            publisher: publisher.clone(),
-            containers: awd_containers.clone(),
-            network: awd_network.clone(),
-        }),
-        Err(e) => {
-            error!(
-                "Failed to initialize AWD crypto: {}. AWD features will be unavailable.",
-                e
-            );
-            web::Data::new(AwdDependencies {
-                crypto: Arc::new(AwdCrypto::new(
-                    crate::modules::event::awd_team::crypto::AwdSecret::new(vec![0u8; 32]),
-                )),
-                publisher: publisher.clone(),
-                containers: awd_containers,
-                network: awd_network,
-            })
-        }
-    };
+    let awd_deps = web::Data::new(AwdDependencies {
+        crypto: awd_crypto.clone(),
+        publisher: publisher.clone(),
+        containers: awd_containers.clone(),
+        network: awd_network.clone(),
+        firewall: awd_firewall.clone(),
+        rate_limiter: Arc::new(crate::infrastructure::ratelimit::RateLimiter::new(
+            redis.clone(),
+        )),
+        audit: audit_service.clone(),
+    });
 
     let ip = config.server.listen_ip.clone();
     let port = config.server.listen_port;
@@ -198,10 +277,26 @@ pub async fn run() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(TracingLogger::default())
             .wrap(cors)
+            // multipart 体积超限默认映射 400 "Payload error"；按 HTTP 语义应为 413
+            // Payload Too Large（客户端可据此提示用户压缩文件，而非报"请求无效"）。
+            .app_data(web::Data::new(
+                MultipartFormConfig::default().error_handler(|err, _req| {
+                    let overflow = matches!(
+                        &err,
+                        actix_multipart::MultipartError::Payload(
+                            actix_web::error::PayloadError::Overflow
+                        )
+                    ) || err.to_string().contains("Overflow");
+                    if overflow {
+                        // 复用 actix-web 内建 413 响应，错误源链保留在 ResponseError 内。
+                        actix_web::error::PayloadError::Overflow.into()
+                    } else {
+                        err.into()
+                    }
+                }),
+            ))
             // New centralized state
             .app_data(app_state.clone())
-            // Same registry instance as AppState (handlers may extract either)
-            .app_data(web::Data::new(app_state.get_ref().event_registry.clone()))
             .app_data(awd_deps.clone())
             // Concrete hub for SSE / WS fan-out (subscribe)
             .app_data(web::Data::from(broadcast_hub.clone()))
@@ -216,7 +311,8 @@ pub async fn run() -> std::io::Result<()> {
     })
     .bind((ip, port))?
     .run()
-    .await
+    .await?;
+    Ok(())
 }
 
 pub use routes::{configure_all_routes, configure_routes};

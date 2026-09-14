@@ -1,24 +1,28 @@
-//! Application service coordinating instance persistence and container lifecycle.
+//! 协调实例持久化与容器生命周期的应用服务。
+//!
+//! 单版本模型：实例直接引用 Challenge 当前版本（flag/端口/镜像钉扎均来自身份行），
+//! 不存在 revision 钉住。
 
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use bollard::Docker;
 use chrono::Utc;
-use fcmc::ChallengeMeta;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, ModelTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait,
+};
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, instances, sea_orm_active_enums::InstanceStatus, users},
+    entity::{challenges, event_challenge_instance, event_instances, users},
     infrastructure::settings::get_setting,
 };
 
 use crate::modules::event::jeopardy::{
     domain::{CleanupFailure, CleanupReport},
     infrastructure::{
-        container_runtime::{DockerInstanceRuntime, InstanceRuntime},
+        container_runtime::{ChallengeRuntimeSpec, DockerInstanceRuntime, InstanceRuntime},
         instance_repository as repo,
     },
 };
@@ -39,77 +43,172 @@ impl InstanceService {
         Self::new(db, runtime)
     }
 
-    /// Launch a challenge instance for `user_id` (Jeopardy path).
+    /// Launch a challenge instance for `user_id` under `event_id`（单版本：使用 Challenge 当前版本字段）。
     ///
-    /// Order: start container (if docker challenge) → insert Running row → schedule auto-destroy.
+    /// Order: ensure pinned image → start container (if docker challenge) →
+    /// 在同一事务里写入 instances（运行时身份）+ event_challenge_instance（题目领域数据，id=instances.id）→
+    /// schedule auto-destroy。
     pub async fn launch(
         &self,
+        event_id: Uuid,
         challenge_id: Uuid,
         identifier: String,
         user_id: Uuid,
-        r#ref: String,
+        team_id: Option<Uuid>,
         flag_prefix: Option<String>,
-    ) -> anyhow::Result<instances::Model> {
+    ) -> anyhow::Result<event_challenge_instance::Model> {
+        // identifier 对 (event, user/team, challenge) 是确定性的（练习 `JP-{user}-{challenge}` 等）：
+        // 销毁（completed）后行仍占着容器名唯一索引，再次启动同一题会撞
+        // event_instances_container_name_uidx → 400（练习复练被阻塞）。先清掉同容器名已完成行。
+        repo::delete_completed_by_container_name(&self.db, &identifier).await?;
+
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&self.db)
             .await?
             .ok_or_else(|| anyhow!("no such challenge: {}", challenge_id))?;
 
-        let cm = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .context("failed to parse challenge toml_str")?;
+        // 单版本模型：Challenge 当前版本决定一切 runtime 契约
+        if challenge.build_status.as_deref() != Some("ready") {
+            return Err(anyhow!(
+                "challenge {} is not ready (build_status={:?}); import a package first",
+                challenge_id,
+                challenge.build_status
+            ));
+        }
 
-        let flag = if cm.flag.value.is_empty() {
-            Self::gen_flag(&self.db, flag_prefix).await
-        } else {
-            cm.flag.value.clone()
+        // Flag semantics（explicit tagged union）
+        let flag = match challenge.flag_type.as_deref() {
+            Some("dynamic") => Self::gen_flag(&self.db, flag_prefix).await,
+            Some("static") => challenge
+                .static_flag_value
+                .clone()
+                .ok_or_else(|| anyhow!("static challenge {} has no flag value", challenge_id))?,
+            other => {
+                return Err(anyhow!(
+                    "unknown flag_type '{other:?}' on challenge {challenge_id}"
+                ));
+            }
+        };
+
+        // Docker runtime spec（non-docker 题目无容器）
+        let runtime_spec = match challenge.container_port {
+            Some(port) => {
+                let pin = effective_image_ref(
+                    challenge.image_repo_digest.as_deref(),
+                    challenge.image_id.as_deref(),
+                )
+                .map_err(|e| anyhow!("{e}"))?;
+                Some(ChallengeRuntimeSpec {
+                    image_ref: pin,
+                    container_port: port as u16,
+                    // dynamic → FLAG env；static → 镜像内置，不注入
+                    flag: if challenge.flag_type.as_deref() == Some("dynamic") {
+                        Some(flag.clone())
+                    } else {
+                        None
+                    },
+                    cpu_millis: challenge.recommended_cpu_millis,
+                    memory_bytes: challenge.recommended_memory_bytes,
+                    pids_limit: challenge.recommended_pids_limit,
+                })
+            }
+            None => None,
         };
 
         let node_ip = get_setting(&self.db, "NODE_IP").await?;
         let http_prefix = get_setting(&self.db, "HTTP_PREFIX").await?;
+        let delay = get_setting(&self.db, "INSTANCE_DESTROY_DELAY")
+            .await?
+            .parse::<i64>()?;
+        if users::Entity::find_by_id(user_id)
+            .one(&self.db)
+            .await?
+            .is_none()
+        {
+            return Err(anyhow!("user not found: {}", user_id));
+        }
 
-        let content = match &cm.docker {
-            Some(d) => {
-                let port = self.runtime.launch(&cm, &identifier, &flag).await?;
-                match d.is_nc {
-                    Some(true) => format!("nc {} {}", node_ip, port),
-                    _ => {
-                        let url = format!("{}{}:{}", http_prefix, node_ip, port);
-                        format!(
-                            "<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\" download >{url}</a>",
-                        )
-                    }
-                }
+        let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
+        let instance_id = Uuid::new_v4();
+        let now = Utc::now().fixed_offset();
+        let image_ref = runtime_spec.as_ref().map(|s| s.image_ref.clone());
+        let has_runtime = runtime_spec.is_some();
+
+        // Docker 是数据库事务外部副作用。后续 DB 持久化失败时必须补偿删除已启动容器。
+        let content = match &runtime_spec {
+            Some(spec) => {
+                let port = self.runtime.launch(spec, &identifier).await?;
+                let url = format!("{}{}:{}", http_prefix, node_ip, port);
+                format!(
+                    "<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\" download >{url}</a>"
+                )
             }
             None => "".into(),
         };
 
-        let delay = get_setting(&self.db, "INSTANCE_DESTROY_DELAY")
-            .await?
-            .parse::<i64>()?;
+        let persist_result: anyhow::Result<event_challenge_instance::Model> = async {
+            // 归一化实例：instances 为运行时根（容器名/状态/过期），event_challenge_instance 为题目关联（id 相同）。
+            let txn = self.db.begin().await?;
 
-        let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
-        let new_instance = instances::ActiveModel {
-            status: Set(InstanceStatus::Running),
-            flag: Set(flag),
-            content: Set(content.into()),
-            user_id: Set(user_id),
-            challenge_id: Set(challenge_id.into()),
-            r#ref: Set(r#ref),
-            destroy_at: Set(destroy_at.clone().into()),
-            identifier: Set(identifier),
-            ..Default::default()
+            event_instances::ActiveModel {
+                id: Set(instance_id),
+                event_id: Set(event_id),
+                owner_user_id: Set(Some(user_id)),
+                owner_team_id: Set(team_id),
+                image_ref: Set(image_ref),
+                container_id: Set(None),
+                container_name: Set(identifier.clone()),
+                runtime_state: Set("running".to_string()),
+                runtime_generation: Set(1),
+                created_at: Set(now),
+                started_at: Set(Some(now)),
+                stopped_at: Set(None),
+                expires_at: Set(Some(destroy_at.clone().into())),
+                updated_at: Set(now),
+            }
+            .insert(&txn)
+            .await?;
+
+            let new_instance = event_challenge_instance::ActiveModel {
+                id: Set(instance_id),
+                flag: Set(flag),
+                content: Set(content.into()),
+                user_id: Set(user_id),
+                challenge_id: Set(challenge_id),
+                event_id: Set(event_id),
+                team_id: Set(team_id),
+                ..Default::default()
+            }
+            .insert(&txn)
+            .await?;
+
+            txn.commit().await?;
+            Ok(new_instance)
+        }
+        .await;
+
+        let new_instance = match persist_result {
+            Ok(instance) => instance,
+            Err(error) => {
+                if has_runtime {
+                    if let Err(cleanup_error) = self.runtime.stop_and_remove(&identifier).await {
+                        warn!(
+                            container = %identifier,
+                            error = %cleanup_error,
+                            "failed to compensate Jeopardy runtime after DB persistence failure"
+                        );
+                    }
+                }
+                return Err(error);
+            }
         };
 
-        let mut res = new_instance.insert(&self.db).await?;
+        let mut res = new_instance;
         res.flag.clear();
 
         // Auto-destroy after delay (best-effort background task).
         let service = self.clone();
         let d_id = res.id;
-        let d_user = users::Entity::find_by_id(user_id)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| anyhow!("user not found: {}", user_id))?;
 
         actix_web::rt::spawn(async move {
             let now = Utc::now();
@@ -117,7 +216,7 @@ impl InstanceService {
             match delay {
                 Ok(d) => {
                     actix_web::rt::time::sleep(d).await;
-                    if let Err(e) = service.destroy_owned(d_id, d_user.id).await {
+                    if let Err(e) = service.destroy_owned(d_id, user_id).await {
                         tracing::error!("[@destroy_auto]{}", e);
                     }
                 }
@@ -135,10 +234,32 @@ impl InstanceService {
     /// Returns `Ok(false)` when no matching running instance exists (idempotent).
     /// Runtime is removed before the DB status becomes `Completed`.
     pub async fn destroy_owned(&self, instance_id: Uuid, user_id: Uuid) -> anyhow::Result<bool> {
-        let Some(instance) = repo::find_owned_running(&self.db, instance_id, user_id).await? else {
+        let Some((instance, runtime)) =
+            repo::find_owned_running(&self.db, instance_id, user_id).await?
+        else {
             return Ok(false);
         };
-        self.destroy_model(instance).await?;
+        self.destroy_model(instance, runtime).await?;
+        Ok(true)
+    }
+
+    /// Destroy a running instance owned by a team inside one event.
+    ///
+    /// Team instances are shared: `event_challenge_instance.user_id` is only the member who
+    /// originally launched it. Authorization therefore uses the stable `(event_id, team_id)`
+    /// subject so any current teammate can clean up the same runtime without widening access.
+    pub async fn destroy_team_owned(
+        &self,
+        instance_id: Uuid,
+        event_id: Uuid,
+        team_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        let Some((instance, runtime)) =
+            repo::find_team_running(&self.db, instance_id, event_id, team_id).await?
+        else {
+            return Ok(false);
+        };
+        self.destroy_model(instance, runtime).await?;
         Ok(true)
     }
 
@@ -146,9 +267,9 @@ impl InstanceService {
         let instances = repo::list_cleanup_candidates(&self.db).await?;
         let mut report = CleanupReport::default();
 
-        for instance in instances {
+        for (instance, runtime) in instances {
             let instance_id = instance.id;
-            match self.destroy_model(instance).await {
+            match self.destroy_model(instance, runtime).await {
                 Ok(()) => report.completed.push(instance_id),
                 Err(error) => report.failed.push(CleanupFailure {
                     instance_id,
@@ -161,30 +282,29 @@ impl InstanceService {
         Ok(report)
     }
 
-    async fn destroy_model(&self, instance: instances::Model) -> anyhow::Result<()> {
-        let previous_status = instance.status.clone();
-        let result = self.remove_runtime_if_needed(&instance).await;
+    async fn destroy_model(
+        &self,
+        instance: event_challenge_instance::Model,
+        runtime: event_instances::Model,
+    ) -> anyhow::Result<()> {
+        let result = self.remove_runtime_if_needed(&instance, &runtime).await;
         match result {
             Ok(()) => {
-                repo::transition_status(
+                repo::transition_runtime_state(
                     &self.db,
                     instance.id,
-                    previous_status,
-                    InstanceStatus::Completed,
+                    &runtime.runtime_state,
+                    "completed",
                 )
                 .await?;
                 Ok(())
             }
             Err(error) => {
                 let instance_id = instance.id;
-                if previous_status == InstanceStatus::Running {
-                    if let Err(status_error) = repo::transition_status(
-                        &self.db,
-                        instance_id,
-                        InstanceStatus::Running,
-                        InstanceStatus::Failed,
-                    )
-                    .await
+                if runtime.runtime_state == "running" {
+                    if let Err(status_error) =
+                        repo::transition_runtime_state(&self.db, instance_id, "running", "failed")
+                            .await
                     {
                         warn!(
                             instance_id = %instance_id,
@@ -198,17 +318,28 @@ impl InstanceService {
         }
     }
 
-    async fn remove_runtime_if_needed(&self, instance: &instances::Model) -> anyhow::Result<()> {
-        let challenge = instance
-            .find_related(challenges::Entity)
+    /// Decide whether the instance had a docker runtime from its challenge's current version.
+    async fn remove_runtime_if_needed(
+        &self,
+        instance: &event_challenge_instance::Model,
+        runtime: &event_instances::Model,
+    ) -> anyhow::Result<()> {
+        let challenge = challenges::Entity::find_by_id(instance.challenge_id)
             .one(&self.db)
             .await?
-            .ok_or_else(|| anyhow!("challenge not found for instance {}", instance.id))?;
-        let metadata = ChallengeMeta::from_toml_str(&challenge.toml_str)
-            .context("failed to parse challenge metadata")?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "challenge {} not found for instance {}",
+                    instance.challenge_id,
+                    instance.id
+                )
+            })?;
+        let is_docker = challenge.container_port.is_some();
 
-        if metadata.docker.is_some() {
-            self.runtime.stop_and_remove(&instance.identifier).await?;
+        if is_docker {
+            self.runtime
+                .stop_and_remove(&runtime.container_name)
+                .await?;
         }
         Ok(())
     }
@@ -223,4 +354,18 @@ impl InstanceService {
         };
         format!("{}{{{}}}", prefix, unique_value)
     }
+}
+
+/// 镜像钉扎优先级：`image_repo_digest`（repo@sha256:…）优于 `image_id`（仅本地 sha256:…）。
+pub fn effective_image_ref(
+    repo_digest: Option<&str>,
+    image_id: Option<&str>,
+) -> Result<String, String> {
+    if let Some(d) = repo_digest.filter(|d| !d.is_empty()) {
+        return Ok(d.to_string());
+    }
+    if let Some(id) = image_id.filter(|id| !id.is_empty()) {
+        return Ok(id.to_string());
+    }
+    Err("no image pin (image_repo_digest/image_id)".to_string())
 }

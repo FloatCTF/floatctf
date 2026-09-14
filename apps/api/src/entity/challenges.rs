@@ -16,48 +16,63 @@ pub struct Model {
     pub category: String,
     #[sea_orm(column_type = "Text")]
     pub description: String,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub attachment: Option<String>,
     pub hidden: bool,
-    #[sea_orm(column_type = "Text")]
-    pub toml_str: String,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub version: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub source_toml: Option<String>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub spec_json: Option<Json>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub spec_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub package_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub flag_type: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub static_flag_value: Option<String>,
+    pub container_port: Option<i32>,
+    pub recommended_cpu_millis: i64,
+    pub recommended_memory_bytes: i64,
+    pub recommended_pids_limit: i64,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_path: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_name: Option<String>,
+    pub attachment_size: Option<i64>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment_sha256: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_ref: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_id: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub image_repo_digest: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_status: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub build_error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::awd_gamebox_templates::Entity")]
-    AwdGameboxTemplates,
     #[sea_orm(has_many = "super::challenge_set_items::Entity")]
     ChallengeSetItems,
-    #[sea_orm(has_many = "super::challenge_solves::Entity")]
-    ChallengeSolves,
     #[sea_orm(has_many = "super::challenge_writeup::Entity")]
     ChallengeWriteup,
-    #[sea_orm(has_many = "super::event_challenge_solves::Entity")]
-    EventChallengeSolves,
-    #[sea_orm(has_many = "super::event_challenges::Entity")]
-    EventChallenges,
-    #[sea_orm(has_many = "super::instances::Entity")]
-    Instances,
-}
-
-impl Related<super::awd_gamebox_templates::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdGameboxTemplates.def()
-    }
+    #[sea_orm(has_many = "super::event_challenge_instance::Entity")]
+    EventChallengeInstance,
+    #[sea_orm(has_many = "super::jeopardy_challenge_solves::Entity")]
+    JeopardyChallengeSolves,
+    #[sea_orm(has_many = "super::jeopardy_event_challenges::Entity")]
+    JeopardyEventChallenges,
 }
 
 impl Related<super::challenge_set_items::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ChallengeSetItems.def()
-    }
-}
-
-impl Related<super::challenge_solves::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ChallengeSolves.def()
     }
 }
 
@@ -67,21 +82,21 @@ impl Related<super::challenge_writeup::Entity> for Entity {
     }
 }
 
-impl Related<super::event_challenge_solves::Entity> for Entity {
+impl Related<super::event_challenge_instance::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallengeSolves.def()
+        Relation::EventChallengeInstance.def()
     }
 }
 
-impl Related<super::event_challenges::Entity> for Entity {
+impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventChallenges.def()
+        Relation::JeopardyChallengeSolves.def()
     }
 }
 
-impl Related<super::instances::Entity> for Entity {
+impl Related<super::jeopardy_event_challenges::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Instances.def()
+        Relation::JeopardyEventChallenges.def()
     }
 }
 
@@ -96,10 +111,14 @@ impl Related<super::challenge_sets::Entity> for Entity {
 
 impl Related<super::events::Entity> for Entity {
     fn to() -> RelationDef {
-        super::event_challenges::Relation::Events.def()
+        super::jeopardy_event_challenges::Relation::Events.def()
     }
     fn via() -> Option<RelationDef> {
-        Some(super::event_challenges::Relation::Challenges.def().rev())
+        Some(
+            super::jeopardy_event_challenges::Relation::Challenges
+                .def()
+                .rev(),
+        )
     }
 }
 

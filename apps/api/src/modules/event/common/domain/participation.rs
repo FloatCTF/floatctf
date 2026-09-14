@@ -1,1 +1,1 @@
-//! Participation modes and membership concepts.
+//! 参赛形态与成员关系相关概念。

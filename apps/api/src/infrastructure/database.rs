@@ -1,4 +1,4 @@
-//! Database connection initialization.
+//! 数据库连接初始化。
 
 use anyhow::Result;
 use sea_orm::DbConn;

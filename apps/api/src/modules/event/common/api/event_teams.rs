@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use sea_orm::Condition;
+use sea_orm::{Condition, TransactionTrait};
 
 use crate::modules::event::common::api::EventTeamMembersDto;
 use crate::modules::event::common::api::EventTeamsDto;
@@ -36,6 +36,9 @@ pub async fn add_team(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.participant_mode != crate::entity::sea_orm_active_enums::ParticipantMode::Team {
+        return AppError::BadRequest("teams require team participant mode".to_string()).into();
+    }
 
     let new_event_team = event_teams::ActiveModel {
         event_id: Set(event.id),
@@ -77,18 +80,35 @@ pub async fn remove_team(
     let user = user.into_inner();
     let event_id = path.into_inner();
     let dir = dir.into_inner();
+
+    // Team deletion and enrollment cleanup must be one transaction. The old code
+    // deleted *every* event_users row for the event, including unrelated teams.
+    let txn = ctx.db.get_ref().begin().await?;
+    let members = event_team_members::Entity::find()
+        .filter(event_team_members::Column::EventId.eq(event_id))
+        .filter(event_team_members::Column::TeamId.is_in(dir.id_list.clone()))
+        .all(&txn)
+        .await?;
+    let member_ids: Vec<Uuid> = members.into_iter().map(|member| member.user_id).collect();
+
     let deleted_count = event_teams::Entity::delete_many()
         .filter(event_teams::Column::EventId.eq(event_id))
         .filter(event_teams::Column::Id.is_in(dir.id_list.clone()))
-        .exec(ctx.db.get_ref())
+        .exec(&txn)
         .await?
         .rows_affected;
 
-    let d = event_users::Entity::delete_many()
-        .filter(event_users::Column::EventId.eq(event_id))
-        .exec(ctx.db.get_ref())
-        .await?
-        .rows_affected;
+    let removed_enrollments = if member_ids.is_empty() {
+        0
+    } else {
+        event_users::Entity::delete_many()
+            .filter(event_users::Column::EventId.eq(event_id))
+            .filter(event_users::Column::UserId.is_in(member_ids))
+            .exec(&txn)
+            .await?
+            .rows_affected
+    };
+    txn.commit().await?;
 
     ctx.log
         .add_log(
@@ -96,14 +116,14 @@ pub async fn remove_team(
             "EVENT_TEAMS",
             "DELETE",
             format!("{} 删除 {} 支队伍", user.username, deleted_count).as_str(),
-            json!({"event_id": event_id, "deleted_count": deleted_count}),
+            json!({"event_id": event_id, "deleted_count": deleted_count, "removed_enrollments": removed_enrollments}),
             None,
             user.id.into(),
             Some(&ctx.req),
         )
         .await;
 
-    UniResponse::ok((deleted_count + d).into()).into()
+    UniResponse::ok(deleted_count.into()).into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -292,33 +312,60 @@ pub async fn add_user_to_team(
     let (event_id, team_id) = path.into_inner();
     let user_id = utt.into_inner().user_id;
 
+    let txn = ctx.db.get_ref().begin().await?;
+    let event = events::Entity::find_by_id(event_id)
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.participant_mode != crate::entity::sea_orm_active_enums::ParticipantMode::Team {
+        return AppError::BadRequest("teams require team participant mode".to_string()).into();
+    }
+
     let event_team = event_teams::Entity::find_by_id(team_id)
         .filter(event_teams::Column::EventId.eq(event_id))
-        .one(ctx.db.get_ref())
+        .one(&txn)
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", team_id)))?;
 
     let user_model = users::Entity::find_by_id(user_id)
-        .one(ctx.db.get_ref())
+        .one(&txn)
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
 
-    let new_event_user = event_users::ActiveModel {
-        event_id: Set(event_team.event_id),
-        user_id: Set(user_model.id),
+    let existing_membership = event_team_members::Entity::find()
+        .filter(event_team_members::Column::EventId.eq(event_id))
+        .filter(event_team_members::Column::UserId.eq(user_id))
+        .one(&txn)
+        .await?;
+    if existing_membership.is_some() {
+        return AppError::BadRequest("user already belongs to a team in this event".to_string())
+            .into();
+    }
+
+    if event_users::Entity::find_by_id((event_id, user_id))
+        .one(&txn)
+        .await?
+        .is_none()
+    {
+        event_users::ActiveModel {
+            event_id: Set(event_id),
+            user_id: Set(user_id),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+    }
+
+    let team_user = event_team_members::ActiveModel {
+        event_id: Set(event_id),
+        team_id: Set(team_id),
+        user_id: Set(user_id),
+        role: Set(EventTeamMemberRole::Member),
         ..Default::default()
-    };
-
-    let _event_user = new_event_user.insert(ctx.db.get_ref()).await?;
-
-    let new_team_user = event_team_members::ActiveModel {
-        event_id: Set(event_team.event_id),
-        team_id: Set(event_team.id),
-        user_id: Set(user_model.id),
-        ..Default::default()
-    };
-
-    let team_user = new_team_user.insert(ctx.db.get_ref()).await?;
+    }
+    .insert(&txn)
+    .await?;
+    txn.commit().await?;
 
     ctx.log
         .add_log(
@@ -351,13 +398,37 @@ pub async fn remove_user_from_team(
     let user = user.into_inner();
     let (event_id, team_id) = path.into_inner();
     let dir = dir.into_inner();
-    let deleted_count = event_team_members::Entity::delete_many()
+    let txn = ctx.db.get_ref().begin().await?;
+
+    let selected = event_team_members::Entity::find()
         .filter(event_team_members::Column::EventId.eq(event_id))
         .filter(event_team_members::Column::TeamId.eq(team_id))
         .filter(event_team_members::Column::UserId.is_in(dir.id_list))
-        .exec(ctx.db.get_ref())
-        .await?
-        .rows_affected;
+        .all(&txn)
+        .await?;
+    if selected
+        .iter()
+        .any(|member| member.role == EventTeamMemberRole::Captain)
+    {
+        return AppError::BadRequest(
+            "captain cannot be removed individually; remove the team instead".to_string(),
+        )
+        .into();
+    }
+    let member_ids: Vec<Uuid> = selected.into_iter().map(|member| member.user_id).collect();
+    let deleted_count = if member_ids.is_empty() {
+        0
+    } else {
+        // event_users -> event_team_members is ON DELETE CASCADE; deleting enrollment
+        // keeps both halves synchronized in one statement.
+        event_users::Entity::delete_many()
+            .filter(event_users::Column::EventId.eq(event_id))
+            .filter(event_users::Column::UserId.is_in(member_ids))
+            .exec(&txn)
+            .await?
+            .rows_affected
+    };
+    txn.commit().await?;
 
     ctx.log
         .add_log(

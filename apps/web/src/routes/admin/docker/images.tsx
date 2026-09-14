@@ -1,6 +1,6 @@
 import dayjs from "dayjs";
 import { TrashIcon } from "@primer/octicons-react";
-import { ActionList } from "@primer/react";
+import { ActionList, useConfirm } from "@primer/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -14,6 +14,7 @@ export const Route = createFileRoute("/admin/docker/images")({
 });
 
 function RouteComponent() {
+	const confirmDialog = useConfirm();
     const queryClient = useQueryClient();
 
     const formatSize = (bytes: number): string => {
@@ -65,14 +66,13 @@ function RouteComponent() {
         <ActionList>
             <ActionList.Item
                 variant="danger"
-                onClick={() => {
-                    if (
-                        confirm(
-                            `Delete image ${row.repo_tags.join(", ") || row.id}?`,
-                        )
-                    ) {
-                        deleteMutation.mutate(row.id);
-                    }
+                onClick={async () => {
+                    const ok = await confirmDialog({
+                        title: `Delete image ${row.repo_tags.join(", ") || row.id}?`,
+                        content: `镜像将被删除，操作不可撤销。`,
+                        confirmButtonType: "danger",
+                    });
+                    if (ok) deleteMutation.mutate(row.id);
                 }}
             >
                 Delete

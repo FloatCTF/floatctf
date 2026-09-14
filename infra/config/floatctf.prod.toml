@@ -1,0 +1,68 @@
+# FloatCTF production process-static configuration.
+# This file is rendered by scripts/install.sh; ${...} placeholders are installer substitutions.
+
+[application]
+main_url = "https://${SITE_ADDRESS}:${HTTPS_PORT}"
+
+[server]
+work_dir = "/var/lib/floatctf/runtime"
+host_address = "${HOST_ADDRESS}"
+listen_ip = "0.0.0.0"
+listen_port = ${API_PORT}
+
+[logging]
+timezone = "Asia/Shanghai"
+filter = "info,actix_web=warn,sqlx=warn"
+
+[docker]
+socket_path = "/run/floatctf/helper-docker.sock"
+
+[database]
+url = "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+max_connections = 64
+min_connections = 4
+connect_timeout_seconds = 10
+acquire_timeout_seconds = 10
+
+[rustfs]
+endpoint_url = "http://rustfs:9000"
+access_key_id = "${RUSTFS_ACCESS_KEY}"
+secret_access_key = "${RUSTFS_SECRET_KEY}"
+region = "cn-east-1"
+
+[auth]
+jwt_secret = "${JWT_SECRET}"
+
+[redis]
+url = "redis://redis:6379/"
+
+[realtime]
+channel = "floatctf:realtime"
+
+[awd]
+network_runtime = "helper"
+flagserver_image = "floatctf/awd-flagserver:${VERSION}"
+judgeserver_image = "floatctf/awd-judgeserver:${VERSION}"
+platform_internal_url = "http://10.42.8.2:${API_PORT}"
+platform_internal_network = "fctf-platform-control"
+
+[awdp]
+practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:${VERSION}"
+practice_network_subnet = "10.42.2.0/23"
+practice_judge_ip = "10.42.2.2"
+network_pool = "10.43.0.0/16"
+event_netmask = 24
+platform_internal_url = "http://10.42.8.2:${API_PORT}"
+
+[registry]
+image_prefix = "floatctf"
+push = false
+insecure = false
+build_timeout_secs = 900
+
+[cors]
+allowed_origins = []
+
+[features]
+unsafe_sql_admin = false
+web_terminal = true

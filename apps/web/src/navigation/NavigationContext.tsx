@@ -11,19 +11,19 @@ import {
 import type { CoordinatorNavigateOptions } from "./navigation-types";
 import type { NavigationPhase } from "./navigation-types";
 
-// ── Optimistic progress bar steps ──────────────────────────────────────────────
-// Trickle from ~8% → 91% during preload, then jump to 100% on complete.
+// ── 乐观进度条步进 ──────────────────────────────────────────────
+// 预加载期间从约 8% 缓增到 91%，完成时跳到 100%。
 const TRICKLE_STEPS = [8, 20, 35, 50, 65, 75, 82, 88, 91];
 const TRICKLE_INTERVAL_MS = 80;
 
-// Router-pending-driven (back/forward) trickle steps
+// 由 router pending 驱动（前进/后退）的缓增步进
 const PENDING_TRICKLE_STEPS = [30, 50, 65, 78, 85, 90];
 const PENDING_TRICKLE_INTERVAL_MS = 120;
 
-// How long to show 100% before starting fade-out
+// 显示 100% 后多久开始淡出
 const COMPLETE_ANIMATION_MS = 150;
 
-// ── Context value ──────────────────────────────────────────────────────────────
+// ── 上下文值 ──────────────────────────────────────────────────────────────
 
 export interface NavigationContextValue {
 	phase: NavigationPhase;
@@ -36,8 +36,8 @@ export const NavigationContext = createContext<NavigationContextValue | null>(
 	null,
 );
 
-// ── Module-level transaction counter (synchronous, outside React) ──────────────
-// Used to detect superseded transactions without re-rendering.
+// ── 模块级事务计数器（同步，React 外） ──────────────
+// 用于在不重渲染的情况下检测被覆盖的事务。
 let nextTransactionId = 0;
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -50,19 +50,19 @@ export function NavigationProvider({
 	const router = useRouter();
 	const routerStatus = useRouterState({ select: (s) => s.status });
 
-	// React state for rendering
+	// 用于渲染的 React state
 	const [phase, setPhase] = useState<NavigationPhase>("idle");
 	const [progress, setProgress] = useState(0);
 	const [visible, setVisible] = useState(false);
 
-	// Refs — mutable, not triggering re-renders
+	// ref——可变，不触发重渲染
 	const activeTransactionRef = useRef(0);
 	const trickleIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const routerDrivenIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const routerDrivenActiveRef = useRef(false);
 
-	// ── Helpers ────────────────────────────────────────────────────────────────
+	// ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 	const cleanupTimers = useCallback(() => {
 		if (trickleIvRef.current) {
@@ -103,8 +103,8 @@ export function NavigationProvider({
 	}, [cleanupTimers]);
 
 	/**
-	 * Jump to 100%, then reset after the animation completes.
-	 * Used by router-pending-driven progress (back/forward).
+	 * 跳到 100%，动画结束后再重置。
+	 * 供 router-pending 驱动的进度条使用（前进/后退）。
 	 */
 	const completeProgress = useCallback(() => {
 		if (trickleIvRef.current) {
@@ -119,18 +119,18 @@ export function NavigationProvider({
 		const txAtSchedule = activeTransactionRef.current;
 		hideTimeoutRef.current = setTimeout(() => {
 			hideTimeoutRef.current = null;
-			// Bail if a coordinator transaction started while we were animating —
-			// resetting now would clobber the new transaction's progress.
+			// 若动画期间已有协调器事务启动则退出——
+			// 此时重置会冲掉新事务的进度。
 			if (activeTransactionRef.current !== txAtSchedule) return;
 			resetState();
 		}, COMPLETE_ANIMATION_MS + 100);
 	}, [resetState]);
 
-	// ── Router-pending-driven progress (back/forward / non-coordinated nav) ─────
-	// Only engages when there is no active coordinator transaction.
+	// ── router-pending 驱动进度（前进/后退 / 非协调导航） ─────
+	// 仅在没有活跃协调器事务时启用。
 	useEffect(() => {
 		if (phase !== "idle") {
-			// Coordinator active — clean up any router-driven interval
+			// 协调器活跃——清理 router 驱动的 interval
 			if (routerDrivenIvRef.current) {
 				clearInterval(routerDrivenIvRef.current);
 				routerDrivenIvRef.current = null;
@@ -140,7 +140,7 @@ export function NavigationProvider({
 		}
 
 		if (routerStatus === "pending") {
-			// Start router-driven progress bar
+			// 启动 router 驱动的进度条
 			routerDrivenActiveRef.current = true;
 			setVisible(true);
 			setProgress(PENDING_TRICKLE_STEPS[0]);
@@ -155,7 +155,7 @@ export function NavigationProvider({
 				setProgress(PENDING_TRICKLE_STEPS[step]);
 			}, PENDING_TRICKLE_INTERVAL_MS);
 		} else if (routerStatus === "idle" && routerDrivenActiveRef.current) {
-			// Router pending completed — finish the bar
+			// router pending 完成——收尾进度条
 			routerDrivenActiveRef.current = false;
 			completeProgress();
 		}
@@ -168,47 +168,47 @@ export function NavigationProvider({
 		};
 	}, [routerStatus, phase, completeProgress]);
 
-	// ── Cleanup on unmount ─────────────────────────────────────────────────────
+	// ── 卸载清理 ─────────────────────────────────────────────────────
 	useEffect(() => {
 		return () => {
 			cleanupTimers();
 		};
 	}, [cleanupTimers]);
 
-	// ── Core: navigate with transition (preload before commit) ─────────────────
+	// ── 核心：带过渡的导航（提交前预加载） ─────────────────
 	const navigateWithTransition = useCallback(
 		(opts: CoordinatorNavigateOptions) => {
 			const transactionId = ++nextTransactionId;
 			activeTransactionRef.current = transactionId;
 			const startHref = router.state.location.href;
 
-			// Cast to the router's typed NavigateOptions
+			// 转为 router 类型化的 NavigateOptions
 			const routerOpts = opts as unknown as NavigateOptions;
 
-			// Enter preloading phase
+			// 进入预加载阶段
 			setPhase("preloading");
 			setVisible(true);
 			startTrickle();
 
 			router.preloadRoute(routerOpts).then(
 				() => {
-					// ── Preload succeeded ──
+					// ── 预加载成功 ──
 					if (transactionId !== activeTransactionRef.current) return;
 
-					// Location may have changed (auth redirect via interceptor)
+					// location 可能已变（鉴权拦截器重定向）
 					if (router.state.location.href !== startHref) {
 						resetState();
 						return;
 					}
 
-					// Animate to 100%, then commit
+					// 动画到 100%，再提交导航
 					setPhase("committing");
 					setProgress(100);
 
 					setTimeout(() => {
 						if (transactionId !== activeTransactionRef.current) return;
 
-						// Re-check location before commit (user may have pressed Back)
+						// 提交前再检查 location（用户可能按了后退）
 						if (router.state.location.href !== startHref) {
 							resetState();
 							return;
@@ -229,16 +229,16 @@ export function NavigationProvider({
 					}, COMPLETE_ANIMATION_MS);
 				},
 				() => {
-					// ── Preload failed ──
+					// ── 预加载失败 ──
 					if (transactionId !== activeTransactionRef.current) return;
 
-					// Location changed (auth redirect) — abort silently
+					// location 已变（鉴权重定向）——静默中止
 					if (router.state.location.href !== startHref) {
 						resetState();
 						return;
 					}
 
-					// Fallback: let the normal router error/loading system handle it
+					// 回退：交给 router 常规错误/加载系统
 					resetState();
 					router.navigate(routerOpts).catch(() => {});
 				},

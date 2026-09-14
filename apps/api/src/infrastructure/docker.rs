@@ -1,15 +1,10 @@
-//! Docker client initialization.
-
-use anyhow::Result;
-use bollard::Docker;
-use tracing::info;
+use bollard::{API_DEFAULT_VERSION, Docker};
 
 use crate::core::config::DockerConfig;
 
-pub async fn connect(config: &DockerConfig) -> Result<Docker> {
-    let _ = config; // reserved for socket/host overrides
-    let docker = Docker::connect_with_defaults()?;
-    let s = docker.ping().await?;
-    info!("Docker connected {}", s);
+pub async fn connect(config: &DockerConfig) -> anyhow::Result<Docker> {
+    let docker = Docker::connect_with_unix(&config.socket_path, 120, API_DEFAULT_VERSION)?;
+    let ping = docker.ping().await?;
+    tracing::info!(socket = %config.socket_path, response = %ping, "Docker connected through floatctf-helper");
     Ok(docker)
 }

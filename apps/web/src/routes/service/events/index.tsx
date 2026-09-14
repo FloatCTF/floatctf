@@ -3,11 +3,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
 import { serviceApi } from "@/api";
-import { GenericTable, useMsgBanner } from "@/components";
+import { EventStatusBadge, GenericTable, useMsgBanner } from "@/components";
 import {
 	type EventTeamMembers,
 	type EventTeams,
-	EventType,
+	EventFamily,
 	type Events,
 } from "@/entity";
 import { AppLink } from "@/navigation";
@@ -17,7 +17,7 @@ export const Route = createFileRoute("/service/events/")({
 	component: RouteComponent,
 });
 
-const filterKeys = ["id", "title", "type", "allow_join"];
+const filterKeys = ["title", "family", "allow_join"];
 
 export type EventInfo = {
 	id: string;
@@ -42,35 +42,35 @@ function RouteComponent() {
 
 	const columns = [
 		{
-			accessorKey: "event.id",
-			header: "ID",
-			field: "event.id",
-			rowHeader: true,
-		},
-		{
 			accessorKey: "event.title",
 			header: "Title",
 			field: "event.title",
 			rowHeader: true,
 			renderCell: (row: EventInfo) => {
-				switch (row.event.type) {
-					case EventType.JeopardySingle:
-					case EventType.JeopardyTeam:
+				switch (row.event.family) {
+					case EventFamily.Jeopardy:
 						return (
 							<AppLink
 								to={"/service/events/jeopardy/$id"}
 								params={{ id: row.event.id }}
-								target="_blank"
 							>
 								{row.event.title}
 							</AppLink>
 						);
-					case EventType.AwdTeam:
+					case EventFamily.Awd:
 						return (
 							<AppLink
 								to={"/service/events/awd/$id"}
 								params={{ id: row.event.id }}
-								target="_blank"
+							>
+								{row.event.title}
+							</AppLink>
+						);
+					case EventFamily.Awdp:
+						return (
+							<AppLink
+								to={"/service/events/awdp/$id"}
+								params={{ id: row.event.id }}
 							>
 								{row.event.title}
 							</AppLink>
@@ -80,7 +80,21 @@ function RouteComponent() {
 				}
 			},
 		},
-		{ accessorKey: "event.type", header: "Type", field: "event.type" },
+		{ accessorKey: "event.family", header: "Family", field: "event.family" },
+		{ accessorKey: "event.participant_mode", header: "Participant", field: "event.participant_mode" },
+		{
+			accessorKey: "status",
+			header: "Status",
+			field: "status",
+			renderCell: (row: EventInfo) => {
+				return (
+					<EventStatusBadge
+						startTime={row.event.start_time}
+						endTime={row.event.end_time}
+					/>
+				);
+			},
+		},
 		{
 			accessorKey: "event.allow_join",
 			header: "Joinable",

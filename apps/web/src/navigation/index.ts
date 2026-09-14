@@ -8,3 +8,15 @@ export type {
 	NavigationPhase,
 	CoordinatorNavigateOptions,
 } from "./navigation-types";
+export { adminNavigation, adminIgnoreRoutes } from "./admin-navigation";
+export { serviceNavigation } from "./service-navigation";
+export type {
+	ActiveNavigationPath,
+	AdminNavigationNode,
+	NavigationGroup,
+	NavigationItem,
+	NavigationMatchRule,
+	NavigationSection,
+	NavigationSeparator,
+	NavigationVisibilityContext,
+} from "./sidebar-types";

@@ -34,6 +34,12 @@ pub async fn add_user(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.participant_mode == crate::entity::sea_orm_active_enums::ParticipantMode::Team {
+        return AppError::BadRequest(
+            "team event users must be added through the team membership endpoint".to_string(),
+        )
+        .into();
+    }
 
     let mut added_count = 0;
 
@@ -124,6 +130,12 @@ pub async fn remove_user(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.participant_mode == crate::entity::sea_orm_active_enums::ParticipantMode::Team {
+        return AppError::BadRequest(
+            "team event users must be removed through the team membership endpoint".to_string(),
+        )
+        .into();
+    }
 
     let deleted_count = event_users::Entity::delete_many()
         .filter(event_users::Column::EventId.eq(event.id))

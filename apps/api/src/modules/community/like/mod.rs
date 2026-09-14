@@ -1,4 +1,4 @@
-//! Discussion like / unlike handlers — `/api/discussions/{id}/like`.
+//! 点赞模块。
 
 use crate::api::prelude::*;
 use crate::entity::{discussion_likes, discussions};

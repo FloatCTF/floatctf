@@ -40,7 +40,7 @@ function RouteComponent() {
       banner.showBanner("success", "Login successful");
       form.buttonDisabled = true;
       form.buttonMessage = "Redirecting...";
-      // redirect to admin dashboard
+      // 重定向到管理端仪表盘
       navigate({ to: "/admin/dashboard" });
     },
     onError: (error) => {

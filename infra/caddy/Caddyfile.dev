@@ -1,0 +1,37 @@
+# FloatCTF development Caddy configuration.
+# The compose service publishes container port 80 on all host IPv4 interfaces at :7780.
+http:// {
+    encode zstd gzip
+    log {
+        output stdout
+    }
+
+    handle /api/* {
+        reverse_proxy host.docker.internal:9090
+    }
+
+    handle_path /public/* {
+        rewrite * /floatctf-public{path}
+        reverse_proxy rustfs:9000
+    }
+
+    handle_path /private/* {
+        rewrite * /floatctf-private{path}
+        reverse_proxy rustfs:9000 {
+            header_up Host 127.0.0.1:9000
+        }
+    }
+
+    @challenge_attachment path_regexp challenge ^/static/challenges/([^/]+)/attachment/(.+)$
+    handle @challenge_attachment {
+        rewrite * /{re.challenge.1}/attachment/{re.challenge.2}
+        root * /srv/challenges
+        header X-Content-Type-Options nosniff
+        header Content-Disposition attachment
+        file_server
+    }
+
+    handle {
+        reverse_proxy host.docker.internal:13000
+    }
+}

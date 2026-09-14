@@ -9,11 +9,14 @@ permissions:
   contents: write
 
 jobs:
-  web:
-    name: Build web release
-    runs-on: ubuntu-latest
+  release:
+    name: Build release artifacts
+    # API runtime image 固定 ubuntu:24.04；构建机同版可避免 release ELF 引用更新 glibc。
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      # ── 前端 ──
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
@@ -25,22 +28,66 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @floatctf/web build
-      - run: tar -czf web-dist.tar.gz -C apps/web/dist .
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: web-dist.tar.gz
-          generate_release_notes: true
 
-  rust:
-    name: Build Rust release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── 后端（全 workspace 二进制）──
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --release
-      - run: tar -czf rust-binaries.tar.gz -C target/release floatctf fcmc floatctf-migration awd_flagserver awd_judgeserver
-      - uses: softprops/action-gh-release@v2
+      # Release 只构建真正发布的 API + host helper 二进制。
+      # 不构建 tests / benches / examples，也不为未发布的 workspace bin 产生本地 artifact。
+      - run: cargo build --locked --release -p floatctf -p floatctf-helper --bins
+
+      # ── 发布 4 个产物（供 install.sh 下载部署）──
+      #   1. floatctf            API 二进制（installer 以此本地构建生产容器 image）
+      #   2. floatctf-helper   宿主控制面二进制
+      #   3. web-dist.tar.gz     前端静态产物
+      #   4. merged.sql          单个 SQL（fresh-DB bootstrap）
+      - name: Assemble release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 1) API 二进制
+          install -m 0755 target/release/floatctf floatctf
+
+          # 2) 宿主控制面
+          install -m 0755 target/release/floatctf-helper floatctf-helper
+
+          # 3) 前端静态产物
+          tar -czf web-dist.tar.gz -C apps/web/dist .
+
+          # 4) merged.sql（确定性 fresh-DB bootstrap）
+          bash apps/api/src/sql/migrate.sh make
+          install -m 0644 apps/api/src/sql/merged.sql merged.sql
+
+          echo "release artifacts:"
+          ls -la floatctf floatctf-helper web-dist.tar.gz merged.sql
+
+      - name: Verify production API image
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .release-api-image
+          mkdir .release-api-image
+          install -m 0755 floatctf .release-api-image/floatctf
+          version="${GITHUB_REF_NAME#v}"
+          docker build \
+            --build-arg "FLOATCTF_VERSION=${version:-ci}" \
+            -f infra/docker/api/Dockerfile \
+            -t floatctf/api:release-test \
+            .release-api-image
+          test "$(docker image inspect -f '{{.Config.User}}' floatctf/api:release-test)" = "65532:65532"
+          docker run --rm --entrypoint sh floatctf/api:release-test -c '
+            set -eu
+            ldd /usr/local/bin/floatctf | tee /tmp/ldd.txt
+            ! grep -q "not found" /tmp/ldd.txt
+          '
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
         with:
-          files: rust-binaries.tar.gz
+          files: |
+            floatctf
+            floatctf-helper
+            web-dist.tar.gz
+            merged.sql
           generate_release_notes: true

@@ -54,6 +54,10 @@ export type MutationColumn = {
     header: string;
     field: string;
     render: ReactElement;
+    /** 仅在新增对话框展示（不可变身份字段等）。 */
+    createOnly?: boolean;
+    /** 仅在修改对话框展示。 */
+    editOnly?: boolean;
 };
 export type BannerState = {
     isShown: boolean;
@@ -74,6 +78,8 @@ type GenericTableProps<T> = {
     patchFn?: (data: Partial<T>) => Promise<UniResponse<T>>;
     mutationColumns?: MutationColumn[];
     mutationData?: Partial<T>;
+    /** 点 Add（新增）时重置表单到该默认值；未提供则保持现状（不重置）。 */
+    defaultMutationData?: Partial<T>;
     customActions?: ReactNode;
     columnActions?: (row: T) => ReactNode;
     externalBanner?: ReturnType<typeof useMsgBanner>;
@@ -88,6 +94,8 @@ type GenericTableProps<T> = {
     selectedRowIds?: Set<string>;
     onSelectedRowIdsChange?: (ids: Set<string>) => void;
     filterKeys?: string[];
+    /** 查询缓存新鲜时间，默认 30s；传 0 时每次挂载/翻页都重新请求（如 Instances 页）。 */
+    staleTime?: number;
 } & RequireGetRowId<T> &
     React.HTMLAttributes<HTMLDivElement>;
 
@@ -100,12 +108,14 @@ export const GenericTable = <T extends object>({
     patchFn,
     mutationColumns,
     mutationData,
+    defaultMutationData,
     customActions,
     columnActions,
     externalBanner,
     enableInternalActions = true,
     disableAdd = false,
     disableSelect = false,
+    staleTime = 30_000,
     hideTitle = false,
     disablePagination = false,
     subtitle,
@@ -133,7 +143,7 @@ export const GenericTable = <T extends object>({
         [onSelectedRowIdsChange],
     );
 
-    // query
+    // 查询
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(disablePagination ? 100 : 10);
     const [filter, setFilter] = useState("");
@@ -144,11 +154,12 @@ export const GenericTable = <T extends object>({
         queryFn: () => queryFn({ page, limit, filter }),
         // 列表数据缓存 30s，重复进入/翻页不重复请求；
         // 翻页时保留上一页数据占位，避免整表骨架屏闪烁。
-        staleTime: 30_000,
+        // staleTime 可覆盖（如 Instances 页传 0，切回标签必刷新）。
+        staleTime,
         refetchOnWindowFocus: false,
         placeholderData: keepPreviousData,
     });
-    // add actions to columns
+    // 向列追加操作
     const safeGetRowId = (row: T) => {
         function hasIdField(obj: unknown): obj is { id: string } {
             return typeof obj === "object" && obj !== null && "id" in obj;
@@ -289,15 +300,30 @@ export const GenericTable = <T extends object>({
     const [originalRow, setOriginalRow] = useState<Partial<T> | null>(null);
     const banner = externalBanner ?? useMsgBanner();
 
-    // add or modify
+    // 新增或修改
     const [isOpen, setIsOpen] = useState(false);
     const [dialogMode, setDialogMode] = useState<"add" | "modify">("add");
     const onDialogClose = useCallback(() => setIsOpen(false), []);
 
-    // mutation
+    // 变更
     const deleteMutation = useMutation({
         mutationFn: removeFn,
-        onSuccess: () => {
+        onSuccess: (_data, ids: string[]) => {
+            // 乐观移除：删除成功后立即从所有 [subject, ...] 缓存里剔除对应行，
+            // 列表马上消失；再 invalidate 拉取服务端真实状态兜底。
+            // 之前只 invalidate 依赖后台 refetch，refetch 慢/失败时（React Query
+            // 保留上次成功数据）已删行会残留到手动刷新，用户反馈过此类问题。
+            const removed = new Set(ids);
+            queryClient.setQueriesData(
+                { queryKey: [subject] },
+                (old: UniResponse<T[]> | undefined) => {
+                    if (!old || !Array.isArray(old.data)) return old;
+                    return {
+                        ...old,
+                        data: old.data.filter((row) => !removed.has(safeGetRowId(row))),
+                    };
+                },
+            );
             queryClient.invalidateQueries({ queryKey: [subject] });
             banner.showBanner("success", `Delete ${subject} successfully`);
         },
@@ -351,7 +377,20 @@ export const GenericTable = <T extends object>({
                     position="right"
                 >
                     <div className="w-full gap-1 flex-col flex">
-                        {mutationColumns?.map((column) => (
+                        {mutationColumns
+                            ?.filter((column) => {
+                                if (dialogMode === "add" && column.editOnly) {
+                                    return false;
+                                }
+                                if (
+                                    dialogMode === "modify" &&
+                                    column.createOnly
+                                ) {
+                                    return false;
+                                }
+                                return true;
+                            })
+                            .map((column) => (
                             <FormControl key={column.field} className="w-full">
                                 <FormControl.Label>
                                     {column.field}
@@ -443,7 +482,11 @@ export const GenericTable = <T extends object>({
                             variant="primary"
                             onClick={() => {
                                 if (mutationData) {
-                                    Object.assign(mutationData, {});
+                                    // 新增：重置到 defaultMutationData（未提供则保持现状）。
+                                    Object.assign(
+                                        mutationData,
+                                        defaultMutationData ?? {},
+                                    );
                                 }
                                 setDialogMode("add");
                                 setIsOpen(true);

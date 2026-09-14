@@ -55,10 +55,10 @@ function RouteComponent() {
 
     const exportMutation = useMutation({
         mutationFn: async () => {
-            // 1. Get S3 key from report endpoint
+            // 1. 从报告接口取得 S3 对象键
             const res = await adminApi.events.getReport(id);
             const s3Key = res.data; // e.g. "writeups/{event_id}/{event_name}_{event_id}.zip"
-            // 2. Get presigned download URL and trigger download
+            // 2. 获取预签名下载 URL 并触发下载
             if (s3Key) {
                 await adminApi.download.download(s3Key);
             } else {

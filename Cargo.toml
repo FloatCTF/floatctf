@@ -5,6 +5,9 @@ members = [
     "crates/fcmc",
     "crates/awd-flagserver",
     "crates/awd-judgeserver",
+    "crates/awdp-judgeserver",
+    "crates/helper-protocol",
+    "crates/floatctf-helper",
 ]
 
 [workspace.package]
@@ -12,6 +15,30 @@ edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/FloatCTF/floatctf"
 
+# Local development keeps source/line information for backtraces without embedding
+# full DWARF into every API/test binary. FloatCTF has many integration-test
+# executables, so full debug info multiplies disk usage dramatically.
 [profile.dev]
 opt-level = 0
-debug = true
+debug = "line-tables-only"
+incremental = false
+
+# `cargo test` uses the test profile, not the dev profile. Keep it explicit so
+# hundreds of integration-test binaries do not each carry full debug symbols or
+# accumulate tens of GiB of incremental object caches.
+[profile.test]
+opt-level = 0
+debug = 0
+incremental = false
+
+# Production binaries are the only Rust artifacts shipped. Tests/benches/examples are
+# not built by the release workflow. Strip symbols, but keep Cargo's normal parallel
+# code generation instead of LTO: for a server binary the extra ~6 MiB saved by
+# ThinLTO was not worth turning clean release builds into multi-minute link jobs.
+# Keep the default unwind panic strategy because the scheduler intentionally uses
+# catch_unwind to recover a worker loop from panics.
+[profile.release]
+opt-level = 3
+debug = 0
+strip = "symbols"
+incremental = false

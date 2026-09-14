@@ -1,4 +1,4 @@
-//! Player discussion handlers — `/api/discussions`.
+//! 讨论选手端接口。
 
 use std::{collections::HashMap, str::FromStr};
 

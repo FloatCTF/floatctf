@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { serviceApi } from "@/api";
 import { MDPlusEditor, useMsgBanner } from "@/components";
 import { ServiceRouteGuard } from "@/routes/service/route";
-import { RouterNavItem } from "../../events/jeopardy.$id/route";
+import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
 
 export const Route = createFileRoute("/service/challenges/$id")({
     component: RouteComponent,

@@ -17,6 +17,15 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 INPUT_DIR = PROJECT_ROOT / "apps" / "api" / "src" / "entity"
 OUTPUT_DIR = PROJECT_ROOT / "apps" / "web" / "src" / "entity"
 
+# Generated TS types represent DATABASE columns only.
+# API computed fields (e.g. Settings.resolved_value) live in manual DTO files
+# under apps/web/src/api/, outside this generated directory.
+
+SKIP_RUST_STEMS = {
+    "mod",
+    "prelude",
+}
+
 
 # ==============================================================================
 # Helpers
@@ -249,6 +258,28 @@ def rust_to_ts(
 # ==============================================================================
 
 
+def reset_output_dir(output_dir: Path) -> None:
+    """
+    Rebuild generated TS entity types from zero.
+
+    Manual API DTOs must NOT live under this directory — they would be wiped.
+    """
+
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            die(f"output path exists but is not a directory: {output_dir}")
+        for child in output_dir.iterdir():
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                # entity/ is flat generated files only; refuse nested leftovers.
+                die(
+                    f"unexpected subdirectory in generated entity types: {child}\n"
+                    "manual types must live outside apps/web/src/entity/"
+                )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
 def convert_directory(
     input_dir: Path,
     output_dir: Path,
@@ -256,18 +287,15 @@ def convert_directory(
     if not input_dir.is_dir():
         die(f"input directory not found: {input_dir}")
 
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
     exports = []
 
     known_enums: set[str] = set()
     enums_module_name: str | None = None
 
     rust_files = sorted(
-        input_dir.glob("*.rs")
+        path
+        for path in input_dir.glob("*.rs")
+        if path.stem not in SKIP_RUST_STEMS
     )
 
     if not rust_files:
@@ -281,8 +309,12 @@ def convert_directory(
     print(f"Output : {output_dir}")
     print(f"Files  : {len(rust_files)}")
     print()
+    print("Note   : generated types = DB columns only; API computed fields live in apps/web/src/api/")
+    print()
     print("=" * 96)
     print()
+
+    reset_output_dir(output_dir)
 
     # ==========================================================================
     # 第一遍：处理枚举
@@ -370,6 +402,14 @@ def convert_directory(
 
         exports.append(
             rust_file.stem
+        )
+
+    # Guard: infrastructure metadata must never become a web entity type.
+    leaked = sorted(output_dir.glob("schema_migrations.ts"))
+    if leaked:
+        die(
+            "schema_migrations.ts was generated; infrastructure tables must be "
+            "excluded by gen_entities.py before web type generation"
         )
 
     # ==========================================================================

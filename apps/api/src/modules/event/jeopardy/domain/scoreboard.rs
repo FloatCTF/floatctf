@@ -1,4 +1,4 @@
-//! Event scoreboard projection types (Jeopardy mode surface).
+//! 积分榜投影类型（Jeopardy 对外表面）。
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

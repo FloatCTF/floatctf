@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-/// Stable identifiers stored in `scheduled_tasks.task_key`.
+/// 存于 `scheduled_tasks.task_key` 的稳定标识。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskKey {
     CheckPracticeEvent,
@@ -8,24 +8,32 @@ pub enum TaskKey {
     CleanRustfs,
     AwdAutoPrecheck,
     AwdEventStart,
+    AwdHardeningEnd,
+    AwdJudgeBatchDeadline,
     AwdRoundStart,
     AwdRoundEnd,
-    AwdRoundGraceEnd,
     AwdArchiveCleanup,
+    AwdpTick,
+    AwdpEvalWorker,
+    AwdpPracticeJudge,
 }
 
 impl TaskKey {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::CheckPracticeEvent => "CHECK_PRACTICE_EVENT",
-            Self::CleanInstances => "CLEAN_INSTANCES",
-            Self::CleanRustfs => "CLEAN_RUSTFS",
+            Self::CheckPracticeEvent => "system.practice.check",
+            Self::CleanInstances => "system.practice.clean",
+            Self::CleanRustfs => "platform.rustfs.clean",
             Self::AwdAutoPrecheck => "awd.event.auto_precheck",
             Self::AwdEventStart => "awd.event.start",
+            Self::AwdHardeningEnd => "awd.event.hardening_end",
+            Self::AwdJudgeBatchDeadline => "awd.judge.batch_deadline",
             Self::AwdRoundStart => "awd.round.start",
             Self::AwdRoundEnd => "awd.round.end",
-            Self::AwdRoundGraceEnd => "awd.round.grace_end",
             Self::AwdArchiveCleanup => "awd.archive.cleanup",
+            Self::AwdpTick => "awdp.tick",
+            Self::AwdpEvalWorker => "awdp.eval.worker",
+            Self::AwdpPracticeJudge => "awdp.practice.judge",
         }
     }
 }
@@ -41,15 +49,22 @@ impl FromStr for TaskKey {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "CHECK_PRACTICE_EVENT" | "CHECK_PRATICE_EVENT" => Ok(Self::CheckPracticeEvent),
-            "CLEAN_INSTANCES" => Ok(Self::CleanInstances),
-            "CLEAN_RUSTFS" => Ok(Self::CleanRustfs),
+            // 旧的大写形式仅在存量行未迁移时兼容，新任务一律使用小写点分形式。
+            "system.practice.check" | "CHECK_PRACTICE_EVENT" | "CHECK_PRATICE_EVENT" => {
+                Ok(Self::CheckPracticeEvent)
+            }
+            "system.practice.clean" | "CLEAN_INSTANCES" => Ok(Self::CleanInstances),
+            "platform.rustfs.clean" | "CLEAN_RUSTFS" => Ok(Self::CleanRustfs),
             "awd.event.auto_precheck" => Ok(Self::AwdAutoPrecheck),
             "awd.event.start" => Ok(Self::AwdEventStart),
+            "awd.event.hardening_end" => Ok(Self::AwdHardeningEnd),
+            "awd.judge.batch_deadline" => Ok(Self::AwdJudgeBatchDeadline),
             "awd.round.start" => Ok(Self::AwdRoundStart),
             "awd.round.end" => Ok(Self::AwdRoundEnd),
-            "awd.round.grace_end" => Ok(Self::AwdRoundGraceEnd),
             "awd.archive.cleanup" => Ok(Self::AwdArchiveCleanup),
+            "awdp.tick" => Ok(Self::AwdpTick),
+            "awdp.eval.worker" => Ok(Self::AwdpEvalWorker),
+            "awdp.practice.judge" => Ok(Self::AwdpPracticeJudge),
             _ => Err(format!("unknown scheduled task key: {value}")),
         }
     }
@@ -67,10 +82,14 @@ mod tests {
             TaskKey::CleanRustfs,
             TaskKey::AwdAutoPrecheck,
             TaskKey::AwdEventStart,
+            TaskKey::AwdHardeningEnd,
+            TaskKey::AwdJudgeBatchDeadline,
             TaskKey::AwdRoundStart,
             TaskKey::AwdRoundEnd,
-            TaskKey::AwdRoundGraceEnd,
             TaskKey::AwdArchiveCleanup,
+            TaskKey::AwdpTick,
+            TaskKey::AwdpEvalWorker,
+            TaskKey::AwdpPracticeJudge,
         ];
 
         for key in keys {
@@ -81,5 +100,32 @@ mod tests {
     #[test]
     fn unknown_task_key_is_rejected() {
         assert!("awd.unknown".parse::<TaskKey>().is_err());
+    }
+
+    #[test]
+    fn renamed_platform_keys_parse_and_keep_legacy_aliases() {
+        // 新小写点分形式。
+        assert_eq!(
+            "system.practice.check".parse::<TaskKey>(),
+            Ok(TaskKey::CheckPracticeEvent)
+        );
+        assert_eq!(
+            "system.practice.clean".parse::<TaskKey>(),
+            Ok(TaskKey::CleanInstances)
+        );
+        assert_eq!(
+            "platform.rustfs.clean".parse::<TaskKey>(),
+            Ok(TaskKey::CleanRustfs)
+        );
+        // 旧大写形式（存量行未迁移时兼容）。
+        assert_eq!(
+            "CHECK_PRACTICE_EVENT".parse::<TaskKey>(),
+            Ok(TaskKey::CheckPracticeEvent)
+        );
+        assert_eq!(
+            "CLEAN_INSTANCES".parse::<TaskKey>(),
+            Ok(TaskKey::CleanInstances)
+        );
+        assert_eq!("CLEAN_RUSTFS".parse::<TaskKey>(), Ok(TaskKey::CleanRustfs));
     }
 }

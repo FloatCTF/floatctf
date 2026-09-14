@@ -3,13 +3,13 @@ import { useNavigation } from "./NavigationContext";
 import type { CoordinatorNavigateOptions } from "./navigation-types";
 
 /**
- * Imperative SPA navigation hook.
+ * 命令式 SPA 导航 Hook。
  *
- * Routes through the Navigation Coordinator (preload → commit).
- * Use for programmatic navigation triggered by user actions
- * (e.g. SideBar click, Header home button).
+ * 经导航协调器（预加载 → 提交）。
+ * 用于用户操作触发的编程式导航
+ * （例如侧栏点击、Header 首页按钮）。
  *
- * For declarative links, use <AppLink> instead.
+ * 声明式链接请用 <AppLink>。
  *
  * @example
  * const appNavigate = useAppNavigate();

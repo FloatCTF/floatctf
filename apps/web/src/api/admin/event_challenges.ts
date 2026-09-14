@@ -1,4 +1,4 @@
-import type { EventChallenges } from "@/entity";
+import type { JeopardyEventChallenges as EventChallenges } from "@/entity";
 import type { EventChallengeResult } from "@/routes/admin/events/jeopardy.$id";
 import { type QueryParams, type UniResponse, admin_api } from "@/api/axios";
 
@@ -18,14 +18,32 @@ export const eventChallengeAdminApi = {
         event_id,
         challenge_id_list,
         challenge_id,
+        points,
     }: {
         event_id: string;
         challenge_id_list?: string[];
         challenge_id?: string;
+        points?: number;
     }): Promise<UniResponse<EventChallenges[]>> => {
         const res = await admin_api.post(`/events/${event_id}/challenges`, {
             challenge_id_list,
             challenge_id,
+            points,
+        });
+        return res.data;
+    },
+    setPoints: async ({
+        event_id,
+        challenge_id_list,
+        points,
+    }: {
+        event_id: string;
+        challenge_id_list: string[];
+        points: number;
+    }): Promise<UniResponse<EventChallenges[]>> => {
+        const res = await admin_api.patch(`/events/${event_id}/challenges`, {
+            challenge_id_list,
+            points,
         });
         return res.data;
     },

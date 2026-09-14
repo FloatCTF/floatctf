@@ -20,12 +20,12 @@
 
 ## 步骤 2：数据模型（如需要）
 
-严格按 [DATABASE.md](./DATABASE.md)：
+严格按 [DATABASE.md](./DATABASE.md)（先读其中的**绝对禁令**）：
 
-1. `mise run db:migration:new <feature-name>` 生成时间戳迁移文件
-2. 写幂等 SQL（`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`），**补中文 `COMMENT ON TABLE/COLUMN`**（注释是硬性要求，管理员后台依赖它）
-3. `mise run db:migration:merge` 重新生成 merged.sql
-4. 应用到开发库（见 DATABASE.md 第 3 步）
+1. `mise run db:migration:new <feature-name>` 生成时间戳迁移文件（文件内**不要**写 BEGIN/COMMIT，事务由 migrate.sh 管理）
+2. **只在这个新文件里**写幂等 SQL（`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`），**补中文 `COMMENT ON TABLE/COLUMN`**（注释是硬性要求，管理员后台依赖它）。**禁止**打开/修改 `migrations/` 下任何已有文件（含 baseline）
+3. `mise run db:migration:validate` 校验 → `mise run db:migration:apply` 应用到开发库（开发库已 baseline；每次迁移独立事务 + schema_migrations 记录）
+4. `mise run db:migration:merge` 重新生成 merged.sql（fresh DB bootstrap 用；**不要手改 merged.sql**）
 5. `mise run db:gen` 重新生成 Rust 实体 + TS 类型（前提：sea-orm-cli 为 1.1.20）
 
 > 新表才需要建 entity；新列会自动进入已生成实体。**改完 Schema 后必须 `db:gen`，否则编译或运行时三处不一致。**
@@ -87,7 +87,7 @@ state.publisher.publish(RealtimeEvent::new(entity_id, "score.changed", json!({..
 > 新增**数据页面**前必读 [DATA-FETCHING.md](./DATA-FETCHING.md)：缓存分级、keepPreviousData、queryKey 失效等硬性规则。
 
 1. `src/entity/*.ts` 由 `db:gen` 生成，新表自动有类型；**不要手改**；改 Schema 后同步页面字段并用 `pnpm exec tsc --noEmit` 校验
-2. 页面组件：参考现有相似页面；数据请求用 TanStack Query（`useQuery`），路由用 TanStack Router
+2. 页面组件：**先找同域参照页，仿照其结构、布局与交互**（赛事详情参照 `service/events/jeopardy.$id/*`、管理列表参照 `admin/challenges.tsx`）；优先复用 `components/` 现有组件（GenericTable、EventStatusBadge、SubmitWriteup、MsgBanner、AppLink、FilterBar 等），禁止自创视觉风格或重复实现；数据请求用 TanStack Query（`useQuery`），路由用 TanStack Router
 3. 数据页面性能基线（详见 DATA-FETCHING.md）：用 useQuery、低频数据覆盖 `staleTime`、列表加 `keepPreviousData`、mutation 成功后 invalidate 对应 key、实时数据用 `refetchInterval`/`useAwdEventStream`
 4. 管理端页面若有 API 权限要求，使用 admin 守卫
 5. 前端类型与后端 DTO 不一致时，以后端为准（必要时同步改 TS 接口）

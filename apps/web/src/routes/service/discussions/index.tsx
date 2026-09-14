@@ -20,6 +20,21 @@ function RouteComponent() {
 
 	const columns = [
 		{
+			accessorKey: "title",
+			header: "Title",
+			field: "title",
+			sortBy: true,
+			renderCell: (row: DiscussionWithAuthor) => (
+				<AppLink
+					to="/service/discussions/$id"
+					params={{ id: row.id }}
+					className="hover:underline font-medium"
+				>
+					{row.title}
+				</AppLink>
+			),
+		},
+		{
 			accessorKey: "author_nickname",
 			header: "Author",
 			field: "author_nickname",
@@ -37,21 +52,6 @@ function RouteComponent() {
 					)}
 					<span>{row.author_nickname}</span>
 				</div>
-			),
-		},
-		{
-			accessorKey: "title",
-			header: "Title",
-			field: "title",
-			sortBy: true,
-			renderCell: (row: DiscussionWithAuthor) => (
-				<AppLink
-					to="/service/discussions/$id"
-					params={{ id: row.id }}
-					className="hover:underline font-medium"
-				>
-					{row.title}
-				</AppLink>
 			),
 		},
 		{

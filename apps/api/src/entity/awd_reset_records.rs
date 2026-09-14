@@ -21,18 +21,19 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub error_msg: Option<String>,
     pub created_at: DateTimeWithTimeZone,
+    pub requested_by_admin: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::awd_gamebox_instances::Entity",
-        from = "Column::GameboxInstanceId",
-        to = "super::awd_gamebox_instances::Column::Id",
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    AwdGameboxInstances,
+    AwdEvents,
     #[sea_orm(
         belongs_to = "super::awd_rounds::Entity",
         from = "Column::RoundId",
@@ -42,6 +43,14 @@ pub enum Relation {
     )]
     AwdRounds,
     #[sea_orm(
+        belongs_to = "super::event_gamebox_instances::Entity",
+        from = "Column::GameboxInstanceId",
+        to = "super::event_gamebox_instances::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    EventGameboxInstances,
+    #[sea_orm(
         belongs_to = "super::event_teams::Entity",
         from = "Column::TeamId",
         to = "super::event_teams::Column::Id",
@@ -50,13 +59,13 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
+        belongs_to = "super::super_admin::Entity",
+        from = "Column::RequestedByAdmin",
+        to = "super::super_admin::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
-    Events,
+    SuperAdmin,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::RequestedBy",
@@ -67,9 +76,9 @@ pub enum Relation {
     Users,
 }
 
-impl Related<super::awd_gamebox_instances::Entity> for Entity {
+impl Related<super::awd_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::AwdGameboxInstances.def()
+        Relation::AwdEvents.def()
     }
 }
 
@@ -79,15 +88,21 @@ impl Related<super::awd_rounds::Entity> for Entity {
     }
 }
 
+impl Related<super::event_gamebox_instances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::EventGameboxInstances.def()
+    }
+}
+
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::super_admin::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::SuperAdmin.def()
     }
 }
 

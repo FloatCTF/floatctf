@@ -5,6 +5,7 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,9 +13,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# 三层分层（chore/plans/awd/05-phase5-hardening.md §5.11）：
+#   CI-fast（PR 必跑）        —— 单测 + mock + 架构/安全 grep
+#   CI-docker（PR 或 on-demand）—— Docker E2E（Flag/Judge smoke + 场景 A/B/C/G/H）
+#   CI-host-network（nightly/manual）—— root + nftables/WG 系统级场景 D/E/F/I
 jobs:
-  rust:
-    name: Rust checks
+  fast-rust:
+    name: CI-fast · Rust unit + security grep
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,10 +29,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all
       - run: cargo clippy --workspace --all-targets --all-features
-      - run: cargo test --workspace
+      - run: cargo test --workspace --lib
+      - name: Security architecture grep (P5-12)
+        run: |
+          if grep -rn 'vec!\[0u8; 32\]' apps/api/src/bootstrap; then echo "FAIL: zero-key fallback"; exit 1; fi
+          if grep -rn 'nft flush ruleset' apps/api/src; then echo "FAIL: nft flush ruleset forbidden"; exit 1; fi
+          if grep -rn 'sh -c' apps/api/src/modules/event/awd_team; then echo "FAIL: shell concat forbidden"; exit 1; fi
+          echo "security greps OK"
 
-  web:
-    name: Web checks
+  fast-web:
+    name: CI-fast · Web checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +55,44 @@ jobs:
       - run: pnpm --filter @floatctf/web lint
       - run: pnpm --filter @floatctf/web test
       - run: pnpm --filter @floatctf/web build
+
+  docker-e2e:
+    name: CI-docker · AWD infra smoke (on-demand)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'docker-e2e')
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: floatctf_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - name: Flag/Judge smoke (env-gated, skips when Dockerfiles missing)
+        run: ./apps/api/scripts/e2e_flag_judge.sh
+        env:
+          RUN_DOCKER_TESTS: "1"
+
+  host-network:
+    name: CI-host-network · nftables/WG scenarios (nightly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: nftables prototype gate (P1-0, needs CAP_NET_ADMIN)
+        run: sudo -E apps/api/scripts/nft_prototype.sh
+      - name: cargo unit (host)
+        run: cargo test --workspace

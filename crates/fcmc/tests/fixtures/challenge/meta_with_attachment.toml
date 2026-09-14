@@ -1,4 +1,5 @@
 name = "test-challenge-attachment"
+version = "1.0.0"
 author = "tester@example.com"
 category = "Reverse"
 description = "A challenge with attachment"
@@ -6,5 +7,4 @@ description = "A challenge with attachment"
 attachment = "attachment/src.zip"
 
 [flag]
-value = "flag{reverse-flag}"
-env_var = "FLAG"
+type = "dynamic"

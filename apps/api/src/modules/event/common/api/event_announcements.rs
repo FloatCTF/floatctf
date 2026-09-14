@@ -151,6 +151,7 @@ pub async fn remove_event_announcement(
 /// GET /api/admin/events/{event_id}/announcements/{announcement_id}
 #[get("/{announcement_id}")]
 pub async fn get_event_announcement(
+    _user: SuperAdminJwtGuard,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<EventAnnouncementsDto> {

@@ -26,6 +26,14 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
+        belongs_to = "super::awd_events::Entity",
+        from = "Column::EventId",
+        to = "super::awd_events::Column::EventId",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    AwdEvents,
+    #[sea_orm(
         belongs_to = "super::awd_rounds::Entity",
         from = "Column::EffectiveRoundId",
         to = "super::awd_rounds::Column::Id",
@@ -50,14 +58,6 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::events::Entity",
-        from = "Column::EventId",
-        to = "super::events::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Events,
-    #[sea_orm(
         belongs_to = "super::super_admin::Entity",
         from = "Column::BannedBy",
         to = "super::super_admin::Column::Id",
@@ -75,15 +75,15 @@ pub enum Relation {
     SuperAdmin1,
 }
 
-impl Related<super::event_teams::Entity> for Entity {
+impl Related<super::awd_events::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EventTeams.def()
+        Relation::AwdEvents.def()
     }
 }
 
-impl Related<super::events::Entity> for Entity {
+impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Events.def()
+        Relation::EventTeams.def()
     }
 }
 

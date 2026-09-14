@@ -1,4 +1,4 @@
-//! Discussion CRUD for player and admin surfaces.
+//! 讨论模块。
 
 pub mod dto;
 pub use dto::DiscussionsDto;

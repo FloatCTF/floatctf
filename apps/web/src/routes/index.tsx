@@ -42,7 +42,7 @@ function App() {
 			form.buttonMessage = "Redirecting...";
 			form.buttonDisabled = true;
 
-			// redirect to admin dashboard
+			// 重定向到管理端仪表盘
 			authStore.setUsername(form.username);
 
 			navigate({ to: "/service" });

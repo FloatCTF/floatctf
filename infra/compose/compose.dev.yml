@@ -1,45 +1,78 @@
 volumes:
     floatctf-db-data:
       name: floatctf-dev-db-data
+    floatctf-redis-data:
+      name: floatctf-dev-redis-data
     floatctf-rustfs-data:
       name: floatctf-dev-rustfs-data
+    floatctf-caddy-data:
+      name: floatctf-dev-caddy-data
+    floatctf-caddy-config:
+      name: floatctf-dev-caddy-config
 
 services:
     db:
         container_name: floatctf-dev-db
         image: postgres:17
         ports:
-            - "5432:5432"
+            - "127.0.0.1:5432:5432"
         environment:
             POSTGRES_USER: postgres
             POSTGRES_PASSWORD: postgres
             POSTGRES_DB: floatctf_db
         volumes:
             - floatctf-db-data:/var/lib/postgresql/data
-            - ${PROJECT_ROOT}/apps/api/src/sql/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres -d floatctf_db"]
+            interval: 2s
+            timeout: 3s
+            retries: 30
+            start_period: 5s
         restart: unless-stopped
 
-    nginx:
+    redis:
+        container_name: floatctf-dev-redis
+        # 与生产 compose（infra/compose/compose.prod.yml）同构：同镜像、appendonly 持久化。
+        # 供 API 的 realtime fan-out / 分布式限流 / 终端票据 / 定时器唤醒 / settings 缓存使用。
+        image: redis:7-alpine
+        ports:
+            - "127.0.0.1:6379:6379"
+        command: ["redis-server", "--appendonly", "yes"]
+        volumes:
+            - floatctf-redis-data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 5s
+        restart: unless-stopped
+
+    caddy:
         depends_on:
             - db
-        container_name: floatctf-dev-nginx
-        image: nginx:1.26-bookworm
+            - rustfs
+        container_name: floatctf-dev-caddy
+        image: caddy:2-alpine
         ports:
-            - "7780:80"
+            - "0.0.0.0:7780:80"
         volumes:
-            - ${PROJECT_ROOT}/app/logs/nginx:/var/log/nginx
-            - ${PROJECT_ROOT}/app/api/challenges:/app/api/challenges:ro
-            - ${PROJECT_ROOT}/app/api/uploads:/app/api/uploads:ro
-            - ${PROJECT_ROOT}/app/api/weapons:/app/api/weapons:ro
-            - ${PROJECT_ROOT}/app/api/images:/app/api/images:ro
-            - ${PROJECT_ROOT}/infra/nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+            - ${PROJECT_ROOT}/app/api/challenges:/srv/challenges:ro
+            - ${PROJECT_ROOT}/infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+            - floatctf-caddy-data:/data
+            - floatctf-caddy-config:/config
         extra_hosts:
             - "host.docker.internal:host-gateway"
         restart: unless-stopped
 
     rustfs:
         container_name: floatctf-dev-rustfs
-        image: rustfs/rustfs:latest
+        image: rustfs/rustfs:1.0.0-beta.12
+        # 以当前开发者 uid/gid 运行（scripts/infra-up.sh 注入 DOCKER_UID/DOCKER_GID）：
+        # 写入的日志与对象文件直接归属开发者，宿主无需 sudo 即可读。
+        # 注意：docker 会按镜像内 /data 属主（10001）初始化新 volume，
+        # infra-up.sh 在 up 后会把 volume 属主对齐到开发者 uid 并重启本服务。
+        user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
         volumes:
             - floatctf-rustfs-data:/data
             - ${PROJECT_ROOT}/app/logs/rustfs:/logs
@@ -48,8 +81,15 @@ services:
           - "127.0.0.1:9001:9001"
         environment:
             RUSTFS_ADDRESS: ":9000"
-            RUSTFS_SERVER_DOMAINS: example.com
+            # 开发 Caddy 同样通过 Compose DNS + path-style S3 访问。
             RUSTFS_ACCESS_KEY: rustfsadmin
             RUSTFS_SECRET_KEY: rustfsadmin
             RUSTFS_CONSOLE_ENABLE: "true"
             RUSTFS_OBS_LOG_DIRECTORY: /logs
+        healthcheck:
+            test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
+            interval: 2s
+            timeout: 3s
+            retries: 30
+            start_period: 5s
+        restart: unless-stopped

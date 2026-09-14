@@ -1,14 +1,15 @@
-//! Player-facing event application service.
+//! 选手侧赛事应用服务。
 //!
-//! Business logic extracted from `api/service/events` HTTP handlers.
-//! Handlers: auth → parse → call these functions → map errors → UniResponse.
+//! 业务逻辑自 `api/service/events` HTTP 处理器抽出。
+//! 处理器职责：鉴权 → 解析 → 调用本模块 → 映射错误 → UniResponse。
 
 use std::str::FromStr;
 
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionError,
+    TransactionTrait, sea_query::LockType,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -16,20 +17,21 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenges, event_announcements, event_challenge_solves, event_challenges,
-        event_team_members, event_teams, event_users, events, instances,
-        sea_orm_active_enums::{EventTeamMemberRole, EventType},
+        challenges, event_announcements, event_challenge_instance, event_team_members, event_teams,
+        event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
         users,
     },
     infrastructure::{WebDb, WebDocker},
-    modules::event::{
-        jeopardy::{
-            application::context::EventContextBuilder,
-            domain::{
-                scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
-            },
+    modules::event::jeopardy::{
+        application::{
+            context::EventContextBuilder, instance as jeopardy_instance,
+            scoreboard as jeopardy_scoreboard, trend as jeopardy_trend,
+            writeup as jeopardy_writeup,
         },
-        registry::event_registry,
+        domain::{
+            scoreboard::ScoreboardItem, scoring::calculate_next_dynamic_score, trend::TrendItem,
+        },
     },
 };
 
@@ -56,7 +58,8 @@ pub struct EventInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventChallengeResult {
-    pub challenge: challenges::Model,
+    /// Enriched challenge DTO（latest ready revision 摘要 + 附件元数据）。
+    pub challenge: crate::modules::challenge::catalog::ChallengesDto,
     pub current_points: f64,
     pub solved_count: u64,
     pub solved: bool,
@@ -65,7 +68,7 @@ pub struct EventChallengeResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventInstanceResult {
-    pub instance: instances::Model,
+    pub instance: event_challenge_instance::Model,
     pub challenge_name: String,
     pub user_nickname: String,
 }
@@ -91,14 +94,14 @@ impl EventStatus {
             .await?
             .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-        let now = Utc::now();
-        if now < event.start_time {
-            Ok(Self::NotStarted)
-        } else if now > event.end_time {
-            Ok(Self::Ended)
-        } else {
-            Ok(Self::Ongoing)
-        }
+        use crate::modules::event::common::domain::time_state::{
+            EventTimeStatus, event_time_status_of,
+        };
+        Ok(match event_time_status_of(&event, Utc::now()) {
+            EventTimeStatus::NotStarted => Self::NotStarted,
+            EventTimeStatus::Ongoing => Self::Ongoing,
+            EventTimeStatus::Ended => Self::Ended,
+        })
     }
 
     /// Variant that accepts `WebDb` (legacy call sites).
@@ -107,10 +110,60 @@ impl EventStatus {
     }
 }
 
+fn require_competition(event: &events::Model) -> Result<(), AppError> {
+    if event.purpose != EventPurpose::Competition {
+        return Err(AppError::BadRequest(
+            "UnsupportedForPurpose: only competition events support join/team".into(),
+        ));
+    }
+    if event.system_key.is_some() {
+        return Err(AppError::BadRequest(
+            "system-managed events cannot be joined".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_team_mode(event: &events::Model) -> Result<(), AppError> {
+    require_competition(event)?;
+    if event.participant_mode != ParticipantMode::Team {
+        return Err(AppError::BadRequest(
+            "UnsupportedForParticipantMode: team operations require team participant mode".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_roster_mutable(event: &events::Model) -> Result<(), AppError> {
+    if !event.allow_join {
+        return Err(AppError::BadRequest(
+            "event roster is closed by the administrator".to_string(),
+        ));
+    }
+
+    use crate::modules::event::common::domain::time_state::{
+        EventTimeStatus, event_time_status_of,
+    };
+    match event_time_status_of(event, Utc::now()) {
+        EventTimeStatus::NotStarted => Ok(()),
+        EventTimeStatus::Ongoing | EventTimeStatus::Ended => Err(AppError::BadRequest(
+            "event roster is locked after the event starts".to_string(),
+        )),
+    }
+}
+
+fn map_transaction_error<T>(result: Result<T, TransactionError<AppError>>) -> Result<T, AppError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(TransactionError::Transaction(error)) => Err(error),
+        Err(TransactionError::Connection(error)) => Err(error.into()),
+    }
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────
 
-/// Enrich event rows with join status for `user_id`.
-/// Filters/queries are applied by the caller (HTTP layer owns FilterMapping).
+/// 为赛事行附加 `user_id` 的报名状态。
+/// 过滤/查询由调用方完成（HTTP 层持有 FilterMapping）。
 pub fn list_events_for_user(
     user_id: Uuid,
     events_with_users: Vec<(events::Model, Vec<event_users::Model>)>,
@@ -128,7 +181,7 @@ pub fn list_events_for_user(
         .collect()
 }
 
-/// Load a single non-hidden event with team membership detail for the user.
+/// 加载单条非隐藏赛事，并附带该用户的战队成员详情。
 pub async fn get_event_info(
     db: &DatabaseConnection,
     event_id: Uuid,
@@ -182,7 +235,7 @@ pub async fn get_event_info(
     }
 }
 
-/// Challenges for a joined user during ongoing/ended events.
+/// 已报名用户在进行中/已结束赛事中的题目列表。
 pub async fn list_event_challenges(
     db: &WebDb,
     event_id: Uuid,
@@ -211,8 +264,8 @@ pub async fn list_event_challenges(
     }
 
     let c_ec = event
-        .find_related(event_challenges::Entity)
-        .filter(event_challenges::Column::Hidden.eq(false))
+        .find_related(jeopardy_event_challenges::Entity)
+        .filter(jeopardy_event_challenges::Column::Hidden.eq(false))
         .find_also_related(challenges::Entity)
         .all(db.get_ref())
         .await?;
@@ -220,16 +273,21 @@ pub async fn list_event_challenges(
     let mut result = Vec::new();
     for (event_challenge, challenge) in c_ec {
         if let Some(c) = challenge {
-            let solved_count = event_challenge_solves::Entity::find()
-                .filter(event_challenge_solves::Column::EventId.eq(event_id))
-                .filter(event_challenge_solves::Column::ChallengeId.eq(c.id))
+            let solved_count = jeopardy_challenge_solves::Entity::find()
+                .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+                .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(c.id))
                 .count(db.get_ref())
                 .await?;
 
-            let (solved, solved_no) = event_registry()
-                .challenge_solve_status(db, &event, user, c.id)
-                .await
-                .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
+            let (solved, solved_no) = jeopardy_instance::challenge_solve_status(
+                db.get_ref(),
+                event.id,
+                c.id,
+                user.id,
+                &event.participant_mode,
+            )
+            .await
+            .map_err(|e| AppError::BadRequest(format!("{}", e)))?;
 
             let current_points =
                 calculate_next_dynamic_score(db.get_ref(), event_challenge.points, solved_count)
@@ -238,7 +296,7 @@ pub async fn list_event_challenges(
                         AppError::BadRequest(format!("calculate_next_dynamic_score error: {}", e))
                     })?;
             result.push(EventChallengeResult {
-                challenge: c,
+                challenge: crate::modules::challenge::catalog::ChallengesDto::from(&c),
                 current_points,
                 solved_count,
                 solved,
@@ -266,13 +324,12 @@ pub async fn list_event_instances(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    let instances = event_registry()
-        .get_instances(&event_ctx)
+    let instances = jeopardy_instance::get_instances(&event_ctx)
         .await
         .map_err(|e| AppError::BadRequest(format!("get_instances error: {}", e)))?;
 
@@ -292,7 +349,7 @@ pub async fn get_challenge_instance(
     event_id: Uuid,
     challenge_id: Uuid,
     user: users::Model,
-) -> Result<instances::Model, AppError> {
+) -> Result<Option<crate::modules::event::jeopardy::api::InstancesDto>, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
@@ -303,104 +360,156 @@ pub async fn get_challenge_instance(
         .db(db)
         .docker(docker)
         .user(user)
-        .event(Some(event))
+        .event(event)
         .build()
         .await
         .map_err(|e| AppError::BadRequest(format!("build event context error: {}", e)))?;
 
-    event_registry()
-        .get_instance_by_challenge_id(&event_ctx, challenge_id)
+    let result = jeopardy_instance::find_instance_by_challenge_id(&event_ctx, challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(format!("get_instance_by_challenge_id error: {}", e)))
+        .map_err(|e| AppError::BadRequest(format!("find_instance_by_challenge_id error: {}", e)))?;
+
+    Ok(result.map(|(instance, runtime)| {
+        crate::modules::event::jeopardy::api::InstancesDto::from_pair(&instance, &runtime)
+    }))
 }
 
 // ── Team membership workflows ─────────────────────────────────────────────
 
-/// Create a team and join as captain (pre-start only). Returns the team model.
+/// 创建战队并以队长加入（仅报名开放且赛前）。
+///
+/// team / event_users / membership 三行必须原子写入；否则任一步失败都会产生半报名状态。
 pub async fn create_team(
     db: &WebDb,
     event_id: Uuid,
     user_id: Uuid,
     name: String,
 ) -> Result<event_teams::Model, AppError> {
-    let event = events::Entity::find_by_id(event_id)
-        .filter(events::Column::Hidden.eq(false))
-        .one(db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+    let result = db
+        .get_ref()
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .filter(events::Column::Hidden.eq(false))
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    match EventStatus::check_web(db, &event.id).await? {
-        EventStatus::Ongoing | EventStatus::Ended => {
-            return Err(AppError::BadRequest("Event has not yet begun".to_string()));
-        }
-        EventStatus::NotStarted => {}
-    }
+                let membership = event_team_members::Entity::find()
+                    .filter(event_team_members::Column::EventId.eq(event_id))
+                    .filter(event_team_members::Column::UserId.eq(user_id))
+                    .one(tx)
+                    .await?;
+                if membership.is_some() {
+                    return Err(AppError::BadRequest("already joined team".to_string()));
+                }
 
-    let event_user = event_users::Entity::find_by_id((event_id, user_id))
-        .one(db.get_ref())
-        .await?;
+                let team = event_teams::ActiveModel {
+                    name: Set(name),
+                    event_id: Set(event_id),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
 
-    if event_user.is_some() {
-        return Err(AppError::BadRequest("already joined team".to_string()));
-    }
+                // Historical versions could leave an event_users row without membership.
+                // Reuse it instead of trapping the user; new writes always stay atomic.
+                if event_users::Entity::find_by_id((event_id, user_id))
+                    .one(tx)
+                    .await?
+                    .is_none()
+                {
+                    event_users::ActiveModel {
+                        event_id: Set(event_id),
+                        user_id: Set(user_id),
+                        ..Default::default()
+                    }
+                    .insert(tx)
+                    .await?;
+                }
 
-    let team = event_teams::ActiveModel {
-        name: Set(name),
-        event_id: Set(event_id),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
+                event_team_members::ActiveModel {
+                    event_id: Set(event_id),
+                    user_id: Set(user_id),
+                    team_id: Set(team.id),
+                    role: Set(EventTeamMemberRole::Captain),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
 
-    event_users::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
-
-    event_team_members::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        team_id: Set(team.id),
-        role: Set(EventTeamMemberRole::Captain),
-        ..Default::default()
-    }
-    .insert(db.get_ref())
-    .await?;
-
-    Ok(team)
+                Ok(team)
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
-/// Captain quits → team deleted; member quits → membership removed. Also leaves event_users.
+/// 队长退出 → 删除战队并注销整队；队员退出 → 仅注销本人。
+/// 所有 roster 变更仅允许在报名开放且赛事开始前发生。
 pub async fn quit_team(
     db: &DatabaseConnection,
     event_id: Uuid,
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    if team_member.role == EventTeamMemberRole::Captain {
-        let team = event_teams::Entity::find_by_id(team_id)
-            .one(db)
-            .await?
-            .ok_or(AppError::NotFound("team not found".to_string()))?;
-        team.delete(db).await?;
-    } else {
-        team_member.delete(db).await?;
-    }
+                let team_member =
+                    event_team_members::Entity::find_by_id((event_id, team_id, user_id))
+                        .one(tx)
+                        .await?
+                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
 
-    let event_user = event_users::Entity::find_by_id((event_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the event".to_string()))?;
-    event_user.delete(db).await?;
-    Ok(())
+                let team = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("team not found".to_string()))?;
+
+                if team_member.role == EventTeamMemberRole::Captain {
+                    let member_ids: Vec<Uuid> = event_team_members::Entity::find()
+                        .filter(event_team_members::Column::EventId.eq(event_id))
+                        .filter(event_team_members::Column::TeamId.eq(team_id))
+                        .all(tx)
+                        .await?
+                        .into_iter()
+                        .map(|member| member.user_id)
+                        .collect();
+
+                    team.delete(tx).await?;
+                    if !member_ids.is_empty() {
+                        event_users::Entity::delete_many()
+                            .filter(event_users::Column::EventId.eq(event_id))
+                            .filter(event_users::Column::UserId.is_in(member_ids))
+                            .exec(tx)
+                            .await?;
+                    }
+                } else {
+                    team_member.delete(tx).await?;
+                    event_users::Entity::delete_many()
+                        .filter(event_users::Column::EventId.eq(event_id))
+                        .filter(event_users::Column::UserId.eq(user_id))
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 pub async fn join_team(
@@ -409,37 +518,64 @@ pub async fn join_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<event_teams::Model, AppError> {
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .filter(events::Column::Hidden.eq(false))
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    if team_member.is_some() {
-        return Err(AppError::BadRequest("already joined team".to_string()));
-    }
-    let event_team = event_teams::Entity::find_by_id(team_id)
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("team not found".to_string()))?;
+                let existing_membership = event_team_members::Entity::find()
+                    .filter(event_team_members::Column::EventId.eq(event_id))
+                    .filter(event_team_members::Column::UserId.eq(user_id))
+                    .one(tx)
+                    .await?;
+                if existing_membership.is_some() {
+                    return Err(AppError::BadRequest("already joined team".to_string()));
+                }
 
-    event_team_members::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        team_id: Set(event_team.id),
-        role: Set(EventTeamMemberRole::Member),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
+                let event_team = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("team not found".to_string()))?;
 
-    event_users::ActiveModel {
-        event_id: Set(event_id),
-        user_id: Set(user_id),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
+                // Create/reuse enrollment first. The event_users PK serializes concurrent
+                // first joins; the DB membership unique constraint is the final race guard.
+                if event_users::Entity::find_by_id((event_id, user_id))
+                    .one(tx)
+                    .await?
+                    .is_none()
+                {
+                    event_users::ActiveModel {
+                        event_id: Set(event_id),
+                        user_id: Set(user_id),
+                        ..Default::default()
+                    }
+                    .insert(tx)
+                    .await?;
+                }
 
-    Ok(event_team)
+                event_team_members::ActiveModel {
+                    event_id: Set(event_id),
+                    user_id: Set(user_id),
+                    team_id: Set(event_team.id),
+                    role: Set(EventTeamMemberRole::Member),
+                    ..Default::default()
+                }
+                .insert(tx)
+                .await?;
+
+                Ok(event_team)
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 pub async fn leave_team(
@@ -448,17 +584,47 @@ pub async fn leave_team(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    let team_member = event_team_members::Entity::find_by_id((event_id, team_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+    let result = db
+        .transaction(|tx| {
+            Box::pin(async move {
+                let event = events::Entity::find_by_id(event_id)
+                    .lock(LockType::Update)
+                    .one(tx)
+                    .await?
+                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                require_team_mode(&event)?;
+                require_roster_mutable(&event)?;
 
-    if team_member.role == EventTeamMemberRole::Captain {
-        return Err(AppError::BadRequest("Captain can't leave team".to_string()));
-    }
+                let team_member =
+                    event_team_members::Entity::find_by_id((event_id, team_id, user_id))
+                        .one(tx)
+                        .await?
+                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
 
-    team_member.delete(db).await?;
-    Ok(())
+                if team_member.role == EventTeamMemberRole::Captain {
+                    return Err(AppError::BadRequest("Captain can't leave team".to_string()));
+                }
+
+                let team_exists = event_teams::Entity::find_by_id(team_id)
+                    .filter(event_teams::Column::EventId.eq(event_id))
+                    .one(tx)
+                    .await?
+                    .is_some();
+                if !team_exists {
+                    return Err(AppError::NotFound("team not found".to_string()));
+                }
+
+                team_member.delete(tx).await?;
+                event_users::Entity::delete_many()
+                    .filter(event_users::Column::EventId.eq(event_id))
+                    .filter(event_users::Column::UserId.eq(user_id))
+                    .exec(tx)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await;
+    map_transaction_error(result)
 }
 
 // ── Join / leave event (solo) ─────────────────────────────────────────────
@@ -473,6 +639,17 @@ pub async fn join_event(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+
+    require_competition(&event)?;
+
+    // Team-mode events enroll through create_team / join_team. Inserting only
+    // event_users here creates a half-joined player with no team membership and
+    // makes the subsequent team operation collide on the event_users PK.
+    if event.participant_mode != ParticipantMode::Individual {
+        return Err(AppError::BadRequest(
+            "team events must be joined by creating or joining a team".to_string(),
+        ));
+    }
 
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow join".to_string()));
@@ -506,6 +683,12 @@ pub async fn leave_event(
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
+    require_competition(&event)?;
+    if event.participant_mode != ParticipantMode::Individual {
+        return Err(AppError::BadRequest(
+            "team events must be left through the team workflow".to_string(),
+        ));
+    }
     if !event.allow_join {
         return Err(AppError::BadRequest("event not allow leave".to_string()));
     }
@@ -526,7 +709,7 @@ pub async fn leave_event(
     Ok((event, rows))
 }
 
-// ── Scoreboard / trend adapters (EventModuleRegistry) ─────────────────────
+// ── Scoreboard / trend adapters (Jeopardy application) ─────────────────────
 
 pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<ScoreboardItem>> {
     let event = events::Entity::find_by_id(event_id)
@@ -534,8 +717,7 @@ pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<Sco
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_scoreboard(&db, &event)
+    jeopardy_scoreboard::get_scoreboard(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
@@ -546,13 +728,12 @@ pub async fn get_trend(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<TrendIte
         .await?
         .ok_or(AppError::NotFound("event not found".to_string()))?;
 
-    event_registry()
-        .get_trend(&db, &event)
+    jeopardy_trend::get_trend(&db, &event)
         .await
         .map_err(|e| AppError::BadRequest(format!("{}", e)).into())
 }
 
-/// Scoreboard with pre-start challenge list blanked.
+/// 积分榜；赛前题目列表置空。
 pub async fn get_scoreboard_for_player(
     db: WebDb,
     event_id: Uuid,
@@ -583,27 +764,25 @@ pub async fn list_announcements(
         .await?)
 }
 
-/// Resolve private object key for the player's own writeup (if any).
+/// 解析选手本人 Writeup 的私有对象键（若有）。
 pub async fn own_writeup_file_url(
     db: &WebDb,
     event_id: Uuid,
     user: &users::Model,
-) -> Result<String, AppError> {
+) -> Result<Option<String>, AppError> {
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!("event {} not found", event_id)))?;
 
-    event_registry()
-        .own_writeup_file_url(db, &event, user)
+    jeopardy_writeup::own_writeup_file_url(db, &event, user)
         .await
-        .map_err(|e| AppError::BadRequest(format!("{}", e)))?
-        .ok_or(AppError::NotFound("Has no wp".into()))
+        .map_err(|e| AppError::BadRequest(format!("{}", e)))
 }
 
 // ── Filter helpers for list endpoints (keep FilterMapping construction here) ─
 
-/// Build sea_orm condition filter mappings for player event list.
+/// 构建选手赛事列表的 sea_orm 条件过滤映射。
 pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
     [
         FilterMapping {
@@ -618,11 +797,11 @@ pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
             column: Box::new(|v| Condition::all().add(events::Column::Title.contains(v))),
         },
         FilterMapping {
-            key: "type",
+            key: "family",
             column: Box::new(|v| {
                 Condition::all().add(
-                    events::Column::Type
-                        .eq(serde_json::from_str(v).unwrap_or(EventType::JeopardyPractice)),
+                    events::Column::Family
+                        .eq(serde_json::from_str(v).unwrap_or(EventFamily::Jeopardy)),
                 )
             }),
         },

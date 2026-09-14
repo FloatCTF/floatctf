@@ -1,6 +1,4 @@
-//! Unified application error type.
-//!
-//! `AppError` is the single HTTP error type for all handlers.
+//! 统一应用错误类型。
 
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
@@ -8,9 +6,9 @@ use sea_orm::DbErr;
 use thiserror::Error;
 
 use super::response::UniResponse;
-use crate::modules::event::awd_team::AwdError;
+use crate::modules::event::awd::AwdError;
 
-/// Unified application error with structured HTTP responses.
+/// 统一应用错误，带结构化 HTTP 响应。
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Database error: {0}")]
@@ -97,6 +95,9 @@ impl From<AwdError> for AppError {
             AwdError::Conflict(m) => AppError::Conflict(m),
             AwdError::Database(m) => AppError::Database(m),
             AwdError::Network(m) => AppError::Internal(format!("Network: {m}")),
+            AwdError::PoolExhausted(m) => AppError::Conflict(m),
+            AwdError::NetworkLocked(m) => AppError::InvalidState(m),
+            AwdError::NetworkOverlap(m) => AppError::Conflict(m),
             AwdError::Docker(m) => AppError::Internal(format!("Docker: {m}")),
             AwdError::Crypto(m) => AppError::Internal(format!("Crypto: {m}")),
             AwdError::Internal(m) => AppError::Internal(m),
@@ -104,7 +105,43 @@ impl From<AwdError> for AppError {
     }
 }
 
-/// Handler result type (name kept for call-site stability).
+impl From<crate::modules::gamebox::GameboxError> for AppError {
+    fn from(value: crate::modules::gamebox::GameboxError) -> Self {
+        match value {
+            crate::modules::gamebox::GameboxError::NotFound(m) => AppError::NotFound(m),
+            crate::modules::gamebox::GameboxError::Validation(m) => AppError::Validation(m),
+            crate::modules::gamebox::GameboxError::Conflict(m) => AppError::Conflict(m),
+            crate::modules::gamebox::GameboxError::Database(m) => AppError::Database(m),
+            crate::modules::gamebox::GameboxError::Docker(m) => {
+                AppError::Internal(format!("Docker: {m}"))
+            }
+            crate::modules::gamebox::GameboxError::Internal(m) => AppError::Internal(m),
+        }
+    }
+}
+
+impl From<crate::modules::event::awdp::AwdpError> for AppError {
+    fn from(value: crate::modules::event::awdp::AwdpError) -> Self {
+        match value {
+            crate::modules::event::awdp::AwdpError::NotFound(m) => AppError::NotFound(m),
+            crate::modules::event::awdp::AwdpError::Forbidden(m) => AppError::Forbidden(m),
+            crate::modules::event::awdp::AwdpError::Validation(m) => AppError::Validation(m),
+            crate::modules::event::awdp::AwdpError::InvalidState(m) => AppError::InvalidState(m),
+            crate::modules::event::awdp::AwdpError::Conflict(m) => AppError::Conflict(m),
+            crate::modules::event::awdp::AwdpError::Database(m) => AppError::Database(m),
+            crate::modules::event::awdp::AwdpError::Docker(m) => {
+                AppError::Internal(format!("Docker: {m}"))
+            }
+            crate::modules::event::awdp::AwdpError::Network(m) => {
+                AppError::Internal(format!("Network: {m}"))
+            }
+            crate::modules::event::awdp::AwdpError::Internal(m) => AppError::Internal(m),
+            crate::modules::event::awdp::AwdpError::Retry => AppError::Internal("retry".into()),
+        }
+    }
+}
+
+/// 处理器结果类型（名称保留以稳定调用点）。
 pub type UniResult<T> = Result<UniResponse<T>, AppError>;
 
 impl<T> From<UniResponse<T>> for Result<UniResponse<T>, AppError> {

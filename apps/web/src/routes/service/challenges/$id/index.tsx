@@ -1,4 +1,6 @@
 import { Button, Label, ProgressBar, Spinner, TextInput } from "@primer/react";
+import type { InstancesDto as Instances } from "@/api/service/instances";
+
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
@@ -13,7 +15,7 @@ import {
 	challengeQueryOptions,
 } from "@/api/queries";
 import { useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+
 import { ServiceRouteGuard } from "@/routes/service/route";
 
 export const Route = createFileRoute("/service/challenges/$id/")({
@@ -21,7 +23,7 @@ export const Route = createFileRoute("/service/challenges/$id/")({
 	loader: async ({ context, params }) => {
 		await ServiceRouteGuard();
 		await context.queryClient.ensureQueryData(challengeQueryOptions(params.id));
-		// Best-effort instance prefetch (may 404 for non-dynamic challenges)
+		// 尽力预取实例（非动态题可能 404）
 		void context.queryClient
 			.ensureQueryData(challengeInstanceQueryOptions(params.id))
 			.catch(() => {});
@@ -70,7 +72,7 @@ function RouteComponent() {
 		mutationFn: serviceApi.submit.submit,
 		onSuccess: (_data) => {
 			banner.showBanner("success", "Flag is correct!");
-			// close in the backend
+			// 由后端关闭
 			challengeStatus.isRunning = false;
 			challengeStatus.instance = {} as Instances;
 		},
@@ -79,8 +81,7 @@ function RouteComponent() {
 		},
 	});
 	const navigate = useNavigate();
-	// biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
-	useEffect(() => {
+		useEffect(() => {
 		if (instance_data?.data) {
 			challengeStatus.isRunning = true;
 			challengeStatus.instance = instance_data.data;
@@ -110,13 +111,13 @@ function RouteComponent() {
 			{/* 附件 */}
 			{challenge?.attachment && (
 				<a
-					href={`/static/challenges/${challenge.safe_name}/${challenge.attachment}`}
+					href={`/static/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
 					download
 					target="_blank"
 					rel="noopener noreferrer"
 					className="inline-block mt-1"
 				>
-					<Label variant="accent">{challenge.attachment}</Label>
+					<Label variant="accent">{challenge.attachment.name}</Label>
 				</a>
 			)}
 			{challengeStatus.instance && (
@@ -134,7 +135,7 @@ function RouteComponent() {
 				{challengeStatus.isRunning ? (
 					<div className="w-full flex flex-col gap-2 mb-4">
 						<RemainingTimer
-							destroy_at={challengeStatus.instance.destroy_at}
+							destroy_at={challengeStatus.instance.destroy_at ?? ""}
 							onExpire={() => {
 								destroyInstance.mutate(challengeStatus.instance.id);
 							}}
@@ -165,7 +166,7 @@ function RouteComponent() {
 										instance_id: challengeStatus.instance.id,
 										flag: challengeStatus.flag,
 									});
-									// need clear the flag value
+									// 需要清空 flag 输入
 									challengeStatus.flag = "";
 								}}
 							>

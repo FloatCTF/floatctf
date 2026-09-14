@@ -1,7 +1,7 @@
-//! Admin-facing event application service.
+//! 管理端赛事应用服务。
 //!
-//! Business logic extracted from `api/admin/events` HTTP handlers.
-//! Handlers keep auth, logging side-effects, and UniResponse wrapping.
+//! 业务逻辑自 `api/admin/events` HTTP 处理器抽出。
+//! 处理器保留鉴权、日志副作用与 UniResponse 包装。
 
 use std::io::Write;
 use std::str::FromStr;
@@ -9,8 +9,9 @@ use std::str::FromStr;
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::{DateTime, FixedOffset};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
+    DatabaseConnection, EntityTrait, IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,13 +20,16 @@ use zip::write::FileOptions;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
-        challenges, event_challenge_solves, event_challenges, event_team_members, event_teams,
-        event_users, event_writeup, events,
-        sea_orm_active_enums::{EventTeamMemberRole, EventType},
+        awd_events, awdp_events, awdp_runs, challenges, event_team_members, event_teams,
+        event_users, event_writeup, events, jeopardy_challenge_solves, jeopardy_event_challenges,
+        sea_orm_active_enums::{
+            AwdpPhase, EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode,
+        },
         users,
     },
     infrastructure::{WebDb, WebRustfs},
     modules::event::common::application::player_service::{get_scoreboard, get_trend},
+    modules::event::common::domain::event_mode::EventMode,
     modules::event::jeopardy::domain::scoring::calculate_next_dynamic_score,
     modules::event::jeopardy::domain::{scoreboard::ScoreboardItem, trend::TrendItem},
 };
@@ -51,7 +55,11 @@ fn generate_safe_name(original: &str) -> String {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateEventRequest {
-    pub r#type: EventType,
+    pub family: EventFamily,
+    pub participant_mode: ParticipantMode,
+    /// 用途：默认 Competition；awdp family 允许显式 Practice（有界练习，end_time 必填）。
+    #[serde(default)]
+    pub purpose: Option<EventPurpose>,
     pub title: String,
     pub description: Option<String>,
     pub hidden: bool,
@@ -64,7 +72,6 @@ pub struct CreateEventRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatchEventRequest {
-    pub r#type: Option<EventType>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub hidden: Option<bool>,
@@ -104,7 +111,7 @@ pub struct DataPresent {
     pub trend: Vec<TrendItem>,
 }
 
-/// Team member row embedded in writeup reports (mirrors admin event_teams DTO).
+/// 嵌入 Writeup 报告的战队成员行（与管理端 event_teams DTO 对齐）。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReportTeamMember {
     pub username: String,
@@ -135,14 +142,41 @@ pub async fn create_event(
     db: &DatabaseConnection,
     req: CreateEventRequest,
 ) -> Result<events::Model, AppError> {
+    // 普通赛事创建固定 Competition（Practice 仅系统托管 / AWDP 显式允许）。
+    // AWDP practice 是有界练习（end_time 必填，与 break+fix 时长一致由 awdp 配置同步）。
+    let purpose = match req.purpose {
+        Some(p) if req.family == EventFamily::Awdp => p,
+        Some(_) => {
+            return Err(AppError::Validation(
+                "purpose 仅 awdp family 允许显式指定（其余固定 competition）".into(),
+            ));
+        }
+        None => EventPurpose::Competition,
+    };
+    let mode = EventMode::new(
+        req.family.clone(),
+        purpose.clone(),
+        req.participant_mode.clone(),
+    )
+    .map_err(|e| AppError::Validation(e.to_string()))?;
+    if req.start_time >= req.end_time {
+        return Err(AppError::Validation(
+            "event start_time must be before end_time".into(),
+        ));
+    }
     let new_event = events::ActiveModel {
-        r#type: Set(req.r#type),
+        // 练习模式（purpose='practice'）即虚拟赛事，由 events_virtual_by_purpose_check 约束。
+        is_virtual: Set(purpose == EventPurpose::Practice),
+        family: Set(mode.family),
+        purpose: Set(mode.purpose),
+        participant_mode: Set(mode.participant_mode),
+        system_key: Set(None),
         title: Set(req.title),
         description: Set(req.description),
         start_time: Set(req.start_time),
         hidden: Set(req.hidden),
         allow_join: Set(req.allow_join),
-        end_time: Set(req.end_time),
+        end_time: Set(Some(req.end_time)),
         flag_prefix: Set(req.flag_prefix),
         rules: Set(req.rules),
         ..Default::default()
@@ -150,20 +184,32 @@ pub async fn create_event(
     Ok(new_event.insert(db).await?)
 }
 
-pub async fn patch_event(
-    db: &DatabaseConnection,
+pub async fn patch_event<C>(
+    db: &C,
     event_id: Uuid,
     req: PatchEventRequest,
-) -> Result<events::Model, AppError> {
+) -> Result<events::Model, AppError>
+where
+    C: ConnectionTrait + TransactionTrait + Send,
+{
+    use sea_orm::sea_query::LockType;
+
+    let txn = db.begin().await?;
+    // 与 AWD Configure 共用 events → awd_events → scheduled_tasks 锁序。
     let event = events::Entity::find_by_id(event_id)
-        .one(db)
+        .lock(LockType::Update)
+        .one(&txn)
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+    if event.system_key.is_some() {
+        return Err(AppError::Validation(
+            "SystemManagedEvent: system-managed events cannot be patched via ordinary admin API"
+                .into(),
+        ));
+    }
+    let schedule_may_change = req.start_time.is_some() || req.end_time.is_some();
     let mut m_event = event.into_active_model();
 
-    if let Some(t) = req.r#type {
-        m_event.r#type = Set(t);
-    }
     if let Some(t) = req.title {
         m_event.title = Set(t);
     }
@@ -174,7 +220,7 @@ pub async fn patch_event(
         m_event.start_time = Set(s);
     }
     if let Some(e) = req.end_time {
-        m_event.end_time = Set(e);
+        m_event.end_time = Set(Some(e));
     }
     if let Some(h) = req.hidden {
         m_event.hidden = Set(h);
@@ -189,7 +235,89 @@ pub async fn patch_event(
         m_event.flag_prefix = Set(f.into());
     }
 
-    Ok(m_event.update(db).await?)
+    let mut updated = m_event.update(&txn).await?;
+    if updated.purpose == EventPurpose::Competition {
+        let end = updated
+            .end_time
+            .ok_or_else(|| AppError::Validation("competition event end_time is required".into()))?;
+        if updated.start_time >= end {
+            return Err(AppError::Validation(
+                "event start_time must be before end_time".into(),
+            ));
+        }
+    }
+
+    if schedule_may_change {
+        let awd_configured = awd_events::Entity::find()
+            .filter(awd_events::Column::EventId.eq(event_id))
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .is_some();
+        if awd_configured {
+            let planned_start =
+                crate::modules::event::awd::scheduler::find_event_start_schedule(&txn, event_id)
+                    .await?;
+            let end = updated.end_time.ok_or_else(|| {
+                AppError::Validation("competition event end_time is required".into())
+            })?;
+            if planned_start.is_some_and(|start_at| start_at >= end) {
+                return Err(AppError::Validation(
+                    "event end_time must be after the AWD planned_start_at".into(),
+                ));
+            }
+            let effective_start = planned_start.unwrap_or(updated.start_time);
+            crate::modules::event::awd::scheduler::replace_auto_precheck_schedule(
+                &txn,
+                event_id,
+                effective_start,
+                chrono::Utc::now(),
+            )
+            .await
+            .map_err(AppError::from)?;
+        }
+
+        // AWDP：开始时间变更需同步派生 end_time（start + break + fix，与 awdp update_config 一致）
+        // 与 pending run 的 next_action_at（tick 到点自动 Break 的游标）。
+        let awdp_configured = awdp_events::Entity::find()
+            .filter(awdp_events::Column::EventId.eq(event_id))
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .is_some();
+        if awdp_configured {
+            let row = awdp_events::Entity::find_by_id(event_id)
+                .one(&txn)
+                .await?
+                .ok_or_else(|| AppError::Internal("awdp_events row missing".into()))?;
+            let derived_end = updated.start_time
+                + chrono::Duration::seconds(
+                    (row.break_duration_secs as i64) + (row.fix_duration_secs as i64),
+                );
+            if updated.end_time != Some(derived_end) {
+                let mut m2: events::ActiveModel = updated.clone().into();
+                m2.end_time = Set(Some(derived_end));
+                updated = m2.update(&txn).await?;
+            }
+            // pending run：next_action_at 跟随新开始时间（tick 到点 Break）。
+            use crate::modules::event::awdp::repo::run_repo as awdp_run_repo;
+            if let Some(run) = awdp_run_repo::find_active_competition_for_event(&txn, event_id)
+                .await
+                .map_err(AppError::from)?
+            {
+                if run.phase == AwdpPhase::Pending {
+                    let now = chrono::Utc::now();
+                    let mut m_run: awdp_runs::ActiveModel = run.into();
+                    m_run.next_action_at = Set(Some(updated.start_time.into()));
+                    m_run.updated_at = Set(now.into());
+                    m_run.update(&txn).await?;
+                }
+            }
+        }
+    }
+
+    txn.commit().await?;
+    Ok(updated)
 }
 
 pub async fn get_event(db: &DatabaseConnection, event_id: Uuid) -> Result<events::Model, AppError> {
@@ -200,6 +328,16 @@ pub async fn get_event(db: &DatabaseConnection, event_id: Uuid) -> Result<events
 }
 
 pub async fn delete_events(db: &DatabaseConnection, id_list: Vec<Uuid>) -> Result<u64, AppError> {
+    let system_count = events::Entity::find()
+        .filter(events::Column::Id.is_in(id_list.clone()))
+        .filter(events::Column::SystemKey.is_not_null())
+        .count(db)
+        .await?;
+    if system_count > 0 {
+        return Err(AppError::Validation(
+            "system-managed events (system_key set) cannot be deleted".into(),
+        ));
+    }
     let deleted = events::Entity::delete_many()
         .filter(events::Column::Id.is_in(id_list))
         .exec(db)
@@ -208,7 +346,7 @@ pub async fn delete_events(db: &DatabaseConnection, id_list: Vec<Uuid>) -> Resul
     Ok(deleted)
 }
 
-pub fn admin_event_filter_mappings() -> [FilterMapping; 5] {
+pub fn admin_event_filter_mappings() -> [FilterMapping; 8] {
     [
         FilterMapping {
             key: "id",
@@ -218,11 +356,29 @@ pub fn admin_event_filter_mappings() -> [FilterMapping; 5] {
             }),
         },
         FilterMapping {
-            key: "type",
+            key: "family",
             column: Box::new(|v| {
                 Condition::all().add(
-                    events::Column::Type
-                        .eq(serde_json::from_str(v).unwrap_or(EventType::JeopardyPractice)),
+                    events::Column::Family
+                        .eq(serde_json::from_str(v).unwrap_or(EventFamily::Jeopardy)),
+                )
+            }),
+        },
+        FilterMapping {
+            key: "purpose",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    events::Column::Purpose
+                        .eq(serde_json::from_str(v).unwrap_or(EventPurpose::Competition)),
+                )
+            }),
+        },
+        FilterMapping {
+            key: "participant_mode",
+            column: Box::new(|v| {
+                Condition::all().add(
+                    events::Column::ParticipantMode
+                        .eq(serde_json::from_str(v).unwrap_or(ParticipantMode::Individual)),
                 )
             }),
         },
@@ -234,6 +390,13 @@ pub fn admin_event_filter_mappings() -> [FilterMapping; 5] {
             key: "hidden",
             column: Box::new(|v| {
                 Condition::all().add(events::Column::Hidden.eq(v.parse::<bool>().unwrap_or(true)))
+            }),
+        },
+        FilterMapping {
+            key: "is_virtual",
+            column: Box::new(|v| {
+                Condition::all()
+                    .add(events::Column::IsVirtual.eq(v.parse::<bool>().unwrap_or(false)))
             }),
         },
         FilterMapping {
@@ -260,7 +423,7 @@ pub async fn get_data_present(db: WebDb, event_id: Uuid) -> Result<DataPresent, 
         .await?;
 
     let team_count = {
-        if event.r#type == EventType::JeopardyTeam {
+        if event.participant_mode == ParticipantMode::Team {
             event_teams::Entity::find()
                 .filter(event_teams::Column::EventId.eq(event_id))
                 .count(db.get_ref())
@@ -270,9 +433,9 @@ pub async fn get_data_present(db: WebDb, event_id: Uuid) -> Result<DataPresent, 
         }
     };
 
-    let solved_recent_15 = event_challenge_solves::Entity::find()
-        .filter(event_challenge_solves::Column::EventId.eq(event_id))
-        .order_by_desc(event_challenge_solves::Column::CreatedAt)
+    let solved_recent_15 = jeopardy_challenge_solves::Entity::find()
+        .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+        .order_by_desc(jeopardy_challenge_solves::Column::CreatedAt)
         .limit(15)
         .find_also_related(users::Entity)
         .find_also_related(challenges::Entity)
@@ -288,22 +451,22 @@ pub async fn get_data_present(db: WebDb, event_id: Uuid) -> Result<DataPresent, 
         })
         .collect::<Vec<_>>();
 
-    let event_challenges_rows = event_challenges::Entity::find()
-        .filter(event_challenges::Column::EventId.eq(event_id))
+    let event_challenges_rows = jeopardy_event_challenges::Entity::find()
+        .filter(jeopardy_event_challenges::Column::EventId.eq(event_id))
         .find_also_related(challenges::Entity)
         .all(db.get_ref())
         .await?;
 
     let mut data_event_challenges = Vec::new();
     for (event_challenge, challenge) in event_challenges_rows {
-        let solved_count = event_challenge_solves::Entity::find()
-            .filter(event_challenge_solves::Column::EventId.eq(event_id))
-            .filter(event_challenge_solves::Column::ChallengeId.eq(event_challenge.challenge_id))
+        let solved_count = jeopardy_challenge_solves::Entity::find()
+            .filter(jeopardy_challenge_solves::Column::EventId.eq(event_id))
+            .filter(jeopardy_challenge_solves::Column::ChallengeId.eq(event_challenge.challenge_id))
             .count(db.get_ref())
             .await?;
 
         let solved_percent = {
-            if event.r#type == EventType::JeopardyTeam {
+            if event.participant_mode == ParticipantMode::Team {
                 if team_count == 0 {
                     0.0
                 } else {
@@ -415,7 +578,7 @@ const REPORT_TEMPLATE: &str = r#"
 <body>
   <h1>{{ event.title }}' Writeup Report</h1>
   <p>Event ID：<code>{{ event.id }}</code></p>
-  <p>Event Type：<code>{{ event.type }}</code></p>
+  <p>Event Mode：<code>{{ event.family }} / {{ event.purpose }} / {{ event.participant_mode }}</code></p>
   <p> Event Date：<code>{{ event.start_time }} - {{ event.end_time }}</code>
   </p> {% if event_teams_results %} <h2>Event Teams</h2>
   <table>
@@ -480,7 +643,7 @@ const REPORT_TEMPLATE: &str = r#"
 </html>
 "#;
 
-/// Build writeup report zip, upload to S3, return object key.
+/// 生成 Writeup 报告 zip，上传对象存储，返回对象键。
 pub async fn export_writeup_report(
     db: &WebDb,
     rustfs: &WebRustfs,
@@ -530,8 +693,8 @@ pub async fn export_writeup_report(
             .template_from_str(REPORT_TEMPLATE)
             .map_err(|e| AppError::BadRequest(format!("Failed to create template: {}", e)))?;
 
-        let ctx = match event.r#type {
-            EventType::JeopardySingle => {
+        let ctx = match event.participant_mode {
+            ParticipantMode::Individual => {
                 let event_users_rows = event_users::Entity::find()
                     .filter(event_users::Column::EventId.eq(event_id))
                     .find_also_related(users::Entity)
@@ -576,7 +739,7 @@ pub async fn export_writeup_report(
                 }
             }
 
-            EventType::JeopardyTeam => {
+            ParticipantMode::Team => {
                 let event_teams_rows = event_teams::Entity::find()
                     .inner_join(event_writeup::Entity)
                     .filter(event_writeup::Column::EventId.eq(event_id))

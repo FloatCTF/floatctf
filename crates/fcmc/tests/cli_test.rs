@@ -1,4 +1,4 @@
-//! CLI argument parsing tests.
+//! CLI 集成测试。
 
 use clap::Parser;
 use fcmc::{Args, Commands, GenFormat};
@@ -26,12 +26,44 @@ fn cli_check_with_path() {
 }
 
 #[test]
+fn cli_help_agent() {
+    let args = Args::try_parse_from(["fcmc", "help", "--agent"]).unwrap();
+    match args.command {
+        Commands::Help { agent, command } => {
+            assert!(agent);
+            assert!(command.is_none());
+        }
+        _ => panic!("expected Help command"),
+    }
+}
+
+#[test]
+fn cli_help_command() {
+    let args = Args::try_parse_from(["fcmc", "help", "build"]).unwrap();
+    match args.command {
+        Commands::Help { agent, command } => {
+            assert!(!agent);
+            assert_eq!(command.as_deref(), Some("build"));
+        }
+        _ => panic!("expected Help command"),
+    }
+}
+
+#[test]
 fn cli_build_default() {
     let args = Args::try_parse_from(["fcmc", "build"]).unwrap();
     match args.command {
-        Commands::Build { path, format } => {
+        Commands::Build {
+            path,
+            format,
+            tag,
+            proxy,
+        } => {
             assert!(path.is_none());
-            assert_eq!(format, GenFormat::Challenge);
+            // 未指定 --format：无默认值，由 main 按 meta.toml 自动识别。
+            assert!(format.is_none());
+            assert!(tag.is_none());
+            assert!(proxy.is_none());
         }
         _ => panic!("expected Build command"),
     }
@@ -41,8 +73,29 @@ fn cli_build_default() {
 fn cli_build_with_format() {
     let args = Args::try_parse_from(["fcmc", "build", "-f", "gamebox"]).unwrap();
     match args.command {
-        Commands::Build { format, .. } => {
-            assert_eq!(format, GenFormat::Gamebox);
+        Commands::Build { format, tag, .. } => {
+            assert_eq!(format, Some(GenFormat::Gamebox));
+            assert!(tag.is_none());
+        }
+        _ => panic!("expected Build command"),
+    }
+}
+
+#[test]
+fn cli_build_with_tag() {
+    let args = Args::try_parse_from([
+        "fcmc",
+        "build",
+        "-f",
+        "gamebox",
+        "-t",
+        "myreg/gameboxes/x:1.0.0",
+    ])
+    .unwrap();
+    match args.command {
+        Commands::Build { format, tag, .. } => {
+            assert_eq!(format, Some(GenFormat::Gamebox));
+            assert_eq!(tag.as_deref(), Some("myreg/gameboxes/x:1.0.0"));
         }
         _ => panic!("expected Build command"),
     }

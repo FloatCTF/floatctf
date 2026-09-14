@@ -5,14 +5,6 @@ export type AwdEvents = {
   event_id: string;
   status: AwdEventStatus;
   phase: AwdPhase;
-  gamebox_cidr: string;
-  wireguard_cidr: string;
-  wireguard_interface_name: string;
-  wireguard_listen_port: number;
-  flagserver_ip: string;
-  judgeserver_ip: string;
-  docker_network_id?: string;
-  docker_network_name?: string;
   event_secret_ciphertext: string;
   event_secret_nonce: string;
   flagserver_token_ciphertext: string;
@@ -25,7 +17,6 @@ export type AwdEvents = {
   key_version: number;
   free_reset_count: number;
   extra_reset_penalty: number;
-  reset_protection_secs: number;
   judge_max_concurrency: number;
   judge_default_timeout_secs: number;
   judge_retry_interval_secs: number;
@@ -39,4 +30,10 @@ export type AwdEvents = {
   finished_at?: string;
   created_at: string;
   updated_at: string;
+  paused_phase?: AwdPhase;
+  configuration_generation: number;
+  verified_generation?: string;
+  round_count?: string;
+  initial_score: number;
+  hardening_ends_at?: string;
 };

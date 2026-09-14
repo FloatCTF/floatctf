@@ -1,4 +1,4 @@
-//! Player comment handlers — `/api/discussions/{id}/comments`.
+//! 评论选手端接口。
 
 use std::collections::HashMap;
 

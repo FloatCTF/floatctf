@@ -1,4 +1,4 @@
-//! Super-admin login and admin CRUD for administrators.
+//! 管理员账户管理。
 
 pub mod dto;
 pub use dto::SuperAdminDto;

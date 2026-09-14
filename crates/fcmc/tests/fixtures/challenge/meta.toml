@@ -1,12 +1,11 @@
 name = "test-challenge"
+version = "1.0.0"
 author = "tester@example.com"
 category = "Web"
 description = "A test challenge"
 
 [flag]
-value = "flag{test-flag-12345}"
-env_var = "FLAG"
+type = "dynamic"
 
 [docker]
-image_tag = "test/challenge:v1"
-port = "80/tcp"
+port = 80

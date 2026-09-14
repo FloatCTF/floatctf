@@ -1,4 +1,6 @@
 import type { UniResponse } from "@/api/axios";
+import type { InstancesDto as Instances } from "@/api/service/instances";
+
 import { Button, Spinner } from "@primer/react";
 import { DataTable, Table } from "@primer/react/experimental";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -8,7 +10,7 @@ import type { AxiosError } from "axios";
 
 import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
-import type { Instances } from "@/entity";
+
 import { DatetimeToShow } from "@/util";
 
 export type EventInstanceResult = {

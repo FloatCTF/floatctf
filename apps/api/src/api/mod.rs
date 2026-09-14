@@ -9,6 +9,6 @@ mod response;
 pub use app_error::{AppError, UniResult};
 pub use extractor::{SuperAdminJwtGuard, UserJwtGuard};
 pub use response::{QueryParams, UniResponse};
-pub use sea_orm_utils::{FilterMapping, apply_filters};
+pub use sea_orm_utils::{FilterMapping, apply_filters, build_filter_condition};
 
 pub use dto::{DeleteItemsRequest, map_dto_vec};

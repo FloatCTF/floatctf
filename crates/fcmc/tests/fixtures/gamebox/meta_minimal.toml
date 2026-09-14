@@ -1,8 +1,8 @@
 name = "test-gamebox-minimal"
+version = "1.0.0"
 author = "tester@example.com"
-category = "Web"
+category = "web"
 description = "Minimal gamebox"
 
 [gamebox]
 username = "ctf"
-image_tag = "test/gamebox:v1"

@@ -1,4 +1,4 @@
-//! Unified event-module errors (narrow surface for handlers).
+//! 赛事模块统一错误类型（供处理器使用的窄接口）。
 
 use thiserror::Error;
 

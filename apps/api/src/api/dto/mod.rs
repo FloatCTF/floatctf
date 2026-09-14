@@ -1,11 +1,11 @@
-//! Shared, non-domain response helpers only.
+//! 共享、非领域的响应辅助类型。
 //!
-//! Business DTOs live in their owning modules under `modules/*/`.
+//! 业务 DTO 放在各自所属的 `modules/*/` 下。
 
 mod common;
 pub use common::DeleteItemsRequest;
 
-/// Map a `Vec` of models into response DTOs.
+/// 将模型 `Vec` 映射为响应 DTO。
 pub fn map_dto_vec<M, D>(items: Vec<M>) -> Vec<D>
 where
     D: From<M>,

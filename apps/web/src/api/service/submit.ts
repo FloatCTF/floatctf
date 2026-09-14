@@ -1,4 +1,4 @@
-import type { ChallengeSolves } from "@/entity";
+import type { JeopardyChallengeSolves as ChallengeSolves } from "@/entity";
 import { type UniResponse, service_api } from "../axios";
 
 export const submitServiceApi = {

@@ -5,9 +5,9 @@ import {
 	systemInformationQueryOptions,
 } from "@/api/queries";
 // @vitest-environment jsdom
-// Query options factories must keep the EXACT query keys used by the
-// original useQuery calls, because existing code invalidates/refetches
-// by key (e.g. useAwdEventStream.invalidateQueries).
+// query options 工厂必须保持与原先 useQuery 完全相同的 query key，
+// 因为既有代码按 key 做 invalidate/refetch
+// （例如 useAwdEventStream.invalidateQueries）。
 import { describe, expect, it } from "vitest";
 
 describe("query options factory keys", () => {

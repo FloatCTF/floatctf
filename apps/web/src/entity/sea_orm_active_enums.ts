@@ -15,10 +15,44 @@ export enum AwdEventStatus {
   VerificationFailed = 'verification_failed',
 }
 
+export enum AwdNetworkAllocationKind {
+  Gamebox = 'gamebox',
+  Wireguard = 'wireguard',
+}
+
+export enum AwdNetworkAllocationMode {
+  Automatic = 'automatic',
+  Manual = 'manual',
+}
+
 export enum AwdPhase {
   Hardening = 'hardening',
   Attack = 'attack',
   Pause = 'pause',
+}
+
+export enum AwdpEvaluationKind {
+  Manual = 'manual',
+  Official = 'official',
+}
+
+export enum AwdpEvaluationStatus {
+  Pending = 'pending',
+  Running = 'running',
+  NoPatch = 'no_patch',
+  ServiceDown = 'service_down',
+  FunctionalBroken = 'functional_broken',
+  Vulnerable = 'vulnerable',
+  Patched = 'patched',
+  PlatformError = 'platform_error',
+}
+
+export enum AwdpPhase {
+  Pending = 'pending',
+  Break = 'break',
+  Fix = 'fix',
+  Ended = 'ended',
+  PreparingFix = 'preparing_fix',
 }
 
 export enum BanStatus {
@@ -27,16 +61,20 @@ export enum BanStatus {
   Unbanned = 'unbanned',
 }
 
+export enum EventFamily {
+  Jeopardy = 'jeopardy',
+  Awd = 'awd',
+  Awdp = 'awdp',
+}
+
+export enum EventPurpose {
+  Practice = 'practice',
+  Competition = 'competition',
+}
+
 export enum EventTeamMemberRole {
   Captain = 'captain',
   Member = 'member',
-}
-
-export enum EventType {
-  JeopardyPractice = 'jeopardy_practice',
-  JeopardySingle = 'jeopardy_single',
-  JeopardyTeam = 'jeopardy_team',
-  AwdTeam = 'awd_team',
 }
 
 export enum GameboxStatus {
@@ -53,22 +91,19 @@ export enum GameboxStatus {
   Stopped = 'stopped',
 }
 
-export enum InstanceStatus {
-  Pending = 'pending',
-  Running = 'running',
-  Completed = 'completed',
-  Failed = 'failed',
-}
-
 export enum JudgeTaskStatus {
   Pending = 'pending',
   Running = 'running',
   Up = 'up',
   Down = 'down',
   JudgeError = 'judge_error',
-  JudgeTimeout = 'judge_timeout',
   SkippedResetting = 'skipped_resetting',
   SkippedBanned = 'skipped_banned',
+}
+
+export enum ParticipantMode {
+  Individual = 'individual',
+  Team = 'team',
 }
 
 export enum PrecheckStatus {
@@ -81,7 +116,6 @@ export enum PrecheckStatus {
 
 export enum RoundStatus {
   Active = 'active',
-  Grace = 'grace',
   Completed = 'completed',
   Paused = 'paused',
 }
@@ -89,11 +123,11 @@ export enum RoundStatus {
 export enum ScoreEventType {
   Attack = 'attack',
   VictimLoss = 'victim_loss',
-  JudgeFix = 'judge_fix',
   JudgeDown = 'judge_down',
   FirstBonus = 'first_bonus',
   ResetPenalty = 'reset_penalty',
   Adjustment = 'adjustment',
+  InitialScore = 'initial_score',
 }
 
 export enum SettingValueType {

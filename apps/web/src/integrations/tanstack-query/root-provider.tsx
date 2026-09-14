@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-// 全局默认：避免每个 tab 切换/窗口聚焦都重新请求。
-// staleTime 30s：30 秒内重复进入同一页面直接走缓存，不再发请求；
+// 全局默认：避免每个 tab 切换/窗口聚焦都重复请求，同时保证切换后能尽快拿到新数据。
+// staleTime 5s：5 秒内重复进入同一页面直接走缓存；超过 5s 的再次进入会在保留旧数据渲染的前提下后台刷新（不白屏）。
+//   —— 曾为 30s，用户反馈"切换 tab/nav 长期看不到新数据，只有刷新才有"，故调短；
+//      React Query 在数据 stale 时挂载仍会先渲染缓存再后台 refetch，不会退化为"切标签页卡顿"。
 // refetchOnWindowFocus false：从 IDE 切回浏览器时不重刷；
 // retry 1：接口失败只重试一次，避免默认 3 次退避叠加等待。
 //
@@ -12,7 +14,7 @@ function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 30_000,
+        staleTime: 5_000,
         gcTime: 10 * 60_000,
         refetchOnWindowFocus: false,
         retry: 1,

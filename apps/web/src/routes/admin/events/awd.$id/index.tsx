@@ -1,350 +1,221 @@
-import { CheckIcon, KebabHorizontalIcon } from "@primer/octicons-react";
 import {
-    ActionList,
-    ActionMenu,
-    Button,
-    ButtonGroup,
-    Dialog,
-    IconButton,
+	Box,
+	Label,
+	Spinner,
 } from "@primer/react";
-import { DataTable, Table } from "@primer/react/experimental";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { InlineMessage } from "@primer/react/experimental";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { useCallback, useContext, useRef, useState } from "react";
+import dayjs from "dayjs";
 
 import { adminApi } from "@/api";
-import { ActionSelect, GenericTable, useMsgBanner } from "@/components";
-import type { Challenges } from "@/entity";
-import { CheckButton } from "@/routes/admin/challenges";
-import { DatetimeToShow, useSelectedRowIds } from "@/util";
-import { EventContext } from "./route";
+import type { AwdEventStatus } from "@/api/awd";
 import { AdminRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/admin/events/awd/$id/")({
-    component: RouteComponent,
-    loader: AdminRouteGuard,
+	component: RouteComponent,
+	loader: AdminRouteGuard,
 });
 
-export type EventChallenge = {
-    event_id: string;
-    challenge_id: string;
-    hidden: boolean;
-    points: number;
-};
-
-export type EventChallengeResult = {
-    id: string;
-    event_challenge: EventChallenge;
-    challenge: Challenges;
-};
+function formatDate(iso?: string | null) {
+	if (!iso) return "-";
+	return dayjs.utc(iso).local().format("YYYY-MM-DD HH:mm:ss");
+}
 
 function RouteComponent() {
-    const event = useContext(EventContext);
-    const { id } = Route.useParams();
-    const queryClient = useQueryClient();
-    const subject = `event_challenges: ${id}`;
-    const banner = useMsgBanner();
-    const open_event_challenge = useMutation({
-        mutationFn: adminApi.event_challenges.open,
-        onSuccess: () => {
-            queryClient.invalidateQueries({
-                queryKey: [subject],
-            });
-        },
-    });
-    const hidden_event_challenge = useMutation({
-        mutationFn: adminApi.event_challenges.hidden,
-        onSuccess: () => {
-            queryClient.invalidateQueries({
-                queryKey: [subject],
-            });
-        },
-    });
+	const { id } = Route.useParams();
+	const eventQuery = useQuery({
+		queryKey: ["event", id],
+		queryFn: () => adminApi.events.get(id),
+	});
+	const statusQuery = useQuery({
+		queryKey: ["admin-awd-status", id],
+		queryFn: () => adminApi.awd.getStatus(id),
+	});
 
-    const columns = [
-        {
-            accessorKey: "challenge.id",
-            header: "Challenge ID",
-            field: "challenge.id",
-            rowHeader: true,
-        },
-        {
-            accessorKey: "challenge.name",
-            header: "Challenge Name",
-            field: "challenge.name",
-            sortBy: true,
-        },
-        {
-            accessorKey: "challenge.category",
-            header: "Challenge Category",
-            field: "challenge.category",
-            sortBy: true,
-        },
-        {
-            accessorKey: "event_challenge.points",
-            header: "Challenge Points",
-            field: "event_challenge.points",
-            sortBy: true,
-        },
-        {
-            accessorKey: "event_challenge.hidden",
-            header: "Hidden",
-            field: "event_challenge.hidden",
+	const event = eventQuery.data?.data;
+	const awd = statusQuery.data?.data ?? null;
 
-            renderCell: (row: EventChallengeResult) => {
-                return (
-                    <span>
-                        {row.event_challenge.hidden ? <CheckIcon /> : <></>}
-                    </span>
-                );
-            },
-            sortBy: true,
-        },
-    ];
+	if (eventQuery.isLoading || statusQuery.isLoading) {
+		return <Spinner size="large" />;
+	}
+	if (!event) {
+		return <InlineMessage variant="warning">Event not found.</InlineMessage>;
+	}
+	if (!awd) {
+		return <InlineMessage variant="warning">AWD not configured. Go to Configure tab first.</InlineMessage>;
+	}
 
-    const columns_action = (row: EventChallengeResult) => {
-        return (
-            <ActionList>
-                <ActionList.Item
-                    key={`${row.id}-edit`}
-                    onClick={() => {
-                        if (row.event_challenge.hidden) {
-                            open_event_challenge.mutate({
-                                event_id: id,
-                                challenge_id: row.challenge.id,
-                            });
-                        } else {
-                            hidden_event_challenge.mutate({
-                                event_id: id,
-                                challenge_id: row.challenge.id,
-                            });
-                        }
-                    }}
-                >
-                    {row.event_challenge.hidden ? "Open" : "Hide"}
-                </ActionList.Item>
-            </ActionList>
-        );
-    };
-
-    const [eventChallengeSelectedRowIds, setEventChallengeSelectedRowIds] =
-        useSelectedRowIds();
-    const custom_actions = (
-        <div className="flex gap-1">
-            <OpenChallengesButton
-                event_id={id}
-                refresh_query_key={subject}
-                banner={banner}
-                challenge_id_list={Array.from(eventChallengeSelectedRowIds)}
-            />
-            <CreateChallengeSetButton
-                name={event?.title ?? "Challenge Set"}
-                description={event?.description ?? "Challenge Description"}
-                banner={banner}
-                challenge_id_list={Array.from(eventChallengeSelectedRowIds)}
-            />
-            <AddChallengeButton event_id={id} refresh_query_key={subject} />
-        </div>
-    );
-    const filterKeys = ["name", "challenge_id", "hidden", "category"];
-    return (
-        <div className="flex gap-2 m-2 items-start">
-            <GenericTable
-                subject={subject}
-                columns={columns}
-                filterKeys={filterKeys}
-                getRowId={(row) => row.challenge.id}
-                queryFn={adminApi.event_challenges.fetch(id)}
-                removeFn={adminApi.event_challenges.remove(id)}
-                selectedRowIds={eventChallengeSelectedRowIds}
-                onSelectedRowIdsChange={setEventChallengeSelectedRowIds}
-                columnActions={columns_action}
-                customActions={custom_actions}
-                disableAdd={true}
-                externalBanner={banner}
-            />
-        </div>
-    );
+	return <Overview event={event} awd={awd} />;
 }
 
-function AddChallengeButton({
-    event_id,
-    refresh_query_key,
-}: {
-    event_id: string;
-    refresh_query_key?: string;
-}) {
-    const queryClient = useQueryClient();
-    const [isOpen, setIsOpen] = useState(false);
-    const buttonRef = useRef<HTMLButtonElement>(null);
-    const onDialogClose = useCallback(() => setIsOpen(false), []);
-    const [userSelectedRowIds, setUserSelectedRowIds] = useSelectedRowIds();
-    const banner = useMsgBanner();
-    const addEventChallengesMutation = useMutation({
-        mutationFn: adminApi.event_challenges.add,
-        onSuccess: () => {
-            if (refresh_query_key) {
-                queryClient.invalidateQueries({
-                    queryKey: [refresh_query_key],
-                });
-            }
-            banner.showBanner("success", "Add Event Challenges Success");
-        },
-        onError: (error) => {
-            banner.showErrorBanner(error);
-        },
-    });
-    const user_op_actions = (
-        <Button
-            variant="primary"
-            onClick={() => {
-                addEventChallengesMutation.mutate({
-                    event_id: event_id,
-                    challenge_id_list: Array.from(userSelectedRowIds),
-                });
-            }}
-        >
-            Add
-        </Button>
-    );
-    const columns = [
-        { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-        { accessorKey: "name", header: "Name", field: "name", sortBy: true },
-        {
-            accessorKey: "category",
-            header: "Category",
-            field: "category",
-            sortBy: true,
-        },
+function Overview({ event, awd }: { event: { title: string; start_time?: string; end_time?: string }; awd: AwdEventStatus }) {
+	const statusLabel = statusVariant(awd.status);
+	const phaseLabel = awd.phase ? phaseVariant(awd.phase) : null;
 
-        {
-            accessorKey: "updated_at",
-            header: "Updated At",
-            field: "updated_at",
-            renderCell: (row: Challenges) => {
-                return <span>{DatetimeToShow(row.updated_at)}</span>;
-            },
-        },
-    ];
-    const filterKeys = ["name", "id", "category"];
-    return (
-        <>
-            {isOpen && (
-                <Dialog title="Add Event Challenges" onClose={onDialogClose}>
-                    <GenericTable
-                        subject="Challenges"
-                        columns={columns}
-                        queryFn={adminApi.challenges.fetch}
-                        filterKeys={filterKeys}
-                        disableAdd={true}
-                        enableInternalActions={false}
-                        selectedRowIds={userSelectedRowIds}
-                        onSelectedRowIdsChange={setUserSelectedRowIds}
-                        customActions={user_op_actions}
-                        externalBanner={banner}
-                    />
-                </Dialog>
-            )}
-            <Button
-                variant="primary"
-                ref={buttonRef}
-                onClick={() => setIsOpen(!isOpen)}
-            >
-                Add Event Challenges
-            </Button>
-        </>
-    );
+	return (
+		<div className="mt-3" style={{ maxWidth: 920 }}>
+			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+				{/* Status */}
+				<StatCard title="AWD Status">
+					<Label variant={statusLabel.variant}>{statusLabel.label}</Label>
+				</StatCard>
+
+				{/* Phase */}
+				<StatCard title="Phase">
+					{phaseLabel ? (
+						<Label variant={phaseLabel.variant}>{phaseLabel.label}</Label>
+					) : (
+						<span className="text-sm text-[var(--fgColor-muted)]">-</span>
+					)}
+				</StatCard>
+
+				{/* Round */}
+				<StatCard title="Total Rounds">
+					<span className="text-sm font-mono">
+						{awd.round_count != null ? `${awd.round_count}` : "-"}
+					</span>
+				</StatCard>
+
+				{/* Round Duration */}
+				<StatCard title="Round Duration">
+					<span className="text-sm font-mono">
+						{awd.round_duration_secs}s
+					</span>
+				</StatCard>
+
+				{/* Initial Score */}
+				<StatCard title="Initial Score">
+					<span className="text-sm font-mono">{awd.initial_score}</span>
+				</StatCard>
+
+				{/* Event Start */}
+				<StatCard title="Event Start">
+					<span className="text-sm">{formatDate(event.start_time)}</span>
+				</StatCard>
+
+				{/* Event End */}
+				<StatCard title="Event End">
+					<span className="text-sm">{formatDate(event.end_time)}</span>
+				</StatCard>
+
+				{/* Started At */}
+				<StatCard title="Competition Started">
+					<span className="text-sm">{formatDate(awd.started_at)}</span>
+				</StatCard>
+
+				{/* SSE connection state */}
+				<StatCard title="Realtime">
+					<span className="text-sm text-[var(--fgColor-muted)]">See top bar</span>
+				</StatCard>
+			</div>
+
+			{/* NetworkError banner */}
+			{awd.status === "network_error" && (
+				<div className="mt-3">
+					<InlineMessage variant="critical">
+						<strong>Network Error</strong> — Platform infrastructure failure detected.
+						Competition is paused. Administrator must Resume after recovery.
+					</InlineMessage>
+				</div>
+			)}
+
+			{/* Final Settlement banner */}
+			{awd.final_settlement && (
+				<div className="mt-3">
+					<InlineMessage variant="warning">
+						<strong>Final Settlement</strong> — Final Judge settlement is in progress.
+						Competition actions are closed. The event will become Finished when all
+						final Judge tasks are terminal and scoring is settled.
+					</InlineMessage>
+				</div>
+			)}
+
+			{/* Paused banner */}
+			{awd.status === "paused" && (
+				<div className="mt-3">
+					<InlineMessage variant="warning">
+						<strong>Paused</strong> — Competition is administratively paused.
+						Players cannot access GameBoxes, submit Flags, or Reset.
+					</InlineMessage>
+				</div>
+			)}
+
+			{/* Finished banner */}
+			{(awd.status === "finished" || awd.status === "archived") && (
+				<div className="mt-3">
+					<InlineMessage variant="success">
+						<strong>{awd.status === "archived" ? "Archived" : "Finished"}</strong> — Scoreboard is final.
+						{awd.status === "finished" && " Archive when ready."}
+					</InlineMessage>
+				</div>
+			)}
+		</div>
+	);
 }
 
-function CreateChallengeSetButton({
-    name,
-    description,
-    challenge_id_list,
-    banner,
-}: {
-    name: string;
-    description?: string;
-    challenge_id_list: string[];
-    banner: ReturnType<typeof useMsgBanner>;
-}) {
-    const createChallengeSetMutation = useMutation({
-        mutationFn: adminApi.events.createChallengeSet,
-        onSuccess: () => {
-            banner.showBanner(
-                "success",
-                `Create Challenge Set Success: ${name} #${challenge_id_list.length}`,
-            );
-        },
-        onError: (error) => {
-            banner.showErrorBanner(error);
-        },
-    });
-
-    return (
-        <>
-            <Button
-                variant="primary"
-                onClick={() => {
-                    if (challenge_id_list.length === 0) {
-                        banner.showBanner(
-                            "critical",
-                            "Please select at least one challenge",
-                        );
-                        return;
-                    }
-                    createChallengeSetMutation.mutate({
-                        name: name,
-                        description: description,
-                        challenge_id_list: challenge_id_list,
-                    });
-                }}
-            >
-                As Challenge Set
-            </Button>
-        </>
-    );
+function StatCard({ title, children }: { title: string; children: React.ReactNode }) {
+	return (
+		<Box
+			sx={{
+				p: 3,
+				border: "1px solid",
+				borderColor: "border.default",
+				borderRadius: 2,
+			}}
+		>
+			<div className="text-xs font-semibold text-[var(--fgColor-muted)] uppercase tracking-wide mb-1">
+				{title}
+			</div>
+			{children}
+		</Box>
+	);
 }
 
-function OpenChallengesButton({
-    event_id,
-    refresh_query_key,
-    banner,
-    challenge_id_list,
-}: {
-    event_id: string;
-    refresh_query_key?: string;
-    banner: ReturnType<typeof useMsgBanner>;
-    challenge_id_list: string[];
-}) {
-    const queryClient = useQueryClient();
-    const openEventChallengesMutation = useMutation({
-        mutationFn: adminApi.event_challenges.open,
-        onSuccess: () => {
-            if (refresh_query_key) {
-                queryClient.invalidateQueries({
-                    queryKey: [refresh_query_key],
-                });
-            }
-            banner.showBanner(
-                "success",
-                `Open Event Challenges Success: ${challenge_id_list.length}`,
-            );
-        },
-        onError: (error) => {
-            banner.showErrorBanner(error);
-        },
-    });
-    return (
-        <Button
-            onClick={() => {
-                openEventChallengesMutation.mutate({
-                    event_id: event_id,
-                    challenge_id_list: challenge_id_list,
-                });
-            }}
-        >
-            Open Challenges
-        </Button>
-    );
+function statusVariant(status: string): { label: string; variant: "success" | "danger" | "attention" | "accent" | "default" } {
+	switch (status) {
+		case "running":
+			return { label: "Running", variant: "success" };
+		case "paused":
+			return { label: "Paused", variant: "attention" };
+		case "network_error":
+			return { label: "Network Error", variant: "danger" };
+		case "finished":
+			return { label: "Finished", variant: "default" };
+		case "archived":
+			return { label: "Archived", variant: "default" };
+		case "draft":
+			return { label: "Draft", variant: "default" };
+		case "configuring":
+			return { label: "Configuring", variant: "accent" };
+		case "deploying":
+			return { label: "Deploying", variant: "accent" };
+		case "deployed":
+			return { label: "Deployed", variant: "accent" };
+		case "prechecking":
+			return { label: "Prechecking", variant: "accent" };
+		case "verified":
+			return { label: "Verified", variant: "success" };
+		case "start_blocked":
+			return { label: "Start Blocked", variant: "attention" };
+		case "deploy_failed":
+			return { label: "Deploy Failed", variant: "danger" };
+		case "verification_failed":
+			return { label: "Verification Failed", variant: "danger" };
+		default:
+			return { label: status, variant: "default" };
+	}
+}
+
+function phaseVariant(phase: string): { label: string; variant: "success" | "danger" | "attention" | "accent" | "default" } {
+	switch (phase) {
+		case "hardening":
+			return { label: "Hardening", variant: "accent" };
+		case "attack":
+			return { label: "Attack", variant: "success" };
+		case "pause":
+			return { label: "Pause", variant: "attention" };
+		default:
+			return { label: phase, variant: "default" };
+	}
 }

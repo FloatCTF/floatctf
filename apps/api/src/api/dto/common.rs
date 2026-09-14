@@ -1,4 +1,4 @@
-//! Cross-cutting request shapes shared by multiple modules.
+//! 通用 HTTP 响应辅助 DTO。
 
 use sea_orm::entity::prelude::Uuid;
 use serde::{Deserialize, Serialize};

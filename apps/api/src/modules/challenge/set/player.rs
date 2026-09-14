@@ -1,15 +1,13 @@
-//! Player challenge set handlers.
+//! 题集选手端接口。
 
 use std::str::FromStr;
 
 use sea_orm::Condition;
 
-use crate::api::dto::map_dto_vec;
-
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::modules::challenge::set::ChallengeSetsDto;
 use crate::{
-    api::{FilterMapping, prelude::*, sea_orm_utils::query_query},
+    api::{FilterMapping, map_dto_vec, prelude::*, sea_orm_utils::query_query},
     entity::{challenge_set_items, challenge_sets, challenges},
 };
 
@@ -79,5 +77,11 @@ pub async fn get_challenge_set(
         .all(ctx.db.get_ref())
         .await?;
 
-    UniResponse::ok(Some(map_dto_vec(challenges))).into()
+    UniResponse::ok(Some(
+        challenges
+            .iter()
+            .map(ChallengesDto::from)
+            .collect::<Vec<_>>(),
+    ))
+    .into()
 }

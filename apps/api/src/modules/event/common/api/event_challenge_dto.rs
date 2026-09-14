@@ -1,4 +1,4 @@
-use crate::entity::event_challenges;
+use crate::entity::jeopardy_event_challenges;
 use sea_orm::entity::prelude::Uuid;
 use serde::Serialize;
 
@@ -10,8 +10,8 @@ pub struct EventChallengesDto {
     pub hidden: bool,
 }
 
-impl From<event_challenges::Model> for EventChallengesDto {
-    fn from(m: event_challenges::Model) -> Self {
+impl From<jeopardy_event_challenges::Model> for EventChallengesDto {
+    fn from(m: jeopardy_event_challenges::Model) -> Self {
         Self {
             event_id: m.event_id,
             challenge_id: m.challenge_id,

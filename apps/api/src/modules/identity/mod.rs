@@ -1,7 +1,4 @@
-//! Identity module — authentication, authorization, users, administrators.
-//!
-//! Technical JWT lives in `core::security::jwt`.
-//! HTTP guards live in `api::extractor::auth`.
+//! 身份域——认证、授权、用户、管理员。
 
 pub mod administrator;
 pub mod authentication;
@@ -10,7 +7,7 @@ pub mod user;
 
 use actix_web::web::{self, ServiceConfig};
 
-/// Player identity routes under `/api`:
+/// 选手身份路由（`/api` 下）：
 /// - `/users/session`, `/users`, `/users/me`, reset flows
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(
@@ -30,13 +27,13 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     );
 }
 
-/// Super-admin session under `/api`:
+/// 超管会话路由（`/api` 下）：
 /// - POST `/admin/session`
 pub fn configure_session_routes(cfg: &mut ServiceConfig) {
     cfg.service(administrator::super_admin_login);
 }
 
-/// Admin identity routes under `/api/admin`:
+/// 管理端身份路由（`/api/admin` 下）：
 /// - `/users` CRUD
 /// - `/super_admin` CRUD
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {

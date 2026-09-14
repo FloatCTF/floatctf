@@ -1,12 +1,19 @@
-//! Player practice challenge solves (catalog, not event scoring).
+//! 选手练习解题记录（题库侧，非赛事计分）。
 
 use std::{collections::HashMap, str::FromStr};
 
-use sea_orm::Condition;
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait,
+};
 
 use crate::{
     api::{FilterMapping, apply_filters, prelude::*, sea_orm_utils::paginate_query},
-    entity::{challenge_solves, users},
+    entity::{
+        challenges, events, jeopardy_challenge_solves,
+        sea_orm_active_enums::{EventFamily, EventPurpose},
+        users,
+    },
+    modules::event::common::domain::event_mode::PRACTICE_JEOPARDY_SYSTEM_KEY,
 };
 
 use chrono::{DateTime, FixedOffset};
@@ -14,9 +21,10 @@ use chrono::{DateTime, FixedOffset};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SolveResult {
     #[serde(flatten)]
-    pub solve: challenge_solves::Model,
+    pub solve: jeopardy_challenge_solves::Model,
     pub nickname: String,
     pub avatar: Option<String>,
+    pub challenge_name: String,
 }
 
 /// GET /api/challenge_solves (scope `/solves`)
@@ -33,15 +41,17 @@ pub async fn get_solves(
         FilterMapping {
             key: "id",
             column: Box::new(|v| {
-                Condition::all()
-                    .add(challenge_solves::Column::Id.eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())))
+                Condition::all().add(
+                    jeopardy_challenge_solves::Column::Id
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                )
             }),
         },
         FilterMapping {
             key: "challenge_id",
             column: Box::new(|v| {
                 Condition::all().add(
-                    challenge_solves::Column::ChallengeId
+                    jeopardy_challenge_solves::Column::ChallengeId
                         .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
                 )
             }),
@@ -49,22 +59,25 @@ pub async fn get_solves(
         FilterMapping {
             key: "event_id",
             column: Box::new(|v| {
-                if v == "null" || v.is_empty() {
-                    Condition::all().add(challenge_solves::Column::EventId.is_null())
-                } else {
-                    Condition::all().add(
-                        challenge_solves::Column::EventId
-                            .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
-                    )
-                }
+                Condition::all().add(
+                    jeopardy_challenge_solves::Column::EventId
+                        .eq(Uuid::from_str(&v).unwrap_or(Uuid::nil())),
+                )
             }),
         },
     ];
 
-    let stmt =
-        challenge_solves::Entity::find().filter(challenge_solves::Column::UserId.eq(user.id));
+    // Default: practice solves only (join events purpose=practice)
+    let stmt = jeopardy_challenge_solves::Entity::find()
+        .join(
+            JoinType::InnerJoin,
+            jeopardy_challenge_solves::Relation::Events.def(),
+        )
+        .filter(events::Column::Purpose.eq(EventPurpose::Practice))
+        .filter(events::Column::Family.eq(EventFamily::Jeopardy))
+        .filter(jeopardy_challenge_solves::Column::UserId.eq(user.id));
     let stmt = apply_filters(stmt, query_params.filter.clone(), &mappings);
-    let stmt = stmt.order_by_desc(challenge_solves::Column::CreatedAt);
+    let stmt = stmt.order_by_desc(jeopardy_challenge_solves::Column::CreatedAt);
 
     let (items, total_items) =
         if let (Some(limit), Some(page)) = (query_params.limit, query_params.page) {
@@ -79,11 +92,29 @@ pub async fn get_solves(
     let nickname = user.nickname.clone();
     let avatar = user.avatar.clone();
 
+    // 收集涉及题目的名称，避免逐行查询。
+    let challenge_ids: Vec<Uuid> = items.iter().map(|s| s.challenge_id).collect();
+    let challenge_names = if challenge_ids.is_empty() {
+        HashMap::new()
+    } else {
+        challenges::Entity::find()
+            .filter(challenges::Column::Id.is_in(challenge_ids))
+            .all(ctx.db.get_ref())
+            .await?
+            .into_iter()
+            .map(|c| (c.id, c.name))
+            .collect::<HashMap<Uuid, String>>()
+    };
+
     let results: Vec<SolveResult> = items
         .into_iter()
         .map(|s| SolveResult {
             nickname: nickname.clone(),
             avatar: avatar.clone(),
+            challenge_name: challenge_names
+                .get(&s.challenge_id)
+                .cloned()
+                .unwrap_or_else(|| s.challenge_id.to_string()),
             solve: s,
         })
         .collect();
@@ -103,12 +134,20 @@ pub struct TopUser {
 /// GET /api/challenge_solves/top15users (scope `/solves`)
 #[get("/top15users")]
 pub async fn get_top_15_users(_user: UserJwtGuard, ctx: ReqCtx) -> UniResult<Vec<TopUser>> {
-    let solves = challenge_solves::Entity::find()
-        .filter(challenge_solves::Column::EventId.is_null())
+    let practice = events::Entity::find()
+        .filter(events::Column::SystemKey.eq(PRACTICE_JEOPARDY_SYSTEM_KEY))
+        .one(ctx.db.get_ref())
+        .await?;
+
+    let Some(practice) = practice else {
+        return UniResponse::ok(Some(Vec::new())).into();
+    };
+
+    let solves = jeopardy_challenge_solves::Entity::find()
+        .filter(jeopardy_challenge_solves::Column::EventId.eq(practice.id))
         .all(ctx.db.get_ref())
         .await?;
 
-    // 2. 在内存里统计
     let mut stats: HashMap<Uuid, (u64, DateTime<FixedOffset>)> = HashMap::new();
 
     for s in solves {
@@ -123,7 +162,6 @@ pub async fn get_top_15_users(_user: UserJwtGuard, ctx: ReqCtx) -> UniResult<Vec
             .or_insert((1, s.created_at));
     }
 
-    // 3. 查昵称和头像
     let mut result = Vec::new();
     for (uid, (count, last)) in stats {
         if let Some(user) = users::Entity::find_by_id(uid).one(ctx.db.get_ref()).await? {
@@ -131,14 +169,12 @@ pub async fn get_top_15_users(_user: UserJwtGuard, ctx: ReqCtx) -> UniResult<Vec
         }
     }
 
-    // 4. 排序 + 取前 15
     result.sort_by(|a, b| {
-        b.1.cmp(&a.1) // 解题次数倒序
-            .then_with(|| b.2.cmp(&a.2)) // 最后解题时间倒序（解题次数相同时，越晚的排前面）
+        b.2.cmp(&a.2) // solved_count
+            .then_with(|| b.3.cmp(&a.3)) // last solve time
     });
     result.truncate(15);
 
-    // 5. 加上排名号 no
     let result: Vec<TopUser> = result
         .into_iter()
         .enumerate()

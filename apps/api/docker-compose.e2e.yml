@@ -1,0 +1,53 @@
+# Optional Flag/Judge E2E profile.
+# Prefer scripts/e2e_flag_judge.sh for labeled one-shot smoke with trap cleanup.
+#
+#   docker compose -f docker-compose.e2e.yml --profile e2e up --build -d
+#   docker compose -f docker-compose.e2e.yml --profile e2e down -v --remove-orphans
+#
+# Does not attach to production networks or host iptables.
+
+services:
+  awd-flagserver:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: Dockerfile.awd-flagserver
+      labels:
+        floatctf-e2e: "compose"
+    image: floatctf-e2e-flagserver:compose
+    labels:
+      floatctf-e2e: "compose"
+    environment:
+      LISTEN_ADDR: "0.0.0.0:8080"
+      EVENT_ID: "00000000-0000-4000-8000-000000000001"
+      INTERNAL_TOKEN: "e2e-test-token"
+      PLATFORM_INTERNAL_URL: "http://127.0.0.1:9"
+    ports:
+      - "18081:8080"
+    networks: [e2e]
+
+  awd-judgeserver:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: Dockerfile.awd-judgeserver
+      labels:
+        floatctf-e2e: "compose"
+    image: floatctf-e2e-judgeserver:compose
+    labels:
+      floatctf-e2e: "compose"
+    environment:
+      LISTEN_ADDR: "0.0.0.0:8080"
+      EVENT_ID: "00000000-0000-4000-8000-000000000001"
+      INTERNAL_TOKEN: "e2e-test-token"
+      PLATFORM_INTERNAL_URL: "http://127.0.0.1:9"
+      WORK_DIR: "/tmp/judge"
+    ports:
+      - "18082:8080"
+    networks: [e2e]
+
+networks:
+  e2e:
+    name: floatctf-e2e-compose
+    labels:
+      floatctf-e2e: "compose"

@@ -8,6 +8,7 @@ pub struct ChallengeSetsDto {
     pub name: String,
     pub description: Option<String>,
     pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 impl From<challenge_sets::Model> for ChallengeSetsDto {
@@ -17,6 +18,7 @@ impl From<challenge_sets::Model> for ChallengeSetsDto {
             name: m.name,
             description: m.description,
             created_at: m.created_at,
+            updated_at: m.updated_at,
         }
     }
 }

@@ -37,6 +37,32 @@ pub enum AwdEventStatus {
     VerificationFailed,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awd_network_allocation_kind"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdNetworkAllocationKind {
+    #[sea_orm(string_value = "gamebox")]
+    Gamebox,
+    #[sea_orm(string_value = "wireguard")]
+    Wireguard,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awd_network_allocation_mode"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdNetworkAllocationMode {
+    #[sea_orm(string_value = "automatic")]
+    Automatic,
+    #[sea_orm(string_value = "manual")]
+    Manual,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "awd_phase")]
 #[serde(rename_all = "snake_case")]
 pub enum AwdPhase {
@@ -46,6 +72,59 @@ pub enum AwdPhase {
     Attack,
     #[sea_orm(string_value = "pause")]
     Pause,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awdp_evaluation_kind"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpEvaluationKind {
+    #[sea_orm(string_value = "manual")]
+    Manual,
+    #[sea_orm(string_value = "official")]
+    Official,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "awdp_evaluation_status"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpEvaluationStatus {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "running")]
+    Running,
+    #[sea_orm(string_value = "no_patch")]
+    NoPatch,
+    #[sea_orm(string_value = "service_down")]
+    ServiceDown,
+    #[sea_orm(string_value = "functional_broken")]
+    FunctionalBroken,
+    #[sea_orm(string_value = "vulnerable")]
+    Vulnerable,
+    #[sea_orm(string_value = "patched")]
+    Patched,
+    #[sea_orm(string_value = "platform_error")]
+    PlatformError,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "awdp_phase")]
+#[serde(rename_all = "snake_case")]
+pub enum AwdpPhase {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "break")]
+    Break,
+    #[sea_orm(string_value = "fix")]
+    Fix,
+    #[sea_orm(string_value = "ended")]
+    Ended,
+    #[sea_orm(string_value = "preparing_fix")]
+    PreparingFix,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "ban_status")]
@@ -59,6 +138,26 @@ pub enum BanStatus {
     Unbanned,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_family")]
+#[serde(rename_all = "snake_case")]
+pub enum EventFamily {
+    #[sea_orm(string_value = "jeopardy")]
+    Jeopardy,
+    #[sea_orm(string_value = "awd")]
+    Awd,
+    #[sea_orm(string_value = "awdp")]
+    Awdp,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_purpose")]
+#[serde(rename_all = "snake_case")]
+pub enum EventPurpose {
+    #[sea_orm(string_value = "practice")]
+    Practice,
+    #[sea_orm(string_value = "competition")]
+    Competition,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(
     rs_type = "String",
     db_type = "Enum",
@@ -70,19 +169,6 @@ pub enum EventTeamMemberRole {
     Captain,
     #[sea_orm(string_value = "member")]
     Member,
-}
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_type")]
-#[serde(rename_all = "snake_case")]
-pub enum EventType {
-    #[sea_orm(string_value = "jeopardy_practice")]
-    JeopardyPractice,
-    #[sea_orm(string_value = "jeopardy_single")]
-    JeopardySingle,
-    #[sea_orm(string_value = "jeopardy_team")]
-    JeopardyTeam,
-    #[sea_orm(string_value = "awd_team")]
-    AwdTeam,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "gamebox_status")]
@@ -112,19 +198,6 @@ pub enum GameboxStatus {
     Stopped,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "instance_status")]
-#[serde(rename_all = "snake_case")]
-pub enum InstanceStatus {
-    #[sea_orm(string_value = "pending")]
-    Pending,
-    #[sea_orm(string_value = "running")]
-    Running,
-    #[sea_orm(string_value = "completed")]
-    Completed,
-    #[sea_orm(string_value = "failed")]
-    Failed,
-}
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "judge_task_status")]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeTaskStatus {
@@ -138,12 +211,19 @@ pub enum JudgeTaskStatus {
     Down,
     #[sea_orm(string_value = "judge_error")]
     JudgeError,
-    #[sea_orm(string_value = "judge_timeout")]
-    JudgeTimeout,
     #[sea_orm(string_value = "skipped_resetting")]
     SkippedResetting,
     #[sea_orm(string_value = "skipped_banned")]
     SkippedBanned,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "participant_mode")]
+#[serde(rename_all = "snake_case")]
+pub enum ParticipantMode {
+    #[sea_orm(string_value = "individual")]
+    Individual,
+    #[sea_orm(string_value = "team")]
+    Team,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "precheck_status")]
@@ -166,8 +246,6 @@ pub enum PrecheckStatus {
 pub enum RoundStatus {
     #[sea_orm(string_value = "active")]
     Active,
-    #[sea_orm(string_value = "grace")]
-    Grace,
     #[sea_orm(string_value = "completed")]
     Completed,
     #[sea_orm(string_value = "paused")]
@@ -181,8 +259,6 @@ pub enum ScoreEventType {
     Attack,
     #[sea_orm(string_value = "victim_loss")]
     VictimLoss,
-    #[sea_orm(string_value = "judge_fix")]
-    JudgeFix,
     #[sea_orm(string_value = "judge_down")]
     JudgeDown,
     #[sea_orm(string_value = "first_bonus")]
@@ -191,6 +267,8 @@ pub enum ScoreEventType {
     ResetPenalty,
     #[sea_orm(string_value = "adjustment")]
     Adjustment,
+    #[sea_orm(string_value = "initial_score")]
+    InitialScore,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "setting_value_type")]

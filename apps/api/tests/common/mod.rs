@@ -8,7 +8,6 @@
 pub mod routes;
 
 use serde_json::Value;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 pub const NIL: &str = "00000000-0000-0000-0000-000000000000";
@@ -21,15 +20,11 @@ pub fn require_live() -> bool {
     std::env::var("FLOATCTF_API_REQUIRE").ok().as_deref() == Some("1")
 }
 
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-pub fn client() -> &'static reqwest::Client {
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .expect("reqwest client")
-    })
+pub fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .expect("reqwest client")
 }
 
 /// Returns false if API is down / not floatctf and tests should soft-skip.

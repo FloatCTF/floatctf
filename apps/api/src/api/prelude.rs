@@ -9,7 +9,7 @@ pub use crate::{
 };
 
 pub use actix_web::{
-    delete, get, patch, post,
+    delete, get, patch, post, put,
     web::{Json, Path, Query},
 };
 pub use chrono::Utc;

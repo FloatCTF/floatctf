@@ -1,6 +1,9 @@
-//! Admin challenge catalog CRUD handlers.
-
-use crate::api::dto::map_dto_vec;
+//! 题库管理端接口。
+//!
+//! 版本/运行时内容经包导入进入（`POST /api/admin/challenges/import`），
+//! 导入会以严格递增门禁 upsert 身份行。本处手工创建/补丁仅触及稳定身份字段
+//! （name / category / description / hidden）；`safe_name` 由 name 派生
+//! （绝不自动加后缀——身份歧义视为显式错误）。
 
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::{
@@ -17,8 +20,6 @@ pub struct CreateChallengeRequest {
     pub category: String,
     pub description: String,
     pub hidden: bool,
-    pub attachment: Option<String>,
-    pub toml_str: String,
 }
 // POST /api/admin/challenges
 #[post("")]
@@ -30,12 +31,35 @@ pub async fn create_challenge(
     let user = user.into_inner();
     let ccr = ccr.into_inner();
 
+    if ccr.name.trim().is_empty() {
+        return AppError::Validation("CHALLENGE_INVALID_MANIFEST: name must be non-empty".into())
+            .into();
+    }
+    let safe_name = fcmc::derive_safe_name(&ccr.name).ok_or_else(|| {
+        AppError::Validation(
+            "CHALLENGE_SAFE_NAME_REQUIRED: cannot derive safe_name from name; use package import with explicit safe_name"
+                .to_string(),
+        )
+    })?;
+
+    // 不允许静默 collision suffix：safe_name 被占用即显式 conflict
+    let taken = Challenges::find()
+        .filter(challenges::Column::SafeName.eq(&safe_name))
+        .one(ctx.db.get_ref())
+        .await?
+        .is_some();
+    if taken {
+        return AppError::Conflict(format!(
+            "CHALLENGE_SAFE_NAME_CONFLICT: safe_name '{safe_name}' already exists"
+        ))
+        .into();
+    }
+
     let new_challenge = challenges::ActiveModel {
         name: Set(ccr.name),
         category: Set(ccr.category),
         description: Set(ccr.description),
-        attachment: Set(ccr.attachment),
-        toml_str: Set(ccr.toml_str),
+        safe_name: Set(safe_name),
         hidden: Set(ccr.hidden),
         ..Default::default()
     };
@@ -48,14 +72,24 @@ pub async fn create_challenge(
             "CHALLENGES",
             "CREATE",
             format!("{} 创建题目: {}", user.username, challenge.name).as_str(),
-            json!({"name": challenge.name, "category": challenge.category}),
+            json!({"name": challenge.name, "category": challenge.category, "safe_name": challenge.safe_name}),
             None,
             user.id.into(),
             Some(&ctx.req),
         )
         .await;
 
-    UniResponse::ok(Some(challenge.into())).into()
+    let dto = ChallengesDto::from(&challenge);
+    UniResponse::ok(Some(dto)).into()
+}
+
+/// 字段显式 null → Some(None)（清空），缺失 → None（不更新）。
+fn deserialize_nullable<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(d)?))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,9 +97,16 @@ pub struct PatchChallengeRequest {
     pub name: Option<String>,
     pub category: Option<String>,
     pub description: Option<String>,
-    pub attachment: Option<String>,
     pub hidden: Option<bool>,
-    pub toml_str: Option<String>,
+    /// 静态 flag 明文；null 清空（仅 flag_type=static 时生效）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub static_flag_value: Option<Option<String>>,
+    /// 容器端口；null 清除容器端口（变为无 docker 运行时）。
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub container_port: Option<Option<i32>>,
+    pub recommended_cpu_millis: Option<i64>,
+    pub recommended_memory_bytes: Option<i64>,
+    pub recommended_pids_limit: Option<i64>,
 }
 /// PATCH /api/admin/challenges/{challenge_id}
 #[patch("/{challenge_id}")]
@@ -85,27 +126,67 @@ pub async fn patch_challenge(
 
     let mut m_challenge = challenge.into_active_model();
 
-    pcr.name.map(|n| {
+    if let Some(n) = pcr.name {
+        if n.trim().is_empty() {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_MANIFEST: name must be non-empty".into(),
+            )
+            .into();
+        }
         m_challenge.name = Set(n);
-    });
-
-    pcr.category.map(|c| {
+    }
+    if let Some(c) = pcr.category {
         m_challenge.category = Set(c);
-    });
-
-    pcr.description.map(|d| {
+    }
+    if let Some(d) = pcr.description {
         m_challenge.description = Set(d);
-    });
-
-    pcr.attachment.map(|a| {
-        m_challenge.attachment = Set(a.into());
-    });
-
-    pcr.hidden.map(|h| {
+    }
+    if let Some(h) = pcr.hidden {
         m_challenge.hidden = Set(h);
-    });
-
-    pcr.toml_str.map(|t| m_challenge.toml_str = Set(t));
+    }
+    if let Some(v) = pcr.static_flag_value {
+        // 空串视为清空
+        let v = v.filter(|s| !s.trim().is_empty());
+        m_challenge.static_flag_value = Set(v);
+    }
+    if let Some(port) = pcr.container_port {
+        if let Some(p) = port {
+            if p < 1 || p > 65535 {
+                return AppError::Validation(
+                    "CHALLENGE_INVALID_CONTAINER_PORT: container_port must be 1-65535".into(),
+                )
+                .into();
+            }
+        }
+        m_challenge.container_port = Set(port);
+    }
+    if let Some(v) = pcr.recommended_cpu_millis {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_cpu_millis must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_cpu_millis = Set(v);
+    }
+    if let Some(v) = pcr.recommended_memory_bytes {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_memory_bytes must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_memory_bytes = Set(v);
+    }
+    if let Some(v) = pcr.recommended_pids_limit {
+        if v <= 0 {
+            return AppError::Validation(
+                "CHALLENGE_INVALID_RESOURCES: recommended_pids_limit must be > 0".into(),
+            )
+            .into();
+        }
+        m_challenge.recommended_pids_limit = Set(v);
+    }
     m_challenge.updated_at = Set(Utc::now().into());
 
     let challenge = m_challenge.update(ctx.db.get_ref()).await?;
@@ -123,7 +204,9 @@ pub async fn patch_challenge(
         )
         .await;
 
-    UniResponse::ok(Some(challenge.into())).into()
+    let dto =
+        ChallengesDto::from(&challenge).with_static_flag_value(challenge.static_flag_value.clone());
+    UniResponse::ok(Some(dto)).into()
 }
 
 /// GET /api/admin/challenges
@@ -146,6 +229,10 @@ pub async fn get_challenges(
         FilterMapping {
             key: "name",
             column: Box::new(|v| Condition::all().add(challenges::Column::Name.contains(v))),
+        },
+        FilterMapping {
+            key: "safe_name",
+            column: Box::new(|v| Condition::all().add(challenges::Column::SafeName.contains(v))),
         },
         FilterMapping {
             key: "category",
@@ -173,9 +260,15 @@ pub async fn get_challenges(
     )
     .await?;
 
+    let mut dtos = Vec::with_capacity(items.len());
+    for m in items {
+        // admin 列表返回静态 flag 明文（编辑表单需要回显；仅超管可达）
+        dtos.push(ChallengesDto::from(&m).with_static_flag_value(m.static_flag_value.clone()));
+    }
+
     query_params.total = Some(total_items);
 
-    UniResponse::ok_meta(Some(map_dto_vec(items)), query_params.into()).into()
+    UniResponse::ok_meta(Some(dtos), query_params.into()).into()
 }
 
 /// GET /api/admin/challenges/{challenge_id}
@@ -190,7 +283,8 @@ pub async fn get_challenge(
         .await?
         .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
 
-    UniResponse::ok(Some(model.into())).into()
+    let dto = ChallengesDto::from(&model).with_static_flag_value(model.static_flag_value.clone());
+    UniResponse::ok(Some(dto)).into()
 }
 
 /// DELETE /api/admin/challenges
@@ -214,7 +308,9 @@ pub async fn delete_challenge(
             .await?
             .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
 
-        let del_challenge_path = std::path::Path::new(&challenges_path).join(&challenge.safe_name);
+        let del_challenge_path =
+            crate::infrastructure::settings::resolve_dir_path(&challenges_path)
+                .join(&challenge.safe_name);
         if del_challenge_path.exists() {
             std::fs::remove_dir_all(&del_challenge_path)
                 .map_err(|e| AppError::BadRequest(format!("delete challenge dir error: {}", e)))?;

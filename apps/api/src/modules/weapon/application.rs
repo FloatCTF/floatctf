@@ -1,4 +1,4 @@
-//! Weapon catalog application helpers (DB / storage orchestration).
+//! 武器库应用辅助（数据库 / 存储编排）。
 
 use aws_sdk_s3::primitives::ByteStream;
 use sea_orm::{

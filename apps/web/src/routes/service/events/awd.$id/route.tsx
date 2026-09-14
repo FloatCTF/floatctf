@@ -1,12 +1,18 @@
-import { AppLink, useNavigation } from "@/navigation";
+import { useNavigation } from "@/navigation";
 import { RocketIcon } from "@primer/octicons-react";
 import { Spinner, UnderlineNav } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute, useMatchRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { createContext } from "react";
 
 import { serviceApi } from "@/api";
+import { awdPlayerApi } from "@/api/awd";
+import { RouterUnderlineNavItem } from "@/components/RouterUnderlineNavItem";
+import {
+	AwdEventProgress,
+	playerProgressState,
+} from "@/components/awd/AwdEventProgress";
 import { useAwdEventStream } from "@/hooks/useAwdEventStream";
 import { ServiceRouteGuard } from "../../route";
 
@@ -26,17 +32,10 @@ function RouterNavItem({
 	id: string;
 	children: React.ReactNode;
 }) {
-	const matchRoute = useMatchRoute();
-	// TanStack path typing is strict; cast for dynamic AWD sub-routes.
-	const path = to as never;
-	const params = { id } as never;
-	const isActive = matchRoute({ to: path, params, fuzzy: false });
 	return (
-		<AppLink style={{ textDecoration: "none" }} to={path} params={params}>
-			<UnderlineNav.Item aria-current={isActive ? "page" : undefined}>
-				{children}
-			</UnderlineNav.Item>
-		</AppLink>
+		<RouterUnderlineNavItem to={to} params={{ id }}>
+			{children}
+		</RouterUnderlineNavItem>
 	);
 }
 
@@ -46,10 +45,19 @@ function RouteComponent() {
 		queryKey: ["eventInfo", id],
 		queryFn: () => serviceApi.events.get(id),
 	});
+
+	// Player AWD status for progress bar
+	const statusQuery = useQuery({
+		queryKey: ["awd-player-status", id],
+		queryFn: () => awdPlayerApi.status(id),
+		retry: false,
+	});
+
 	const eventInfo = data?.data;
 	useTitle(`${eventInfo?.event.title ?? "AWD Event"} | FloatCTF`);
-	// Realtime + poll snapshot fallback (R7-B stream)
 	const stream = useAwdEventStream({ eventId: id });
+
+	const awdStatus = statusQuery.data?.data ?? null;
 
 	if (isLoading) {
 		return <Spinner size="large" />;
@@ -64,6 +72,7 @@ function RouteComponent() {
 					{stream.connected ? "live" : "poll"}
 				</span>
 			</div>
+			{awdStatus && <AwdEventProgress {...playerProgressState(awdStatus)} />}
 			<AwdEventContext.Provider value={{ id }}>
 				<UnderlineNav aria-label="AWD event">
 					<RouterNavItem to="/service/events/awd/$id" id={id}>
@@ -77,6 +86,9 @@ function RouteComponent() {
 					</RouterNavItem>
 					<RouterNavItem to="/service/events/awd/$id/wireguard" id={id}>
 						WireGuard
+					</RouterNavItem>
+					<RouterNavItem to="/service/events/awd/$id/ssh" id={id}>
+						SSH
 					</RouterNavItem>
 				</UnderlineNav>
 				<div className="mt-3">

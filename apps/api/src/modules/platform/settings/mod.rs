@@ -1,4 +1,4 @@
-//! Platform key/value settings admin API.
+//! 平台键值设置管理 API。
 
 mod api;
 mod dto;

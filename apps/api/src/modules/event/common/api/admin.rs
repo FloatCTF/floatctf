@@ -1,4 +1,4 @@
-//! Admin event HTTP handlers — thin adapters over `modules::event::common::application::admin_service`.
+//! 管理端赛事 HTTP 处理器——薄适配 `admin_service`。
 
 use crate::api::dto::map_dto_vec;
 
@@ -34,7 +34,7 @@ pub async fn create_event(
             "EVENTS",
             "CREATE",
             format!("{} 创建比赛: {}", user.username, event.title).as_str(),
-            json!({"title": event.title, "type": event.r#type}),
+            json!({"title": event.title, "family": event.family, "purpose": event.purpose, "participant_mode": event.participant_mode}),
             None,
             user.id.into(),
             Some(&ctx.req),
@@ -49,6 +49,7 @@ pub async fn create_event(
 pub async fn patch_event(
     user: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    state: actix_web::web::Data<crate::bootstrap::AppState>,
     per: Json<PatchEventRequest>,
     event_id: Path<Uuid>,
 ) -> UniResult<EventsDto> {
@@ -57,6 +58,17 @@ pub async fn patch_event(
     let event_id = event_id.into_inner();
 
     let event = svc::patch_event(ctx.db.get_ref(), event_id, per).await?;
+
+    // AWDP 事件时间/规则修改 → 推 SSE（选手端 eventInfo/进度条即时刷新，
+    // 不依赖 15s poll 才看到新 start/end 时间）。
+    if event.family == crate::entity::sea_orm_active_enums::EventFamily::Awdp {
+        crate::modules::event::awdp::realtime::publish(
+            &state,
+            event.id,
+            "awdp.event_updated",
+            serde_json::json!({}),
+        );
+    }
 
     ctx.log
         .add_log(

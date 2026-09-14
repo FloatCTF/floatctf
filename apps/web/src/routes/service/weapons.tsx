@@ -12,8 +12,7 @@ export const Route = createFileRoute("/service/weapons")({
 function RouteComponent() {
     const subject = "Weapons";
     const columns = [
-        { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-        { accessorKey: "name", header: "Name", field: "name", sortBy: true },
+        { accessorKey: "name", header: "Name", field: "name", rowHeader: true, sortBy: true },
         {
             accessorKey: "category",
             header: "Category",

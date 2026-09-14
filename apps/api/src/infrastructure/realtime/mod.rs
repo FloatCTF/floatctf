@@ -1,6 +1,6 @@
-//! Real-time event publishing (WebSocket / SSE / multi-node Redis fan-out).
+//! 实时事件发布（WebSocket / SSE / 多节点 Redis 扇出）。
 //!
-//! Redis fan-out is configured through `[realtime]` in the API TOML file.
+//! Redis URL 来自必需配置 `[redis].url`；`[realtime].channel` 只配置事件频道。
 
 pub mod publisher;
 

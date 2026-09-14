@@ -1,0 +1,7 @@
+[Unit]
+Description=FloatCTF platform (host helper + production Compose stack)
+Requires=floatctf-helper.service floatctf-infra.service
+After=floatctf-helper.service floatctf-infra.service
+
+[Install]
+WantedBy=multi-user.target

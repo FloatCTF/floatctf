@@ -1,11 +1,11 @@
-//! Dynamic score calculation for Jeopardy submissions.
+//! Jeopardy 动态分计算。
 
 use sea_orm::DbConn;
 
 use crate::infrastructure::settings::get_setting;
 
-/// Pure DynamicScore from BasePoints and solve count.
-/// `solves` = number of solves already recorded *before* the current award (same as legacy).
+/// 由基础分与已解次数计算动态分（纯函数）。
+/// `solves` = 本次加分**之前**已记录的解题次数（与历史语义一致）。
 pub fn dynamic_score(base_points: f64, solves: u64, decay: f64, min_percent: f64) -> f64 {
     if solves == 0 {
         return base_points;
@@ -16,7 +16,7 @@ pub fn dynamic_score(base_points: f64, solves: u64, decay: f64, min_percent: f64
     current.max(min_points)
 }
 
-/// Load decay / min-percent from settings, then compute DynamicScore.
+/// 从设置读取衰减/最低百分比，再计算动态分。
 pub async fn calculate_next_dynamic_score(
     db: &DbConn,
     base_points: f64,

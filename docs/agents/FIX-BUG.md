@@ -14,7 +14,7 @@
 - 常用命令：
   ```bash
   mise run dev:api               # 看启动/运行日志
-  mise run infra:logs            # 基础设施（nginx/db/rustfs）日志
+  mise run infra:logs            # 基础设施（Caddy/db/rustfs）日志
   curl -s -o /tmp/r.txt -w "%{http_code}" http://localhost:7780/api/xxx
   ```
 - 无法复现时，明确复现前置条件（数据状态、账号权限、配置项）。
@@ -28,7 +28,7 @@
 | 启动 panic（SQL 列不存在） | Schema 漂移 → 见"陷阱 B" |
 | 运行时 404 | 路由没在 `bootstrap/routes.rs` 注册；前缀错误 |
 | 运行时 500 | handler 内 `AppError` 未正确映射；service 层 panic |
-| Nginx 502 | 后端进程未起（API 9090 / Web 3000）；nginx 配置 upstream |
+| Caddy 502 | 后端进程未起（API 9090 / Web 3000）；Caddy 配置 upstream |
 | 数据对不上/查询报错 | 三处不一致（实体/代码/DB）或 settings 表缺键 |
 
 先跑编译与单元测试确认基线：
@@ -98,6 +98,7 @@ cargo test -p floatctf
 
 - [ ] 根因已定位并有证据（日志/查询/复现测试），不是猜测
 - [ ] 未引入环境变量读取、未手改 entity/（改 Schema 走了迁移 + db:gen）
+- [ ] **未直接修改** `migrations/` 下任何已有文件；Schema/数据修复仅通过 `db:migration:new` 追加新迁移
 - [ ] 数据库修复幂等（可重复执行），带中文注释，已应用开发库
 - [ ] 复现测试存在并转绿
 - [ ] `cargo fmt` + `cargo check` 通过

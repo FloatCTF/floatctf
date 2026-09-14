@@ -1,20 +1,20 @@
-//! AWD FlagServer — standalone HTTP service for on-demand flag issuing.
+//! AWD FlagServer — 按需发放 Flag 的独立 HTTP 服务。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! 1. GameBox makes an HTTP request to FlagServer (via Docker network)
-//! 2. FlagServer reads the TCP source IP from the socket
-//! 3. FlagServer calls the platform's internal API to issue the flag
-//! 4. Platform validates (event running, attack phase, team not banned) and returns flag
+//! 1. GameBox 经 Docker 网络向 FlagServer 发起 HTTP 请求
+//! 2. FlagServer 从套接字读取 TCP 源 IP
+//! 3. FlagServer 调用平台内部 API 申请发放 Flag
+//! 4. 平台校验（赛事进行中、攻击阶段、战队未封禁）后返回 Flag
 //!
-//! # Configuration (env vars)
+//! # 配置（环境变量）
 //!
-//! - `PLATFORM_INTERNAL_URL` — base URL of the FloatCTF platform
-//! - `EVENT_ID` — UUID of the AWD event this server serves
-//! - `INTERNAL_TOKEN` — Bearer token for platform authentication
-//! - `LISTEN_ADDR` — bind address (default "0.0.0.0:8081")
-//! - `REQUEST_TIMEOUT_SECS` — platform request timeout (default 10)
-//! - `RETRY_COUNT` — retry count on platform failure (default 3)
+//! - `PLATFORM_INTERNAL_URL` — FloatCTF 平台基址
+//! - `EVENT_ID` — 本服务服务的 AWD 赛事 UUID
+//! - `INTERNAL_TOKEN` — 平台鉴权 Bearer 令牌
+//! - `LISTEN_ADDR` — 监听地址（默认 `"0.0.0.0:8081"`）
+//! - `REQUEST_TIMEOUT_SECS` — 调用平台超时秒数（默认 10）
+//! - `RETRY_COUNT` — 平台失败重试次数（默认见实现）
 
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use reqwest::Client;
@@ -48,9 +48,9 @@ struct AppState {
     retry_count: u32,
 }
 
-/// GET /flag — return a flag for the requesting GameBox.
+/// GET /flag — 为请求方 GameBox 返回 Flag。
 ///
-/// The source IP is read from the TCP connection, NOT from headers.
+/// 源 IP 从 TCP 连接读取，**不是**从 HTTP 头读取。
 async fn get_flag(req: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
     // Read REAL source IP from the TCP connection
     let source_ip = req

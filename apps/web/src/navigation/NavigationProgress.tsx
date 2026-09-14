@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigation } from "./NavigationContext";
 
 /**
- * 2px progress bar at the top of the viewport.
- * Positioned above content, below tooltips (z-index: 1000).
- * Uses CSS transform: scaleX() for smooth width animation.
- * Respects prefers-reduced-motion.
+ * 视口顶部 2px 进度条。
+ * 位于内容之上、tooltip 之下（z-index: 1000）。
+ * 使用 CSS transform: scaleX() 做平滑宽度动画。
+ * 遵循 prefers-reduced-motion。
  */
 export function NavigationProgress() {
 	const { visible, progress } = useNavigation();

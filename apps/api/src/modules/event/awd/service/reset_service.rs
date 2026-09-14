@@ -21,7 +21,10 @@ use crate::modules::event::awd::{
     service::{gamebox_service, score_service},
 };
 
-/// 重置发起方（P4-1 显式化，废弃 admin 传 `Uuid::nil()` hack）。
+/// 重置发起方（保留身份类型，不塌缩成单一 UUID）。
+///
+/// 玩家主体与管理员主体属于**两个不同的身份空间**（`users` / `super_admin`），
+/// 持久化时必须分别落到 `awd_reset_records.requested_by` 与 `requested_by_admin`。
 #[derive(Debug, Clone)]
 pub enum ResetActor {
     Player {
@@ -33,23 +36,30 @@ pub enum ResetActor {
         admin_id: Uuid,
         charge_team: bool,
     },
+    /// 平台内部崩溃恢复：无人类发起者，且**不新建** `awd_reset_records`
+    /// （复用既有 pending 记录），因此不产生任何 requester 列。
+    System,
 }
 
-impl ResetActor {
-    pub fn requester_id(&self) -> Uuid {
-        match self {
-            ResetActor::Player { user_id, .. } => *user_id,
-            ResetActor::Admin { admin_id, .. } => *admin_id,
-        }
+/// 主体 → (`requested_by`, `requested_by_admin`) 两列的映射。
+///
+/// 返回值刻意保留两类主体各自的语义，避免再次出现"两种身份压成一个 UUID"。
+/// `System` 两者皆为空——仅用于复用既有记录的内部恢复路径，不写新记录。
+fn requester_columns(actor: &ResetActor) -> (Option<Uuid>, Option<Uuid>) {
+    match actor {
+        ResetActor::Player { user_id, .. } => (Some(*user_id), None),
+        ResetActor::Admin { admin_id, .. } => (None, Some(*admin_id)),
+        ResetActor::System => (None, None),
     }
 }
 
 /// 重置操作中创建的重置记录。
+///
+/// 注意：**不带 team_id**。归属队伍由目标实例（`event_instances.owner_team_id`）
+/// 解析，调用方不得用占位 UUID 表达"稍后再解析"。
 pub struct ResetContext {
     pub event_id: Uuid,
     pub instance_id: Uuid,
-    /// 归属队伍（Admin 豁免 ownership 校验，但仍需真实 team_id 记账）。
-    pub team_id: Uuid,
     pub actor: ResetActor,
 }
 
@@ -103,6 +113,16 @@ pub fn check_reset_eligibility(
     Ok(())
 }
 
+/// 解析目标实例的权威归属队伍（`event_instances.owner_team_id`）。
+///
+/// 该列为 NULL 表示实例未绑定队伍（无法记账 `awd_reset_records.team_id`）。
+/// 这是**可预期的业务失败**：返回 4xx 语义的 `InvalidState`，绝不 panic，
+/// 也不落库、不执行重置。
+fn require_owner_team(root: &event_instances::Model) -> AwdResult<Uuid> {
+    root.owner_team_id
+        .ok_or_else(|| AwdError::InvalidState("GameBox instance is not bound to a team".into()))
+}
+
 /// 执行完整 GameBox 重置工作流。
 ///
 /// Crash recovery: if the instance is already Resetting, attempt to complete the
@@ -126,16 +146,19 @@ pub async fn execute_reset(
         .map_err(|e| AwdError::Database(e.to_string()))?
         .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;
     let team_id = match &ctx.actor {
-        // Player：必须 ownership；Admin：豁免（用 instance 真实 team_id 记账）
+        // Player：必须 ownership（用 guard 解析出的 membership team 比对）。
+        // 权威 team 以实例根（event_instances.owner_team_id）为准。
         ResetActor::Player { team_id, .. } => {
-            if *team_id != instance.team_id {
+            let owner_team = require_owner_team(&root)?;
+            if *team_id != owner_team {
                 return Err(AwdError::Forbidden(
                     "This GameBox does not belong to your team".into(),
                 ));
             }
-            *team_id
+            owner_team
         }
-        ResetActor::Admin { .. } => instance.team_id,
+        // Admin / System：ownership 豁免，按实例真实归属队伍记账。
+        ResetActor::Admin { .. } | ResetActor::System => require_owner_team(&root)?,
     };
 
     // 3. Check team not banned
@@ -171,15 +194,19 @@ pub async fn execute_reset(
         ResetActor::Admin { charge_team, .. } => {
             !charge_team || used < awd_event.free_reset_count as i64
         }
+        // 内部恢复不计费（复用既有记录的 free_reset 语义）。
+        ResetActor::System => true,
     };
 
-    // 7. Create reset record
+    // 7. Create reset record（主体分列：玩家 → requested_by，管理员 → requested_by_admin）
+    let (requested_by, requested_by_admin) = requester_columns(&ctx.actor);
     let reset_record = awd_reset_records::ActiveModel {
         id: Set(Uuid::new_v4()),
         event_id: Set(ctx.event_id),
         team_id: Set(team_id),
         gamebox_instance_id: Set(ctx.instance_id),
-        requested_by: Set(Some(ctx.actor.requester_id())),
+        requested_by: Set(requested_by),
+        requested_by_admin: Set(requested_by_admin),
         free_reset: Set(is_free),
         status: Set("pending".to_string()),
         ..Default::default()
@@ -239,11 +266,8 @@ async fn recover_in_flight_reset(
             let ctx = ResetContext {
                 event_id: awd_event.event_id,
                 instance_id: instance.id,
-                team_id,
-                actor: ResetActor::Admin {
-                    admin_id: Uuid::nil(),
-                    charge_team: false,
-                },
+                // 内部恢复：无人类发起者；复用既有 pending 记录，不新建记录。
+                actor: ResetActor::System,
             };
             do_docker_reset(
                 db,
@@ -269,11 +293,8 @@ async fn recover_in_flight_reset(
             let ctx = ResetContext {
                 event_id: awd_event.event_id,
                 instance_id: instance.id,
-                team_id,
-                actor: ResetActor::Admin {
-                    admin_id: Uuid::nil(),
-                    charge_team: false,
-                },
+                // 内部恢复：无人类发起者；复用既有 pending 记录，不新建记录。
+                actor: ResetActor::System,
             };
             Box::pin(execute_reset(db, containers, ctx)).await
         }
@@ -439,4 +460,103 @@ pub async fn team_reset_count(
         .map_err(|e| AwdError::Database(e.to_string()))?;
 
     Ok(results.len() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 主体 → 两列的映射必须各自落到正确列，且互斥。
+    /// 回归点：管理员 ID 绝不能再被写进 `requested_by`（该列外键指向 users）。
+    #[test]
+    fn requester_columns_maps_player_to_requested_by_only() {
+        let user_id = Uuid::new_v4();
+        let actor = ResetActor::Player {
+            user_id,
+            team_id: Uuid::new_v4(),
+        };
+        let (requested_by, requested_by_admin) = requester_columns(&actor);
+        assert_eq!(requested_by, Some(user_id));
+        assert_eq!(requested_by_admin, None);
+    }
+
+    #[test]
+    fn requester_columns_maps_admin_to_requested_by_admin_only() {
+        let admin_id = Uuid::new_v4();
+        let actor = ResetActor::Admin {
+            admin_id,
+            charge_team: true,
+        };
+        let (requested_by, requested_by_admin) = requester_columns(&actor);
+        assert_eq!(requested_by, None, "admin id must never go to users(id)");
+        assert_eq!(requested_by_admin, Some(admin_id));
+    }
+
+    /// 内置系统管理员的 ID 是 nil UUID，且 `super_admin` 表中真实存在；
+    /// 它必须落到 `requested_by_admin`，而不是 `requested_by`。
+    #[test]
+    fn requester_columns_keeps_nil_admin_id_in_admin_column() {
+        let actor = ResetActor::Admin {
+            admin_id: Uuid::nil(),
+            charge_team: false,
+        };
+        let (requested_by, requested_by_admin) = requester_columns(&actor);
+        assert_eq!(requested_by, None);
+        assert_eq!(requested_by_admin, Some(Uuid::nil()));
+    }
+
+    /// 内部恢复无人类发起者：两列皆空（且该路径不新建记录）。
+    #[test]
+    fn requester_columns_system_has_no_requester() {
+        let (requested_by, requested_by_admin) = requester_columns(&ResetActor::System);
+        assert_eq!(requested_by, None);
+        assert_eq!(requested_by_admin, None);
+    }
+
+    /// 玩家与管理员的身份空间不同：同一 UUID 在两边必须落在不同列。
+    #[test]
+    fn requester_columns_keeps_subject_spaces_separate() {
+        let shared = Uuid::new_v4();
+        let (p_user, p_admin) = requester_columns(&ResetActor::Player {
+            user_id: shared,
+            team_id: Uuid::new_v4(),
+        });
+        let (a_user, a_admin) = requester_columns(&ResetActor::Admin {
+            admin_id: shared,
+            charge_team: false,
+        });
+        assert_eq!((p_user, p_admin), (Some(shared), None));
+        assert_eq!((a_user, a_admin), (None, Some(shared)));
+    }
+
+    /// 未绑定队伍的实例必须得到可预期的错误，而不是 panic / 数据库约束错误。
+    #[test]
+    fn require_owner_team_rejects_unbound_instance() {
+        let mut root = event_instances::Model {
+            id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            owner_user_id: Some(Uuid::new_v4()),
+            owner_team_id: None,
+            image_ref: None,
+            container_id: None,
+            container_name: "unbound".into(),
+            runtime_state: "running".into(),
+            runtime_generation: 1,
+            created_at: chrono::Utc::now().into(),
+            started_at: None,
+            stopped_at: None,
+            expires_at: None,
+            updated_at: chrono::Utc::now().into(),
+        };
+        let err = require_owner_team(&root).expect_err("unbound instance must fail");
+        assert!(
+            matches!(err, AwdError::InvalidState(_)),
+            "expected InvalidState, got {err:?}"
+        );
+
+        // 绑定队伍时正常返回该 team。
+        let team_id = Uuid::new_v4();
+        root.owner_team_id = Some(team_id);
+        assert_eq!(require_owner_team(&root).expect("bound instance"), team_id);
+    }
 }

@@ -556,7 +556,7 @@ pub async fn admin_reset_gamebox(
         crate::modules::event::awd::service::reset_service::ResetContext {
             event_id,
             instance_id,
-            team_id: uuid::Uuid::nil(), // Admin：ownership 豁免，真实 team_id 由 service 解析
+            // 归属队伍由 service 从目标实例解析；actor 只携带管理员身份。
             actor: crate::modules::event::awd::service::reset_service::ResetActor::Admin {
                 admin_id,
                 charge_team: false,

@@ -145,7 +145,7 @@ pub async fn reset_my_gamebox(
         crate::modules::event::awd::service::reset_service::ResetContext {
             event_id,
             instance_id,
-            team_id: membership.team_id,
+            // 归属队伍由 service 从目标实例解析；actor 携带 membership team 用于 ownership 校验。
             actor: crate::modules::event::awd::service::reset_service::ResetActor::Player {
                 user_id: user.id,
                 team_id: membership.team_id,

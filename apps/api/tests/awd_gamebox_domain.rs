@@ -559,7 +559,6 @@ async fn reset_keeps_identity_and_uses_current_gamebox_image() {
         ResetContext {
             event_id,
             instance_id,
-            team_id,
             actor: ResetActor::Player { user_id, team_id },
         },
     )

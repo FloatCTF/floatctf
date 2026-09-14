@@ -21,6 +21,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub error_msg: Option<String>,
     pub created_at: DateTimeWithTimeZone,
+    pub requested_by_admin: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -58,6 +59,14 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
+        belongs_to = "super::super_admin::Entity",
+        from = "Column::RequestedByAdmin",
+        to = "super::super_admin::Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    SuperAdmin,
+    #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::RequestedBy",
         to = "super::users::Column::Id",
@@ -88,6 +97,12 @@ impl Related<super::event_gamebox_instances::Entity> for Entity {
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
+    }
+}
+
+impl Related<super::super_admin::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::SuperAdmin.def()
     }
 }
 

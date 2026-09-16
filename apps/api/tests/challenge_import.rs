@@ -47,7 +47,7 @@ async fn seed_challenge_package(
     am.recommended_memory_bytes = Set(268_435_456);
     am.recommended_pids_limit = Set(100);
     am.image_ref = Set(Some(format!(
-        "floatctf/challenges/{}:{version}",
+        "floatctf/{}:challenge-v{version}",
         challenge.safe_name
     )));
     am.image_id = Set(Some(format!("sha256:local-{version}")));

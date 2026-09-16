@@ -9,7 +9,7 @@ use std::time::Duration;
 use bollard::Docker;
 use fcmc::{
     ArtifactKind, ChallengeMetaError, DockerContainerRuntime, ImageBuildRequest, ImageError,
-    ImageRuntime, RegistryAuth, build_artifact_image_ref,
+    ImageRuntime, RegistryAuth, content_image_ref,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -21,9 +21,9 @@ use crate::api::AppError;
 use crate::core::config::RegistryConfig;
 use crate::entity::{challenges, prelude::Challenges};
 use crate::infrastructure::package::{
-    self, compute_package_digest, compute_spec_digest, discover_package_root, extract_package_zip,
-    read_meta_toml, read_package_file, require_package_layout, sanitize_build_error, sha256_hex,
-    version_gate_reason,
+    self, compute_package_digest, compute_spec_digest, discover_package, extract_package_zip,
+    has_dockerfile, read_meta_toml, read_package_file, require_meta_toml, sanitize_build_error,
+    sha256_hex, version_gate_reason,
 };
 use crate::infrastructure::settings::get_setting;
 
@@ -54,14 +54,31 @@ pub async fn import_challenge_package(
     let tmp = tempfile::tempdir()
         .map_err(|e| AppError::Internal(format!("tempdir for challenge import: {e}")))?;
     extract_package_zip(zip_path, tmp.path()).map_err(map_package_error)?;
-    let package_root = discover_package_root(tmp.path()).map_err(map_package_error)?;
-    require_package_layout(&package_root).map_err(map_package_error)?;
+    let discovered = discover_package(tmp.path()).map_err(map_package_error)?;
+    let package_root = discovered.root;
+    // 只有 meta.toml 是硬要求：static / attachment-only 题目（官方内容里占多数）
+    // 同样可以导入，只是没有镜像、不能建实例。
+    require_meta_toml(&package_root).map_err(map_package_error)?;
+    let is_container = has_dockerfile(&package_root);
+
+    // content id = 包目录名（floatctf-content 约定）；safe_name 缺省由它派生。
+    let content_id_known = discovered.content_id.is_some();
+    let content_id = discovered.content_id.unwrap_or_default();
 
     let source_toml = read_meta_toml(&package_root).map_err(map_package_error)?;
-    let meta = fcmc::ChallengeMeta::parse_and_validate(&source_toml).map_err(map_meta_error)?;
-    let safe_name = meta.resolved_safe_name().map_err(map_meta_error)?;
+    let meta = fcmc::ChallengeMeta::parse_and_validate(&source_toml, &content_id)
+        .map_err(|e| map_meta_error_for_package(e, content_id_known))?;
+    let safe_name = meta
+        .resolved_safe_name(&content_id)
+        .map_err(map_meta_error)?;
     let version = meta.version.clone();
-    let normalized = meta.normalize().map_err(map_meta_error)?;
+    let mut normalized = meta.normalize(&content_id).map_err(map_meta_error)?;
+
+    // 官方 catalog 语义：static / attachment-only 内容**不带** image 与 docker
+    // （`content.py::content_entry` 只在 src/Dockerfile 存在时输出两者）。
+    // 因此即使 meta.toml 声明了 [docker].port，也不作为容器（官方
+    // `scripts/tests/fixtures/safe-names/challenges/static_with_docker` 即此形态）。
+    apply_container_policy(&mut normalized, is_container);
 
     // ── 2. 版本门禁（先比对，任何写操作之前）─────────────────────────────
     let existing = Challenges::find()
@@ -98,11 +115,15 @@ pub async fn import_challenge_package(
     let flag_type = normalized.flag_type.clone();
     let static_flag_value = meta.static_flag_value().map(str::to_string);
 
-    // Dynamic flag 必须能注入容器（无 [docker] 的题目无法交付动态 flag）。
-    if flag_type == "dynamic" && normalized.container_port.is_none() {
-        return Err(AppError::Validation(
-            "CHALLENGE_INVALID_FLAG_CONFIG: dynamic flag requires [docker] section".into(),
-        ));
+    // Dynamic flag 必须由容器交付（static / attachment-only 题目无法注入 FLAG）。
+    if flag_type.as_deref() == Some("dynamic") && normalized.container_port.is_none() {
+        return Err(AppError::Validation(if is_container {
+            "CHALLENGE_INVALID_FLAG_CONFIG: dynamic flag requires a [docker] port".into()
+        } else {
+            "CHALLENGE_INVALID_FLAG_CONFIG: dynamic flag requires container content \
+             (src/Dockerfile); static/attachment-only challenges must use type = \"static\""
+                .to_string()
+        }));
     }
 
     // Attachment metadata (never part of docker context).
@@ -126,12 +147,15 @@ pub async fn import_challenge_package(
         None => (None, None, None, None),
     };
 
-    let image_ref = build_artifact_image_ref(
-        ArtifactKind::Challenge,
-        &registry.image_prefix,
-        &safe_name,
-        &version,
-    );
+    // 容器内容才有 canonical image_ref；static / attachment-only 题目没有镜像。
+    let image_ref = is_container.then(|| {
+        content_image_ref(
+            ArtifactKind::Challenge,
+            &registry.image_prefix,
+            &safe_name,
+            &version,
+        )
+    });
     let resources = &normalized.recommended_resources;
 
     // ── 3. 单版本 upsert：identity + building 状态（事务）──────────────────
@@ -163,7 +187,7 @@ pub async fn import_challenge_package(
         am.spec_json = Set(Some(spec_json.clone()));
         am.spec_digest = Set(Some(spec_digest.clone()));
         am.package_digest = Set(Some(package_digest.clone()));
-        am.flag_type = Set(Some(flag_type.clone()));
+        am.flag_type = Set(flag_type.clone());
         am.static_flag_value = Set(static_flag_value.clone());
         am.container_port = Set(normalized.container_port.map(|p| p as i32));
         am.recommended_cpu_millis = Set(resources.cpu_millis);
@@ -173,10 +197,16 @@ pub async fn import_challenge_package(
         am.attachment_name = Set(attachment_name.clone());
         am.attachment_size = Set(attachment_size);
         am.attachment_sha256 = Set(attachment_sha.clone());
-        am.image_ref = Set(Some(image_ref.clone()));
+        am.image_ref = Set(image_ref.clone());
         am.image_id = Set(None);
         am.image_repo_digest = Set(None);
-        am.build_status = Set(Some(BUILD_STATUS_BUILDING.to_string()));
+        // 静态内容没有构建过程：直接就是 ready（平台用它作为“可开局”门禁，
+        // 与镜像无关——`start_instance` 对 static 题目只建无容器的占位实例）。
+        am.build_status = Set(Some(if is_container {
+            BUILD_STATUS_BUILDING.to_string()
+        } else {
+            BUILD_STATUS_READY.to_string()
+        }));
         am.build_error = Set(None);
         am.updated_at = Set(chrono::Utc::now().into());
         let challenge = am
@@ -190,10 +220,29 @@ pub async fn import_challenge_package(
         challenge
     };
 
-    // ── 4. Build outside txn (synchronous v1) ──────────────────────────────
+    // ── 4. Static / attachment-only：没有构建步骤 ───────────────────────────
+    if !is_container {
+        // Mirror 包（attachment/ 等）；Caddy 只暴露 /static/challenges/<safe>/attachment/*，
+        // 因此 meta.toml（可能含 static flag 明文）不会被静态服务。
+        mirror_to_challenges_dir(db, &safe_name, &package_root).await;
+        info!(
+            challenge_id = %challenge.id,
+            safe_name = %safe_name,
+            version = %version,
+            package_digest = %package_digest,
+            attachment = ?attachment_path,
+            "Challenge package import ready (static / attachment-only content)"
+        );
+        return Ok(ImportChallengeResult { challenge });
+    }
+
+    // ── 5. Build outside txn (synchronous v1) ──────────────────────────────
     let context_dir = package_root.join("src");
     let short_id = &challenge.id.to_string().replace('-', "")[..8];
-    let temp_tag = format!("{image_ref}-import-{short_id}");
+    let canonical_ref = image_ref
+        .clone()
+        .expect("container content always has a canonical image ref");
+    let temp_tag = format!("{canonical_ref}-import-{short_id}");
 
     let mut labels = HashMap::new();
     labels.insert("io.floatctf.managed".into(), "true".into());
@@ -213,15 +262,16 @@ pub async fn import_challenge_package(
         build_proxy: None,
     };
 
-    let build_outcome = run_build_and_pin(&runtime, registry, &build_req, &image_ref, &temp_tag)
-        .await
-        .map_err(map_image_error);
+    let build_outcome =
+        run_build_and_pin(&runtime, registry, &build_req, &canonical_ref, &temp_tag)
+            .await
+            .map_err(map_image_error);
 
-    // ── 5. ready or failed ─────────────────────────────────────────────────
+    // ── 6. ready or failed ─────────────────────────────────────────────────
     match build_outcome {
         Ok((image_id, image_repo_digest)) => {
             let mut am: challenges::ActiveModel = challenge.clone().into();
-            am.image_ref = Set(Some(image_ref.clone()));
+            am.image_ref = Set(Some(canonical_ref.clone()));
             am.image_id = Set(Some(image_id.clone()));
             am.image_repo_digest = Set(image_repo_digest.clone());
             am.build_status = Set(Some(BUILD_STATUS_READY.to_string()));
@@ -239,7 +289,7 @@ pub async fn import_challenge_package(
                 challenge_id = %challenge.id,
                 safe_name = %safe_name,
                 version = %version,
-                image_ref = %image_ref,
+                image_ref = %canonical_ref,
                 image_repo_digest = ?image_repo_digest,
                 package_digest = %package_digest,
                 "Challenge package import ready"
@@ -325,7 +375,9 @@ pub async fn scan_challenges_dir(
                 continue;
             }
         };
-        let meta = match fcmc::ChallengeMeta::parse_and_validate(&source_toml) {
+        // 扫描场景下目录名即 content id（mirror 目标目录）。
+        let content_id = dir_name.clone();
+        let meta = match fcmc::ChallengeMeta::parse_and_validate(&source_toml, &content_id) {
             Ok(m) => m,
             Err(e) => {
                 items.push(ChallengeScanItem {
@@ -338,7 +390,7 @@ pub async fn scan_challenges_dir(
                 continue;
             }
         };
-        let safe_name = match meta.resolved_safe_name() {
+        let safe_name = match meta.resolved_safe_name(&content_id) {
             Ok(s) => s,
             Err(e) => {
                 items.push(ChallengeScanItem {
@@ -352,7 +404,7 @@ pub async fn scan_challenges_dir(
             }
         };
         let version = meta.version.clone();
-        let normalized = match meta.normalize() {
+        let mut normalized = match meta.normalize(&content_id) {
             Ok(n) => n,
             Err(e) => {
                 items.push(ChallengeScanItem {
@@ -365,6 +417,9 @@ pub async fn scan_challenges_dir(
                 continue;
             }
         };
+        // static / attachment-only：无镜像、不作为容器（与 import 一致）。
+        let is_container = has_dockerfile(&package_root);
+        apply_container_policy(&mut normalized, is_container);
 
         // 已入库 → 跳过（scan 只补录缺的）
         let existing = Challenges::find()
@@ -456,15 +511,19 @@ pub async fn scan_challenges_dir(
             None => (None, None, None, None),
         };
 
-        // 镜像存在性：image_ref tag 本地可 inspect → ready；否则 failed（提示重新 Import）
-        let image_ref = build_artifact_image_ref(
-            ArtifactKind::Challenge,
-            &registry.image_prefix,
-            &safe_name,
-            &version,
-        );
-        let (image_id, build_status, build_error) =
-            match ImageRuntime::inspect_image(&runtime, &image_ref).await {
+        // 镜像存在性：image_ref tag 本地可 inspect → ready；否则 failed（提示重新 Import）。
+        // static / attachment-only 内容没有镜像：直接 ready（否则会被误标为构建失败）。
+        let image_ref = is_container.then(|| {
+            content_image_ref(
+                ArtifactKind::Challenge,
+                &registry.image_prefix,
+                &safe_name,
+                &version,
+            )
+        });
+        let (image_id, build_status, build_error) = match &image_ref {
+            None => (None, BUILD_STATUS_READY, None),
+            Some(image_ref) => match ImageRuntime::inspect_image(&runtime, image_ref).await {
                 Ok(insp) => (
                     if insp.image_id.is_empty() {
                         None
@@ -479,7 +538,8 @@ pub async fn scan_challenges_dir(
                     BUILD_STATUS_FAILED,
                     Some("镜像不存在本地，请用 Import 重新构建".to_string()),
                 ),
-            };
+            },
+        };
 
         let resources = &normalized.recommended_resources;
         let model = challenges::ActiveModel {
@@ -493,7 +553,7 @@ pub async fn scan_challenges_dir(
             spec_json: Set(Some(spec_json)),
             spec_digest: Set(Some(spec_digest)),
             package_digest: Set(Some(package_digest)),
-            flag_type: Set(Some(flag_type)),
+            flag_type: Set(flag_type),
             static_flag_value: Set(static_flag_value),
             container_port: Set(normalized.container_port.map(|p| p as i32)),
             recommended_cpu_millis: Set(resources.cpu_millis),
@@ -503,7 +563,7 @@ pub async fn scan_challenges_dir(
             attachment_name: Set(attachment_name),
             attachment_size: Set(attachment_size),
             attachment_sha256: Set(attachment_sha),
-            image_ref: Set(Some(image_ref.clone())),
+            image_ref: Set(image_ref),
             image_id: Set(image_id.clone()),
             image_repo_digest: Set(None),
             build_status: Set(Some(build_status.to_string())),
@@ -638,6 +698,20 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 平台侧容器化策略：**只有 `src/Dockerfile` 存在时**才是容器内容。
+///
+/// 官方 catalog 语义（`content.py::content_entry`）在 static 内容上既不带 `image`
+/// 也不带 `docker`，因此即使 meta.toml 声明了 `[docker].port` 也必须忽略它——
+/// 否则平台会为一个没有镜像的题目去建容器。
+pub(crate) fn apply_container_policy(
+    normalized: &mut fcmc::NormalizedChallengeSpec,
+    is_container: bool,
+) {
+    if !is_container {
+        normalized.container_port = None;
+    }
+}
+
 fn map_package_error(e: package::PackageError) -> AppError {
     match e {
         package::PackageError::Validation(m) => AppError::Validation(m),
@@ -650,14 +724,13 @@ fn map_meta_error(e: ChallengeMetaError) -> AppError {
     match &e {
         UnknownField(_) => AppError::Validation(format!("CHALLENGE_MANIFEST_UNKNOWN_FIELD: {e}")),
         Parse(_) => AppError::Validation(format!("CHALLENGE_INVALID_MANIFEST: {e}")),
-        EmptyName | EmptyAuthor | EmptyCategory => {
+        EmptyName | EmptyAuthor | EmptyCategory | EmptyDescription => {
             AppError::Validation(format!("CHALLENGE_INVALID_MANIFEST: {e}"))
         }
-        InvalidVersion { .. } | VersionBuildMetadata(_) => {
-            AppError::Validation(format!("CHALLENGE_INVALID_VERSION: {e}"))
-        }
+        InvalidVersion(_) => AppError::Validation(format!("CHALLENGE_INVALID_VERSION: {e}")),
         InvalidSafeName(_) => AppError::Validation(format!("CHALLENGE_INVALID_SAFE_NAME: {e}")),
         SafeNameRequired => AppError::Validation(format!("CHALLENGE_SAFE_NAME_REQUIRED: {e}")),
+        InvalidTag(_) => AppError::Validation(format!("CHALLENGE_INVALID_MANIFEST: {e}")),
         InvalidFlagConfig(_) | StaticFlagRequired => {
             AppError::Validation(format!("CHALLENGE_INVALID_FLAG_CONFIG: {e}"))
         }
@@ -667,6 +740,21 @@ fn map_meta_error(e: ChallengeMetaError) -> AppError {
             AppError::Validation(format!("CHALLENGE_INVALID_ATTACHMENT_PATH: {e}"))
         }
     }
+}
+
+/// zip 根直接铺 `meta.toml`（没有 content 目录）时，`safe_name` 缺省无从派生：
+/// 给出可执行的提示，而不是含糊的 SAFE_NAME_REQUIRED。
+fn map_meta_error_for_package(e: ChallengeMetaError, content_id_known: bool) -> AppError {
+    if !content_id_known && matches!(e, ChallengeMetaError::SafeNameRequired) {
+        return AppError::Validation(
+            "CHALLENGE_SAFE_NAME_REQUIRED: package has no content directory (expected \
+             <content-id>/meta.toml or challenges/<content-id>/meta.toml), so safe_name cannot \
+             be derived from the content id; include the content directory in the zip or set \
+             safe_name explicitly in meta.toml"
+                .to_string(),
+        );
+    }
+    map_meta_error(e)
 }
 
 fn map_image_error(e: ImageError) -> AppError {
@@ -700,6 +788,44 @@ fn map_image_error(e: ImageError) -> AppError {
 mod tests {
     use super::*;
 
+    /// 官方 `static_with_docker` fixture 形态：声明了 [docker] 但没有 src/Dockerfile。
+    const STATIC_WITH_DOCKER: &str = r#"
+name = "static_with_docker"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "misc"
+difficulty = "easy"
+tags = []
+description = "static content that still declares a [docker] table"
+
+[docker]
+port = 8080
+
+[docker.recommended_resources]
+cpu_millis = 100
+memory_bytes = 67108864
+pids_limit = 10
+"#;
+
+    #[test]
+    fn container_policy_drops_port_for_static_content() {
+        let meta =
+            fcmc::ChallengeMeta::parse_and_validate(STATIC_WITH_DOCKER, "static_with_docker")
+                .unwrap();
+        let mut normalized = meta.normalize("static_with_docker").unwrap();
+        // fcmc 侧如实保留 meta.toml 声明的端口（metadata 视角）……
+        assert_eq!(normalized.container_port, Some(8080));
+
+        // ……但平台侧：没有 src/Dockerfile 就不是容器，端口必须丢掉。
+        apply_container_policy(&mut normalized, false);
+        assert_eq!(normalized.container_port, None);
+
+        // 容器内容：端口保留。
+        let mut container = meta.normalize("static_with_docker").unwrap();
+        apply_container_policy(&mut container, true);
+        assert_eq!(container.container_port, Some(8080));
+    }
+
     #[test]
     fn map_meta_unknown_field_code() {
         let err = map_meta_error(fcmc::ChallengeMetaError::UnknownField("image_tag".into()));
@@ -713,34 +839,42 @@ mod tests {
     }
 
     #[test]
-    fn image_ref_shared_with_gamebox() {
+    fn image_ref_is_canonical_content_ref() {
         assert_eq!(
-            fcmc::build_artifact_image_ref(
+            fcmc::content_image_ref(
                 fcmc::ArtifactKind::Challenge,
                 "registry.example.com",
                 "easy-web",
                 "1.0.0"
             ),
-            "registry.example.com/challenges/easy-web:1.0.0"
+            "registry.example.com/easy-web:challenge-v1.0.0"
         );
         assert_eq!(
-            fcmc::build_artifact_image_ref(
+            fcmc::content_image_ref(
                 fcmc::ArtifactKind::GameBox,
                 "registry.example.com",
                 "easy-awd-web",
                 "2.1.0"
             ),
-            "registry.example.com/gameboxes/easy-awd-web:2.1.0"
+            "registry.example.com/easy-awd-web:gamebox-v2.1.0"
         );
     }
 
     #[test]
-    fn manifest_roundtrip_v1() {
+    fn map_meta_safe_name_required_hint_for_rootless_zip() {
+        let err = map_meta_error_for_package(fcmc::ChallengeMetaError::SafeNameRequired, false);
+        assert!(err.to_string().contains("no content directory"));
+    }
+
+    #[test]
+    fn manifest_roundtrip() {
         let toml = r#"
 name = "Easy Web 01"
 version = "1.0.0"
 author = "a@b.c"
 category = "web"
+difficulty = "easy"
+tags = ["web"]
 description = "hello"
 
 [flag]
@@ -754,12 +888,32 @@ cpu_millis = 500
 memory_bytes = 268435456
 pids_limit = 100
 "#;
-        let meta = fcmc::ChallengeMeta::parse_and_validate(toml).unwrap();
-        assert_eq!(meta.resolved_safe_name().unwrap(), "easy-web-01");
+        let meta = fcmc::ChallengeMeta::parse_and_validate(toml, "Easy Web 01").unwrap();
+        assert_eq!(
+            meta.resolved_safe_name("Easy Web 01").unwrap(),
+            "easy-web-01"
+        );
         assert!(meta.static_flag_value().is_none());
-        let normalized = meta.normalize().unwrap();
-        assert_eq!(normalized.flag_type, "dynamic");
+        let normalized = meta.normalize("Easy Web 01").unwrap();
+        assert_eq!(normalized.flag_type.as_deref(), Some("dynamic"));
         assert_eq!(normalized.container_port, Some(80));
+    }
+
+    #[test]
+    fn manifest_without_flag_normalizes_to_none() {
+        let toml = r#"
+name = "static"
+version = "1.0.0"
+author = "a@b.c"
+category = "misc"
+difficulty = "unknown"
+tags = []
+description = "d"
+"#;
+        let meta = fcmc::ChallengeMeta::parse_and_validate(toml, "static").unwrap();
+        assert!(meta.flag.is_none());
+        let normalized = meta.normalize("static").unwrap();
+        assert!(normalized.flag_type.is_none());
     }
 
     #[test]
@@ -769,15 +923,17 @@ name = "Static"
 version = "1.0.0"
 author = "a@b.c"
 category = "misc"
+difficulty = "unknown"
+tags = []
 description = "d"
 
 [flag]
 type = "static"
 value = "flag{supersecret}"
 "#;
-        let meta = fcmc::ChallengeMeta::parse_and_validate(toml).unwrap();
+        let meta = fcmc::ChallengeMeta::parse_and_validate(toml, "Static").unwrap();
         assert_eq!(meta.static_flag_value(), Some("flag{supersecret}"));
-        let normalized = meta.normalize().unwrap();
+        let normalized = meta.normalize("Static").unwrap();
         let spec_json = serde_json::to_string(&normalized).unwrap();
         assert!(
             !spec_json.contains("supersecret"),

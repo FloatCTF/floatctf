@@ -84,8 +84,11 @@ pub struct ChallengeCheckResult {
     pub id: Uuid,
     pub challenge_name: String,
     pub is_ok: bool,
+    /// 镜像可用。static / attachment-only 题目没有镜像，恒为 true（没有东西需要构建）。
     pub docker_image: bool,
     pub attachment: bool,
+    /// static / attachment-only 内容（无 `src/Dockerfile`）：前端据此不显示 Build 按钮。
+    pub static_content: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,36 +121,40 @@ pub async fn check_challenges(
     let runtime = DockerContainerRuntime::new(ctx.docker.get_ref().clone());
     let mut results = Vec::new();
     for challenge in challenges {
-        let (docker_image_ok, attachment_ok) =
-            if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
-                // 镜像检查：当前版本 image pin（RepoDigest/image_id）必须本地可 inspect
-                let docker_ok = match effective_image_ref(
-                    challenge.image_repo_digest.as_deref(),
-                    challenge.image_id.as_deref(),
-                ) {
-                    Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
-                    Err(_) => false,
-                };
-                let attach_ok = match &challenge.attachment_path {
-                    Some(rel) => {
-                        let p = crate::infrastructure::settings::resolve_dir_path(&challenge_dir)
-                            .join(&challenge.safe_name)
-                            .join(rel);
-                        p.is_file()
-                    }
-                    None => true,
-                };
-                (docker_ok, attach_ok)
-            } else {
-                (false, true)
-            };
+        // static / attachment-only（container_port 为空）没有镜像，也没有 Dockerfile：
+        // 它不需要构建，只有附件需要存在。绝不能被判成“镜像缺失 → Build”。
+        let static_content = challenge.container_port.is_none();
+        let attach_ok = match &challenge.attachment_path {
+            Some(rel) => {
+                let p = crate::infrastructure::settings::resolve_dir_path(&challenge_dir)
+                    .join(&challenge.safe_name)
+                    .join(rel);
+                p.is_file()
+            }
+            None => true,
+        };
+        let docker_ok = if static_content {
+            true
+        } else if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
+            // 镜像检查：当前版本 image pin（RepoDigest/image_id）必须本地可 inspect
+            match effective_image_ref(
+                challenge.image_repo_digest.as_deref(),
+                challenge.image_id.as_deref(),
+            ) {
+                Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
+                Err(_) => false,
+            }
+        } else {
+            false
+        };
 
         results.push(ChallengeCheckResult {
             id: challenge.id,
             challenge_name: challenge.name,
-            is_ok: docker_image_ok && attachment_ok,
-            docker_image: docker_image_ok,
-            attachment: attachment_ok,
+            is_ok: docker_ok && attach_ok,
+            docker_image: docker_ok,
+            attachment: attach_ok,
+            static_content,
         });
     }
 

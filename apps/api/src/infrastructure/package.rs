@@ -161,9 +161,30 @@ pub fn extract_package_zip(zip_path: &Path, dest_dir: &Path) -> Result<(), Packa
 /// 定位包根：若 `root/meta.toml` 存在则用 root；否则若恰好一个
 /// 嵌套目录含 meta.toml 则用之；否则报错。
 pub fn discover_package_root(extract_root: &Path) -> Result<PathBuf, PackageError> {
+    Ok(discover_package(extract_root)?.root)
+}
+
+/// 解压结果：包根 + **content id**。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredPackage {
+    pub root: PathBuf,
+    /// 包根所在目录名（floatctf-content 的 `id`）。
+    ///
+    /// `meta.toml` 直接位于解压根（zip 内没有内容目录）时为 `None`：此时无法
+    /// 从目录名派生 `safe_name`，调用方必须要求包内显式声明 `safe_name`。
+    /// 绝不退化为“用解压临时目录名派生”（那会产生不确定的镜像名）。
+    pub content_id: Option<String>,
+}
+
+/// 定位包根并解析 content id（目录名）。
+pub fn discover_package(extract_root: &Path) -> Result<DiscoveredPackage, PackageError> {
     let root_meta = extract_root.join("meta.toml");
     if root_meta.is_file() {
-        return Ok(extract_root.to_path_buf());
+        // 包内容直接铺在解压根：没有可信的内容目录名。
+        return Ok(DiscoveredPackage {
+            root: extract_root.to_path_buf(),
+            content_id: None,
+        });
     }
 
     let mut found = Vec::new();
@@ -173,7 +194,15 @@ pub fn discover_package_root(extract_root: &Path) -> Result<PathBuf, PackageErro
         0 => Err(PackageError::Validation(
             "INVALID_PACKAGE: meta.toml not found".into(),
         )),
-        1 => Ok(found.remove(0)),
+        1 => {
+            let root = found.remove(0);
+            let content_id = root
+                .file_name()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            Ok(DiscoveredPackage { root, content_id })
+        }
         _ => Err(PackageError::Validation(
             "INVALID_PACKAGE: multiple meta.toml found; provide a single package root".into(),
         )),
@@ -205,8 +234,19 @@ fn find_meta_tomls(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), PackageErro
     Ok(())
 }
 
-/// 校验 `package_root` 下的必需包布局：meta.toml + src/Dockerfile。
-pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
+/// 官方“是否为容器内容”判定：`<package>/src/Dockerfile` 是否存在。
+///
+/// 与 floatctf-content `scripts/content.py::has_dockerfile` 一致：**不看**
+/// `[docker]` 段是否存在。static / attachment-only 包（官方 28 道题里有 16 道）
+/// 同样可以从 admin 导入，只是没有镜像、不能建实例。
+pub fn has_dockerfile(package_root: &Path) -> bool {
+    package_root.join("src").join("Dockerfile").is_file()
+}
+
+/// 校验包根必须存在 `meta.toml`（大小上限见 [`MAX_META_TOML_BYTES`]）。
+///
+/// 容器/静态内容都适用：这是 Content Contract 解析的最低要求。
+pub fn require_meta_toml(package_root: &Path) -> Result<(), PackageError> {
     let meta = package_root.join("meta.toml");
     if !meta.is_file() {
         return Err(PackageError::Validation(
@@ -219,13 +259,26 @@ pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
             "PACKAGE_TOO_LARGE: meta.toml exceeds 1MB".into(),
         ));
     }
-    let dockerfile = package_root.join("src").join("Dockerfile");
-    if !dockerfile.is_file() {
+    Ok(())
+}
+
+/// 校验这是容器内容包（`src/Dockerfile` 存在）。GameBox 与 build 前置使用。
+pub fn require_src_dockerfile(package_root: &Path) -> Result<(), PackageError> {
+    if !has_dockerfile(package_root) {
         return Err(PackageError::Validation(
             "DOCKERFILE_MISSING: src/Dockerfile required at package root".into(),
         ));
     }
     Ok(())
+}
+
+/// 校验 `package_root` 下的必需包布局：meta.toml + src/Dockerfile。
+///
+/// 仅适用于**必须**有镜像的包（GameBox）；Challenge 导入请分别使用
+/// [`require_meta_toml`] 与 [`has_dockerfile`]，以支持 static / attachment-only 题目。
+pub fn require_package_layout(package_root: &Path) -> Result<(), PackageError> {
+    require_meta_toml(package_root)?;
+    require_src_dockerfile(package_root)
 }
 
 /// 读取 meta.toml 文本（大小已由 require_package_layout 校验）。
@@ -433,6 +486,34 @@ mod tests {
     use std::io::Write;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn meta_toml_required_but_dockerfile_optional() {
+        // 空目录：meta.toml 缺失 → 拒绝
+        let empty = tempfile::tempdir().unwrap();
+        assert!(require_meta_toml(empty.path()).is_err());
+        assert!(!has_dockerfile(empty.path()));
+
+        // 只有 meta.toml（static / attachment-only 官方题目形态）→ meta 校验通过，
+        // Dockerfile 校验失败，但 has_dockerfile 为 false 而不是错误。
+        let static_pkg = tempfile::tempdir().unwrap();
+        fs::write(
+            static_pkg.path().join("meta.toml"),
+            "name = \"cookie\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+        assert!(require_meta_toml(static_pkg.path()).is_ok());
+        assert!(!has_dockerfile(static_pkg.path()));
+        assert!(require_src_dockerfile(static_pkg.path()).is_err());
+        // 旧的聚合校验（GameBox 用）仍然要求 Dockerfile
+        assert!(require_package_layout(static_pkg.path()).is_err());
+
+        // meta.toml + src/Dockerfile → 容器内容
+        fs::create_dir_all(static_pkg.path().join("src")).unwrap();
+        fs::write(static_pkg.path().join("src/Dockerfile"), "FROM scratch\n").unwrap();
+        assert!(has_dockerfile(static_pkg.path()));
+        assert!(require_package_layout(static_pkg.path()).is_ok());
+    }
 
     fn write_minimal_package(root: &Path) {
         fs::create_dir_all(root.join("src")).unwrap();

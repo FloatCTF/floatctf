@@ -2,8 +2,9 @@
 //!
 //! 版本/运行时内容经包导入进入（`POST /api/admin/challenges/import`），
 //! 导入会以严格递增门禁 upsert 身份行。本处手工创建/补丁仅触及稳定身份字段
-//! （name / category / description / hidden）；`safe_name` 由 name 派生
-//! （绝不自动加后缀——身份歧义视为显式错误）。
+//! （name / category / description / hidden）；`safe_name` 用与
+//! floatctf-content 完全相同的算法派生（此处没有包目录，故以 name 充当
+//! content id；绝不自动加后缀——身份歧义视为显式错误）。
 
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::{
@@ -35,6 +36,8 @@ pub async fn create_challenge(
         return AppError::Validation("CHALLENGE_INVALID_MANIFEST: name must be non-empty".into())
             .into();
     }
+    // 手工创建没有包目录：以 name 充当 content id 走同一套派生算法
+    // （与 floatctf-content/scripts/content.py::derive_safe_name 一致）。
     let safe_name = fcmc::derive_safe_name(&ccr.name).ok_or_else(|| {
         AppError::Validation(
             "CHALLENGE_SAFE_NAME_REQUIRED: cannot derive safe_name from name; use package import with explicit safe_name"

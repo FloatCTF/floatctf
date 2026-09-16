@@ -50,7 +50,7 @@ FloatCTF 的 AWD 引擎采用一种接近「春秋云境」的**基础设施容�
 
 | 操作 | 目的 | 实现要点 | 常见坑 |
 |------|------|----------|--------|
-| 构建镜像 | 从 GameBox src/ 产出一个不可变运行时镜像 | `docker build`（`fcmc::build_image`）：context `src/` tar 流式传给 daemon，`-t <image_prefix>/gameboxes/<safe_name>:<version>`，`--rm`，可注入 `--add-host`+HTTP(S)/ALL_PROXY build args（`build_proxy`）；`BuildImageOptionsBuilder` | 镜像标签可变→不可作 runtime 身份；必须在赛后 inspect 拿权威 image id，不能用日志 grep |
+| 构建镜像 | 从 GameBox src/ 产出一个不可变运行时镜像 | `docker build`（`fcmc::build_image`）：context `src/` tar 流式传给 daemon，`-t <image_prefix>/<safe_name>:gamebox-v<version>`（canonical ref，见 floatctf-content），`--rm`，可注入 `--add-host`+HTTP(S)/ALL_PROXY build args（`build_proxy`）；`BuildImageOptionsBuilder` | 镜像标签可变→不可作 runtime 身份；必须在赛后 inspect 拿权威 image id，不能用日志 grep |
 | 打 tag | 复核 / 分发给多节点 | `docker tag`（`tag_image`：`repo`/`tag` 拆分） | tag 会被覆盖，不能作为唯一身份 |
 | 推送镜像 | 推到私有 registry，供重拉 | `docker push`（`push_image`）→ 推后 inspect 取 `RepoDigest`（`pick_repo_digest`），返回 `repo@sha256:…` | push 后必须拿 RepoDigest 钉扎；auth 缺失/过期 → `RegistryAuthFailed` |
 | 拉取镜像 | 节点/恢复时拉回 | `docker pull`（`pull_image`：`create_image`, fromImage+tag, credentials） | 用 **digest** 拉可保证不可变一致性；只按 tag 拉可能拿到被覆盖的新内容 |

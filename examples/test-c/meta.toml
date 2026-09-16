@@ -2,10 +2,12 @@ name = "test-c"
 version = "1.0.0"
 author = "your_email@example.com" # modify
 category = "web" # modify
+difficulty = "unknown" # modify
+tags = []
 description = "Challenge description" # modify
 
-# Optional: 显式 safe_name；缺省由 name 派生（派生失败时必须显式提供）
-# safe_name = "easy-web-01"
+# Optional: 显式 safe_name；缺省由**目录 ID**（content id）派生，派生失败时必须显式提供
+# safe_name = "test-c"
 
 # Optional: 附件路径（必须位于 attachment/ 目录下）
 attachment = "attachment/note.txt"

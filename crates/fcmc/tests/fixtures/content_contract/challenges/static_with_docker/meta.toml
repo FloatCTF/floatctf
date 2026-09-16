@@ -1,0 +1,15 @@
+name = "static_with_docker"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "misc"
+difficulty = "easy"
+tags = []
+description = "static content that still declares a [docker] table"
+
+[docker]
+port = 8080
+
+[docker.recommended_resources]
+cpu_millis = 100
+memory_bytes = 67108864
+pids_limit = 10

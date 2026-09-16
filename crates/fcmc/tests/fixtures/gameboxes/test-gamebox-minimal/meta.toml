@@ -2,6 +2,8 @@ name = "test-gamebox-minimal"
 version = "1.0.0"
 author = "tester@example.com"
 category = "web"
+difficulty = "unknown"
+tags = []
 description = "Minimal gamebox"
 
 [gamebox]

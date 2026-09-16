@@ -1,0 +1,7 @@
+name = "Android_reverse"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "reverse"
+difficulty = "easy"
+tags = []
+description = "attachment-only fixture: no src/Dockerfile"

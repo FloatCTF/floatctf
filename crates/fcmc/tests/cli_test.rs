@@ -116,11 +116,13 @@ fn cli_gen_with_name() {
             output,
             format,
             template,
+            safe_name,
         } => {
             assert_eq!(name, "my-challenge");
             assert_eq!(output, ".");
             assert_eq!(format, GenFormat::Challenge);
             assert!(!template);
+            assert!(safe_name.is_none());
         }
         _ => panic!("expected Gen command"),
     }
@@ -153,6 +155,39 @@ fn cli_gen_format_aliases() {
     let args = Args::try_parse_from(["fcmc", "gen", "-n", "x", "-f", "g"]).unwrap();
     match args.command {
         Commands::Gen { format, .. } => assert_eq!(format, GenFormat::Gamebox),
+        _ => panic!("expected Gen command"),
+    }
+}
+
+#[test]
+fn cli_check_format_override() {
+    let args = Args::try_parse_from(["fcmc", "check", "-f", "gamebox"]).unwrap();
+    match args.command {
+        Commands::Check {
+            format, runtime, ..
+        } => {
+            assert_eq!(format, Some(GenFormat::Gamebox));
+            assert!(!runtime);
+        }
+        _ => panic!("expected Check command"),
+    }
+
+    // 缺省不指定 → main 按路径 / meta.toml 自动识别
+    let args = Args::try_parse_from(["fcmc", "check"]).unwrap();
+    match args.command {
+        Commands::Check { format, .. } => assert!(format.is_none()),
+        _ => panic!("expected Check command"),
+    }
+}
+
+#[test]
+fn cli_gen_safe_name() {
+    let args = Args::try_parse_from(["fcmc", "gen", "-n", "题目", "--safe-name", "challenge-001"])
+        .unwrap();
+    match args.command {
+        Commands::Gen { safe_name, .. } => {
+            assert_eq!(safe_name.as_deref(), Some("challenge-001"));
+        }
         _ => panic!("expected Gen command"),
     }
 }

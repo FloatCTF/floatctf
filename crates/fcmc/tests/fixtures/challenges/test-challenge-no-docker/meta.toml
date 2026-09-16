@@ -2,6 +2,8 @@ name = "test-challenge-no-docker"
 version = "1.0.0"
 author = "tester@example.com"
 category = "Crypto"
+difficulty = "unknown"
+tags = []
 description = "A challenge without Docker"
 
 [flag]

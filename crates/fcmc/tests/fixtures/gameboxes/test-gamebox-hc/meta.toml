@@ -2,8 +2,15 @@ name = "test-gamebox-hc"
 version = "1.0.0"
 author = "tester@example.com"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "Gamebox with healthchecks"
 safe_name = "test-gamebox-hc"
+
+[docker.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
 
 [gamebox]
 username = "ctf"
@@ -17,8 +24,3 @@ expected_status = 200
 [[gamebox.healthchecks]]
 type = "tcp"
 port = 3306
-
-[gamebox.recommended_resources]
-cpu_millis = 1000
-memory_bytes = 536870912
-pids_limit = 100

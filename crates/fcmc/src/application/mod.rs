@@ -5,3 +5,6 @@ pub mod build;
 pub mod check;
 pub mod generate;
 pub mod manual;
+pub mod package;
+
+pub use package::{has_dockerfile, resolve_content_id};

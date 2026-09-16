@@ -112,7 +112,7 @@ pub enum ImageError {
 ///
 /// 处理：
 /// - `nginx:latest`
-/// - `floatctf/gameboxes/ttt1:1.0.0`
+/// - `floatctf/ttt1:gamebox-v1.0.0`
 /// - `registry.example.com:5000/foo/bar:1.0`
 /// - `repo@sha256:…` → tag_or_none 为 `None`（digest 形式）；repository 在 `@` 前
 ///
@@ -524,8 +524,8 @@ mod tests {
     #[test]
     fn split_nested_repo() {
         assert_eq!(
-            split_image_ref("floatctf/gameboxes/ttt1:1.0.0"),
-            ("floatctf/gameboxes/ttt1".into(), Some("1.0.0".into()))
+            split_image_ref("floatctf/ttt1:gamebox-v1.0.0"),
+            ("floatctf/ttt1".into(), Some("gamebox-v1.0.0".into()))
         );
     }
 
@@ -543,8 +543,8 @@ mod tests {
     #[test]
     fn split_digest_ref() {
         assert_eq!(
-            split_image_ref("floatctf/gameboxes/ttt1@sha256:abc"),
-            ("floatctf/gameboxes/ttt1".into(), None)
+            split_image_ref("floatctf/ttt1@sha256:abc"),
+            ("floatctf/ttt1".into(), None)
         );
     }
 
@@ -552,18 +552,18 @@ mod tests {
     fn pick_repo_digest_exact() {
         let digests = vec![
             "other/repo@sha256:111".into(),
-            "floatctf/gameboxes/ttt1@sha256:abc".into(),
+            "floatctf/ttt1@sha256:abc".into(),
         ];
         assert_eq!(
-            pick_repo_digest(&digests, "floatctf/gameboxes/ttt1:1.0.0").as_deref(),
-            Some("floatctf/gameboxes/ttt1@sha256:abc")
+            pick_repo_digest(&digests, "floatctf/ttt1:gamebox-v1.0.0").as_deref(),
+            Some("floatctf/ttt1@sha256:abc")
         );
     }
 
     #[test]
     fn pick_repo_digest_missing() {
         let digests = vec!["other/repo@sha256:111".into()];
-        assert!(pick_repo_digest(&digests, "floatctf/gameboxes/ttt1:1.0.0").is_none());
+        assert!(pick_repo_digest(&digests, "floatctf/ttt1:gamebox-v1.0.0").is_none());
     }
 
     #[test]

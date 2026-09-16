@@ -1893,7 +1893,6 @@ dependencies = [
  "clap",
  "colored",
  "futures-util",
- "semver",
  "serde",
  "serde_json",
  "tar",
@@ -1903,6 +1902,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "unicode-normalization",
  "uuid",
 ]
 

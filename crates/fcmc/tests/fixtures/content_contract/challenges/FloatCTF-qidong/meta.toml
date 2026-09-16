@@ -1,0 +1,13 @@
+name = "FloatCTF-qidong"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "web"
+difficulty = "easy"
+tags = ["web"]
+description = "container fixture"
+
+[flag]
+type = "dynamic"
+
+[docker]
+port = 80

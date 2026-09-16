@@ -25,9 +25,15 @@ pub struct Args {
 pub enum Commands {
     /// 检查题目配置文件是否合法
     Check {
-        /// 配置文件目录 (里面需要包含 meta.toml)
+        /// 配置文件目录 (里面需要包含 meta.toml)；content id 取该目录名
         #[arg(short, long)]
         path: Option<String>,
+
+        /// 包类型: challenge (c) | gamebox (g)。缺省时按路径
+        /// (challenges/<id> | gameboxes/<id>) 推断，standalone 包再看 meta.toml
+        /// 是否含 [gamebox] 段，最后回退 challenge
+        #[arg(short, long)]
+        format: Option<GenFormat>,
 
         /// 额外连接 Docker 运行时验证
         #[arg(long, default_value = "false")]
@@ -35,15 +41,17 @@ pub enum Commands {
     },
     /// 构建题目镜像
     Build {
-        /// 配置文件目录 (里面需要包含 meta.toml)
+        /// 配置文件目录 (里面需要包含 meta.toml)；content id 取该目录名
         #[arg(short, long)]
         path: Option<String>,
-        /// 构建模板类型: challenge (c) | gamebox (g)。缺省不传时按 meta.toml 内容自动识别
-        /// （含 [gamebox] 段按 gamebox，否则按 challenge）。
+        /// 构建模板类型: challenge (c) | gamebox (g)。缺省不传时按路径与
+        /// meta.toml 内容自动识别。
         #[arg(short, long)]
         format: Option<GenFormat>,
-        /// 镜像 tag（gamebox 推荐显式传入；缺省为 floatctf/gameboxes/<safe_name>:<version>）
-        /// Challenge 默认 <prefix>/challenges/<safe_name>:<version>。
+        /// 显式镜像 tag（build override，例如 myreg/x:test）。缺省时使用
+        /// floatctf-content canonical ref:
+        ///   challenge → floatctf/{safe_name}:challenge-v{version}
+        ///   gamebox   → floatctf/{safe_name}:gamebox-v{version}
         #[arg(short = 't', long = "tag")]
         tag: Option<String>,
         /// 构建代理 [ip:]port（缺省 ip 用 host.docker.internal）。设置后注入
@@ -54,7 +62,7 @@ pub enum Commands {
     },
     /// 生成新的题目模板
     Gen {
-        /// 新题目的名称
+        /// 新题目的名称；同时作为生成的目录名，也就是 content id
         #[arg(short, long)]
         name: String,
 
@@ -69,6 +77,10 @@ pub enum Commands {
         /// gamebox 基础模板 (仅 format=gamebox 时生效)
         #[arg(short, long, default_value = "false")]
         template: bool,
+
+        /// 显式 safe_name（content id 无法派生时必填，例如纯中文目录名）
+        #[arg(long = "safe-name")]
+        safe_name: Option<String>,
     },
     /// 输出详细使用说明（--agent 输出面向 AI 助手的完整手册；
     /// 或指定命令查看单命令详解）

@@ -1,6 +1,10 @@
 //! `fcmc` — FloatCTF 容器/元数据客户端库与 CLI 核心。
 //!
 //! 提供 Challenge/GameBox 元数据解析、镜像运行时、构建与检查等能力。
+//!
+//! **公共 metadata contract 的 source of truth**：
+//! <https://github.com/FloatCTF/floatctf-content>（`scripts/content.py`）。
+//! 本 crate 只复刻该 contract，不定义第二套。
 
 pub mod application;
 pub mod metadata;
@@ -31,14 +35,16 @@ pub use runtime::{
 pub mod cli;
 pub use cli::{Args, Commands, GenFormat};
 
-// ── Metadata ──
+// ── Metadata (FloatCTF Content Contract) ──
 pub use metadata::{
-    ArtifactKind, ChallengeDockerConfig, ChallengeFlagConfig, ChallengeManifest, ChallengeMeta,
-    ChallengeMetaError, GameBoxConfig, GameBoxHealthcheck, GameBoxManifest, GameBoxMeta,
-    GameBoxMetaError, GameBoxSection, JudgeManifest, NormalizedChallengeSpec,
-    NormalizedGameBoxSpec, NormalizedHealthcheck, RecommendedResources, build_artifact_image_ref,
-    build_gamebox_image_ref, derive_safe_name, validate_awdp_path, validate_judge_path,
-    validate_safe_name, validate_version,
+    ArtifactKind, AwdpManifest, CONTENT_IMAGE_NAMESPACE, ChallengeFlagConfig, ChallengeManifest,
+    ChallengeMeta, ChallengeMetaError, ContentFieldError, Difficulty, DockerConfig, GameBoxConfig,
+    GameBoxHealthcheck, GameBoxManifest, GameBoxMeta, GameBoxMetaError, GameBoxSection,
+    JudgeManifest, NormalizedChallengeSpec, NormalizedGameBoxSpec, NormalizedHealthcheck,
+    RecommendedResources, RecommendedResourcesInput, SafeNameError, canonical_content_image_ref,
+    content_image_ref, derive_safe_name, is_valid_safe_name, is_valid_version, resolve_safe_name,
+    validate_awdp_path, validate_content_fields, validate_judge_path, validate_safe_name,
+    validate_version,
 };
 
 // ── Re-export runtime model types for external use ──

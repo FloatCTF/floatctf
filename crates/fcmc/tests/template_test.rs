@@ -8,7 +8,7 @@ fn challenge_template_generates_files() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_challenge_template("test-template", output).unwrap();
+    template::generate_challenge_template("test-template", output, None, "test-template").unwrap();
 
     let dir = tmp.path().join("test-template");
     assert!(dir.exists());
@@ -30,57 +30,82 @@ fn challenge_template_generates_files() {
 }
 
 #[test]
-fn challenge_template_meta_is_v1_and_roundtrips() {
+fn challenge_template_meta_follows_content_contract_and_roundtrips() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_challenge_template("roundtrip-test", output).unwrap();
+    template::generate_challenge_template("roundtrip-test", output, None, "roundtrip-test")
+        .unwrap();
 
     let meta_path = tmp.path().join("roundtrip-test").join("meta.toml");
     let content = std::fs::read_to_string(&meta_path).unwrap();
 
-    // v1 manifest markers
+    // 官方 Content Contract 标记
     assert!(content.contains("version = \"1.0.0\""));
+    assert!(content.contains("difficulty = \"unknown\""));
+    assert!(content.contains("tags = []"));
     assert!(content.contains("[flag]"));
     assert!(content.contains("type = \"dynamic\""));
     assert!(content.contains("[docker]"));
     assert!(content.contains("port = 80"));
-    // attachment is enabled by default and points to the scaffolded sample file
+    // safe_name 注释必须说明“由目录 ID 派生”，不是由 name 派生
     assert!(
-        content.contains("attachment = \"attachment/note.txt\""),
-        "template meta.toml must enable attachment (mirrors examples/test-c)"
+        content.contains("目录 ID"),
+        "safe_name comment must reference the content id:\n{content}"
     );
-    // no legacy fields
+    assert!(
+        !content.contains("由 name 派生"),
+        "stale 'derive from name' comment must be gone"
+    );
+    assert!(content.contains("attachment = \"attachment/note.txt\""));
+    // 没有 legacy 字段
     assert!(!content.contains("image_tag"));
     assert!(!content.contains("env_var"));
     assert!(!content.contains("flag.sh"));
 
-    // parses + validates as a v1 manifest and round-trips
-    let meta = ChallengeMeta::parse_and_validate(&content).unwrap();
+    // 生成的包立刻通过 contract 校验（目录名 = content id）
+    let meta = ChallengeMeta::parse_and_validate(&content, "roundtrip-test").unwrap();
     assert_eq!(meta.name, "roundtrip-test");
     assert_eq!(meta.version, "1.0.0");
-    assert!(matches!(meta.flag, fcmc::ChallengeFlagConfig::Dynamic));
+    assert_eq!(meta.difficulty, fcmc::Difficulty::Unknown);
+    assert!(matches!(
+        meta.flag,
+        Some(fcmc::ChallengeFlagConfig::Dynamic)
+    ));
+    assert_eq!(
+        meta.resolved_safe_name("roundtrip-test").unwrap(),
+        "roundtrip-test"
+    );
     let docker = meta.docker.unwrap();
-    assert_eq!(docker.port, 80);
-    let res = docker.recommended_resources.unwrap();
-    assert_eq!(res.cpu_millis, 500);
-    assert_eq!(res.memory_bytes, 268_435_456);
-    assert_eq!(res.pids_limit, 100);
+    assert_eq!(docker.port, Some(80));
+}
+
+#[test]
+fn challenge_template_with_explicit_safe_name_writes_it() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    template::generate_challenge_template(
+        "题目",
+        tmp.path().to_str().unwrap(),
+        Some("challenge-001"),
+        "challenge-001",
+    )
+    .unwrap();
+
+    let content = std::fs::read_to_string(tmp.path().join("题目/meta.toml")).unwrap();
+    assert!(content.contains("safe_name = \"challenge-001\""));
+    let meta = ChallengeMeta::parse_and_validate(&content, "题目").unwrap();
+    assert_eq!(meta.resolved_safe_name("题目").unwrap(), "challenge-001");
 }
 
 /// 生成的 entrypoint 必须把 FLAG 写入 flag 文件，并在同一 shell 中
 /// `unset` 后再 `exec`——否则应用进程可能经 getenv /
 /// `/proc/<pid>/environ` 读到真实 flag。
-///
-/// 真实脚本写入 `/flag`（容器根路径）；普通非 root
-/// 开发 shell 无法写入，故在临时目录副本上把目标改写为
-/// `./flag`——仍覆盖 shell 作用域契约
-/// （先写、再 unset、再 exec）。
 #[cfg(unix)]
 #[test]
 fn entrypoint_script_flag_contract() {
     let tmp = tempfile::TempDir::new().unwrap();
-    template::generate_challenge_template("envtest", tmp.path().to_str().unwrap()).unwrap();
+    template::generate_challenge_template("envtest", tmp.path().to_str().unwrap(), None, "envtest")
+        .unwrap();
     let src = tmp.path().join("envtest/src");
 
     let script = std::fs::read_to_string(src.join("entrypoint.sh")).unwrap();
@@ -116,7 +141,8 @@ fn entrypoint_script_flag_contract() {
 #[test]
 fn entrypoint_script_contract_markers() {
     let tmp = tempfile::TempDir::new().unwrap();
-    template::generate_challenge_template("markers", tmp.path().to_str().unwrap()).unwrap();
+    template::generate_challenge_template("markers", tmp.path().to_str().unwrap(), None, "markers")
+        .unwrap();
     let script = std::fs::read_to_string(tmp.path().join("markers/src/entrypoint.sh")).unwrap();
 
     let write_pos = script.find("> /flag").expect("script must write to /flag");
@@ -132,8 +158,8 @@ fn challenge_template_output_dir_already_exists() {
     let output = tmp.path().to_str().unwrap();
 
     // Generate twice — second should succeed (create_dir_all is idempotent)
-    template::generate_challenge_template("exists", output).unwrap();
-    template::generate_challenge_template("exists", output).unwrap();
+    template::generate_challenge_template("exists", output, None, "exists").unwrap();
+    template::generate_challenge_template("exists", output, None, "exists").unwrap();
 
     assert!(tmp.path().join("exists/meta.toml").exists());
 }
@@ -143,7 +169,7 @@ fn gamebox_template_generates_files() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_gamebox_template("gb-template", output).unwrap();
+    template::generate_gamebox_template("gb-template", output, None, "gb-template").unwrap();
 
     let dir = tmp.path().join("gb-template");
     assert!(dir.exists());
@@ -151,6 +177,11 @@ fn gamebox_template_generates_files() {
     assert!(dir.join("src").exists());
     assert!(dir.join("src/Dockerfile").exists());
     assert!(dir.join("src/index.php").exists());
+    // AWDP 运行时契约：/flag.php 按 FLAG env 返回 flag（平台 Judge/Break 读取）
+    assert!(
+        dir.join("src/flag.php").exists(),
+        "gamebox template must scaffold src/flag.php"
+    );
     assert!(dir.join("judge/check.py").exists());
     assert!(dir.join("awdp/exploit.py").exists());
 }
@@ -160,14 +191,16 @@ fn gamebox_template_meta_is_parseable() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_gamebox_template("gb-roundtrip", output).unwrap();
+    template::generate_gamebox_template("gb-roundtrip", output, None, "gb-roundtrip").unwrap();
 
-    let meta_path = tmp.path().join("gb-roundtrip").join("meta.toml");
-    let content = std::fs::read_to_string(meta_path).unwrap();
-    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    let raw = std::fs::read_to_string(tmp.path().join("gb-roundtrip/meta.toml")).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&raw, "gb-roundtrip").unwrap();
     assert_eq!(meta.name, "gb-roundtrip");
     assert_eq!(meta.version, "1.0.3");
-    assert_eq!(meta.gamebox.username, "floatctf");
+    assert_eq!(meta.difficulty, fcmc::Difficulty::Unknown);
+    let gamebox = meta.gamebox.as_ref().unwrap();
+    assert_eq!(gamebox.username, "floatctf");
+    assert!(!gamebox.healthchecks.is_empty());
     assert!(meta.judge.is_some());
     assert!(meta.awdp.is_some());
     assert_eq!(
@@ -178,9 +211,27 @@ fn gamebox_template_meta_is_parseable() {
         meta.awdp.as_ref().unwrap().source_code_dir.as_str(),
         "/var/www/html"
     );
-    assert!(!meta.gamebox.healthchecks.is_empty());
-    // No legacy fields
-    let raw = std::fs::read_to_string(tmp.path().join("gb-roundtrip/meta.toml")).unwrap();
+
+    // 资源来自 [docker.recommended_resources]；不再有 [gamebox.recommended_resources]
+    assert!(raw.contains("[docker.recommended_resources]"));
+    assert!(
+        !raw.contains("[gamebox.recommended_resources]"),
+        "gamebox resources must live under [docker]"
+    );
+    let res = meta
+        .docker
+        .as_ref()
+        .unwrap()
+        .materialize_resources(fcmc::RecommendedResources::GAMEBOX_DEFAULTS);
+    assert_eq!(res.cpu_millis, 1000);
+    assert_eq!(res.memory_bytes, 536_870_912);
+    assert_eq!(res.pids_limit, 100);
+    assert_eq!(meta.docker.as_ref().unwrap().port, Some(80));
+
+    // safe_name 注释说明由目录 ID 派生
+    assert!(raw.contains("目录 ID"));
+
+    // 没有 legacy 字段
     assert!(!raw.contains("image_tag"));
     assert!(!raw.contains("break_points"));
 }
@@ -208,11 +259,12 @@ fn gamebox_basic_template_meta_is_parseable() {
 
     template::generate_gamebox_basic_template("gb-basic-rt", output).unwrap();
 
-    let meta_path = tmp.path().join("gb-basic-rt").join("meta.toml");
-    let content = std::fs::read_to_string(meta_path).unwrap();
-    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    let raw = std::fs::read_to_string(tmp.path().join("gb-basic-rt/meta.toml")).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&raw, "gb-basic-rt").unwrap();
     assert_eq!(meta.name, "awd-base");
     assert_eq!(meta.safe_name.as_deref(), Some("awd-base"));
+    assert!(raw.contains("[docker.recommended_resources]"));
+    assert!(!raw.contains("[gamebox.recommended_resources]"));
 }
 
 #[test]
@@ -220,8 +272,8 @@ fn gamebox_template_output_dir_already_exists() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_gamebox_template("gb-exists", output).unwrap();
-    template::generate_gamebox_template("gb-exists", output).unwrap();
+    template::generate_gamebox_template("gb-exists", output, None, "gb-exists").unwrap();
+    template::generate_gamebox_template("gb-exists", output, None, "gb-exists").unwrap();
 
     assert!(tmp.path().join("gb-exists/meta.toml").exists());
 }
@@ -231,7 +283,7 @@ fn challenge_template_dockerfile_content() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_challenge_template("content-test", output).unwrap();
+    template::generate_challenge_template("content-test", output, None, "content-test").unwrap();
 
     let dockerfile =
         std::fs::read_to_string(tmp.path().join("content-test/src/Dockerfile")).unwrap();
@@ -244,7 +296,7 @@ fn gamebox_template_dockerfile_content() {
     let tmp = tempfile::TempDir::new().unwrap();
     let output = tmp.path().to_str().unwrap();
 
-    template::generate_gamebox_template("gb-content", output).unwrap();
+    template::generate_gamebox_template("gb-content", output, None, "gb-content").unwrap();
 
     let dockerfile = std::fs::read_to_string(tmp.path().join("gb-content/src/Dockerfile")).unwrap();
     assert!(dockerfile.contains("FROM"));

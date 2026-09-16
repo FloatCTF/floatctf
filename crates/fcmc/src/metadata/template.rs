@@ -2,8 +2,17 @@
 
 use anyhow::{Context, Result};
 
-/// 生成 Challenge 模板目录（包清单 v1）。
-pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
+/// 生成 Challenge 模板目录（官方 Content Contract）。
+///
+/// `explicit_safe_name` 为用户显式提供的值（`--safe-name`）；`safe_name` 是
+/// 解析后的最终 safe_name（用于注释示例）。注意：`safe_name` **缺省由目录 ID
+/// （content id）派生**，不是由 `name` 派生。
+pub fn generate_challenge_template(
+    name: &str,
+    output_dir: &str,
+    explicit_safe_name: Option<&str>,
+    safe_name: &str,
+) -> Result<()> {
     use std::fs;
     use std::path::Path;
 
@@ -20,16 +29,24 @@ pub fn generate_challenge_template(name: &str, output_dir: &str) -> Result<()> {
     fs::write(attachment_dir.join("note.txt"), "just test attachment")
         .context("Failed to write attachment/note.txt")?;
 
-    // meta.toml (v1 manifest — strict deny_unknown_fields)
+    let safe_name_line = match explicit_safe_name {
+        Some(_) => format!("safe_name = \"{safe_name}\""),
+        None => format!(
+            "# Optional: 显式 safe_name；缺省由**目录 ID**（content id）派生，派生失败时必须显式提供\n# safe_name = \"{safe_name}\""
+        ),
+    };
+
+    // meta.toml — FloatCTF Content Contract（见 floatctf-content/scripts/content.py）
     let meta_content = format!(
         r#"name = "{name}"
 version = "1.0.0"
 author = "your_email@example.com" # modify
 category = "web" # modify
+difficulty = "unknown" # modify
+tags = []
 description = "Challenge description" # modify
 
-# Optional: 显式 safe_name；缺省由 name 派生（派生失败时必须显式提供）
-# safe_name = "easy-web-01"
+{safe_name_line}
 
 # Optional: 附件路径（必须位于 attachment/ 目录下）
 attachment = "attachment/note.txt"
@@ -105,14 +122,31 @@ CMD ["apache2-foreground"]
     Ok(())
 }
 
-fn gamebox_meta_toml(name: &str) -> String {
+fn gamebox_meta_toml(name: &str, explicit_safe_name: Option<&str>, safe_name: &str) -> String {
+    let safe_name_line = match explicit_safe_name {
+        Some(_) => format!("safe_name = \"{safe_name}\""),
+        None => format!(
+            "# optional: 显式 safe_name；缺省由**目录 ID**（content id）派生\n# safe_name = \"{safe_name}\""
+        ),
+    };
+
     format!(
         r#"name = "{name}"
 version = "1.0.3"
 author = "your_email"
 category = "web"
+difficulty = "unknown"
+tags = []
 description = "hello floatctf"
-# optional: safe_name = "{slug}"
+{safe_name_line}
+
+[docker]
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
 
 [gamebox]
 username = "floatctf"
@@ -131,14 +165,8 @@ check_script = "judge/check.py"
 # zip file from docker image and provide the path to user
 source_code_dir = "/var/www/html"
 exploit_script = "awdp/exploit.py"
-
-[gamebox.recommended_resources]
-cpu_millis = 1000
-memory_bytes = 536870912
-pids_limit = 100
 "#,
         name = name,
-        slug = name.to_lowercase().replace(' ', "-"),
     )
 }
 
@@ -315,8 +343,13 @@ if __name__ == "__main__":
     Ok(())
 }
 
-/// 生成 GameBox 模板目录（可移植包格式）。
-pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
+/// 生成 GameBox 模板目录（官方 Content Contract + AWD 运行时扩展）。
+pub fn generate_gamebox_template(
+    name: &str,
+    output_dir: &str,
+    explicit_safe_name: Option<&str>,
+    safe_name: &str,
+) -> Result<()> {
     use std::fs;
     use std::path::Path;
 
@@ -326,8 +359,11 @@ pub fn generate_gamebox_template(name: &str, output_dir: &str) -> Result<()> {
     let src_dir = gamebox_dir.join("src");
     fs::create_dir_all(&src_dir).context("Failed to create src directory")?;
 
-    fs::write(gamebox_dir.join("meta.toml"), gamebox_meta_toml(name))
-        .context("Failed to write meta.toml")?;
+    fs::write(
+        gamebox_dir.join("meta.toml"),
+        gamebox_meta_toml(name, explicit_safe_name, safe_name),
+    )
+    .context("Failed to write meta.toml")?;
 
     write_judge_check_py(&gamebox_dir.join("judge"))?;
     write_awdp_exploit_py(&gamebox_dir.join("awdp"))?;
@@ -351,9 +387,11 @@ RUN apt-get update \
         > /etc/ssh/sshd_config.d/floatctf.conf
 
 COPY index.php /var/www/html/index.php
+# AWDP 运行时契约：/flag.php 按 FLAG env 返回本实例 flag（平台注入 FLAG）。
+COPY flag.php /var/www/html/flag.php
 COPY entrypoint.sh /entrypoint.sh
 
-RUN chmod 0755 /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh && chmod 0644 /var/www/html/*.php
 
 WORKDIR /var/www/html
 
@@ -458,6 +496,26 @@ if (isset($url)) {
     )
     .context("Failed to write index.php")?;
 
+    // flag.php —— AWDP 运行时契约：`/flag.php` 按 FLAG env 返回本实例 flag。
+    // 平台在启动实例时注入 FLAG；Judge / Break 流程通过 HTTP 读取该端点。
+    fs::write(
+        src_dir.join("flag.php"),
+        r#"<?php
+// FloatCTF AWDP GameBox 运行时契约：平台以 FLAG 环境变量注入本实例的 flag。
+// 真实题目应把 flag 藏在漏洞之后；如需保留这个直读端点，请确认它符合题目设计。
+$flag = getenv('FLAG');
+
+if ($flag === false || $flag === '') {
+    http_response_code(500);
+    echo 'FLAG env not set';
+    exit;
+}
+
+echo $flag;
+"#,
+    )
+    .context("Failed to write flag.php")?;
+
     Ok(())
 }
 
@@ -479,8 +537,18 @@ pub fn generate_gamebox_basic_template(name: &str, output_dir: &str) -> Result<(
 version = "1.0.0"
 author = "fb0sh@outlook.com"
 category = "web"
+difficulty = "unknown"
+tags = []
 description = "awd-base"
 safe_name = "awd-base"
+
+[docker]
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
 
 [gamebox]
 username = "floatctf"
@@ -497,11 +565,6 @@ port = 22
 
 [judge]
 script = "judge/check.py"
-
-[gamebox.recommended_resources]
-cpu_millis = 1000
-memory_bytes = 536870912
-pids_limit = 100
 "#,
     )
     .context("Failed to write meta.toml")?;

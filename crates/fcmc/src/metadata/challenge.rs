@@ -1,9 +1,16 @@
 //! Challenge 包元数据模型与解析。
+//!
+//! 公共字段（`name` / `version` / `author` / `category` / `difficulty` / `tags` /
+//! `description` / `safe_name` / `[flag]` / `[docker]`）严格对齐
+//! `floatctf-content/scripts/content.py`；见 [`crate::metadata`] 顶部说明。
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::metadata::{RecommendedResources, identity};
+use crate::metadata::content::{
+    ContentFieldError, Difficulty, DockerConfig, validate_content_fields,
+};
+use crate::metadata::identity::{self, SafeNameError};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -26,17 +33,20 @@ pub enum ChallengeMetaError {
     #[error("category must be non-empty")]
     EmptyCategory,
 
-    #[error("invalid version '{version}': {reason}")]
-    InvalidVersion { version: String, reason: String },
+    #[error("description must be non-empty")]
+    EmptyDescription,
 
-    #[error("SemVer build metadata is not allowed in package version: '{0}'")]
-    VersionBuildMetadata(String),
+    #[error("{0}")]
+    InvalidVersion(String),
 
-    #[error("invalid safe_name '{0}': must match ^[a-z0-9][a-z0-9_-]*$")]
+    #[error("invalid safe_name '{0}': must match ^[a-z0-9]+(?:[._-][a-z0-9]+)*$")]
     InvalidSafeName(String),
 
-    #[error("safe_name is required (could not derive a valid slug from name)")]
+    #[error("unable to derive Docker safe_name from content id; set safe_name explicitly")]
     SafeNameRequired,
+
+    #[error("invalid tag in `tags`: every entry must be a non-empty string: '{0}'")]
+    InvalidTag(String),
 
     #[error("invalid flag config: {0}")]
     InvalidFlagConfig(String),
@@ -47,11 +57,37 @@ pub enum ChallengeMetaError {
     #[error("invalid container port {0}: must be 1..=65535")]
     InvalidPort(u16),
 
-    #[error("recommended_resources.{0} must be > 0")]
+    #[error("docker.recommended_resources.{0} must be > 0")]
     InvalidResource(String),
 
     #[error("invalid attachment path '{0}': {1}")]
     InvalidAttachmentPath(String, String),
+}
+
+impl From<ContentFieldError> for ChallengeMetaError {
+    fn from(e: ContentFieldError) -> Self {
+        match e {
+            ContentFieldError::EmptyName => ChallengeMetaError::EmptyName,
+            ContentFieldError::EmptyAuthor => ChallengeMetaError::EmptyAuthor,
+            ContentFieldError::EmptyCategory => ChallengeMetaError::EmptyCategory,
+            ContentFieldError::EmptyDescription => ChallengeMetaError::EmptyDescription,
+            ContentFieldError::InvalidVersion(reason) => ChallengeMetaError::InvalidVersion(reason),
+            ContentFieldError::InvalidTag(tag) => ChallengeMetaError::InvalidTag(tag),
+            ContentFieldError::InvalidPort(port) => ChallengeMetaError::InvalidPort(port),
+            ContentFieldError::InvalidResource(field) => {
+                ChallengeMetaError::InvalidResource(field.to_string())
+            }
+        }
+    }
+}
+
+impl From<SafeNameError> for ChallengeMetaError {
+    fn from(e: SafeNameError) -> Self {
+        match e {
+            SafeNameError::Invalid(raw) => ChallengeMetaError::InvalidSafeName(raw),
+            SafeNameError::Underivable => ChallengeMetaError::SafeNameRequired,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -61,35 +97,42 @@ pub enum ChallengeMetaError {
 /// Challenge 包顶层清单（`meta.toml`）。
 ///
 /// 亦导出为 [`ChallengeManifest`]。
+///
+/// 公共 Content Contract 字段**不使用** `deny_unknown_fields`：floatctf-content
+/// 的 validator 不会因为无关扩展字段拒绝 metadata，FCMC 也不应制造第二套更严
+/// 的公共 contract。（`[flag]` 是 FCMC 拥有的运行时契约，仍然严格。）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ChallengeMeta {
     pub name: String,
-    /// Author package version (SemVer, no build metadata). Becomes the image tag suffix.
+    /// 官方 version：`^\d+\.\d+\.\d+$`。成为 canonical image tag 的一部分。
     pub version: String,
     pub author: String,
     pub category: String,
+    pub difficulty: Difficulty,
+    pub tags: Vec<String>,
     pub description: String,
-    /// Optional stable slug; derived from name when absent.
+    /// 可选显式 slug；缺省从 **content id（目录名）** 派生。
     #[serde(default)]
     pub safe_name: Option<String>,
-    /// Optional attachment path, must be under `attachment/`.
+    /// 可选附件路径，必须位于 `attachment/` 下。
     #[serde(default)]
     pub attachment: Option<String>,
-    pub flag: ChallengeFlagConfig,
+    /// 官方 Content Contract **不要求** `[flag]`；缺失即“运行时不注入 FLAG”。
     #[serde(default)]
-    pub docker: Option<ChallengeDockerConfig>,
+    pub flag: Option<ChallengeFlagConfig>,
+    /// 官方公共 `[docker]` 段（`port` 与 `recommended_resources` 均可选）。
+    #[serde(default)]
+    pub docker: Option<DockerConfig>,
 }
 
 /// 部分调用方/计划文档偏好的别名。
 pub type ChallengeManifest = ChallengeMeta;
 
-/// `[flag]` 段——flag 类型契约。
+/// `[flag]` 段——FCMC 拥有的 flag 运行时契约。
 ///
 /// serde 内部标签枚举会静默忽略 `deny_unknown_fields`，故
-/// 反序列化经严格中间结构体（见手工
-/// [`Deserialize`] 实现），拒绝历史/未知键如 `env_var`
-/// 以及动态 flag 上的 `value`。
+/// 反序列化经严格中间结构体（见手工 [`Deserialize`] 实现），拒绝历史/未知键
+/// 如 `env_var` 以及动态 flag 上的 `value`。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ChallengeFlagConfig {
@@ -130,17 +173,6 @@ impl<'de> Deserialize<'de> for ChallengeFlagConfig {
     }
 }
 
-/// `[docker]` 段。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ChallengeDockerConfig {
-    /// Single exposed TCP port (runtime contract source of truth; EXPOSE in Dockerfile is cosmetic).
-    pub port: u16,
-    /// Soft resource recommendation (EventChallenge may override).
-    #[serde(default)]
-    pub recommended_resources: Option<RecommendedResources>,
-}
-
 // ---------------------------------------------------------------------------
 // Canonical normalized spec (stable JSON for spec_digest)
 // ---------------------------------------------------------------------------
@@ -154,13 +186,15 @@ pub struct NormalizedChallengeSpec {
     pub version: String,
     pub author: String,
     pub category: String,
+    pub difficulty: Difficulty,
+    pub tags: Vec<String>,
     pub description: String,
     pub safe_name: String,
-    /// `"dynamic"` | `"static"`
-    pub flag_type: String,
+    /// `Some("dynamic" | "static")`；未声明 `[flag]` 时为 `None`。
+    pub flag_type: Option<String>,
     /// None for non-docker challenges.
     pub container_port: Option<u16>,
-    pub recommended_resources: RecommendedResources,
+    pub recommended_resources: crate::metadata::RecommendedResources,
     pub attachment: Option<String>,
 }
 
@@ -198,9 +232,9 @@ fn validate_attachment_path(path: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 impl ChallengeMeta {
-    /// Parse TOML only (no semantic validation). Unknown fields fail via
-    /// `deny_unknown_fields`; a static flag without `value` maps to
-    /// [`ChallengeMetaError::StaticFlagRequired`].
+    /// Parse TOML only (no semantic validation).
+    ///
+    /// 顶层公共字段宽松（未知字段忽略）；`[flag]` 严格。
     pub fn from_toml_str(toml_str: &str) -> Result<Self, ChallengeMetaError> {
         toml::from_str(toml_str).map_err(|e| {
             let msg = e.to_string();
@@ -214,73 +248,43 @@ impl ChallengeMeta {
         })
     }
 
-    /// Parse + semantic validation.
-    pub fn parse_and_validate(toml_str: &str) -> Result<Self, ChallengeMetaError> {
+    /// Parse + semantic validation for a package whose **content id 是目录名**。
+    pub fn parse_and_validate(
+        toml_str: &str,
+        content_id: &str,
+    ) -> Result<Self, ChallengeMetaError> {
         let meta = Self::from_toml_str(toml_str)?;
-        meta.validate()?;
+        meta.validate(content_id)?;
         Ok(meta)
     }
 
-    /// Resolve `safe_name`: explicit value, or derived from `name`.
-    pub fn resolved_safe_name(&self) -> Result<String, ChallengeMetaError> {
-        if let Some(ref s) = self.safe_name {
-            identity::validate_safe_name(s)
-                .map_err(|_| ChallengeMetaError::InvalidSafeName(s.clone()))?;
-            return Ok(s.clone());
-        }
-        identity::derive_safe_name(&self.name).ok_or(ChallengeMetaError::SafeNameRequired)
+    /// 解析 `safe_name`：显式值优先（trim 后校验），否则从 *content_id* 派生。
+    pub fn resolved_safe_name(&self, content_id: &str) -> Result<String, ChallengeMetaError> {
+        identity::resolve_safe_name(content_id, self.safe_name.as_deref())
+            .map_err(ChallengeMetaError::from)
     }
 
-    /// Semantic validation (identity fields, flag config, docker port/resources, attachment).
-    pub fn validate(&self) -> Result<(), ChallengeMetaError> {
-        if self.name.trim().is_empty() {
-            return Err(ChallengeMetaError::EmptyName);
-        }
-        if self.author.trim().is_empty() {
-            return Err(ChallengeMetaError::EmptyAuthor);
-        }
-        if self.category.trim().is_empty() {
-            return Err(ChallengeMetaError::EmptyCategory);
-        }
+    /// Semantic validation（官方公共字段 + flag + 附件路径）。
+    pub fn validate(&self, content_id: &str) -> Result<(), ChallengeMetaError> {
+        validate_content_fields(
+            &self.name,
+            &self.version,
+            &self.author,
+            &self.category,
+            &self.description,
+            &self.tags,
+            self.docker.as_ref(),
+        )?;
 
-        if self.version.contains('+') {
-            return Err(ChallengeMetaError::VersionBuildMetadata(
-                self.version.clone(),
-            ));
-        }
-        identity::validate_version(&self.version).map_err(|reason| {
-            ChallengeMetaError::InvalidVersion {
-                version: self.version.clone(),
-                reason,
-            }
-        })?;
+        let _ = self.resolved_safe_name(content_id)?;
 
-        let _ = self.resolved_safe_name()?;
-
-        match &self.flag {
-            ChallengeFlagConfig::Dynamic => {}
-            ChallengeFlagConfig::Static { value } => {
-                if value.as_deref().map(str::trim).map_or(true, str::is_empty) {
-                    return Err(ChallengeMetaError::StaticFlagRequired);
-                }
-            }
-        }
-
-        if let Some(ref docker) = self.docker {
-            if docker.port == 0 {
-                return Err(ChallengeMetaError::InvalidPort(docker.port));
-            }
-            if let Some(ref res) = docker.recommended_resources {
-                if res.cpu_millis <= 0 {
-                    return Err(ChallengeMetaError::InvalidResource("cpu_millis".into()));
-                }
-                if res.memory_bytes <= 0 {
-                    return Err(ChallengeMetaError::InvalidResource("memory_bytes".into()));
-                }
-                if res.pids_limit <= 0 {
-                    return Err(ChallengeMetaError::InvalidResource("pids_limit".into()));
-                }
-            }
+        let static_flag_without_value = matches!(
+            &self.flag,
+            Some(ChallengeFlagConfig::Static { value })
+                if value.as_deref().map(str::trim).is_none_or(str::is_empty)
+        );
+        if static_flag_without_value {
+            return Err(ChallengeMetaError::StaticFlagRequired);
         }
 
         if let Some(ref attachment) = self.attachment {
@@ -292,50 +296,57 @@ impl ChallengeMeta {
         Ok(())
     }
 
-    /// Static flag value (secret). `None` for dynamic flags / missing value.
-    /// The platform stores it in a secret column — never in logs/DTOs.
+    /// Static flag value (secret). `None` for dynamic flags / missing value /
+    /// missing `[flag]`. The platform stores it in a secret column — never in
+    /// logs/DTOs.
     pub fn static_flag_value(&self) -> Option<&str> {
         match &self.flag {
-            ChallengeFlagConfig::Static { value: Some(v) } => Some(v.as_str()),
+            Some(ChallengeFlagConfig::Static { value: Some(v) }) => Some(v.as_str()),
             _ => None,
+        }
+    }
+
+    /// `"dynamic"` / `"static"`；未声明 `[flag]` 时为 `None`。
+    pub fn flag_type(&self) -> Option<&'static str> {
+        match &self.flag {
+            Some(ChallengeFlagConfig::Dynamic) => Some("dynamic"),
+            Some(ChallengeFlagConfig::Static { .. }) => Some("static"),
+            None => None,
         }
     }
 
     /// Produce a canonical, fully-materialised spec (defaults filled).
     ///
-    /// Callers should `validate()` first; this method also validates.
-    pub fn normalize(&self) -> Result<NormalizedChallengeSpec, ChallengeMetaError> {
-        self.validate()?;
-        let safe_name = self.resolved_safe_name()?;
+    /// Callers should `validate(content_id)` first; this method also validates.
+    pub fn normalize(
+        &self,
+        content_id: &str,
+    ) -> Result<NormalizedChallengeSpec, ChallengeMetaError> {
+        self.validate(content_id)?;
+        let safe_name = self.resolved_safe_name(content_id)?;
 
-        let flag_type = match &self.flag {
-            ChallengeFlagConfig::Dynamic => "dynamic",
-            ChallengeFlagConfig::Static { .. } => "static",
-        };
+        let container_port = self.docker.as_ref().and_then(|d| d.port);
 
-        let container_port = self.docker.as_ref().map(|d| d.port);
-
-        // Challenge default recommendations (500m CPU / 256MiB / 100 pids) differ
-        // from the gamebox default (1000 / 512MiB / 100); fill inline when absent.
-        // Non-docker challenges get the same default (they have no resources anyway).
+        // Challenge default recommendations (500m CPU / 256MiB / 100 pids)
+        // differ from the gamebox default; fill inline when absent.
         let recommended_resources = self
             .docker
             .as_ref()
-            .and_then(|d| d.recommended_resources.clone())
-            .unwrap_or(RecommendedResources {
-                cpu_millis: 500,
-                memory_bytes: 268_435_456,
-                pids_limit: 100,
-            });
+            .map(|d| {
+                d.materialize_resources(crate::metadata::RecommendedResources::CHALLENGE_DEFAULTS)
+            })
+            .unwrap_or(crate::metadata::RecommendedResources::CHALLENGE_DEFAULTS);
 
         Ok(NormalizedChallengeSpec {
             name: self.name.clone(),
             version: self.version.clone(),
             author: self.author.clone(),
             category: self.category.clone(),
+            difficulty: self.difficulty,
+            tags: self.tags.clone(),
             description: self.description.clone(),
             safe_name,
-            flag_type: flag_type.to_string(),
+            flag_type: self.flag_type().map(str::to_string),
             container_port,
             recommended_resources,
             attachment: self.attachment.clone(),
@@ -352,6 +363,8 @@ name = "Easy Web 01"
 version = "1.0.0"
 author = "you@example.com"
 category = "web"
+difficulty = "easy"
+tags = ["web"]
 description = "hello"
 
 [flag]
@@ -363,33 +376,108 @@ port = 80
 
     #[test]
     fn parse_minimal_dynamic() {
-        let meta = ChallengeMeta::parse_and_validate(MINIMAL).unwrap();
+        let meta = ChallengeMeta::parse_and_validate(MINIMAL, "easy-web-01").unwrap();
         assert_eq!(meta.name, "Easy Web 01");
         assert_eq!(meta.version, "1.0.0");
-        assert_eq!(meta.resolved_safe_name().unwrap(), "easy-web-01");
-        assert!(matches!(meta.flag, ChallengeFlagConfig::Dynamic));
+        assert_eq!(meta.difficulty, Difficulty::Easy);
+        assert_eq!(meta.tags, vec!["web".to_string()]);
+        assert_eq!(
+            meta.resolved_safe_name("easy-web-01").unwrap(),
+            "easy-web-01"
+        );
+        assert!(matches!(meta.flag, Some(ChallengeFlagConfig::Dynamic)));
         let docker = meta.docker.as_ref().unwrap();
-        assert_eq!(docker.port, 80);
+        assert_eq!(docker.port, Some(80));
         assert!(docker.recommended_resources.is_none());
     }
 
     #[test]
-    fn parse_static_with_value() {
+    fn missing_flag_is_contract_valid() {
+        let toml = r#"
+name = "cookie"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "unknown"
+tags = []
+description = "d"
+"#;
+        let meta = ChallengeMeta::parse_and_validate(toml, "cookie").unwrap();
+        assert!(meta.flag.is_none());
+        assert!(meta.static_flag_value().is_none());
+        let norm = meta.normalize("cookie").unwrap();
+        assert!(norm.flag_type.is_none());
+    }
+
+    #[test]
+    fn missing_difficulty_or_tags_rejected() {
+        for missing in [
+            (
+                "difficulty",
+                "name = \"t\"\nversion = \"1.0.0\"\nauthor = \"a\"\ncategory = \"c\"\ntags = []\ndescription = \"d\"\n",
+            ),
+            (
+                "tags",
+                "name = \"t\"\nversion = \"1.0.0\"\nauthor = \"a\"\ncategory = \"c\"\ndifficulty = \"easy\"\ndescription = \"d\"\n",
+            ),
+        ] {
+            let err = ChallengeMeta::from_toml_str(missing.1).unwrap_err();
+            assert!(
+                matches!(err, ChallengeMetaError::Parse(_)),
+                "missing {} must be rejected: {err}",
+                missing.0
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_difficulty_rejected() {
         let toml = r#"
 name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "impossible"
+tags = []
+description = "d"
+"#;
+        assert!(ChallengeMeta::from_toml_str(toml).is_err());
+    }
+
+    #[test]
+    fn empty_description_rejected() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "easy"
+tags = []
+description = "   "
+"#;
+        let err = ChallengeMeta::parse_and_validate(toml, "t").unwrap_err();
+        assert!(matches!(err, ChallengeMetaError::EmptyDescription));
+    }
+
+    #[test]
+    fn static_with_value() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 
 [flag]
 type = "static"
 value = "flag{secret}"
 "#;
-        let meta = ChallengeMeta::parse_and_validate(toml).unwrap();
+        let meta = ChallengeMeta::parse_and_validate(toml, "t").unwrap();
         assert_eq!(meta.static_flag_value(), Some("flag{secret}"));
-        let norm = meta.normalize().unwrap();
-        assert_eq!(norm.flag_type, "static");
+        let norm = meta.normalize("t").unwrap();
+        assert_eq!(norm.flag_type.as_deref(), Some("static"));
     }
 
     #[test]
@@ -399,12 +487,14 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 
 [flag]
 type = "static"
 "#;
-        let err = ChallengeMeta::parse_and_validate(toml).unwrap_err();
+        let err = ChallengeMeta::parse_and_validate(toml, "t").unwrap_err();
         assert!(matches!(err, ChallengeMetaError::StaticFlagRequired));
     }
 
@@ -415,13 +505,15 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 
 [flag]
 type = "static"
 value = ""
 "#;
-        let err = ChallengeMeta::parse_and_validate(toml).unwrap_err();
+        let err = ChallengeMeta::parse_and_validate(toml, "t").unwrap_err();
         assert!(matches!(err, ChallengeMetaError::StaticFlagRequired));
     }
 
@@ -432,6 +524,8 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 
 [flag]
@@ -446,43 +540,14 @@ value = "flag{secret}"
     }
 
     #[test]
-    fn legacy_top_level_fields_rejected() {
-        for line in [
-            "image_tag = \"x:v1\"",
-            "env_var = \"FLAG\"",
-            "schema_version = 1",
-        ] {
-            let toml = format!(
-                r#"
-name = "t"
-version = "1.0.0"
-author = "a"
-category = "web"
-description = "d"
-{line}
-
-[flag]
-type = "dynamic"
-"#
-            );
-            let err = ChallengeMeta::from_toml_str(&toml).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    ChallengeMetaError::UnknownField(_) | ChallengeMetaError::Parse(_)
-                ),
-                "legacy field must be rejected: {line}"
-            );
-        }
-    }
-
-    #[test]
     fn legacy_flag_env_var_rejected() {
         let toml = r#"
 name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 
 [flag]
@@ -497,16 +562,32 @@ env_var = "FLAG"
     }
 
     #[test]
+    fn unknown_top_level_fields_are_ignored() {
+        // 公共 Content Contract 不拒绝无关扩展字段（与 content.py 一致）。
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "easy"
+tags = []
+description = "d"
+points = 500
+custom_extension = "x"
+"#;
+        ChallengeMeta::parse_and_validate(toml, "t").unwrap();
+    }
+
+    #[test]
     fn string_port_rejected() {
         let toml = r#"
 name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-
-[flag]
-type = "dynamic"
 
 [docker]
 port = "80/tcp"
@@ -522,16 +603,59 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-
-[flag]
-type = "dynamic"
 
 [docker]
 port = 0
 "#;
-        let err = ChallengeMeta::parse_and_validate(toml).unwrap_err();
+        let err = ChallengeMeta::parse_and_validate(toml, "t").unwrap_err();
         assert!(matches!(err, ChallengeMetaError::InvalidPort(0)));
+    }
+
+    #[test]
+    fn partial_recommended_resources_valid() {
+        let toml = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "easy"
+tags = []
+description = "d"
+
+[docker.recommended_resources]
+cpu_millis = 500
+"#;
+        let norm = ChallengeMeta::parse_and_validate(toml, "t")
+            .unwrap()
+            .normalize("t")
+            .unwrap();
+        assert_eq!(norm.recommended_resources.cpu_millis, 500);
+        assert_eq!(norm.recommended_resources.memory_bytes, 268_435_456);
+        assert_eq!(norm.recommended_resources.pids_limit, 100);
+    }
+
+    #[test]
+    fn safe_name_comes_from_content_id_not_name() {
+        let toml = r#"
+name = "琪露诺的完美数学教室"
+version = "1.0.0"
+author = "a"
+category = "misc"
+difficulty = "easy"
+tags = []
+description = "d"
+"#;
+        let meta = ChallengeMeta::parse_and_validate(toml, "Cirno's perfect math class").unwrap();
+        assert_eq!(
+            meta.resolved_safe_name("Cirno's perfect math class")
+                .unwrap(),
+            "cirnos-perfect-math-class"
+        );
+        // 从 name 派生会失败（纯中文）——证明没有走 name
+        assert!(meta.resolved_safe_name("题目").is_err());
     }
 
     #[test]
@@ -540,22 +664,17 @@ port = 0
             identity::derive_safe_name("Easy Web 01").as_deref(),
             Some("easy-web-01")
         );
-        assert_eq!(
-            identity::derive_safe_name("easy---web").as_deref(),
-            Some("easy-web")
-        );
-        // non-ASCII-only name without explicit safe_name → SafeNameRequired
+        // 非 ASCII-only content id 且无显式 safe_name → SafeNameRequired
         let toml = r#"
-name = "注入题目"
+name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-
-[flag]
-type = "dynamic"
 "#;
-        let err = ChallengeMeta::parse_and_validate(toml).unwrap_err();
+        let err = ChallengeMeta::parse_and_validate(toml, "注入题目").unwrap_err();
         assert!(matches!(err, ChallengeMetaError::SafeNameRequired));
     }
 
@@ -566,73 +685,63 @@ name = "注入题目"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 safe_name = "zhu-ru"
-
-[flag]
-type = "dynamic"
 "#;
-        let meta = ChallengeMeta::parse_and_validate(valid).unwrap();
-        assert_eq!(meta.resolved_safe_name().unwrap(), "zhu-ru");
+        let meta = ChallengeMeta::parse_and_validate(valid, "题目").unwrap();
+        assert_eq!(meta.resolved_safe_name("题目").unwrap(), "zhu-ru");
 
         let invalid = r#"
 name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 safe_name = "Easy Web"
-
-[flag]
-type = "dynamic"
 "#;
-        let err = ChallengeMeta::parse_and_validate(invalid).unwrap_err();
+        let err = ChallengeMeta::parse_and_validate(invalid, "t").unwrap_err();
         assert!(matches!(err, ChallengeMetaError::InvalidSafeName(_)));
     }
 
     #[test]
     fn version_rules() {
-        for v in ["1.0.0", "1.0.0-rc.1"] {
+        for v in ["1.0.0", "01.0.0", "12.34.56"] {
             let toml = format!(
                 r#"
 name = "t"
 version = "{v}"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-
-[flag]
-type = "dynamic"
 "#
             );
-            ChallengeMeta::parse_and_validate(&toml).unwrap();
+            ChallengeMeta::parse_and_validate(&toml, "t").unwrap();
         }
 
-        let build_meta = r#"
+        for v in ["1.0", "v1.0.0", "1.0.0-rc.1", "1.0.0+build.1", "abc"] {
+            let toml = format!(
+                r#"
 name = "t"
-version = "1.0.0+build.1"
+version = "{v}"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-
-[flag]
-type = "dynamic"
-"#;
-        let err = ChallengeMeta::parse_and_validate(build_meta).unwrap_err();
-        assert!(matches!(err, ChallengeMetaError::VersionBuildMetadata(_)));
-
-        let bad = r#"
-name = "t"
-version = "abc"
-author = "a"
-category = "web"
-description = "d"
-
-[flag]
-type = "dynamic"
-"#;
-        let err = ChallengeMeta::parse_and_validate(bad).unwrap_err();
-        assert!(matches!(err, ChallengeMetaError::InvalidVersion { .. }));
+"#
+            );
+            let err = ChallengeMeta::parse_and_validate(&toml, "t").unwrap_err();
+            assert!(
+                matches!(err, ChallengeMetaError::InvalidVersion(_)),
+                "version {v} must be rejected: {err}"
+            );
+        }
     }
 
     #[test]
@@ -642,13 +751,12 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 attachment = "attachment/src.zip"
-
-[flag]
-type = "dynamic"
 "#;
-        let meta = ChallengeMeta::parse_and_validate(ok).unwrap();
+        let meta = ChallengeMeta::parse_and_validate(ok, "t").unwrap();
         assert_eq!(meta.attachment.as_deref(), Some("attachment/src.zip"));
 
         for bad in ["../x", "/x", "src/x"] {
@@ -658,14 +766,13 @@ name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 attachment = "{bad}"
-
-[flag]
-type = "dynamic"
 "#
             );
-            let err = ChallengeMeta::parse_and_validate(&toml).unwrap_err();
+            let err = ChallengeMeta::parse_and_validate(&toml, "t").unwrap_err();
             assert!(
                 matches!(err, ChallengeMetaError::InvalidAttachmentPath(_, _)),
                 "attachment path must be rejected: {bad}"
@@ -675,36 +782,38 @@ type = "dynamic"
 
     #[test]
     fn normalize_fills_defaults() {
-        let meta = ChallengeMeta::parse_and_validate(MINIMAL).unwrap();
-        let norm = meta.normalize().unwrap();
+        let meta = ChallengeMeta::parse_and_validate(MINIMAL, "easy-web-01").unwrap();
+        let norm = meta.normalize("easy-web-01").unwrap();
         assert_eq!(norm.safe_name, "easy-web-01");
-        assert_eq!(norm.flag_type, "dynamic");
+        assert_eq!(norm.flag_type.as_deref(), Some("dynamic"));
         assert_eq!(norm.container_port, Some(80));
         assert_eq!(norm.recommended_resources.cpu_millis, 500);
         assert_eq!(norm.recommended_resources.memory_bytes, 268_435_456);
         assert_eq!(norm.recommended_resources.pids_limit, 100);
         assert!(norm.attachment.is_none());
+        assert_eq!(norm.difficulty, Difficulty::Easy);
+        assert_eq!(norm.tags, vec!["web".to_string()]);
     }
 
     #[test]
-    fn shared_artifact_image_ref() {
+    fn canonical_image_ref() {
         assert_eq!(
-            identity::build_artifact_image_ref(
+            identity::content_image_ref(
                 identity::ArtifactKind::Challenge,
                 "registry.example",
                 "easy-web",
                 "1.0.0"
             ),
-            "registry.example/challenges/easy-web:1.0.0"
+            "registry.example/easy-web:challenge-v1.0.0"
         );
         assert_eq!(
-            identity::build_artifact_image_ref(
+            identity::content_image_ref(
                 identity::ArtifactKind::GameBox,
                 "registry.example",
                 "easy-web",
                 "1.0.0"
             ),
-            "registry.example/gameboxes/easy-web:1.0.0"
+            "registry.example/easy-web:gamebox-v1.0.0"
         );
     }
 }

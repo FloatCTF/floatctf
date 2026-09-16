@@ -2,27 +2,30 @@
 
 use bollard::Docker;
 use fcmc::{
-    ArtifactKind, ChallengeMeta, ContainerRuntime, DockerContainerRuntime, GameBoxMeta,
-    NetworkSpec, RecommendedResources, build_artifact_image_ref,
+    ArtifactKind, CONTENT_IMAGE_NAMESPACE, ChallengeMeta, ContainerRuntime, DockerContainerRuntime,
+    GameBoxMeta, NetworkSpec, content_image_ref,
 };
 use std::path::Path;
 
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn docker_create_and_start_challenge() {
-    let content = std::fs::read_to_string(Path::new("tests/fixtures/challenge/meta.toml")).unwrap();
-    let cm = ChallengeMeta::parse_and_validate(&content).unwrap();
+    let dir = Path::new("tests/fixtures/challenges/test-challenge");
+    let content = std::fs::read_to_string(dir.join("meta.toml")).unwrap();
+    let cm = ChallengeMeta::parse_and_validate(&content, "test-challenge").unwrap();
     let docker = Docker::connect_with_local_defaults().unwrap();
     let rt = DockerContainerRuntime::new(docker.clone());
 
-    // Image ref is platform-resolved (not in meta): floatctf/challenges/<safe>:<version>.
-    let image_ref = build_artifact_image_ref(
+    // Image ref is platform-resolved (not in meta):
+    // floatctf/{safe_name}:challenge-v{version}.
+    let image_ref = content_image_ref(
         ArtifactKind::Challenge,
-        "floatctf",
-        &cm.resolved_safe_name().unwrap(),
+        CONTENT_IMAGE_NAMESPACE,
+        &cm.resolved_safe_name("test-challenge").unwrap(),
         &cm.version,
     );
     let docker_meta = cm.docker.as_ref().unwrap();
+    let docker_port = docker_meta.port.expect("fixture declares [docker].port");
 
     let flag = "flag{docker-test}";
     let spec = fcmc::ContainerSpec {
@@ -35,7 +38,7 @@ async fn docker_create_and_start_challenge() {
         fixed_ip: None,
         network_aliases: vec![],
         port_bindings: vec![fcmc::PortBinding {
-            container_port: format!("{}/tcp", docker_meta.port),
+            container_port: format!("{docker_port}/tcp"),
             host_ip: Some("0.0.0.0".into()),
             host_port: None,
         }],
@@ -82,28 +85,35 @@ async fn docker_create_network_and_container() {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn docker_gamebox_create_and_start() {
-    let content = std::fs::read_to_string(Path::new("tests/fixtures/gamebox/meta.toml")).unwrap();
-    let meta = GameBoxMeta::parse_and_validate(&content).unwrap();
+    let dir = Path::new("tests/fixtures/gameboxes/test-gamebox");
+    let content = std::fs::read_to_string(dir.join("meta.toml")).unwrap();
+    let meta = GameBoxMeta::parse_and_validate(&content, "test-gamebox").unwrap();
     let docker = Docker::connect_with_local_defaults().unwrap();
     let rt = DockerContainerRuntime::new(docker);
 
     // Image ref is platform-resolved (not in meta). Integration test uses a placeholder tag.
-    let image_ref = fcmc::build_gamebox_image_ref(
-        "floatctf",
-        &meta.resolved_safe_name().unwrap(),
+    let image_ref = content_image_ref(
+        ArtifactKind::GameBox,
+        CONTENT_IMAGE_NAMESPACE,
+        &meta.resolved_safe_name("test-gamebox").unwrap(),
         &meta.version,
     );
     let res = meta
-        .gamebox
-        .recommended_resources
-        .clone()
-        .unwrap_or_else(RecommendedResources::default);
+        .docker
+        .as_ref()
+        .map(|d| d.materialize_resources(fcmc::RecommendedResources::GAMEBOX_DEFAULTS))
+        .unwrap_or(fcmc::RecommendedResources::GAMEBOX_DEFAULTS);
+    let username = meta
+        .require_gamebox_section()
+        .expect("fixture declares [gamebox]")
+        .username
+        .clone();
 
     let spec = fcmc::ContainerSpec {
         name: "fcmc-test-gamebox".into(),
         image: image_ref,
         env: vec![
-            format!("GAMEBOX_USERNAME={}", meta.gamebox.username),
+            format!("GAMEBOX_USERNAME={username}"),
             "GAMEBOX_USERPASS=testpass".into(),
         ],
         labels: fcmc::awd_labels(
@@ -152,7 +162,7 @@ fn test_image() -> &'static str {
 
 /// test_g GameBox（php:apache 长驻进程，需 GAMEBOX_USERNAME/PASS）。
 fn gamebox_image() -> &'static str {
-    "floatctf/gameboxes/test-gg:1.0.2"
+    "floatctf/test-gg:gamebox-v1.0.2"
 }
 
 async fn ensure_test_image() {

@@ -1,0 +1,7 @@
+name = "Cirno's perfect math class"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "misc"
+difficulty = "easy"
+tags = []
+description = "attachment-only fixture: no src/Dockerfile"

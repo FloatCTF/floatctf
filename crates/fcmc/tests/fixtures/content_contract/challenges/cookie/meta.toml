@@ -1,0 +1,11 @@
+name = "cookie"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "web"
+difficulty = "unknown"
+tags = []
+description = "想成为管理员吗？也许你需要一个特殊的饼干！"
+
+[flag]
+type = "static"
+value = "flag{fixture-flag-must-not-leak}"

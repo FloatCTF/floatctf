@@ -2,6 +2,8 @@ name = "test-challenge"
 version = "1.0.0"
 author = "tester@example.com"
 category = "Web"
+difficulty = "easy"
+tags = ["web"]
 description = "A test challenge"
 
 [flag]

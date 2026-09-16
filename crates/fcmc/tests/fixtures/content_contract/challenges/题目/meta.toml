@@ -1,0 +1,12 @@
+name = "题目"
+version = "2.0.0"
+author = "dev@floatctf.local"
+category = "misc"
+difficulty = "medium"
+tags = []
+description = "Unicode id needs an explicit safe_name"
+safe_name = "challenge-001"
+
+[flag]
+type = "static"
+value = "flag{fixture-flag-must-not-leak}"

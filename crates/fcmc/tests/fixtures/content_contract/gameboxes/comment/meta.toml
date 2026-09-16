@@ -1,0 +1,10 @@
+name = "comment"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "misc"
+difficulty = "medium"
+tags = ["box"]
+description = "GameBox fixture"
+
+[docker]
+port = 8080

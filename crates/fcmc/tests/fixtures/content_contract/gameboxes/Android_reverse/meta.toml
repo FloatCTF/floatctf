@@ -1,0 +1,10 @@
+name = "Android_reverse"
+version = "1.0.0"
+author = "dev@floatctf.local"
+category = "reverse"
+difficulty = "easy"
+tags = []
+description = "gamebox sharing a safe_name with the challenge of the same id"
+
+[docker]
+port = 9000

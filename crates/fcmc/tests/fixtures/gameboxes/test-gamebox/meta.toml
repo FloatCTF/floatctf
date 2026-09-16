@@ -2,8 +2,18 @@ name = "test-gamebox"
 version = "1.0.0"
 author = "tester@example.com"
 category = "web"
+difficulty = "easy"
+tags = ["box"]
 description = "A test gamebox"
 safe_name = "test-gamebox"
+
+[docker]
+port = 80
+
+[docker.recommended_resources]
+cpu_millis = 1000
+memory_bytes = 536870912
+pids_limit = 100
 
 [gamebox]
 username = "ctf"
@@ -13,8 +23,3 @@ type = "http"
 port = 80
 path = "/"
 expected_status = 200
-
-[gamebox.recommended_resources]
-cpu_millis = 1000
-memory_bytes = 536870912
-pids_limit = 100

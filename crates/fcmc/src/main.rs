@@ -9,12 +9,18 @@ async fn main() -> anyhow::Result<()> {
     let args = fcmc::Args::parse();
 
     match args.command {
-        Commands::Check { path, runtime } => {
+        Commands::Check {
+            path,
+            format,
+            runtime,
+        } => {
             let dir = path.unwrap_or_else(|| ".".to_string());
             let dir = PathBuf::from(&dir);
 
-            // 按 meta.toml 内容自动识别包类型：含 [gamebox] 段按 GameBox 检查，否则按 Challenge。
-            let is_gamebox = matches!(detect_package_kind(&dir), GenFormat::Gamebox);
+            // 包类型：显式 --format > 路径 (challenges/<id> | gameboxes/<id>) >
+            // standalone 含 [gamebox] 段 > 回退 challenge。
+            let format = format.unwrap_or_else(|| detect_package_kind(&dir));
+            let is_gamebox = matches!(format, GenFormat::Gamebox);
 
             let result = if is_gamebox {
                 check::check_gamebox(&dir)?
@@ -62,12 +68,13 @@ async fn main() -> anyhow::Result<()> {
             output,
             format,
             template,
+            safe_name,
         } => match format {
             GenFormat::Challenge => {
-                generate::generate_challenge(&name, &output).await?;
+                generate::generate_challenge(&name, &output, safe_name.as_deref()).await?;
             }
             GenFormat::Gamebox => {
-                generate::generate_gamebox(&name, &output, template).await?;
+                generate::generate_gamebox(&name, &output, template, safe_name.as_deref()).await?;
             }
         },
         Commands::Build {
@@ -79,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
             let dir = path.unwrap_or_else(|| ".".to_string());
             let dir = PathBuf::from(&dir);
 
-            // 未显式指定 --format 时按 meta.toml 自动识别包类型。
+            // 未显式指定 --format 时按路径与 meta.toml 自动识别包类型。
             let format = format.unwrap_or_else(|| detect_package_kind(&dir));
 
             match format {
@@ -96,12 +103,38 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 按 meta.toml 内容自动识别包类型：含 `[gamebox]` 段按 GameBox，否则按 Challenge。
-/// 供 `check` 与未显式指定 `--format` 的 `build` 使用。
+/// 识别包类型（floatctf-content 的目录约定优先）：
+///
+/// 1. 用户显式 `--format`（调用方处理，不在此函数内）
+/// 2. 路径位于 `gameboxes/<id>` → GameBox
+/// 3. 路径位于 `challenges/<id>` → Challenge
+/// 4. standalone 包：meta.toml 存在 `[gamebox]` 段 → GameBox
+/// 5. 最后回退 → Challenge
+///
+/// 注意：官方 canonical GameBox **可以没有** `[gamebox]` 段，所以 standalone 包
+/// 若没写 `[gamebox]` 时需要显式 `--format gamebox`（或放进 `gameboxes/<id>`）。
 fn detect_package_kind(dir: &Path) -> GenFormat {
-    let is_gamebox = std::fs::read_to_string(dir.join("meta.toml"))
-        .map(|c| c.contains("[gamebox]"))
+    let resolved = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+
+    if let Some(parent) = resolved
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+    {
+        match parent {
+            "gameboxes" => return GenFormat::Gamebox,
+            "challenges" => return GenFormat::Challenge,
+            _ => {}
+        }
+    }
+
+    let is_gamebox = std::fs::read_to_string(resolved.join("meta.toml"))
+        .map(|raw| {
+            raw.parse::<toml::Table>()
+                .is_ok_and(|t| t.contains_key("gamebox"))
+        })
         .unwrap_or(false);
+
     if is_gamebox {
         GenFormat::Gamebox
     } else {

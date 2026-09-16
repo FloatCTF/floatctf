@@ -3,14 +3,14 @@
 //! 覆盖：从真实 GameBox 镜像导出 source_code_dir → 重打包 source.tar.gz 的端到端链路；
 //! 包结构 = `src/`（源码）+ 根 `patch.sh` 通用模板；临时容器只 create 不 start、
 //! 内容正确、根前缀剥除、临时容器移除；RustFS 上传 + digest 存储。
-//! 依赖本地镜像 `floatctf/gameboxes/test-gg:1.0.2`（test_g 示例包构建产物，
+//! 依赖本地镜像 `floatctf/test-g:gamebox-v1.0.3`（examples/test-g 构建产物，
 //! source_code_dir=/var/www/html）。无该镜像时跳过。
 
 use bollard::Docker;
 use fcmc::{ContainerRuntime, DockerContainerRuntime, ImageRuntime};
 
 fn gamebox_image() -> &'static str {
-    "floatctf/gameboxes/test-gg:1.0.2"
+    "floatctf/test-g:gamebox-v1.0.3"
 }
 
 async fn docker_or_skip() -> Option<DockerContainerRuntime> {

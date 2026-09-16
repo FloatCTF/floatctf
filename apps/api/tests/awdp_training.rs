@@ -15,8 +15,32 @@ use floatctf::modules::event::awdp::{
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
-const IMAGE_ID: &str = "sha256:e8e04fcb779cfbfb64980f5c2c1b29ad507f3a6760e38cb0126335ea7893e70b";
+const IMAGE_REF: &str = "floatctf/test-g:gamebox-v1.0.3";
+/// 本地 GameBox 镜像的真实 image id。
+///
+/// **不写死 digest**：镜像一旦重建（换 base image / 改 Dockerfile）id 就会变，
+/// 写死会让 LocalOnly pin 指向一个不存在的镜像，随后的 ensure_image 会去 pull
+/// 一个名为 `sha256` 的仓库并 404。这里在运行时从本地镜像解析，并缓存一次。
+static IMAGE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// 解析并缓存本地镜像 id；镜像不存在时 panic（调用方应先做 exists 检查以跳过）。
+async fn local_gamebox_image_id() -> String {
+    if let Some(id) = IMAGE_ID.get() {
+        return id.clone();
+    }
+    let docker = bollard::Docker::connect_with_local_defaults()
+        .expect("docker client required to resolve local gamebox image id");
+    let rt = fcmc::DockerContainerRuntime::new(docker);
+    let inspected = fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .unwrap_or_else(|e| panic!("inspect local image {IMAGE_REF}: {e}"));
+    assert!(
+        !inspected.image_id.is_empty(),
+        "local image {IMAGE_REF} has empty id"
+    );
+    let _ = IMAGE_ID.set(inspected.image_id.clone());
+    inspected.image_id
+}
 const JWT_SECRET: &[u8] = b"test-platform-secret-0123456789abcdef";
 
 fn db_url() -> String {
@@ -80,7 +104,7 @@ async fn seed_trainable_gamebox(db: &sea_orm::DatabaseConnection, tag: &str) -> 
         spec_digest: Set(Some("spec".into())),
         package_digest: Set(Some("pkg".into())),
         image_ref: Set(Some(IMAGE_REF.into())),
-        image_id: Set(Some(IMAGE_ID.into())),
+        image_id: Set(Some(local_gamebox_image_id().await)),
         image_repo_digest: Set(None),
         username: Set(Some("floatctf".into())),
         recommended_cpu_millis: Set(1000),

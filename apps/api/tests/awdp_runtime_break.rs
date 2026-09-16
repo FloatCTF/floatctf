@@ -3,7 +3,7 @@
 //! 覆盖（plan §47，run 中心化）：on-demand 启动 / healthcheck 端点发布 / 端点跨重启稳定 /
 //! flag 正确得分一次 / 重复 flag 不再得分 / 错误 flag 拒绝 / Team 共享实例。
 //!
-//! 前置：本地镜像 `floatctf/gameboxes/test-g:1.0.3`（examples/test-g v1.0.3，
+//! 前置：本地镜像 `floatctf/test-g:gamebox-v1.0.3`（examples/test-g v1.0.3，
 //! flag.php 提供 FLAG env）。无镜像或 DB 时跳过。
 
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
@@ -26,8 +26,32 @@ use floatctf::modules::event::awdp::{
 
 static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-const IMAGE_REF: &str = "floatctf/gameboxes/test-g:1.0.3";
-const IMAGE_ID: &str = "sha256:e8e04fcb779cfbfb64980f5c2c1b29ad507f3a6760e38cb0126335ea7893e70b";
+const IMAGE_REF: &str = "floatctf/test-g:gamebox-v1.0.3";
+/// 本地 GameBox 镜像的真实 image id。
+///
+/// **不写死 digest**：镜像一旦重建（换 base image / 改 Dockerfile）id 就会变，
+/// 写死会让 LocalOnly pin 指向一个不存在的镜像，随后的 ensure_image 会去 pull
+/// 一个名为 `sha256` 的仓库并 404。这里在运行时从本地镜像解析，并缓存一次。
+static IMAGE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// 解析并缓存本地镜像 id；镜像不存在时 panic（调用方应先做 exists 检查以跳过）。
+async fn local_gamebox_image_id() -> String {
+    if let Some(id) = IMAGE_ID.get() {
+        return id.clone();
+    }
+    let docker = bollard::Docker::connect_with_local_defaults()
+        .expect("docker client required to resolve local gamebox image id");
+    let rt = fcmc::DockerContainerRuntime::new(docker);
+    let inspected = fcmc::ImageRuntime::inspect_image(&rt, IMAGE_REF)
+        .await
+        .unwrap_or_else(|e| panic!("inspect local image {IMAGE_REF}: {e}"));
+    assert!(
+        !inspected.image_id.is_empty(),
+        "local image {IMAGE_REF} has empty id"
+    );
+    let _ = IMAGE_ID.set(inspected.image_id.clone());
+    inspected.image_id
+}
 const JWT_SECRET: &[u8] = b"test-platform-secret-0123456789abcdef";
 
 fn db_url() -> String {
@@ -200,7 +224,7 @@ async fn seed_awdp_gamebox(
         spec_digest: Set(Some("spec".into())),
         package_digest: Set(Some("pkg".into())),
         image_ref: Set(Some(IMAGE_REF.into())),
-        image_id: Set(Some(IMAGE_ID.into())),
+        image_id: Set(Some(local_gamebox_image_id().await)),
         image_repo_digest: Set(None),
         username: Set(Some("floatctf".into())),
         recommended_cpu_millis: Set(1000),
@@ -562,7 +586,7 @@ async fn individual_start_flag_break_and_idempotency() {
             spec_digest: Set(Some("spec".into())),
             package_digest: Set(Some("pkg".into())),
             image_ref: Set(Some(IMAGE_REF.into())),
-            image_id: Set(Some(IMAGE_ID.into())),
+            image_id: Set(Some(local_gamebox_image_id().await)),
             image_repo_digest: Set(None),
             username: Set(Some("floatctf".into())),
             recommended_cpu_millis: Set(1000),
@@ -820,7 +844,7 @@ async fn team_shares_instance_and_score() {
         spec_digest: Set(Some("spec".into())),
         package_digest: Set(Some("pkg".into())),
         image_ref: Set(Some(IMAGE_REF.into())),
-        image_id: Set(Some(IMAGE_ID.into())),
+        image_id: Set(Some(local_gamebox_image_id().await)),
         image_repo_digest: Set(None),
         username: Set(Some("floatctf".into())),
         recommended_cpu_millis: Set(1000),

@@ -19,15 +19,20 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use floatctf::modules::gamebox::package::{
-    discover_package_root, extract_package_zip, read_awdp_script, read_judge_script,
-    read_meta_toml, require_package_layout,
+    discover_package, discover_package_root, extract_package_zip, read_awdp_script,
+    read_judge_script, read_meta_toml, require_package_layout,
 };
+
+/// content id（floatctf-content 约定 = 包目录名）。
+const CONTENT_ID: &str = "manifest-it";
 
 const BASE_META: &str = r#"
 name = "manifest-it"
 version = "1.0.0"
 author = "it@example.com"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "manifest integration"
 
 [gamebox]
@@ -94,6 +99,43 @@ fn load_meta_from_zip(zip_path: &Path, extract_dir: &Path) -> String {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// content id：`<id>/meta.toml` 布局 → 目录名；zip 根直接铺 meta.toml → None
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn discover_package_reports_content_id_from_directory_name() {
+    // 根级 meta.toml（上面的 zip_package 形态）：没有可信的 content 目录名。
+    let root_level = tempfile::tempdir().unwrap();
+    write_package(root_level.path(), BASE_META, &[]);
+    let discovered = discover_package(root_level.path()).unwrap();
+    assert_eq!(discovered.content_id, None);
+
+    // `<id>/meta.toml`（floatctf-content 形态）：目录名即 content id。
+    let nested = tempfile::tempdir().unwrap();
+    let pkg = nested.path().join("Cirno's perfect math class");
+    write_package(&pkg, BASE_META, &[]);
+    let discovered = discover_package(nested.path()).unwrap();
+    assert_eq!(
+        discovered.content_id.as_deref(),
+        Some("Cirno's perfect math class")
+    );
+    assert_eq!(discovered.root, pkg);
+
+    // discovery 之后 require_package_layout / read_meta_toml 仍可用。
+    require_package_layout(&discovered.root).unwrap();
+    let meta = read_meta_toml(&discovered.root).unwrap();
+    let parsed =
+        fcmc::GameBoxMeta::parse_and_validate(&meta, discovered.content_id.as_deref().unwrap())
+            .unwrap();
+    assert_eq!(
+        parsed
+            .resolved_safe_name("Cirno's perfect math class")
+            .unwrap(),
+        "cirnos-perfect-math-class"
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // §77：no [awdp] —— 普通 GameBox 合法
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -113,10 +155,11 @@ fn no_awdp_section_is_valid_normal_gamebox() {
     zip_package(dir.path(), &zip_path);
 
     let meta = load_meta_from_zip(&zip_path, extract.path());
-    let parsed = fcmc::GameBoxMeta::parse_and_validate(&meta).expect("no-[awdp] manifest valid");
+    let parsed =
+        fcmc::GameBoxMeta::parse_and_validate(&meta, CONTENT_ID).expect("no-[awdp] manifest valid");
     assert!(parsed.awdp.is_none(), "[awdp] must be absent");
-    assert_eq!(parsed.gamebox.username, "ctf");
-    let norm = parsed.normalize().unwrap();
+    assert_eq!(parsed.gamebox.as_ref().unwrap().username, "ctf");
+    let norm = parsed.normalize(CONTENT_ID).unwrap();
     assert_eq!(norm.exploit_script, None);
     assert_eq!(norm.source_code_dir, None);
 
@@ -154,11 +197,12 @@ source_code_dir = "/var/www/html"
     zip_package(dir.path(), &zip_path);
 
     let meta = load_meta_from_zip(&zip_path, extract.path());
-    let parsed = fcmc::GameBoxMeta::parse_and_validate(&meta).expect("complete [awdp] valid");
+    let parsed =
+        fcmc::GameBoxMeta::parse_and_validate(&meta, CONTENT_ID).expect("complete [awdp] valid");
     let awdp = parsed.awdp.as_ref().unwrap();
     assert_eq!(awdp.exploit_script, "awdp/exploit.py");
     assert_eq!(awdp.source_code_dir, "/var/www/html");
-    let norm = parsed.normalize().unwrap();
+    let norm = parsed.normalize(CONTENT_ID).unwrap();
     assert_eq!(norm.exploit_script.as_deref(), Some("awdp/exploit.py"));
     assert_eq!(norm.source_code_dir.as_deref(), Some("/var/www/html"));
 
@@ -179,7 +223,7 @@ fn awdp_missing_source_code_dir_rejected() {
 exploit_script = "awdp/exploit.py"
 "#
     );
-    let err = fcmc::GameBoxMeta::parse_and_validate(&meta_toml).unwrap_err();
+    let err = fcmc::GameBoxMeta::parse_and_validate(&meta_toml, CONTENT_ID).unwrap_err();
     assert!(
         err.to_string().contains("source_code_dir") || err.to_string().contains("missing"),
         "missing source_code_dir must fail: {err}"
@@ -198,7 +242,7 @@ fn awdp_missing_exploit_script_rejected() {
 source_code_dir = "/var/www/html"
 "#
     );
-    let err = fcmc::GameBoxMeta::parse_and_validate(&meta_toml).unwrap_err();
+    let err = fcmc::GameBoxMeta::parse_and_validate(&meta_toml, CONTENT_ID).unwrap_err();
     assert!(
         err.to_string().contains("exploit_script") || err.to_string().contains("missing"),
         "missing exploit_script must fail: {err}"
@@ -219,7 +263,7 @@ exploit_script = "awdp/../escape.py"
 source_code_dir = "/var/www/html"
 "#
     );
-    let err = fcmc::GameBoxMeta::parse_and_validate(&t1).unwrap_err();
+    let err = fcmc::GameBoxMeta::parse_and_validate(&t1, CONTENT_ID).unwrap_err();
     assert!(
         err.to_string().contains("exploit") || err.to_string().contains("awdp"),
         "traversal exploit path must fail: {err}"
@@ -233,7 +277,7 @@ exploit_script = "scripts/exploit.py"
 source_code_dir = "/var/www/html"
 "#
     );
-    assert!(fcmc::GameBoxMeta::parse_and_validate(&t2).is_err());
+    assert!(fcmc::GameBoxMeta::parse_and_validate(&t2, CONTENT_ID).is_err());
 
     // source_code_dir 带 .. → 拒绝。
     let t3 = format!(
@@ -243,7 +287,7 @@ exploit_script = "awdp/exploit.py"
 source_code_dir = "/var/www/../html"
 "#
     );
-    let err = fcmc::GameBoxMeta::parse_and_validate(&t3).unwrap_err();
+    let err = fcmc::GameBoxMeta::parse_and_validate(&t3, CONTENT_ID).unwrap_err();
     assert!(
         err.to_string().contains("source_code_dir") || err.to_string().contains("awdp"),
         "traversal source dir must fail: {err}"
@@ -257,7 +301,7 @@ exploit_script = "awdp/exploit.py"
 source_code_dir = "var/www/html"
 "#
     );
-    assert!(fcmc::GameBoxMeta::parse_and_validate(&t4).is_err());
+    assert!(fcmc::GameBoxMeta::parse_and_validate(&t4, CONTENT_ID).is_err());
 
     // 绝对/越界 exploit 路径在读取层也被拒绝（read_package_file 纵深防御）。
     let dir = tempfile::tempdir().unwrap();
@@ -288,7 +332,7 @@ source_code_dir = "/var/www/html"
     write_package(dir.path(), &meta_toml, &[("src/index.php", "<?php")]);
 
     // manifest 本身解析通过（字段齐全）。
-    fcmc::GameBoxMeta::parse_and_validate(&meta_toml).expect("manifest ok");
+    fcmc::GameBoxMeta::parse_and_validate(&meta_toml, CONTENT_ID).expect("manifest ok");
 
     // 但 import 物化阶段读取脚本失败 → FILE_NOT_FOUND（[awdp] 缺文件 = fail）。
     let err = read_awdp_script(dir.path(), "awdp/exploit.py").unwrap_err();

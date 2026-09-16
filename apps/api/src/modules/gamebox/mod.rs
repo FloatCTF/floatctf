@@ -8,7 +8,6 @@
 
 pub mod error;
 pub mod healthcheck;
-pub mod identity;
 pub mod import;
 pub mod library;
 pub mod package;

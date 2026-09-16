@@ -31,6 +31,11 @@ pub fn discover_package_root(extract_root: &Path) -> GameboxResult<PathBuf> {
     package::discover_package_root(extract_root).map_err(map)
 }
 
+/// 定位包根 + content id（目录名；zip 根直接铺 meta.toml 时为 None）。
+pub fn discover_package(extract_root: &Path) -> GameboxResult<package::DiscoveredPackage> {
+    package::discover_package(extract_root).map_err(map)
+}
+
 /// 校验 `package_root` 下的必需包布局。
 pub fn require_package_layout(package_root: &Path) -> GameboxResult<()> {
     package::require_package_layout(package_root).map_err(map)
@@ -92,6 +97,8 @@ name = "TTT1"
 version = "1.0.0"
 author = "a@b.c"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
 safe_name = "ttt1"
 
@@ -144,24 +151,42 @@ username = "ctf"
     #[test]
     fn image_ref_helper_matches_fcmc() {
         assert_eq!(
-            fcmc::build_gamebox_image_ref("floatctf", "ttt1", "1.0.0"),
-            "floatctf/gameboxes/ttt1:1.0.0"
+            fcmc::content_image_ref(fcmc::ArtifactKind::GameBox, "floatctf", "ttt1", "1.0.0"),
+            "floatctf/ttt1:gamebox-v1.0.0"
         );
     }
 
     #[test]
-    fn manifest_rejects_legacy_fields() {
+    fn manifest_ignores_unknown_top_level_but_rejects_legacy_gamebox_fields() {
+        // 顶层未知字段按官方 contract 被忽略
         let toml = r#"
 name = "t"
 version = "1.0.0"
 author = "a"
 category = "web"
+difficulty = "easy"
+tags = []
 description = "d"
-image_tag = "x"
 
 [gamebox]
 username = "u"
 "#;
-        assert!(fcmc::GameBoxMeta::from_toml_str(toml).is_err());
+        fcmc::GameBoxMeta::from_toml_str(toml).unwrap();
+
+        // FCMC 拥有的 [gamebox] 段仍然严格
+        let legacy = r#"
+name = "t"
+version = "1.0.0"
+author = "a"
+category = "web"
+difficulty = "easy"
+tags = []
+description = "d"
+
+[gamebox]
+username = "u"
+break_points = 100
+"#;
+        assert!(fcmc::GameBoxMeta::from_toml_str(legacy).is_err());
     }
 }

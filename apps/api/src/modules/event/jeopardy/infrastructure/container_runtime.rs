@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn challenge_spec_preserves_runtime_contract() {
         let spec = ChallengeRuntimeSpec {
-            image_ref: "floatctf/challenges/web:1.0.0".into(),
+            image_ref: "floatctf/web:challenge-v1.0.0".into(),
             container_port: 8080,
             flag: Some("flag{test}".into()),
             cpu_millis: 500,
@@ -163,7 +163,7 @@ mod tests {
         let (container_spec, container_port) = challenge_container_spec(&spec, "instance-1");
 
         assert_eq!(container_spec.name, "instance-1");
-        assert_eq!(container_spec.image, "floatctf/challenges/web:1.0.0");
+        assert_eq!(container_spec.image, "floatctf/web:challenge-v1.0.0");
         assert_eq!(container_spec.env, vec!["FLAG=flag{test}"]);
         assert_eq!(container_port, "8080/tcp");
         assert_eq!(container_spec.port_bindings.len(), 1);
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn static_flag_injects_no_env() {
         let spec = ChallengeRuntimeSpec {
-            image_ref: "floatctf/challenges/static:1.0.0".into(),
+            image_ref: "floatctf/static:challenge-v1.0.0".into(),
             container_port: 80,
             flag: None,
             cpu_millis: 500,

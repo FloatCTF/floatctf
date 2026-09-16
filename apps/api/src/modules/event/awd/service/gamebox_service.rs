@@ -226,14 +226,14 @@ mod tests {
     #[test]
     fn pinned_image_prefers_repo_digest() {
         let g = dummy_gamebox(
-            Some("floatctf/gameboxes/ttt1@sha256:abc"),
+            Some("floatctf/ttt1@sha256:abc"),
             Some("sha256:local"),
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             BUILD_STATUS_READY,
         );
         assert_eq!(
             effective_image_ref_from_gamebox(&g).unwrap(),
-            "floatctf/gameboxes/ttt1@sha256:abc"
+            "floatctf/ttt1@sha256:abc"
         );
     }
 
@@ -242,7 +242,7 @@ mod tests {
         let g = dummy_gamebox(
             None,
             Some("sha256:localid"),
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             BUILD_STATUS_READY,
         );
         assert_eq!(
@@ -256,7 +256,7 @@ mod tests {
         let g = dummy_gamebox(
             None,
             None,
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             BUILD_STATUS_READY,
         );
         assert!(effective_image_ref_from_gamebox(&g).is_err());

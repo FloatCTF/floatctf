@@ -212,7 +212,7 @@ async fn seed_gamebox_with_revision(
         )
     } else if image_pin.starts_with("sha256:") {
         (
-            Some(format!("floatctf/gameboxes/{tag}:1.0.0")),
+            Some(format!("floatctf/{tag}:gamebox-v1.0.0")),
             Some(image_pin.to_string()),
             None,
         )

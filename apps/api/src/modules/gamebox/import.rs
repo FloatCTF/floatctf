@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use bollard::Docker;
 use fcmc::{
-    DockerContainerRuntime, ImageBuildRequest, ImageError, ImageRuntime, RegistryAuth,
-    build_gamebox_image_ref,
+    ArtifactKind, DockerContainerRuntime, ImageBuildRequest, ImageError, ImageRuntime,
+    RegistryAuth, content_image_ref,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, QueryFilter,
@@ -35,7 +35,7 @@ use crate::modules::gamebox::{
     GameboxError, GameboxResult,
     library::{create_gamebox_identity, find_gamebox_by_safe_name},
     package::{
-        compute_package_digest, compute_spec_digest, discover_package_root, extract_package_zip,
+        compute_package_digest, compute_spec_digest, discover_package, extract_package_zip,
         read_awdp_script, read_judge_script, read_meta_toml, require_package_layout,
         sanitize_build_error,
     },
@@ -76,14 +76,22 @@ pub async fn import_gamebox_package(
     let tmp = tempfile::tempdir()
         .map_err(|e| GameboxError::Internal(format!("tempdir for gamebox import: {e}")))?;
     extract_package_zip(zip_path, tmp.path())?;
-    let package_root = discover_package_root(tmp.path())?;
+    let discovered = discover_package(tmp.path())?;
+    let package_root = discovered.root;
     require_package_layout(&package_root)?;
 
+    // content id = 包目录名（floatctf-content 约定）；safe_name 缺省由它派生。
+    let content_id_known = discovered.content_id.is_some();
+    let content_id = discovered.content_id.unwrap_or_default();
+
     let source_toml = read_meta_toml(&package_root)?;
-    let meta = fcmc::GameBoxMeta::parse_and_validate(&source_toml).map_err(map_meta_error)?;
-    let safe_name = meta.resolved_safe_name().map_err(map_meta_error)?;
+    let meta = fcmc::GameBoxMeta::parse_and_validate(&source_toml, &content_id)
+        .map_err(|e| map_meta_error_for_package(e, content_id_known))?;
+    let safe_name = meta
+        .resolved_safe_name(&content_id)
+        .map_err(map_meta_error)?;
     let version = meta.version.clone();
-    let normalized = meta.normalize().map_err(map_meta_error)?;
+    let normalized = meta.normalize(&content_id).map_err(map_meta_error)?;
 
     // ── 2. 版本门禁（先比对，任何写操作之前）─────────────────────────────
     let existing = library::find_gamebox_by_safe_name(db, &safe_name)
@@ -127,7 +135,12 @@ pub async fn import_gamebox_package(
         (None, None)
     };
 
-    let image_ref = build_gamebox_image_ref(&registry.image_prefix, &safe_name, &version);
+    let image_ref = content_image_ref(
+        ArtifactKind::GameBox,
+        &registry.image_prefix,
+        &safe_name,
+        &version,
+    );
     let resources = &normalized.recommended_resources;
 
     // ── 3. 单版本 upsert：identity + building 状态（事务）──────────────────
@@ -160,7 +173,7 @@ pub async fn import_gamebox_package(
         am.image_ref = Set(Some(image_ref.clone()));
         am.image_id = Set(None);
         am.image_repo_digest = Set(None);
-        am.username = Set(Some(normalized.username.clone()));
+        am.username = Set(normalized.username.clone());
         am.recommended_cpu_millis = Set(resources.cpu_millis);
         am.recommended_memory_bytes = Set(resources.memory_bytes);
         am.recommended_pids_limit = Set(resources.pids_limit);
@@ -406,7 +419,9 @@ pub async fn scan_gameboxes_dir(
                 continue;
             }
         };
-        let meta = match fcmc::GameBoxMeta::parse_and_validate(&source_toml) {
+        // 扫描场景下目录名即 content id（mirror 目标目录）。
+        let content_id = dir_name.clone();
+        let meta = match fcmc::GameBoxMeta::parse_and_validate(&source_toml, &content_id) {
             Ok(m) => m,
             Err(e) => {
                 items.push(GameBoxScanItem {
@@ -419,7 +434,7 @@ pub async fn scan_gameboxes_dir(
                 continue;
             }
         };
-        let safe_name = match meta.resolved_safe_name() {
+        let safe_name = match meta.resolved_safe_name(&content_id) {
             Ok(s) => s,
             Err(e) => {
                 items.push(GameBoxScanItem {
@@ -433,7 +448,7 @@ pub async fn scan_gameboxes_dir(
             }
         };
         let version = meta.version.clone();
-        let normalized = match meta.normalize() {
+        let normalized = match meta.normalize(&content_id) {
             Ok(n) => n,
             Err(e) => {
                 items.push(GameBoxScanItem {
@@ -541,7 +556,12 @@ pub async fn scan_gameboxes_dir(
         };
 
         // 镜像存在性：image_ref tag 本地可 inspect → ready；否则 failed（提示重新 Import）
-        let image_ref = build_gamebox_image_ref(&registry.image_prefix, &safe_name, &version);
+        let image_ref = content_image_ref(
+            ArtifactKind::GameBox,
+            &registry.image_prefix,
+            &safe_name,
+            &version,
+        );
         let (image_id, build_status, build_error) =
             match ImageRuntime::inspect_image(&runtime, &image_ref).await {
                 Ok(insp) => (
@@ -654,7 +674,7 @@ pub async fn scan_gameboxes_dir(
             image_ref: Set(Some(image_ref.clone())),
             image_id: Set(image_id.clone()),
             image_repo_digest: Set(None),
-            username: Set(Some(normalized.username.clone())),
+            username: Set(normalized.username.clone()),
             recommended_cpu_millis: Set(resources.cpu_millis),
             recommended_memory_bytes: Set(resources.memory_bytes),
             recommended_pids_limit: Set(resources.pids_limit),
@@ -815,17 +835,29 @@ fn map_meta_error(e: fcmc::GameBoxMetaError) -> GameboxError {
     match &e {
         UnknownField(_) => GameboxError::Validation(format!("MANIFEST_UNKNOWN_FIELD: {e}")),
         Parse(_) => GameboxError::Validation(format!("INVALID_MANIFEST: {e}")),
-        EmptyName | EmptyAuthor | EmptyCategory | EmptyUsername => {
+        EmptyName | EmptyAuthor | EmptyCategory | EmptyDescription | EmptyUsername => {
             GameboxError::Validation(format!("INVALID_MANIFEST: {e}"))
         }
-        InvalidVersion { .. } | VersionBuildMetadata(_) => {
-            GameboxError::Validation(format!("INVALID_VERSION: {e}"))
-        }
+        InvalidVersion(_) => GameboxError::Validation(format!("INVALID_VERSION: {e}")),
         InvalidSafeName(_) => GameboxError::Validation(format!("INVALID_SAFE_NAME: {e}")),
         SafeNameRequired => GameboxError::Validation(format!("SAFE_NAME_REQUIRED: {e}")),
+        InvalidTag(_) => GameboxError::Validation(format!("INVALID_MANIFEST: {e}")),
         InvalidJudgePath(_, _) => GameboxError::Validation(format!("INVALID_JUDGE_PATH: {e}")),
         other => GameboxError::Validation(format!("INVALID_MANIFEST: {other}")),
     }
+}
+
+/// zip 根直接铺 `meta.toml`（没有 content 目录）时，`safe_name` 缺省无从派生。
+fn map_meta_error_for_package(e: fcmc::GameBoxMetaError, content_id_known: bool) -> GameboxError {
+    if !content_id_known && matches!(e, fcmc::GameBoxMetaError::SafeNameRequired) {
+        return GameboxError::Validation(
+            "SAFE_NAME_REQUIRED: package has no content directory (expected <content-id>/meta.toml \
+             or gameboxes/<content-id>/meta.toml), so safe_name cannot be derived from the content \
+             id; include the content directory in the zip or set safe_name explicitly in meta.toml"
+                .to_string(),
+        );
+    }
+    map_meta_error(e)
 }
 
 fn map_image_error(e: ImageError) -> GameboxError {
@@ -867,6 +899,12 @@ mod tests {
     #[test]
     fn pinned_prefers_repo_digest_unit() {
         // Covered in gamebox_service tests; keep import module lean.
-        let _ = build_gamebox_image_ref("floatctf", "x", "1.0.0");
+        let _ = content_image_ref(ArtifactKind::GameBox, "floatctf", "x", "1.0.0");
+    }
+
+    #[test]
+    fn map_meta_safe_name_required_hint_for_rootless_zip() {
+        let err = map_meta_error_for_package(fcmc::GameBoxMetaError::SafeNameRequired, false);
+        assert!(err.to_string().contains("no content directory"));
     }
 }

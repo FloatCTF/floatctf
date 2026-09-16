@@ -11,10 +11,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::entity::{awd_event_gameboxes, awdp_event_gameboxes, awdp_runs, gameboxes};
-use crate::modules::gamebox::{
-    GameboxError, GameboxResult,
-    identity::{slugify, validate_safe_name},
-};
+use crate::modules::gamebox::{GameboxError, GameboxResult};
 
 pub async fn find_gamebox_by_id<C: ConnectionTrait>(
     db: &C,
@@ -281,16 +278,14 @@ pub async fn update_gamebox_identity_checked(
 }
 
 /// safe_name 生成 + 去重（仅用于 admin 手动创建身份场景；import 不走 -2 后缀）。
+///
+/// 派生规则直接复用 fcmc（= floatctf-content `content.py::derive_safe_name`），
+/// 不在 API 侧维护第二套 safe_name contract。
 pub async fn unique_safe_name(
     db: &DatabaseConnection,
     display_name: &str,
 ) -> GameboxResult<String> {
-    let base = slugify(display_name);
-    let base = if base.is_empty() {
-        "gamebox".to_string()
-    } else {
-        base
-    };
+    let base = fcmc::derive_safe_name(display_name).unwrap_or_else(|| "gamebox".to_string());
     let mut candidate = base.clone();
     let mut i = 1;
     while find_gamebox_by_safe_name(db, &candidate)
@@ -309,7 +304,7 @@ pub async fn unique_safe_name(
 
 /// 校验显式 safe_name（不加自动后缀）。
 pub fn validate_identity_safe_name(safe_name: &str) -> GameboxResult<()> {
-    validate_safe_name(safe_name).map_err(GameboxError::Validation)
+    fcmc::validate_safe_name(safe_name).map_err(GameboxError::Validation)
 }
 
 /// 运行时镜像钉扎：
@@ -395,14 +390,14 @@ mod tests {
     #[test]
     fn pinned_image_prefers_repo_digest() {
         let g = dummy_gamebox(
-            Some("floatctf/gameboxes/ttt1@sha256:abc"),
+            Some("floatctf/ttt1@sha256:abc"),
             Some("sha256:local"),
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             crate::modules::gamebox::BUILD_STATUS_READY,
         );
         assert_eq!(
             effective_image_ref_from_gamebox(&g).unwrap(),
-            "floatctf/gameboxes/ttt1@sha256:abc"
+            "floatctf/ttt1@sha256:abc"
         );
     }
 
@@ -411,7 +406,7 @@ mod tests {
         let g = dummy_gamebox(
             None,
             Some("sha256:localid"),
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             crate::modules::gamebox::BUILD_STATUS_READY,
         );
         assert_eq!(
@@ -425,7 +420,7 @@ mod tests {
         let g = dummy_gamebox(
             None,
             None,
-            Some("floatctf/gameboxes/ttt1:1.0.0"),
+            Some("floatctf/ttt1:gamebox-v1.0.0"),
             crate::modules::gamebox::BUILD_STATUS_READY,
         );
         assert!(effective_image_ref_from_gamebox(&g).is_err());

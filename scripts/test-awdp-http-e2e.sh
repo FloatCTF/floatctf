@@ -70,7 +70,8 @@ API_PORT=""
 REDIS_PORT=""
 GAMEBOX_ID=""
 GAMEBOX_SAFE="awdp-e2e-$SAFE_SUFFIX"
-GAMEBOX_REPO="floatctf/gameboxes/$GAMEBOX_SAFE"
+# canonical ref: floatctf/<safe_name>:gamebox-v<version>（类型编码在 tag 中）
+GAMEBOX_REPO="floatctf/$GAMEBOX_SAFE"
 PRE_GAMEBOX_IMAGES="$(docker image ls --format '{{.Repository}}:{{.Tag}}' | awk -F: -v repo="$GAMEBOX_REPO" '$1 == repo { print }')"
 PRE_PRACTICE_JUDGE="$(docker ps -aq --filter name='^/fctf-awdp-practice-judge$' | head -n1)"
 EVENT_IDS=()
@@ -302,7 +303,17 @@ safe_name = "$GAMEBOX_SAFE"
 version = "1.0.0"
 author = "FloatCTF E2E"
 category = "web"
+difficulty = "unknown"
+tags = ["e2e"]
 description = "dependency-free AWDP real E2E GameBox"
+
+[docker]
+port = 8080
+
+[docker.recommended_resources]
+cpu_millis = 500
+memory_bytes = 134217728
+pids_limit = 64
 
 [gamebox]
 username = "floatctf"
@@ -319,11 +330,6 @@ check_script = "judge/check.py"
 [awdp]
 source_code_dir = "/app"
 exploit_script = "awdp/exploit.py"
-
-[gamebox.recommended_resources]
-cpu_millis = 500
-memory_bytes = 134217728
-pids_limit = 64
 EOF
 cat >"$PKG_DIR/src/Dockerfile" <<'EOF'
 FROM python:3.12-slim-bookworm

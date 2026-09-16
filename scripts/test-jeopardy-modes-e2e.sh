@@ -79,8 +79,10 @@ p.write_text('\n'.join(lines)+'\n')
 PY
 FLOATCTF_CONFIG="$CONFIG" apps/api/src/sql/migrate.sh apply >/dev/null
 migration_count="$(PGPASSWORD=postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -d "$DB_URL" -c 'SELECT count(*) FROM schema_migrations')"
-[[ "$migration_count" == "45" ]] || fail "expected 45 migrations, got $migration_count"
-pass "45 migrations applied"
+# 迁移数量随仓库增长，不要在脚本里写死：直接与 migrations 目录比对。
+EXPECTED_MIGRATIONS="$(find "$ROOT/apps/api/src/sql/migrations" -maxdepth 1 -name '*.sql' | wc -l)"
+[[ "$migration_count" == "$EXPECTED_MIGRATIONS" ]] || fail "expected $EXPECTED_MIGRATIONS migrations, got $migration_count"
+pass "$EXPECTED_MIGRATIONS migrations applied"
 
 log "build disposable managed challenge image"
 mkdir -p "$TMP/image"

@@ -55,7 +55,7 @@ exec > >(tee -a "$RESULT_LOG") 2> >(tee -a "$RESULT_LOG" >&2)
 API_PID=""
 API_PORT=""
 REDIS_PORT=""
-PRE_TEST_C_IMAGE="$(docker image inspect floatctf/challenges/test-c:1.0.0 --format '{{.Id}}' 2>/dev/null || true)"
+PRE_TEST_C_IMAGE="$(docker image inspect floatctf/test-c:challenge-v1.0.0 --format '{{.Id}}' 2>/dev/null || true)"
 PRE_PRACTICE_JUDGE="$(docker ps -aq --filter name='^/fctf-awdp-practice-judge$' | head -n1)"
 
 cleanup() {
@@ -79,7 +79,7 @@ cleanup() {
   docker rm -f "$REDIS_NAME" >/dev/null 2>&1 || true
   PGPASSWORD=postgres dropdb -h 127.0.0.1 -U postgres --if-exists --force "$DB_NAME" >/dev/null 2>&1 || true
   if [[ -z "$PRE_TEST_C_IMAGE" ]]; then
-    docker image rm -f floatctf/challenges/test-c:1.0.0 >/dev/null 2>&1 || true
+    docker image rm -f floatctf/test-c:challenge-v1.0.0 >/dev/null 2>&1 || true
   fi
   if ((rc == 0)); then
     rm -rf "$TMP"
@@ -240,7 +240,10 @@ s=s.replace('platform_internal_url = "http://127.0.0.1:9090"',f'platform_interna
 p.write_text(s)
 PY
 FLOATCTF_CONFIG="$CONFIG" apps/api/src/sql/migrate.sh apply >/dev/null
-[[ "$(sql 'SELECT count(*) FROM schema_migrations')" == "45" ]] || fail "expected 45 migrations"
+# 迁移数量随仓库增长，不要在脚本里写死：直接与 migrations 目录比对。
+EXPECTED_MIGRATIONS="$(find "$ROOT/apps/api/src/sql/migrations" -maxdepth 1 -name '*.sql' | wc -l)"
+[[ "$(sql 'SELECT count(*) FROM schema_migrations')" == "$EXPECTED_MIGRATIONS" ]] \
+    || fail "expected $EXPECTED_MIGRATIONS migrations"
 (cd apps/api && exec env FLOATCTF_CONFIG="$CONFIG" ../../target/debug/floatctf) >"$API_LOG" 2>&1 &
 API_PID=$!
 for _ in $(seq 1 180); do

@@ -18,6 +18,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # （sql/.. → src，sql/../.. → api，sql/../../.. → apps，sql/../../../.. → repo）。
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
+# ── Python 解释器解析（必须绕过 mise shim）────────────────────────────────────
+#
+# mise 的 `python3` shim 每次启动都会重新注入 mise.toml 的 [env]（其中包含
+# FLOATCTF_CONFIG），从而 **覆盖调用方显式传入的值**。这会让
+# `FLOATCTF_CONFIG=<test.toml> migrate.sh apply` 静默迁移错误的数据库
+# （实测：disposable test DB 被跳过，dev DB 被当成目标）。
+#
+# 因此这里解析出真实解释器路径：shim 自身能正确报告 sys.executable，只是顺带
+# 注入 env，故仅用它取路径，之后所有 python3 调用都走真实二进制。
+PYTHON="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
+if [ -z "$PYTHON" ] || [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || true)"
+fi
+[ -n "$PYTHON" ] || {
+    echo "python3 not found" >&2
+    exit 1
+}
+
 # 测试可覆盖内部路径（FLOATCTF_MIGRATIONS_DIR/FLOATCTF_MERGED_FILE 仅用于隔离测试，
 # 生产路径永远来自脚本自身位置）。
 MIGRATIONS_DIR="${FLOATCTF_MIGRATIONS_DIR:-$SCRIPT_DIR/migrations}"
@@ -123,7 +141,7 @@ sql_literal() {
 
 load_db_url() {
     local config_path
-    if ! config_path="$(python3 - "$PROJECT_ROOT" <<'PY'
+    if ! config_path="$("$PYTHON" - "$PROJECT_ROOT" <<'PY'
 import os, pathlib, sys
 root = sys.argv[1]
 value = os.getenv("FLOATCTF_CONFIG")
@@ -143,7 +161,7 @@ PY
         die "无法解析 FLOATCTF_CONFIG（见上方错误）"
     fi
 
-    if ! DB_URL="$(python3 - "$config_path" <<'PY'
+    if ! DB_URL="$("$PYTHON" - "$config_path" <<'PY'
 import sys, tomllib
 with open(sys.argv[1], "rb") as fh:
     cfg = tomllib.load(fh)

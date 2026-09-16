@@ -80,6 +80,8 @@ impl RealHttpClient {
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
+                // 只访问平台内网地址：不得继承宿主 HTTP 代理。
+                .no_proxy()
                 .build()
                 .expect("Failed to create HTTP client"),
         }

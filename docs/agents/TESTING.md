@@ -77,9 +77,24 @@ cargo test --test http_auth_contract      # API 契约（需 API 运行）
 cargo fmt --all && cargo check -p floatctf  # 提交前必跑
 ```
 
+## 宿主代理（HTTP_PROXY）与内网直连
+
+平台内部探针/评测都直连 Docker 内网（`10.42.x`、`10.43.x`）。宿主一旦设置
+`HTTP(S)_PROXY`（国内开发机为 cargo/docker 构建设代理很常见），`reqwest`
+默认会把内网请求转给代理由代理转发，而代理无法回连这些地址 → 健康检查恒失败、
+AWD/AWDP 评测测试大面积报 `ServiceDown`。
+
+- 测试入口 `scripts/test-rust.sh` 已自动导出 `NO_PROXY`（含 `10.0.0.0/8`、
+  `172.16.0.0/12`、`192.168.0.0/16`，reqwest 的 `NO_PROXY` 支持 CIDR）。
+- 业务代码里访问内网的 reqwest 客户端必须显式 `.no_proxy()`
+  （见 `modules/gamebox/healthcheck.rs` 与三个 judgeserver/flagserver）。
+- 回归用例：`cargo test -p floatctf --test gamebox_healthcheck_proxy`。
+
 ## 测试禁忌
 
-- ❌ 测试里设置/读取真实环境变量（历史教训：`SECRET`/`REALTIME_REDIS_URL` 的测试代码已全部移除）
+- ❌ 测试里设置/读取真实环境变量（历史教训：`SECRET`/`REALTIME_REDIS_URL` 的测试代码已全部移除）。
+  唯一例外：进程内注入**受控**变量、`Drop` 时还原、且该测试文件只含这一个测试，并自带对照断言
+  （例：`gamebox_healthcheck_proxy.rs` 注入「死代理」证明探针确实关闭了系统代理继承）。
 - ❌ 单元测试连真实数据库/Docker（属于集成测试层级，且要显式标出）
 - ❌ 只测 happy path 不加边界值（空输入、越界、非法状态）
 - ❌ 提交编译不过或测试失败的代码（保持 `cargo test -p floatctf` 绿色）

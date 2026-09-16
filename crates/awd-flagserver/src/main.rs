@@ -166,8 +166,10 @@ async fn main() -> std::io::Result<()> {
         .parse()
         .unwrap_or(3);
 
+    // 只访问平台内网地址（平台回调 / 容器内网）：不得继承宿主 HTTP 代理。
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
+        .no_proxy()
         .build()
         .expect("Failed to create HTTP client");
 

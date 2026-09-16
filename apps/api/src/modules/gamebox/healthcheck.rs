@@ -97,7 +97,10 @@ pub async fn probe_one(ip: &str, check: &AppHealthcheck, t: Duration) -> ProbeRe
             expected_status,
         } => {
             let url = format!("http://{ip}:{port}{path}");
-            let client = match reqwest::Client::builder().timeout(t).build() {
+            // 探针目标是 GameBox 容器内网 IP：必须显式关闭系统代理继承。
+            // reqwest 默认读取 HTTP(S)_PROXY/ALL_PROXY，宿主一旦设置代理，
+            // 请求会被送到代理（代理无法回连 Docker 内网），健康检查恒失败。
+            let client = match reqwest::Client::builder().timeout(t).no_proxy().build() {
                 Ok(c) => c,
                 Err(e) => {
                     return ProbeResult {

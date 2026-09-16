@@ -14,6 +14,15 @@ cd "$ROOT"
 
 log() { printf '[rust-test] %s\n' "$*" >&2; }
 
+# 平台内部网络（Docker 网桥 / 自定义网络）必须绕过宿主 HTTP(S) 代理：
+# 集成测试用 reqwest 直连容器内网 IP（10.42/10.43 等），而宿主代理无法回连这些
+# 地址，一旦宿主设置了 HTTP(S)_PROXY，健康检查/评测类测试会被误判为失败。
+# reqwest 的 NO_PROXY 支持 CIDR 网段，这里直接放行私有网段（保留调用方已有条目）。
+_EXISTING_NO_PROXY="${NO_PROXY:-${no_proxy:-}}"
+export NO_PROXY="127.0.0.1,localhost,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16${_EXISTING_NO_PROXY:+,$_EXISTING_NO_PROXY}"
+export no_proxy="$NO_PROXY"
+unset _EXISTING_NO_PROXY
+
 if [[ -n "${DATABASE_URL:-}" ]]; then
     log "DATABASE_URL supplied by caller; using caller-owned test database"
     exec cargo test --workspace "$@"

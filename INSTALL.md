@@ -92,7 +92,7 @@ floatctf-caddy
 生产 API service 使用以下约束：
 
 ```yaml
-user: "${FLOATCTF_UID}:${FLOATCTF_GID}"
+user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID}"
 cap_drop:
   - ALL
 security_opt:
@@ -120,7 +120,7 @@ API 容器不会挂载：
 宿主任意目录
 ```
 
-`floatctf` 系统用户仍会在宿主创建。它的 numeric UID/GID 被写进 `.env`，Compose 用这组数字运行 API 容器。这样 `/run/floatctf/helper*.sock` 的 `floatctf` group 权限无需在容器内创建同名组，也能正确生效。
+宿主侧只创建 `floatctf` **组**，不创建 `floatctf` 用户：API 在容器内以数值 UID/GID 运行（`FLOATCTF_UID` 默认 `65532`，与 API 镜像的 `USER 65532:65532` 对齐；`FLOATCTF_GID` 是 `floatctf` 组的 GID），这样 `/run/floatctf/helper*.sock` 的 `floatctf` group 权限无需在容器内创建同名组也能正确生效。
 
 ---
 
@@ -279,7 +279,7 @@ FLOATCTF_VERSION
 默认安装根：
 
 ```text
-/home/floatctf
+/var/lib/floatctf
 ```
 
 覆盖：
@@ -296,7 +296,8 @@ sudo env \
 ```text
 host precheck / initialization
         ↓
-create floatctf + floatctf-helper users/groups
+create floatctf group + floatctf-helper user
+（API 容器用数值 uid，不再创建 floatctf 用户）
         ↓
 floatctf-helper joins docker group
         ↓
@@ -326,7 +327,7 @@ enable units（不启动整个平台）
 默认布局：
 
 ```text
-/home/floatctf/
+/var/lib/floatctf/
 ├── image/
 │   └── api/
 │       ├── Dockerfile
@@ -337,18 +338,24 @@ enable units（不启动整个平台）
 │   └── caddy/Caddyfile
 ├── data/
 │   ├── postgres/
-│   ├── redis/
 │   ├── rustfs/
 │   ├── caddy/
 │   └── caddy-config/
 ├── logs/
-├── runtime/
-├── gameboxes/
+│   └── rustfs/
+├── runtime/                  # API work_dir；容器内同名 /var/lib/floatctf/runtime
+│   ├── challenges/           # CHALLENGES_DIR = {{WORK_DIR}}/challenges（Caddy 附件根挂到 /srv）
+│   ├── gameboxes/            # GAMEBOXES_DIR
+│   └── logs/api/             # API 日志（bootstrap 固定 WORK_DIR/logs/api）
 ├── compose.prod.yml
 ├── merged.sql
 ├── .env
 └── uninstall.sh
 ```
+
+说明：`data/`、`logs/`、`runtime/` 属主是 API 容器的数值身份 `65532:floatctf`；
+根目录本身是 `root:floatctf 0750`。Redis 的数据落在 Compose named volume
+`floatctf-redis-data`（不是 `data/redis/`）。
 
 helper 单独安装：
 
@@ -480,7 +487,7 @@ systemctl status floatctf-infra
 查看 Compose：
 
 ```bash
-cd /home/floatctf
+cd /var/lib/floatctf
 docker compose -f compose.prod.yml ps
 ```
 
@@ -489,15 +496,15 @@ docker compose -f compose.prod.yml ps
 ```bash
 journalctl -fu floatctf-helper floatctf-infra
 
-docker compose -f /home/floatctf/compose.prod.yml logs -f api
-docker compose -f /home/floatctf/compose.prod.yml logs -f caddy
-docker compose -f /home/floatctf/compose.prod.yml logs -f postgres redis rustfs
+docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api
+docker compose -f /var/lib/floatctf/compose.prod.yml logs -f caddy
+docker compose -f /var/lib/floatctf/compose.prod.yml logs -f postgres redis rustfs
 ```
 
 重启 API：
 
 ```bash
-docker compose -f /home/floatctf/compose.prod.yml restart api
+docker compose -f /var/lib/floatctf/compose.prod.yml restart api
 ```
 
 重启整个 Compose 应用面：
@@ -656,7 +663,7 @@ helper 会拒绝通过应用 API 修改普通宿主容器和普通 Docker 网络
 |---|---|---|
 | 主入口 | `mise run dev` | `systemctl start floatctf.target` |
 | API 载体 | native `watchexec + setpriv` | Docker Compose container |
-| API UID | 当前开发者 | 宿主 `floatctf` numeric UID |
+| API UID | 当前开发者 | `65532`（`$FLOATCTF_UID`，容器内数值身份） |
 | API docker group | 启动时显式丢弃 | 无 |
 | API capabilities | 全部丢弃 | `cap_drop=ALL` |
 | API NoNewPrivileges | yes | yes |
@@ -685,7 +692,7 @@ $FLOATCTF_HOME/uninstall.sh
 安全卸载：
 
 ```bash
-sudo /home/floatctf/uninstall.sh
+sudo /var/lib/floatctf/uninstall.sh
 ```
 
 它会停止并清理：
@@ -723,13 +730,13 @@ uninstall.sh
 永久删除：
 
 ```bash
-sudo /home/floatctf/uninstall.sh --purge
+sudo /var/lib/floatctf/uninstall.sh --purge
 ```
 
 非交互：
 
 ```bash
-sudo /home/floatctf/uninstall.sh --purge --yes
+sudo /var/lib/floatctf/uninstall.sh --purge --yes
 ```
 
 Purge 还删除：

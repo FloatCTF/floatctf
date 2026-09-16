@@ -24,7 +24,7 @@
 #   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
 #   FLOATCTF_MIGRATE_URL / FLOATCTF_VERSION
 # 安装根：
-#   FLOATCTF_HOME=/opt/floatctf   （默认 /home/floatctf）
+#   FLOATCTF_HOME=/opt/floatctf   （默认 /var/lib/floatctf）
 #
 # 注意：
 #   - 只做全新安装；已有数据的升级（forward-only 迁移）后续单独实现。
@@ -37,8 +37,13 @@
 set -Eeuo pipefail
 
 # ── 常量 ──────────────────────────────────────────────────────────────────────
-FLOATCTF_HOME="${FLOATCTF_HOME:-/home/floatctf}"
+# 安装根：API 容器的 work_dir 固定为 /var/lib/floatctf/runtime（镜像 WORKDIR 同名），
+# 宿主侧 ${FLOATCTF_HOME}/runtime 与它 identity 挂载，两边路径一致、无需换算。
+FLOATCTF_HOME="${FLOATCTF_HOME:-/var/lib/floatctf}"
+# 只需要组，不需要用户：API 在容器内以数值 "$FCTF_UID:$FCTF_GID" 运行，宿主上没有任何
+# 进程以 floatctf 用户身份运行；组同时是 helper socket（0750 root:floatctf）的访问凭据。
 FCTF_USER="floatctf"
+FCTF_UID="65532"
 FCTF_HELPER_USER="floatctf-helper"
 HELPER_INSTALL_PATH="/usr/local/libexec/floatctf-helper"
 
@@ -254,24 +259,16 @@ check_bridge_netfilter() {
     [ "$ok_bridge" = "1" ] && ok "br_netfilter + bridge-nf-call-{ip,ip6}tables=1"
 }
 
-ensure_service_users() {
+ensure_service_group() {
     # 显式创建共享组，避免依赖各发行版 useradd 的 USERGROUPS_ENAB 默认值。
+    # 不创建 floatctf 用户：容器以数值 uid/gid 运行，宿主上没有任何进程需要该身份
+    #（历史上宿主 systemd 以 User=floatctf 跑 API，那个用途已随容器化消失）。
     if ! getent group "$FCTF_USER" >/dev/null 2>&1; then
         groupadd --system "$FCTF_USER"
         ok "已创建系统组 $FCTF_USER"
     fi
 
-    if ! id "$FCTF_USER" >/dev/null 2>&1; then
-        useradd --system --gid "$FCTF_USER" --home-dir "$FLOATCTF_HOME" --shell /usr/sbin/nologin "$FCTF_USER"
-        ok "已创建系统用户 $FCTF_USER"
-    else
-        ok "服务用户 $FCTF_USER 存在"
-        if [ "$(id -gn "$FCTF_USER")" != "$FCTF_USER" ]; then
-            usermod -g "$FCTF_USER" "$FCTF_USER"
-            ok "已把 $FCTF_USER 主组收敛到 $FCTF_USER"
-        fi
-    fi
-
+    # helper 必须是真实账号：systemd 单元以 User=floatctf-helper 运行，且需要 docker 组。
     if ! id "$FCTF_HELPER_USER" >/dev/null 2>&1; then
         useradd --system --no-create-home --gid "$FCTF_USER" --shell /usr/sbin/nologin "$FCTF_HELPER_USER"
         ok "已创建宿主控制用户 $FCTF_HELPER_USER（主组 $FCTF_USER）"
@@ -284,10 +281,11 @@ ensure_service_users() {
     fi
 
     if getent group docker >/dev/null 2>&1; then
-        # 迁移旧安装：API 服务用户曾经可能被加入 docker 组。systemd 启动 User=floatctf
-        # 时会继承 NSS 中的 supplementary groups，因此必须显式移除，才能保证 API
-        # 无法绕过 helper 直连 /var/run/docker.sock。
-        if id -nG "$FCTF_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        # 历史清理：早期宿主 systemd 版本以 User=floatctf 运行 API，该账号可能被加入
+        # docker 组；systemd 会继承 NSS 里的 supplementary groups，那样 API 就能绕过
+        # helper 直连 /var/run/docker.sock。账号仍存在时收敛一次（已不存在则跳过）。
+        if id "$FCTF_USER" >/dev/null 2>&1 \
+            && id -nG "$FCTF_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
             if command -v gpasswd >/dev/null 2>&1; then
                 gpasswd -d "$FCTF_USER" docker >/dev/null
             elif command -v deluser >/dev/null 2>&1; then
@@ -298,7 +296,7 @@ ensure_service_users() {
                     | grep -vx "$FCTF_USER" | grep -vx docker | paste -sd, -)"
                 usermod -G "$keep_groups" "$FCTF_USER"
             fi
-            ok "已确保 $FCTF_USER 不属于 docker 组（API Docker 权限仅经 helper）"
+            ok "已确保历史账号 $FCTF_USER 不属于 docker 组（API Docker 权限仅经 helper）"
         fi
 
         if ! id -nG "$FCTF_HELPER_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
@@ -309,30 +307,35 @@ ensure_service_users() {
 }
 
 check_user_layout() {
-    ensure_service_users
+    ensure_service_group
 
-    # floatctf UID/GID 同时作为生产 API 容器的 numeric identity；不加入 docker 组。
+    # 宿主目录属主 = API 容器的 numeric identity "$FCTF_UID:$FCTF_GID"。
+    # FCTF_UID 与 API 镜像里的 USER 65532:65532 对齐（镜像自带 chown 65532）；
+    # 组仍是 floatctf，因为 helper socket 是 0750 root:floatctf。
+    local fctf_gid
+    fctf_gid="$(getent group "$FCTF_USER" | cut -d: -f3)"
+    [ -n "$fctf_gid" ] || die "无法解析 $FCTF_USER 组 GID"
 
     local d
-    for d in image/api web config/caddy data/postgres data/redis data/rustfs data/caddy data/caddy-config logs/api logs/rustfs runtime gameboxes; do
+    for d in image/api web config/caddy data/postgres data/rustfs data/caddy data/caddy-config logs/rustfs runtime; do
         mkdir -p "$FLOATCTF_HOME/$d"
     done
     chown root:"$FCTF_USER" "$FLOATCTF_HOME" >/dev/null 2>&1 || true
     chmod 750 "$FLOATCTF_HOME" >/dev/null 2>&1 || true
     local run_dir
-    for run_dir in data logs runtime gameboxes; do
-        chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/$run_dir" >/dev/null 2>&1 || true
+    for run_dir in data logs runtime; do
+        chown -R "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/$run_dir" >/dev/null 2>&1 || true
     done
     chown -R root:"$FCTF_USER" "$FLOATCTF_HOME/image" "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
     chmod 750 "$FLOATCTF_HOME/image" "$FLOATCTF_HOME/image/api" "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy" >/dev/null 2>&1 || true
     chmod 750 "$FLOATCTF_HOME/config" >/dev/null 2>&1 || true
-    ok "布局就绪: $FLOATCTF_HOME/{image/api,web,config/caddy,data/{postgres,rustfs,caddy,caddy-config},logs/{api,rustfs},runtime,gameboxes}"
+    ok "布局就绪: $FLOATCTF_HOME/{image/api,web,config/caddy,data/{postgres,rustfs,caddy,caddy-config},logs/rustfs,runtime}"
 
     if [ ! -f "$FLOATCTF_HOME/.initialized" ]; then
         printf 'FloatCTF host initialized at %s by %s\n' "$(date -Is 2>/dev/null || date)" "${SUDO_USER:-root}" \
             > "$FLOATCTF_HOME/.initialized"
-        chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/.initialized"
+        chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/.initialized"
         ok "完成标记已写入 $FLOATCTF_HOME/.initialized"
     else
         ok "检测到 $FLOATCTF_HOME/.initialized（主机已初始化）"
@@ -367,11 +370,11 @@ run_init() {
     check_ip_forward
     check_bridge_netfilter
     if [ "$mode" = "develop" ]; then
-        ensure_service_users
-        ok "开发宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/服务用户 就绪）"
+        ensure_service_group
+        ok "开发宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/服务组 就绪）"
     else
         check_user_layout
-        ok "生产宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/用户/布局 就绪）"
+        ok "生产宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/组/布局 就绪）"
     fi
 }
 
@@ -494,7 +497,7 @@ services:
         image: floatctf/api:${VERSION:?VERSION 必须在 .env 设置}
         container_name: floatctf-api
         restart: unless-stopped
-        user: "${FLOATCTF_UID:?FLOATCTF_UID 必须在 .env 设置}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"
+        user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"
         cap_drop:
             - ALL
         security_opt:
@@ -542,7 +545,10 @@ services:
         volumes:
             - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
             - ${FLOATCTF_HOME}/web:/srv/web:ro
-            - ${FLOATCTF_HOME}/runtime/challenges:/srv/challenges:ro
+            # 挂载 API 的 work_dir 根（宿主 ${FLOATCTF_HOME}/runtime == 容器
+            # /var/lib/floatctf/runtime）到 /srv；Caddyfile 里 root 是 /srv/challenges，
+            # 于是附件根恒等于 CHALLENGES_DIR（{{WORK_DIR}}/challenges），与 dev 同构。
+            - ${FLOATCTF_HOME}/runtime:/srv:ro
             - ${FLOATCTF_HOME}/data/caddy:/data
             - ${FLOATCTF_HOME}/data/caddy-config:/config
         depends_on:
@@ -819,25 +825,25 @@ write_uninstall() {
 #
 # FloatCTF uninstall (Phase 10.9) — 独立卸载脚本，可脱离源码签出运行.
 #
-# 本脚本安装到 /home/floatctf/uninstall.sh（由 scripts/install.sh 每次成功部署自动安装），
+# 本脚本安装到 $FCTF_ROOT/uninstall.sh（由 scripts/install.sh 每次成功部署自动安装），
 # 必须能在用户删除 Git 签出后独立工作：绝不依赖仓库相对路径 / scripts/install.sh /
 # 源码 / mise / cargo / pnpm / git / chore / docs。仅依赖宿主既有工具：
 #   systemctl, systemd, docker, docker compose, nft, iptables, ip, wg,
-#   usermod/userdel, rm/install/find/cp/trap。
+#   usermod/userdel/groupdel, rm/install/find/cp/trap。
 #
 # 两个模式：
-#   sudo /home/floatctf/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
+#   sudo $FCTF_ROOT/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
 #                                               （systemd、生产 Compose 容器/赛事资源、API image、
 #                                               web 资产），但保留可恢复状态：
 #                                               data/{postgres,rustfs,caddy,caddy-config}, config/, .env,
 #                                               runtime/, logs/, .initialized, 本卸载脚本。
 #                                               语义：deploy → safe uninstall → deploy 应恢复相同的
 #                                               应用数据与密钥（用户/赛事/数据仍在）。
-#   sudo /home/floatctf/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
+#   sudo $FCTF_ROOT/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
 #                                               （PG/RustFS 数据、config、secrets、runtime、
 #                                               日志、API image/build context、web、compose、systemd 单元、
-#                                               动态赛事资源、sysctl/modules 文件、floatctf 用户、
-#                                               /home/floatctf、本脚本自身）。需输入确认文本
+#                                               动态赛事资源、sysctl/modules 文件、helper 用户、
+#                                               安装根目录、本脚本自身）。需输入确认文本
 #                                               "PURGE FLOATCTF"（除非 --yes）。
 #
 # 共享宿主依赖永不卸载：Docker / docker compose / nftables 包 / wireguard-tools /
@@ -846,7 +852,9 @@ write_uninstall() {
 #
 set -Eeuo pipefail
 
-FCTF_ROOT="${FLOATCTF_HOME:-${FCTF_ROOT:-/home/floatctf}}"
+# 安装根：安装时 install.sh 用 sed 把 __FLOATCTF_HOME__ 固化为实际根；
+# 运行时仍可用环境变量 FLOATCTF_HOME 或 FCTF_ROOT 覆盖。
+FCTF_ROOT="${FLOATCTF_HOME:-${FCTF_ROOT:-__FLOATCTF_HOME__}}"
 FCTF_USER="floatctf"
 FCTF_HELPER_USER="floatctf-helper"
 HELPER_INSTALL_PATH="/usr/local/libexec/floatctf-helper"
@@ -858,7 +866,7 @@ die()  { printf '%s[FAIL]%s %s\n'  "$(tput setaf 1 2>/dev/null || true)" "$(tput
 
 # ── 根权限 ────────────────────────────────────────────────────────────────────
 require_root() {
-    [ "$(id -u)" -eq 0 ] || die "需要 root。请改用: sudo $FCTF_ROOT/uninstall.sh（或源码签出: sudo ./scripts/uninstall.sh）"
+    [ "$(id -u)" -eq 0 ] || die "需要 root。请改用: sudo $FCTF_ROOT/uninstall.sh"
 }
 
 # ── 工具可用性（宿主既有；缺失则报错，不尝试安装）──────────────────────────────
@@ -867,12 +875,12 @@ PURGE_YES=0
 SELF_TMP=""
 
 usage() {
-    cat <<'EOF'
+    cat <<EOF
 用法：
-  sudo /home/floatctf/uninstall.sh             安全卸载（保留 PG/RustFS 数据、config、secrets）
-  sudo /home/floatctf/uninstall.sh --purge     永久删除全部 FloatCTF 自有数据（需确认 PURGE FLOATCTF）
-  sudo /home/floatctf/uninstall.sh --purge --yes  跳过确认（仅限非交互 purge）
-  sudo /home/floatctf/uninstall.sh --help
+  sudo $FCTF_ROOT/uninstall.sh             安全卸载（保留 PG/RustFS 数据、config、secrets）
+  sudo $FCTF_ROOT/uninstall.sh --purge     永久删除全部 FloatCTF 自有数据（需确认 PURGE FLOATCTF）
+  sudo $FCTF_ROOT/uninstall.sh --purge --yes  跳过确认（仅限非交互 purge）
+  sudo $FCTF_ROOT/uninstall.sh --help
 EOF
 }
 
@@ -891,7 +899,7 @@ parse_args() {
     return 0
 }
 
-# ── 自删除安全（§18）：purge 会把 /home/floatctf（含本脚本）删掉，Bash 不能继续读
+# ── 自删除安全（§18）：purge 会把安装根（含本脚本）删掉，Bash 不能继续读
 #    已删除的自身文件。策略：把本脚本复制到 root 独有的 /tmp/floatctf-uninstall.<pid>.sh，
 #    然后 exec 该临时副本续跑（临时副本自身设置 EXIT trap 删除自己，不留特权脚本在 /tmp）。
 #    用环境变量 FCTF_UNINSTALL_CONT 标识内部续跑模式，避免无限递归。
@@ -1263,14 +1271,14 @@ purge_remove_sysctl_modules() {
     fi
     # 不自动 sysctl -w 关闭转发/br_netfilter：其他负载可能依赖；文档已说明此取舍。
     # 用 if 而非 `[ ... ] && ok`：removed=1 时后者返回非零，叠加 set -e 会在
-    # 删除家目录/用户之前就退出（purge 实际观察到用户与 /home/floatctf 残留）。
+    # 删除安装根/宿主身份之前就退出（历史 purge 曾观察到目录与账号残留）。
     if [ "$removed" = "0" ]; then
         ok "无 FloatCTF sysctl/modules 文件（或已不存在）"
     fi
 }
 
 purge_remove_user() {
-    info "── 移除 FloatCTF 服务用户 ──"
+    info "── 移除 FloatCTF 宿主身份（helper 用户 + 历史账号 + 组）──"
     if id "$FCTF_HELPER_USER" >/dev/null 2>&1; then
         userdel "$FCTF_HELPER_USER" 2>/dev/null \
             && ok "已移除用户 $FCTF_HELPER_USER" \
@@ -1279,21 +1287,24 @@ purge_remove_user() {
         ok "用户 $FCTF_HELPER_USER 不存在"
     fi
 
+    # v2 起安装器不再创建 floatctf 用户（容器用数值 uid，宿主不需要该身份）。
+    # 若存在，只可能是历史安装或 dev setup 残留：确认是 system 账号 + nologin +
+    # home 为安装根（或 v2 之前的默认根 /home/floatctf）才删除，避免误删同名账号。
     if id "$FCTF_USER" >/dev/null 2>&1; then
-        # 校验确为 FloatCTF 创建：家目录是该安装根、nologin、system 用户。
         local home shell
         home=$(getent passwd "$FCTF_USER" | cut -d: -f6)
         shell=$(getent passwd "$FCTF_USER" | cut -d: -f7)
-        if [ "$home" = "$FCTF_ROOT" ] && [ "$shell" = "/usr/sbin/nologin" ]; then
-            userdel -r "$FCTF_USER" 2>/dev/null && ok "已移除用户 $FCTF_USER" \
-                || { warn "userdel $FCTF_USER 失败（可能仍有进程占用 /home/floatctf/runtime）"; \
+        if { [ "$home" = "$FCTF_ROOT" ] || [ "$home" = "/home/floatctf" ]; } \
+            && [ "$shell" = "/usr/sbin/nologin" ]; then
+            userdel -r "$FCTF_USER" 2>/dev/null && ok "已移除历史用户 $FCTF_USER" \
+                || { warn "userdel $FCTF_USER 失败（可能仍有进程占用 $FCTF_ROOT/runtime）"; \
                      # 回退：仅移除配置但保留记录，避免误删
                      warn "保留用户记录；请确认无 floatctf 进程后重试 userdel -r floatctf"; }
         else
             warn "账户 $FCTF_USER 不匹配预期（home=$home shell=$shell），跳过删除"
         fi
     else
-        ok "用户 $FCTF_USER 不存在"
+        ok "用户 $FCTF_USER 不存在（v2 起不再创建）"
     fi
 
     if getent group "$FCTF_USER" >/dev/null 2>&1; then
@@ -1349,7 +1360,7 @@ main() {
     require_root
 
     if [ "$MODE" = "purge" ]; then
-        # 自删除安全：在删除 /home/floatctf（含自身）之前，把脚本复制到 /tmp 免责续跑。
+        # 自删除安全：在删除安装根（含自身）之前，把脚本复制到 /tmp 免责续跑。
         # 续跑模式里该函数只设置 EXIT trap 并返回；否则 exec 已替换当前进程（不返回）。
         run_purge_via_temp
         purge_run
@@ -1358,11 +1369,11 @@ main() {
     fi
 }
 
-# 兼容两种调用方式（本文件被安装到 /home/floatctf/uninstall.sh，或从源码 ./scripts/uninstall.sh）
+# 本文件由 install.sh 写出到 $FCTF_ROOT/uninstall.sh 后就地执行。
 main "$@"
 UNINSTALL_EOF
-    # 固化 FLOATCTF_HOME 实际路径（把占位 ${FLOATCTF_HOME} 与默认 /home/floatctf 都替换）。
-    sed -i "s|\${FLOATCTF_HOME}|$FLOATCTF_HOME|g" "$FLOATCTF_HOME/uninstall.sh"
+    # 固化安装根：把 __FLOATCTF_HOME__ 占位替换为实际路径（环境变量仍可覆盖）。
+    sed -i "s|__FLOATCTF_HOME__|$FLOATCTF_HOME|g" "$FLOATCTF_HOME/uninstall.sh"
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/uninstall.sh"
     chmod 0750 "$FLOATCTF_HOME/uninstall.sh"
     if ! bash -n "$FLOATCTF_HOME/uninstall.sh" 2>/dev/null; then
@@ -1424,12 +1435,14 @@ precheck() {
 
 prepare_env() {
     info "──── 部署：配置（.env + floatctf.toml + Caddyfile）────"
-    mkdir -p "$FLOATCTF_HOME/config/caddy" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" "$FLOATCTF_HOME/logs/api" "$FLOATCTF_HOME/logs/rustfs"
+    mkdir -p "$FLOATCTF_HOME/config/caddy" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" "$FLOATCTF_HOME/logs/rustfs"
     local site_address fctf_uid fctf_gid
     site_address=$(env_get SITE_ADDRESS "")
     [ -n "$site_address" ] || die "生产部署必须设置 SITE_ADDRESS（例如 ctf.example.com），并将该域名 DNS 指向本机"
-    fctf_uid="$(id -u "$FCTF_USER")"
-    fctf_gid="$(id -g "$FCTF_USER")"
+    # API 容器身份：uid 是常量（与镜像 USER 65532:65532 对齐），gid 取 floatctf 组的 GID。
+    fctf_uid="$FCTF_UID"
+    fctf_gid="$(getent group "$FCTF_USER" | cut -d: -f3)"
+    [ -n "$fctf_gid" ] || die "无法解析 $FCTF_USER 组 GID"
     if [ ! -f "$ENV_FILE" ]; then
         : > "$ENV_FILE"
         env_set POSTGRES_USER "${POSTGRES_USER:-postgres}"
@@ -1468,7 +1481,7 @@ prepare_env() {
     env_set FLOATCTF_GID "$fctf_gid"
     chown root:"$FCTF_USER" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
-    chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/data" "$FLOATCTF_HOME/logs" "$FLOATCTF_HOME/runtime" 2>/dev/null || true
+    chown -R "$fctf_uid":"$fctf_gid" "$FLOATCTF_HOME/data" "$FLOATCTF_HOME/logs" "$FLOATCTF_HOME/runtime" 2>/dev/null || true
 }
 
 render() { # template out
@@ -1502,7 +1515,7 @@ prepare_configs() {
     chmod 750 "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy"
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/caddy/Caddyfile"
     chmod 640 "$FLOATCTF_HOME/config/floatctf.toml" "$FLOATCTF_HOME/config/caddy/Caddyfile"
-    chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" 2>/dev/null || true
+    chown -R "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" 2>/dev/null || true
     ok "配置已写入（floatctf.toml + Caddyfile；证书状态持久化在 data/caddy）"
 }
 
@@ -1615,16 +1628,15 @@ validate_compose_config() {
 #   0644/0755（other 可读），组读把「宿主用户可读」从镜像默认行为升级为显式
 #   保证（未来 rustfs 收紧默认 mode 也不受影响）；容器写入 uid 不变，零迁移。
 # - postgres（uid 999）：数据目录归其所有（首次启动 initdb 写入）。
-# - redis（uid 999，dev bind mount）：同 postgres。
-# - caddy：容器以 root 运行，属主仅归 floatctf 便于管理（同生产 prepare_configs）。
+# - caddy：容器以 root 运行，属主仅归 API 身份便于管理（同生产 prepare_configs）。
 # install.sh 不启动容器，直接 chown 即可（不触碰运行中的容器）。
 fix_infra_ownership() {
     chown -R 10001:10001 "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
     chgrp -R "$FCTF_USER" "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
     chmod -R g+rX "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" 2>/dev/null || true
     find "$FLOATCTF_HOME/data/rustfs" "$FLOATCTF_HOME/logs/rustfs" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chown -R 999:999 "$FLOATCTF_HOME/data/postgres" "$FLOATCTF_HOME/data/redis" 2>/dev/null || true
-    chown -R "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" 2>/dev/null || true
+    chown -R 999:999 "$FLOATCTF_HOME/data/postgres" 2>/dev/null || true
+    chown -R "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/data/caddy" "$FLOATCTF_HOME/data/caddy-config" 2>/dev/null || true
 }
 
 install_systemd() {

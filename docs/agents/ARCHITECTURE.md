@@ -159,9 +159,9 @@ helper 对 Host RPC 做资源所有权校验：WireGuard interface 必须是 `fa
 
 ### 生产进程载体与 control network
 
-生产 API 已进入 `infra/compose/compose.prod.yml`，宿主没有 `floatctf-api.service`。Compose 内包括 API/PostgreSQL/Redis/RustFS/Caddy；systemd 只保留 `floatctf-helper.service` 与负责 Compose 生命周期的 `floatctf-infra.service`/`floatctf.target`。
+生产 API 已进入生产 Compose（`install.sh` 内嵌模板；安装后落在 `$FLOATCTF_HOME/compose.prod.yml`，默认根 `$FLOATCTF_HOME=/var/lib/floatctf`），宿主没有 `floatctf-api.service`。Compose 内包括 API/PostgreSQL/Redis/RustFS/Caddy；systemd 只保留 `floatctf-helper.service` 与负责 Compose 生命周期的 `floatctf-infra.service`/`floatctf.target`。
 
-API container 以宿主 `floatctf` numeric UID/GID 运行，`cap_drop=ALL`、`no-new-privileges`、read-only rootfs，只读挂载 `/run/floatctf`，不挂 `/var/run/docker.sock`。API 的 9090 不发布到宿主；Caddy 通过 Compose DNS `api:9090` 访问。
+API container 以数值 `65532:<floatctf GID>`（`.env` 的 `FLOATCTF_UID`/`FLOATCTF_GID`）运行——宿主不创建 `floatctf` 用户，只需要 `floatctf` 组（helper socket 权限）。`cap_drop=ALL`、`no-new-privileges`、read-only rootfs，只读挂载 `/run/floatctf`，不挂 `/var/run/docker.sock`。API 的 9090 不发布到宿主；Caddy 通过 Compose DNS `api:9090` 访问。
 
 AWD/AWDP 的 FlagServer/JudgeServer 通过 external internal network `fctf-platform-control` 回调 API：subnet `10.42.8.0/24`，API 固定 `10.42.8.2`，动态地址范围 `10.42.8.128/25`。GameBox 不加入该网络。`AwdStaticConfig.platform_internal_network` 为空时保持开发模式的“按赛事 infra gateway 派生 host”逻辑；生产设置该字段后使用固定 `platform_internal_url` 并把基础设施容器额外接入 control network。
 

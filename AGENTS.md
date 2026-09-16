@@ -60,5 +60,5 @@ cargo test -p floatctf <关键词>               # 跑指定单元测试
 - 开发库：`postgres://postgres:postgres@127.0.0.1:5432/floatctf_db`；fresh DB 直接 `migration apply`，开发启动不需要 `merged.sql`。
 - Redis：`redis://127.0.0.1:6379`；RustFS：`http://127.0.0.1:9000`；Caddy/DB/Redis/RustFS 开发端口均回环绑定。Redis 是 API 必需基础设施：正常开发/生产必须提供 `[redis].url` 且 bootstrap PING 成功；禁止重新引入“未配置 Redis 也能正常启动”的生产路径，in-memory/noop 仅限显式测试。
 - 配置：`apps/api/config/development.toml`，正常 `awd.network_runtime = "helper"`；`noop` 仅供测试/mock。
-- 生产：API/PostgreSQL/Redis/RustFS/Caddy 在 `infra/compose/compose.prod.yml`；API 不发布宿主 9090，通过 external internal `fctf-platform-control`（API `10.42.8.2`）接收 FlagServer/JudgeServer 回调。生产 TOML 使用 Compose DNS。
+- 生产：API/PostgreSQL/Redis/RustFS/Caddy 由生产 Compose 承载（模板内嵌在 `scripts/install.sh`，安装后为 `$FLOATCTF_HOME/compose.prod.yml`，默认根 `/var/lib/floatctf`）；API 不发布宿主 9090，通过 external internal `fctf-platform-control`（API `10.42.8.2`）接收 FlagServer/JudgeServer 回调。生产 TOML 使用 Compose DNS。宿主只创建 `floatctf` 组（不创建该用户），API 容器以数值 `65532:$FLOATCTF_GID` 运行。
 - 修改 `crates/floatctf-helper/` / `crates/helper-protocol/` 后重新执行 `mise run setup`，刷新 root-owned `/usr/local/libexec/floatctf-helper`。

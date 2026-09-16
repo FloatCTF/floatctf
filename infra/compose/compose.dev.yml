@@ -32,7 +32,7 @@ services:
 
     redis:
         container_name: floatctf-dev-redis
-        # 与生产 compose（infra/compose/compose.prod.yml）同构：同镜像、appendonly 持久化。
+        # 与生产 compose 同构（模板内嵌在 scripts/install.sh，安装后为 $FLOATCTF_HOME/compose.prod.yml）：
         # 供 API 的 realtime fan-out / 分布式限流 / 终端票据 / 定时器唤醒 / settings 缓存使用。
         image: redis:7-alpine
         ports:
@@ -57,7 +57,11 @@ services:
         ports:
             - "0.0.0.0:7780:80"
         volumes:
-            - ${PROJECT_ROOT}/app/api/challenges:/srv/challenges:ro
+            # 挂载 API 的工作目录（[server].work_dir = "../../app"）到 /srv。
+            # Caddyfile.dev 里 `root * /srv/challenges`，于是 Caddy 的附件根恒等于
+            # CHALLENGES_DIR（{{WORK_DIR}}/challenges）——与 prod 挂
+            # ${FLOATCTF_HOME}/runtime/challenges 同构，不再有第二处需要人工对齐的路径。
+            - ${PROJECT_ROOT}/app:/srv:ro
             - ${PROJECT_ROOT}/infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
             - floatctf-caddy-data:/data
             - floatctf-caddy-config:/config

@@ -4,7 +4,7 @@
 #
 # 目的：
 #   只清理"可再生"的源码/构建产物（Cargo target、Web dist、发布包、Python 字节码等），
-#   绝不触碰已部署的生产实例（/home/floatctf）或任何系统状态。
+#   绝不触碰已部署的生产实例（/var/lib/floatctf）或任何系统状态。
 #
 #   默认（无参数）：
 #     - target/                          Cargo 构建缓存（cargo build 可再生）
@@ -19,7 +19,7 @@
 #
 # 安全约束（铁律）：
 #   - 所有删除路径一律锚定在仓库根（由脚本路径稳健推导），绝不越出仓库。
-#   - 绝不触碰：/home/floatctf、systemd 单元、sysctl/modules 文件、Docker 生产容器/
+#   - 绝不触碰：/var/lib/floatctf、systemd 单元、sysctl/modules 文件、Docker 生产容器/
 #     网络、PostgreSQL/RustFS 数据、生产 config/secrets、nftables、WireGuard、主机路由。
 #   - 删除前打印将被移除的路径；幂等，重复运行安全。
 #
@@ -107,4 +107,4 @@ fi
 # ── 保险断言：默认模式下仓库内已无常见大体积再生产物 ───────────────────────────
 # （--all 额外清掉的 node_modules/app 不在默认断言内。）
 
-ok "clean 完成：仓库内可再生产物已清理，生产实例（/home/floatctf）与系统状态不受影响"
+ok "clean 完成：仓库内可再生产物已清理，生产实例（/var/lib/floatctf）与系统状态不受影响"

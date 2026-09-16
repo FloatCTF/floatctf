@@ -50,18 +50,21 @@ FloatCTF 自有文件（不污染系统默认配置）。
 
 ## 4. 运行账号
 
-- 系统用户 `floatctf`（`useradd --system --shell nologin`），UID 自动分配。
-- 加入 `docker` 组（`usermod -aG docker floatctf`）以操作容器。
-- `install.sh` 用 `runuser -u floatctf -- docker info` 验证组真实生效。
+- 系统组 `floatctf`（`groupadd --system`）：`/run/floatctf` 与两个 helper socket 的访问凭据。
+- 系统用户 `floatctf-helper`（`useradd --system --no-create-home`，主组 `floatctf`），加入 `docker` 组，
+  由 `floatctf-helper.service` 以 `CAP_NET_ADMIN` 运行；Docker 与宿主网络的权限只授予它。
+- **不创建 `floatctf` 用户**：API 在容器内以数值 `65532:<floatctf GID>` 运行，宿主上没有任何进程
+  以该身份运行（宿主历史上曾以 `User=floatctf` 跑 native API service，该用途已随容器化取消）。
 
-## 5. 目录布局（`/home/floatctf`）
+## 5. 目录布局（`/var/lib/floatctf`）
 
 ```
-bin/  web/  config/caddy/  data/{postgres,rustfs,caddy,caddy-config}  logs/{api,rustfs}  runtime/  gameboxes/
+web/  config/{floatctf.toml,caddy/}  data/{postgres,rustfs,caddy,caddy-config}  logs/rustfs/  runtime/{challenges,gameboxes,logs/api}
 ```
 
-`config/` 属 `root:floatctf`（含密钥）；运行数据属 `floatctf`；容器数据目录
-分别归容器 uid（postgres 999 / rustfs 10001）。
+`config/` 属 `root:floatctf`（含密钥）；运行数据（`data/`、`logs/`、`runtime/`）属
+API 容器的数值身份 `65532:floatctf`；容器数据目录分别归容器 uid（postgres 999 /
+rustfs 10001）。Redis 数据在 Compose named volume `floatctf-redis-data`。
 
 ## 6. 端口约定
 
@@ -72,18 +75,18 @@ bin/  web/  config/caddy/  data/{postgres,rustfs,caddy,caddy-config}  logs/{api,
 | RustFS | 9000/9001（回环） | 仅 `127.0.0.1` |
 | Caddy | 80/443 | host 网络直绑宿主端口；`SITE_ADDRESS` 自动 HTTPS |
 
-所有端口可经 `/home/floatctf/.env`（或环境变量）调整，`install.sh` 部署前检测冲突。
+所有端口可经 `/var/lib/floatctf/.env`（或环境变量）调整，`install.sh` 部署前检测冲突。
 
 ## 7. 迁移（porting）到另一台主机
 
 1. 新主机：`sudo env SITE_ADDRESS=ctf.example.com ./scripts/install.sh`（下载 release tarball + 建用户/布局/内核参数/权限 + 部署）。
 2. 数据迁移：`data/postgres/`、`data/rustfs/`、`data/caddy/` 与 `data/caddy-config/` 物理拷贝（原主机停容器后拷贝
-   最安全），或逻辑导出/导入。密钥如需延续，原样拷贝 `/home/floatctf/.env` 与
+   最安全），或逻辑导出/导入。密钥如需延续，原样拷贝 `/var/lib/floatctf/.env` 与
    `config/floatctf.toml`。
 
 ## 8. 故障排查锚点
 
-- `journalctl -u floatctf-api -f` —— API 启动/崩溃日志。
-- `docker compose -f /home/floatctf/compose.prod.yml ps` —— infra 健康状态。
+- `docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api` —— API 启动/崩溃日志。
+- `docker compose -f /var/lib/floatctf/compose.prod.yml ps` —— infra 健康状态。
 - `nft list table inet floatctf_awd` —— 赛事防火墙表（`managed-by=floatctf`）。
 - `docker network ls | grep fctf-awd` —— AWD 赛事子网。

@@ -140,13 +140,13 @@ sudo systemctl start floatctf.target
 systemctl status floatctf.target
 ```
 
-默认安装根为 `/home/floatctf`，可用 `FLOATCTF_HOME` 覆盖。安装器创建 `floatctf` 和 `floatctf-helper` 系统身份，用 release `floatctf` 二进制本地构建 `floatctf/api:<version>` runtime image，并以 `floatctf` 的 numeric UID/GID 运行 API 容器；helper 独占 Docker 与网络宿主权限。
+默认安装根为 `/var/lib/floatctf`，可用 `FLOATCTF_HOME` 覆盖。安装器只创建 `floatctf` **组**（辅助账号只有 `floatctf-helper`，供宿主控制面使用），用 release `floatctf` 二进制本地构建 `floatctf/api:<version>` runtime image，并以数值 `65532:<floatctf GID>` 运行 API 容器；helper 独占 Docker 与网络宿主权限。
 
 卸载：
 
 ```bash
-sudo /home/floatctf/uninstall.sh
-sudo /home/floatctf/uninstall.sh --purge
+sudo /var/lib/floatctf/uninstall.sh
+sudo /var/lib/floatctf/uninstall.sh --purge
 ```
 
 ## 发布渠道（crates.io / GitHub Release）
@@ -169,7 +169,7 @@ cd floatctf
 mise run setup
 ```
 
-`setup` 会准备固定工具链、Docker / WireGuard / nftables、系统用户和 `floatctf-helper`。首次加入 `docker` / `floatctf` 组后重新登录一次。
+`setup` 会准备固定工具链、Docker / WireGuard / nftables、`floatctf` 组和 `floatctf-helper` 账号（API 容器用数值 uid，不需要 `floatctf` 用户）。首次加入 `docker` / `floatctf` 组后重新登录一次。
 
 日常开发只运行：
 
@@ -351,7 +351,7 @@ mise run build
 | helper socket permission denied | 开发确认当前用户在 `floatctf` 组；生产确认 API numeric GID 与宿主 `floatctf` GID 一致 |
 | API 无法连接数据库 | 开发检查 `floatctf-dev-db`；生产检查 `docker compose ... ps postgres` 与 Compose DNS |
 | 开发 Caddy 502 | 确认 API 9090 / Vite 13000 已完成启动 |
-| 生产 Caddy 502 | `docker compose -f /home/floatctf/compose.prod.yml logs -f api caddy` |
+| 生产 Caddy 502 | `docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api caddy` |
 | 生产 HTTPS 失败 | 检查 `SITE_ADDRESS`、DNS、80/443 与 `floatctf-caddy` 日志 |
 
 ## 运维速查
@@ -364,11 +364,11 @@ sudo systemctl restart floatctf-helper
 sudo systemctl restart floatctf-infra
 journalctl -fu floatctf-helper floatctf-infra
 
-docker compose -f /home/floatctf/compose.prod.yml ps
-docker compose -f /home/floatctf/compose.prod.yml logs -f api caddy
+docker compose -f /var/lib/floatctf/compose.prod.yml ps
+docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api caddy
 
-sudo /home/floatctf/uninstall.sh
-sudo /home/floatctf/uninstall.sh --purge
+sudo /var/lib/floatctf/uninstall.sh
+sudo /var/lib/floatctf/uninstall.sh --purge
 ```
 
 ## AI 开发手册

@@ -40,6 +40,9 @@ function RouteComponent() {
 	const banner = useMsgBanner();
 
 	const challenge = challenge_data?.data;
+	// static / attachment-only 题目：没有容器，启动只是创建一个“无容器”的答题实例
+	// （flag 在服务端比对），因此不显示倒计时与 Destroy。
+	const isStatic = challenge?.container_port == null;
 	const challengeStatus = useReactive({
 		flag: "",
 		isRunning: false,
@@ -134,12 +137,14 @@ function RouteComponent() {
 			>
 				{challengeStatus.isRunning ? (
 					<div className="w-full flex flex-col gap-2 mb-4">
-						<RemainingTimer
-							destroy_at={challengeStatus.instance.destroy_at ?? ""}
-							onExpire={() => {
-								destroyInstance.mutate(challengeStatus.instance.id);
-							}}
-						/>
+						{!isStatic && (
+							<RemainingTimer
+								destroy_at={challengeStatus.instance.destroy_at ?? ""}
+								onExpire={() => {
+									destroyInstance.mutate(challengeStatus.instance.id);
+								}}
+							/>
+						)}
 
 						<div className="flex gap-2">
 							<TextInput
@@ -150,14 +155,16 @@ function RouteComponent() {
 								}}
 								placeholder="flag{}"
 							/>
-							<Button
-								variant="danger"
-								onClick={() => {
-									destroyInstance.mutate(challengeStatus.instance.id);
-								}}
-							>
-								Destroy
-							</Button>
+							{!isStatic && (
+								<Button
+									variant="danger"
+									onClick={() => {
+										destroyInstance.mutate(challengeStatus.instance.id);
+									}}
+								>
+									Destroy
+								</Button>
+							)}
 
 							<Button
 								variant="primary"
@@ -181,7 +188,7 @@ function RouteComponent() {
 							mutationInstance.mutate(id);
 						}}
 					>
-						Launch
+						{isStatic ? "Start" : "Launch"}
 					</Button>
 				)}
 			</div>

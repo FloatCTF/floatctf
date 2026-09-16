@@ -179,6 +179,9 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 		select: (data) => data.data,
 	});
 
+	// static / attachment-only 题目：没有容器，启动只是创建无容器答题实例（flag 服务端比对）。
+	const isStatic = challenge?.container_port == null;
+
 	const challengeStatus = useReactive({
 		isRunning: false,
 		instance: {} as Instances,
@@ -272,13 +275,15 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 					)}
 					{challengeStatus.isRunning ? (
 						<div className="w-full flex flex-col gap-2 mb-4">
-							<RemainingTimer
-								destroy_at={challengeStatus.instance.destroy_at ?? ""}
-								onExpire={() => {
-									refetch_instance({ cancelRefetch: true });
-									destroyInstance.mutate(challengeStatus.instance.id);
-								}}
-							/>
+							{!isStatic && (
+								<RemainingTimer
+									destroy_at={challengeStatus.instance.destroy_at ?? ""}
+									onExpire={() => {
+										refetch_instance({ cancelRefetch: true });
+										destroyInstance.mutate(challengeStatus.instance.id);
+									}}
+								/>
+							)}
 
 							<div className="flex gap-2">
 								<TextInput
@@ -289,14 +294,16 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 									}}
 									placeholder="flag{}"
 								/>
-								<Button
-									variant="danger"
-									onClick={() => {
-										destroyInstance.mutate(challengeStatus.instance.id);
-									}}
-								>
-									Destroy
-								</Button>
+								{!isStatic && (
+									<Button
+										variant="danger"
+										onClick={() => {
+											destroyInstance.mutate(challengeStatus.instance.id);
+										}}
+									>
+										Destroy
+									</Button>
+								)}
 
 								<Button
 									variant="primary"
@@ -316,7 +323,7 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 							variant="primary"
 							onClick={() => mutationInstance.mutate(id)}
 						>
-							Launch
+							{isStatic ? "Start" : "Launch"}
 						</Button>
 					)}
 				</div>

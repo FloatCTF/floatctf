@@ -3,6 +3,7 @@ import {
 	Button,
 	ButtonGroup,
 	Dialog,
+	Label,
 	Stack,
 	TextInput,
 	ToggleSwitch,
@@ -360,6 +361,8 @@ export type ChallengeCheckResult = {
 	is_ok: boolean;
 	docker_image: boolean;
 	attachment: boolean;
+	/** static / attachment-only 题目（无 src/Dockerfile）：没有镜像，无需 Build。 */
+	static_content: boolean;
 };
 export type BuildChallengeResult = {
 	challenge_name: string;
@@ -510,11 +513,29 @@ export function CheckButton({
 			adminApi.challenges.buildChallenges(challenge_id_list),
 		onSuccess: (data) => {
 			setBuilding(false);
-			banner.showBanner(
-				"success",
-				data.data?.map((r) => r.message).join("\n") ?? "",
-			);
+			const results = data.data ?? [];
+			const failed = results.filter((r) => !r.is_ok);
+			const empty = results.length === 0;
+			if (failed.length > 0) {
+				// is_ok=false 必须报错，不能画成成功（否则点击 Build 像"没反应"）
+				banner.showBanner(
+					"critical",
+					failed.map((r) => `${r.challenge_name}: ${r.message}`).join("\n"),
+				);
+			} else if (empty) {
+				// /build 只对 build_status=ready 的题目生效；没有可构建项必须说明原因
+				banner.showBanner(
+					"warning",
+					"没有可构建的镜像：请先 Import 题目包，并确认 build_status 为 ready（否则请查看 build_error）",
+				);
+			} else {
+				banner.showBanner(
+					"success",
+					results.map((r) => r.message).join("\n") || "ok",
+				);
+			}
 			queryClient.invalidateQueries({ queryKey: ["ChallengeCheck"] });
+			queryClient.invalidateQueries({ queryKey: ["Challenges"] });
 		},
 		onError: (e) => {
 			setBuilding(false);
@@ -535,6 +556,14 @@ export function CheckButton({
 				header: "Docker Image",
 				field: "docker_image",
 				renderCell: (row: ChallengeCheckResult) => {
+					// static / attachment-only 题目没有镜像：不显示 Build（永远无法构建）
+					if (row.static_content) {
+						return (
+							<Label size="small" variant="secondary">
+								static
+							</Label>
+						);
+					}
 					return (
 						<span>
 							{row.docker_image ? (

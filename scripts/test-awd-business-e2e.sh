@@ -5,6 +5,11 @@ set -Eeuo pipefail
 # Explicitly run on a prepared Linux AWD development host. It uses an isolated
 # PostgreSQL DB, Redis container and API port, but the real system helper,
 # Docker Engine, WireGuard and nftables.
+#
+# Scenario selection via AWD_E2E_SCENARIO (default baseline):
+#   baseline  — 2 rounds x 30s, zero hardening: full competition + exact score ledger
+#   hardening — 2 rounds x 30s with 40s hardening: hardening gate + pause/resume boundaries
+#   reset     — 1 round x 90s: GameBox reset (free/charged) + ownership/pause/settlement boundaries
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -103,6 +108,15 @@ API_LOG="$TMP/api.log"
 RESULT_LOG="$TMP/result.log"
 WORK_DIR="$TMP/work"
 mkdir -p "$WORK_DIR"
+
+SCENARIO="${AWD_E2E_SCENARIO:-baseline}"
+case "$SCENARIO" in
+    baseline) ROUND_COUNT=2; ROUND_SECS=30; EVENT_SECS=60 ;;
+    hardening) ROUND_COUNT=2; ROUND_SECS=30; EVENT_SECS=100 ;;
+    reset) ROUND_COUNT=1; ROUND_SECS=90; EVENT_SECS=90 ;;
+    *) printf 'unknown AWD_E2E_SCENARIO: %s (baseline|hardening|reset)\n' "$SCENARIO" >&2; exit 2 ;;
+esac
+
 exec > >(tee -a "$RESULT_LOG") 2> >(tee -a "$RESULT_LOG" >&2)
 
 API_PID="" API_PORT="" REDIS_PORT="" EVENT_ID="" NETWORK_NAME="" WG_INTERFACE=""
@@ -198,6 +212,18 @@ wait_player_round() {
         sleep 0.25
     done
     printf 'round %s did not become active; last=%s\n' "$round" "$payload" >&2
+    return 1
+}
+
+wait_player_phase() {
+    local token=$1 phase=$2 timeout=${3:-30} payload=""
+    local deadline=$((SECONDS + timeout))
+    while (( SECONDS < deadline )); do
+        payload="$(api_ok GET "/api/events/$EVENT_ID/awd/status" "$token" 2>/dev/null || true)"
+        if [[ -n "$payload" ]] && [[ "$(json_get data.phase <<<"$payload")" == "$phase" ]]; then return 0; fi
+        sleep 0.25
+    done
+    printf 'phase %s did not become active; last=%s\n' "$phase" "$payload" >&2
     return 1
 }
 
@@ -319,10 +345,10 @@ from datetime import datetime, timezone, timedelta
 print((datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat(timespec='seconds'))
 PY
 )"
-END_TIME="$(python3 - "$START_TIME" <<'PY'
+END_TIME="$(python3 - "$START_TIME" "$EVENT_SECS" <<'PY'
 from datetime import datetime, timedelta
 import sys
-print((datetime.fromisoformat(sys.argv[1])+timedelta(seconds=60)).isoformat(timespec='seconds'))
+print((datetime.fromisoformat(sys.argv[1])+timedelta(seconds=int(sys.argv[2]))).isoformat(timespec='seconds'))
 PY
 )"
 
@@ -338,10 +364,12 @@ EVENT_ID="$(json_get data.id <<<"$CREATE_EVENT")"
 [[ "$EVENT_ID" =~ ^[0-9a-f-]{36}$ ]] || fail "invalid event id"
 pass "event created: $EVENT_ID"
 
-log "configure 2 rounds x 30 seconds"
-AWD_CONFIG="$(python3 - "$EVENT_ID" <<'PYJSON'
+# Judge 超时/宽限刻意放宽（10s/5s）：宿主机负载较高时 JudgeServer 认领任务可能晚于
+# 批次截止时间，过窄的窗口会让 round 结算随机退化为 judge_error（无罚分）。
+log "configure $ROUND_COUNT round(s) x ${ROUND_SECS}s (scenario=$SCENARIO)"
+AWD_CONFIG="$(python3 - "$EVENT_ID" "$ROUND_COUNT" "$ROUND_SECS" <<'PYJSON'
 import json,sys
-print(json.dumps({"event_id":sys.argv[1],"round_count":2,"round_duration_secs":30,"initial_score":1000,"free_reset_count":1,"extra_reset_penalty":50,"judge_max_concurrency":4,"judge_default_timeout_secs":3,"judge_retry_interval_secs":1,"judge_grace_period_secs":2,"archive_retention_hours":1},separators=(",",":")))
+print(json.dumps({"event_id":sys.argv[1],"round_count":int(sys.argv[2]),"round_duration_secs":int(sys.argv[3]),"initial_score":1000,"free_reset_count":1,"extra_reset_penalty":50,"judge_max_concurrency":4,"judge_default_timeout_secs":10,"judge_retry_interval_secs":1,"judge_grace_period_secs":5,"archive_retention_hours":1},separators=(",",":")))
 PYJSON
 )"
 api_ok POST /api/admin/events/awd "$ADMIN_TOKEN" "$AWD_CONFIG" >/dev/null
@@ -427,12 +455,40 @@ PRECHECK="$(sql "SELECT status::text FROM awd_precheck_runs WHERE event_id='$EVE
 [[ "$PRECHECK" == "passed" ]] || fail "precheck row not passed: $PRECHECK"
 pass "precheck passed; event verified"
 
-log "manual start; 60s event duration minus 2x30s rounds means zero hardening"
+log "manual start; ${EVENT_SECS}s event duration minus ${ROUND_COUNT}x${ROUND_SECS}s rounds"
 api_ok POST "/api/admin/events/$EVENT_ID/awd/start" "$ADMIN_TOKEN" >/dev/null
-wait_player_round "${TOKENS[redcap]}" 1 20
-[[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "1000" ]] || fail "Red initial score != 1000"
-[[ "$(score_of "${TOKENS[bluecap]}" "$BLUE_TEAM_ID")" == "1000" ]] || fail "Blue initial score != 1000"
-pass "Round 1 active; initial scores seeded exactly once"
+
+if [[ "$SCENARIO" == hardening ]]; then
+    # 阶段边界：hardening 期间不得提交 flag，也不应有 active round
+    wait_player_phase "${TOKENS[redcap]}" hardening 20
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag 'flag{hardening-not-allowed}')" \
+        || fail "hardening phase accepted a flag submission"
+    [[ "$(sql "SELECT count(*) FROM awd_rounds WHERE event_id='$EVENT_ID'")" == "0" ]] \
+        || fail "hardening must not create a round row yet"
+    pass "hardening boundary: phase=hardening, no round row, flag submission rejected"
+
+    # 时间边界：hardening 结束必须自动进入 Round 1
+    wait_player_round "${TOKENS[redcap]}" 1 75
+    [[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "1000" ]] || fail "Red initial score != 1000"
+    [[ "$(score_of "${TOKENS[bluecap]}" "$BLUE_TEAM_ID")" == "1000" ]] || fail "Blue initial score != 1000"
+    pass "Round 1 auto-started after hardening; initial scores seeded exactly once"
+
+    # 暂停/恢复边界：暂停期间拒绝提交，恢复后回到 attack 且不重开轮次
+    api_ok POST "/api/admin/events/$EVENT_ID/awd/pause" "$ADMIN_TOKEN" >/dev/null
+    wait_player_phase "${TOKENS[redcap]}" pause 15
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag 'flag{paused-not-allowed}')" \
+        || fail "paused event accepted a flag submission"
+    api_ok POST "/api/admin/events/$EVENT_ID/awd/resume" "$ADMIN_TOKEN" >/dev/null
+    wait_player_phase "${TOKENS[redcap]}" attack 15
+    [[ "$(sql "SELECT count(*) FROM awd_rounds WHERE event_id='$EVENT_ID' AND round_number=1")" == "1" ]] \
+        || fail "resume must not create an extra round row"
+    pass "pause/resume boundary: submissions rejected while paused, attack resumed on same round"
+else
+    wait_player_round "${TOKENS[redcap]}" 1 20
+    [[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "1000" ]] || fail "Red initial score != 1000"
+    [[ "$(score_of "${TOKENS[bluecap]}" "$BLUE_TEAM_ID")" == "1000" ]] || fail "Blue initial score != 1000"
+    pass "Round 1 active; initial scores seeded exactly once"
+fi
 
 get_flag_from_box() {
     local container=$1 flag
@@ -446,77 +502,196 @@ submit_flag() {
     api_ok POST "/api/events/$EVENT_ID/awd/submissions" "$token" "$(json_string_obj flag "$flag")"
 }
 
-log "Round 1: obtain victim flags from real victim containers through FlagServer"
-R1_RED_FLAG="$(get_flag_from_box "$RED_CONTAINER")"
-R1_BLUE_FLAG="$(get_flag_from_box "$BLUE_CONTAINER")"
-[[ "$R1_RED_FLAG" != "$R1_BLUE_FLAG" ]] || fail "different GameBoxes returned identical flag"
+run_baseline_scenario() {
+    log "Round 1: obtain victim flags from real victim containers through FlagServer"
+    R1_RED_FLAG="$(get_flag_from_box "$RED_CONTAINER")"
+    R1_BLUE_FLAG="$(get_flag_from_box "$BLUE_CONTAINER")"
+    [[ "$R1_RED_FLAG" != "$R1_BLUE_FLAG" ]] || fail "different GameBoxes returned identical flag"
 
-R1_RED_ATTACK="$(submit_flag "${TOKENS[redcap]}" "$R1_BLUE_FLAG")"
-[[ "$(json_get data.attack_score <<<"$R1_RED_ATTACK")" == "100" ]] || fail "Round1 Red attack score != 100"
-[[ "$(json_get data.first_bonus <<<"$R1_RED_ATTACK")" == "20" ]] || fail "Round1 first blood != 20"
-[[ "$(json_get data.was_first_blood <<<"$R1_RED_ATTACK")" == "true" ]] || fail "Round1 Red not marked first blood"
-api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag "$R1_BLUE_FLAG")" || fail "duplicate attack unexpectedly accepted"
-api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag "$R1_RED_FLAG")" || fail "self attack unexpectedly accepted"
-R1_BLUE_ATTACK="$(submit_flag "${TOKENS[bluecap]}" "$R1_RED_FLAG")"
-[[ "$(json_get data.attack_score <<<"$R1_BLUE_ATTACK")" == "100" ]] || fail "Round1 Blue attack score != 100"
-[[ "$(json_get data.first_bonus <<<"$R1_BLUE_ATTACK")" == "0" ]] || fail "Round1 second attack got first bonus"
-pass "Round1 FlagServer attacks + first blood + duplicate/self guards passed"
+    R1_RED_ATTACK="$(submit_flag "${TOKENS[redcap]}" "$R1_BLUE_FLAG")"
+    [[ "$(json_get data.attack_score <<<"$R1_RED_ATTACK")" == "100" ]] || fail "Round1 Red attack score != 100"
+    [[ "$(json_get data.first_bonus <<<"$R1_RED_ATTACK")" == "20" ]] || fail "Round1 first blood != 20"
+    [[ "$(json_get data.was_first_blood <<<"$R1_RED_ATTACK")" == "true" ]] || fail "Round1 Red not marked first blood"
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag "$R1_BLUE_FLAG")" || fail "duplicate attack unexpectedly accepted"
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/submissions" "${TOKENS[redcap]}" "$(json_string_obj flag "$R1_RED_FLAG")" || fail "self attack unexpectedly accepted"
+    R1_BLUE_ATTACK="$(submit_flag "${TOKENS[bluecap]}" "$R1_RED_FLAG")"
+    [[ "$(json_get data.attack_score <<<"$R1_BLUE_ATTACK")" == "100" ]] || fail "Round1 Blue attack score != 100"
+    [[ "$(json_get data.first_bonus <<<"$R1_BLUE_ATTACK")" == "0" ]] || fail "Round1 second attack got first bonus"
+    pass "Round1 FlagServer attacks + first blood + duplicate/self guards passed"
 
-log "wait Round 1 end, JudgeServer result, and Round 2 start"
-wait_player_round "${TOKENS[redcap]}" 2 45
-R1_ID="$(sql "SELECT id FROM awd_rounds WHERE event_id='$EVENT_ID' AND round_number=1")"
-wait_sql "SELECT count(*) FROM awd_judge_tasks WHERE event_id='$EVENT_ID' AND round_id='$R1_ID' AND status::text NOT IN ('up','down','judge_error','skipped_resetting','skipped_banned')" "0" 20
-R1_RED_SCORE="$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")"
-R1_BLUE_SCORE="$(score_of "${TOKENS[bluecap]}" "$BLUE_TEAM_ID")"
-[[ "$R1_RED_SCORE" == "980" ]] || fail "Round1 Red expected 980, got $R1_RED_SCORE"
-[[ "$R1_BLUE_SCORE" == "1000" ]] || fail "Round1 Blue expected 1000, got $R1_BLUE_SCORE"
-R1_DOWN="$(sql "SELECT count(*) FROM awd_judge_tasks WHERE round_id='$R1_ID' AND status::text='down'")"
-R1_UP="$(sql "SELECT count(*) FROM awd_judge_tasks WHERE round_id='$R1_ID' AND status::text='up'")"
-[[ "$R1_DOWN" == "1" && "$R1_UP" == "1" ]] || fail "Round1 judge expected 1 down/1 up, got $R1_DOWN/$R1_UP"
-pass "Round1 exact settlement: Red=980 Blue=1000, Judge 1 down/1 up"
+    log "wait Round 1 end, JudgeServer result, and Round 2 start"
+    wait_player_round "${TOKENS[redcap]}" 2 45
+    R1_ID="$(sql "SELECT id FROM awd_rounds WHERE event_id='$EVENT_ID' AND round_number=1")"
+    wait_sql "SELECT count(*) FROM awd_judge_tasks WHERE event_id='$EVENT_ID' AND round_id='$R1_ID' AND status::text NOT IN ('up','down','judge_error','skipped_resetting','skipped_banned')" "0" 20
+    R1_RED_SCORE="$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")"
+    R1_BLUE_SCORE="$(score_of "${TOKENS[bluecap]}" "$BLUE_TEAM_ID")"
+    [[ "$R1_RED_SCORE" == "980" ]] || fail "Round1 Red expected 980, got $R1_RED_SCORE"
+    [[ "$R1_BLUE_SCORE" == "1000" ]] || fail "Round1 Blue expected 1000, got $R1_BLUE_SCORE"
+    R1_DOWN="$(sql "SELECT count(*) FROM awd_judge_tasks WHERE round_id='$R1_ID' AND status::text='down'")"
+    R1_UP="$(sql "SELECT count(*) FROM awd_judge_tasks WHERE round_id='$R1_ID' AND status::text='up'")"
+    [[ "$R1_DOWN" == "1" && "$R1_UP" == "1" ]] || fail "Round1 judge expected 1 down/1 up, got $R1_DOWN/$R1_UP"
+    pass "Round1 exact settlement: Red=980 Blue=1000, Judge 1 down/1 up"
 
-log "Round 2: flags rotate; both teams attack again"
-R2_RED_FLAG="$(get_flag_from_box "$RED_CONTAINER")"
-R2_BLUE_FLAG="$(get_flag_from_box "$BLUE_CONTAINER")"
-[[ "$R2_RED_FLAG" != "$R1_RED_FLAG" ]] || fail "Red flag did not rotate between rounds"
-[[ "$R2_BLUE_FLAG" != "$R1_BLUE_FLAG" ]] || fail "Blue flag did not rotate between rounds"
-R2_BLUE_ATTACK="$(submit_flag "${TOKENS[bluecap]}" "$R2_RED_FLAG")"
-R2_RED_ATTACK="$(submit_flag "${TOKENS[redcap]}" "$R2_BLUE_FLAG")"
-[[ "$(json_get data.first_bonus <<<"$R2_BLUE_ATTACK")" == "0" ]] || fail "Round2 re-awarded first bonus"
-[[ "$(json_get data.first_bonus <<<"$R2_RED_ATTACK")" == "0" ]] || fail "Round2 re-awarded first bonus"
-pass "Round2 flag rotation + attacks passed; first blood remains event-global"
+    log "Round 2: flags rotate; both teams attack again"
+    R2_RED_FLAG="$(get_flag_from_box "$RED_CONTAINER")"
+    R2_BLUE_FLAG="$(get_flag_from_box "$BLUE_CONTAINER")"
+    [[ "$R2_RED_FLAG" != "$R1_RED_FLAG" ]] || fail "Red flag did not rotate between rounds"
+    [[ "$R2_BLUE_FLAG" != "$R1_BLUE_FLAG" ]] || fail "Blue flag did not rotate between rounds"
+    R2_BLUE_ATTACK="$(submit_flag "${TOKENS[bluecap]}" "$R2_RED_FLAG")"
+    R2_RED_ATTACK="$(submit_flag "${TOKENS[redcap]}" "$R2_BLUE_FLAG")"
+    [[ "$(json_get data.first_bonus <<<"$R2_BLUE_ATTACK")" == "0" ]] || fail "Round2 re-awarded first bonus"
+    [[ "$(json_get data.first_bonus <<<"$R2_RED_ATTACK")" == "0" ]] || fail "Round2 re-awarded first bonus"
+    pass "Round2 flag rotation + attacks passed; first blood remains event-global"
 
-log "wait final round judge settlement"
-R2_ID=""
-for _ in $(seq 1 160); do
-    R2_ID="$(sql "SELECT id FROM awd_rounds WHERE event_id='$EVENT_ID' AND round_number=2" 2>/dev/null || true)"
-    [[ -n "$R2_ID" ]] && break
-    sleep 0.25
-done
-[[ -n "$R2_ID" ]] || fail "Round2 row missing"
-wait_sql "SELECT status::text FROM awd_rounds WHERE id='$R2_ID'" "completed" 45
-wait_sql "SELECT count(*) FROM awd_judge_tasks WHERE event_id='$EVENT_ID' AND round_id='$R2_ID' AND status::text NOT IN ('up','down','judge_error','skipped_resetting','skipped_banned')" "0" 20
+    log "wait final round judge settlement"
+    R2_ID=""
+    for _ in $(seq 1 160); do
+        R2_ID="$(sql "SELECT id FROM awd_rounds WHERE event_id='$EVENT_ID' AND round_number=2" 2>/dev/null || true)"
+        [[ -n "$R2_ID" ]] && break
+        sleep 0.25
+    done
+    [[ -n "$R2_ID" ]] || fail "Round2 row missing"
+    wait_sql "SELECT status::text FROM awd_rounds WHERE id='$R2_ID'" "completed" 45
+    wait_sql "SELECT count(*) FROM awd_judge_tasks WHERE event_id='$EVENT_ID' AND round_id='$R2_ID' AND status::text NOT IN ('up','down','judge_error','skipped_resetting','skipped_banned')" "0" 20
 
-FINAL_STATUS="$(sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'")"
-if [[ "$FINAL_STATUS" != "finished" ]]; then
-    api_ok POST "/api/admin/events/$EVENT_ID/awd/finish" "$ADMIN_TOKEN" >/dev/null
-    wait_sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'" "finished" 20
+    FINAL_STATUS="$(sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'")"
+    if [[ "$FINAL_STATUS" != "finished" ]]; then
+        api_ok POST "/api/admin/events/$EVENT_ID/awd/finish" "$ADMIN_TOKEN" >/dev/null
+        wait_sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'" "finished" 20
+    fi
+
+    FINAL_SCORES="$(api_ok GET "/api/admin/events/$EVENT_ID/awd/scores" "$ADMIN_TOKEN")"
+    RED_FINAL="$(json_team_field "$RED_TEAM_ID" total_score <<<"$FINAL_SCORES")"
+    BLUE_FINAL="$(json_team_field "$BLUE_TEAM_ID" total_score <<<"$FINAL_SCORES")"
+    RED_RANK="$(json_team_field "$RED_TEAM_ID" rank <<<"$FINAL_SCORES")"
+    BLUE_RANK="$(json_team_field "$BLUE_TEAM_ID" rank <<<"$FINAL_SCORES")"
+    [[ "$RED_FINAL" == "940" ]] || fail "final Red expected 940, got $RED_FINAL"
+    [[ "$BLUE_FINAL" == "1000" ]] || fail "final Blue expected 1000, got $BLUE_FINAL"
+    [[ "$BLUE_RANK" == "1" && "$RED_RANK" == "2" ]] || fail "expected Blue#1 Red#2, got Blue#$BLUE_RANK Red#$RED_RANK"
+
+    SCORE_COUNTS="$(sql "SELECT event_type::text || '=' || count(*) FROM awd_score_events WHERE event_id='$EVENT_ID' GROUP BY event_type ORDER BY event_type")"
+    for expected in 'attack=4' 'victim_loss=4' 'first_bonus=1' 'initial_score=2' 'judge_down=2'; do
+        grep -qx "$expected" <<<"$SCORE_COUNTS" || { printf '%s\n' "$SCORE_COUNTS" >&2; fail "score ledger missing $expected"; }
+    done
+    pass "final scoreboard exact: Blue=1000 rank#1, Red=940 rank#2; ledger verified"
+}
+
+run_reset_scenario() {
+    # ── 靶机重置环节（真实 helper 容器重建）──
+    log "resolve Red GameBox identity before reset"
+    RED_BOXES="$(api_ok GET "/api/events/$EVENT_ID/awd/gameboxes" "${TOKENS[redcap]}")"
+    RED_INSTANCE="$(json_get data.0.id <<<"$RED_BOXES")"
+    RED_CONTAINER="$(json_get data.0.container_name <<<"$RED_BOXES")"
+    RED_IP_BEFORE="$(json_get data.0.gamebox_ip <<<"$RED_BOXES")"
+    [[ -n "$RED_INSTANCE" && -n "$RED_CONTAINER" && -n "$RED_IP_BEFORE" ]] || fail "cannot resolve Red GameBox"
+    [[ "$(sql "SELECT status::text FROM event_gamebox_instances WHERE id='$RED_INSTANCE'")" == "ready" ]] \
+        || fail "Red GameBox not ready before reset"
+    RED_CID_BEFORE="$(docker inspect "$RED_CONTAINER" --format '{{.Id}}')"
+    pass "Red GameBox resolved: $RED_CONTAINER @ $RED_IP_BEFORE"
+
+    log "reset #1 (within free_reset_count): container recreated, IP preserved, no penalty"
+    api_ok POST "/api/events/$EVENT_ID/awd/gameboxes/$RED_INSTANCE/reset" "${TOKENS[redcap]}" >/dev/null
+    wait_sql "SELECT status::text FROM event_gamebox_instances WHERE id='$RED_INSTANCE'" "ready" 30
+    RED_CID_1="$(docker inspect "$RED_CONTAINER" --format '{{.Id}}')"
+    [[ "$RED_CID_1" != "$RED_CID_BEFORE" ]] || fail "reset #1 did not recreate the container"
+    [[ "$(json_get data.0.gamebox_ip <<<"$(api_ok GET "/api/events/$EVENT_ID/awd/gameboxes" "${TOKENS[redcap]}")")" == "$RED_IP_BEFORE" ]] \
+        || fail "reset #1 changed the GameBox IP"
+    [[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "1000" ]] || fail "free reset must not change score"
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID' AND team_id='$RED_TEAM_ID'")" == "1" ]] \
+        || fail "expected 1 reset record"
+    [[ "$(sql "SELECT free_reset FROM awd_reset_records WHERE event_id='$EVENT_ID' AND team_id='$RED_TEAM_ID' LIMIT 1")" == "t" ]] \
+        || fail "reset #1 must be free"
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID' AND requested_by_admin IS NOT NULL")" == "0" ]] \
+        || fail "player reset must not set requested_by_admin"
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID' AND requested_by IS NOT NULL")" == "1" ]] \
+        || fail "player reset must record requested_by"
+    pass "reset #1 free: new container id, same IP, score unchanged, requested_by recorded"
+
+    log "reset #2 (beyond free count): charged extra_reset_penalty=50 exactly once"
+    api_ok POST "/api/events/$EVENT_ID/awd/gameboxes/$RED_INSTANCE/reset" "${TOKENS[redcap]}" >/dev/null
+    wait_sql "SELECT status::text FROM event_gamebox_instances WHERE id='$RED_INSTANCE'" "ready" 30
+    RED_CID_2="$(docker inspect "$RED_CONTAINER" --format '{{.Id}}')"
+    [[ "$RED_CID_2" != "$RED_CID_1" ]] || fail "reset #2 did not recreate the container"
+    [[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "950" ]] \
+        || fail "charged reset must deduct 50, got $(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")"
+    [[ "$(sql "SELECT count(*) FROM awd_score_events WHERE event_id='$EVENT_ID' AND team_id='$RED_TEAM_ID' AND event_type::text='reset_penalty'")" == "1" ]] \
+        || fail "expected exactly one reset_penalty entry"
+    [[ "$(sql "SELECT delta FROM awd_score_events WHERE event_id='$EVENT_ID' AND team_id='$RED_TEAM_ID' AND event_type::text='reset_penalty'")" == "-50" ]] \
+        || fail "reset_penalty delta must be -50"
+    [[ "$(sql "SELECT free_reset FROM awd_reset_records WHERE event_id='$EVENT_ID' AND team_id='$RED_TEAM_ID' ORDER BY created_at DESC LIMIT 1")" == "f" ]] \
+        || fail "reset #2 must be charged"
+    pass "reset #2 charged: -50 ledgered once, container recreated"
+
+    log "ownership boundary: another team cannot reset this GameBox"
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/gameboxes/$RED_INSTANCE/reset" "${TOKENS[bluecap]}" \
+        || fail "cross-team reset was accepted"
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID'")" == "2" ]] \
+        || fail "rejected cross-team reset left a record"
+    pass "ownership boundary: cross-team reset rejected without record"
+
+    log "pause boundary: reset rejected while paused"
+    api_ok POST "/api/admin/events/$EVENT_ID/awd/pause" "$ADMIN_TOKEN" >/dev/null
+    wait_player_phase "${TOKENS[redcap]}" pause 15
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/gameboxes/$RED_INSTANCE/reset" "${TOKENS[redcap]}" \
+        || fail "paused event accepted a reset"
+    api_ok POST "/api/admin/events/$EVENT_ID/awd/resume" "$ADMIN_TOKEN" >/dev/null
+    wait_player_phase "${TOKENS[redcap]}" attack 15
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID'")" == "2" ]] \
+        || fail "paused reset attempt left a record"
+    pass "pause boundary: reset rejected while paused, no record written"
+
+    log "post-reset attack still works through FlagServer"
+    BLUE_CONTAINER="$(json_get data.0.container_name <<<"$(api_ok GET "/api/events/$EVENT_ID/awd/gameboxes" "${TOKENS[bluecap]}")")"
+    [[ -n "$BLUE_CONTAINER" ]] || fail "cannot resolve Blue GameBox"
+    R1_BLUE_FLAG="$(get_flag_from_box "$BLUE_CONTAINER")"
+    R1_RED_ATTACK="$(submit_flag "${TOKENS[redcap]}" "$R1_BLUE_FLAG")"
+    [[ "$(json_get data.attack_score <<<"$R1_RED_ATTACK")" == "100" ]] || fail "post-reset attack score != 100"
+    [[ "$(json_get data.first_bonus <<<"$R1_RED_ATTACK")" == "20" ]] || fail "post-reset attack lost first blood"
+    [[ "$(json_get data.was_first_blood <<<"$R1_RED_ATTACK")" == "true" ]] || fail "post-reset attack not marked first blood"
+    [[ "$(score_of "${TOKENS[redcap]}" "$RED_TEAM_ID")" == "1070" ]] \
+        || fail "expected Red 1070 after charged reset + first-blood attack"
+    pass "post-reset attack: +100 attack +20 first blood => Red=1070"
+
+    log "wait round end + Judge settlement, then finish"
+    wait_sql "SELECT count(*) FROM awd_rounds WHERE event_id='$EVENT_ID' AND status::text='completed'" "1" 150
+    wait_sql "SELECT count(*) FROM awd_judge_tasks WHERE event_id='$EVENT_ID' AND status::text NOT IN ('up','down','judge_error','skipped_resetting','skipped_banned')" "0" 30
+    if [[ "$(sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'")" != "finished" ]]; then
+        api_ok POST "/api/admin/events/$EVENT_ID/awd/finish" "$ADMIN_TOKEN" >/dev/null
+        wait_sql "SELECT status::text FROM awd_events WHERE event_id='$EVENT_ID'" "finished" 20
+    fi
+
+    log "final-settlement boundary: reset rejected once the competition closed"
+    api_expect_fail POST "/api/events/$EVENT_ID/awd/gameboxes/$RED_INSTANCE/reset" "${TOKENS[redcap]}" \
+        || fail "closed event accepted a reset"
+    [[ "$(sql "SELECT count(*) FROM awd_reset_records WHERE event_id='$EVENT_ID'")" == "2" ]] \
+        || fail "closed-event reset attempt left a record"
+    pass "final settlement boundary: reset rejected after the round closed"
+
+    FINAL_SCORES="$(api_ok GET "/api/admin/events/$EVENT_ID/awd/scores" "$ADMIN_TOKEN")"
+    for team in "$RED_TEAM_ID" "$BLUE_TEAM_ID"; do
+        api_total="$(json_team_field "$team" total_score <<<"$FINAL_SCORES")"
+        ledger_total="$(sql "SELECT COALESCE(SUM(delta),0) FROM awd_score_events WHERE event_id='$EVENT_ID' AND team_id='$team'")"
+        [[ "$api_total" == "$ledger_total" ]] || fail "scoreboard($api_total) != ledger($ledger_total) for team $team"
+    done
+    SCORE_COUNTS="$(sql "SELECT event_type::text || '=' || count(*) FROM awd_score_events WHERE event_id='$EVENT_ID' GROUP BY event_type ORDER BY event_type")"
+    for expected in 'attack=1' 'victim_loss=1' 'first_bonus=1' 'initial_score=2' 'reset_penalty=1'; do
+        grep -qx "$expected" <<<"$SCORE_COUNTS" || { printf '%s\n' "$SCORE_COUNTS" >&2; fail "score ledger missing $expected"; }
+    done
+    RED_FINAL="$(json_team_field "$RED_TEAM_ID" total_score <<<"$FINAL_SCORES")"
+    BLUE_FINAL="$(json_team_field "$BLUE_TEAM_ID" total_score <<<"$FINAL_SCORES")"
+    RED_RANK="$(json_team_field "$RED_TEAM_ID" rank <<<"$FINAL_SCORES")"
+    BLUE_RANK="$(json_team_field "$BLUE_TEAM_ID" rank <<<"$FINAL_SCORES")"
+    [[ "$RED_RANK" == "1" && "$BLUE_RANK" == "2" ]] || fail "expected Red#1 Blue#2, got Red#$RED_RANK Blue#$BLUE_RANK"
+    R1_RED_SCORE="$RED_FINAL"
+    R1_BLUE_SCORE="$BLUE_FINAL"
+    pass "scoreboard == ledger sum; reset_penalty ledgered once; Red rank#1 Blue rank#2"
+}
+
+if [[ "$SCENARIO" == reset ]]; then
+    run_reset_scenario
+else
+    run_baseline_scenario
 fi
-
-FINAL_SCORES="$(api_ok GET "/api/admin/events/$EVENT_ID/awd/scores" "$ADMIN_TOKEN")"
-RED_FINAL="$(json_team_field "$RED_TEAM_ID" total_score <<<"$FINAL_SCORES")"
-BLUE_FINAL="$(json_team_field "$BLUE_TEAM_ID" total_score <<<"$FINAL_SCORES")"
-RED_RANK="$(json_team_field "$RED_TEAM_ID" rank <<<"$FINAL_SCORES")"
-BLUE_RANK="$(json_team_field "$BLUE_TEAM_ID" rank <<<"$FINAL_SCORES")"
-[[ "$RED_FINAL" == "940" ]] || fail "final Red expected 940, got $RED_FINAL"
-[[ "$BLUE_FINAL" == "1000" ]] || fail "final Blue expected 1000, got $BLUE_FINAL"
-[[ "$BLUE_RANK" == "1" && "$RED_RANK" == "2" ]] || fail "expected Blue#1 Red#2, got Blue#$BLUE_RANK Red#$RED_RANK"
-
-SCORE_COUNTS="$(sql "SELECT event_type::text || '=' || count(*) FROM awd_score_events WHERE event_id='$EVENT_ID' GROUP BY event_type ORDER BY event_type")"
-for expected in 'attack=4' 'victim_loss=4' 'first_bonus=1' 'initial_score=2' 'judge_down=2'; do
-    grep -qx "$expected" <<<"$SCORE_COUNTS" || { printf '%s\n' "$SCORE_COUNTS" >&2; fail "score ledger missing $expected"; }
-done
-pass "final scoreboard exact: Blue=1000 rank#1, Red=940 rank#2; ledger verified"
 
 log "archive through admin HTTP and assert zero event runtime residue"
 api_ok POST "/api/admin/events/$EVENT_ID/awd/archive" "$ADMIN_TOKEN" >/dev/null
@@ -593,7 +768,8 @@ pass "admin team add/remove/duplicate/captain/delete invariants preserved; unrel
 
 printf '\n=== AWD BUSINESS E2E SUMMARY ===\n'
 printf 'event: %s\n' "$EVENT_ID"
-printf 'users: 4, teams: 2, rounds: 2\n'
+printf 'scenario: %s\n' "$SCENARIO"
+printf 'users: 4, teams: 2, rounds: %s\n' "$ROUND_COUNT"
 printf 'round1 totals: Red=%s Blue=%s\n' "$R1_RED_SCORE" "$R1_BLUE_SCORE"
 printf 'final totals:  Red=%s (#%s) Blue=%s (#%s)\n' "$RED_FINAL" "$RED_RANK" "$BLUE_FINAL" "$BLUE_RANK"
 printf 'score ledger:\n%s\n' "$SCORE_COUNTS"

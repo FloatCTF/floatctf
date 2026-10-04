@@ -1,7 +1,7 @@
 //! 平台级 AWD 网络管理 API。
 
 use actix_web::{get, patch, web};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::api::{
     AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*,
@@ -9,6 +9,15 @@ use crate::api::{
 use crate::modules::event::awd::{
     repo::network_settings_repo::NetworkSettingsPatch, service::platform_network_service,
 };
+
+/// 区分「字段缺省」与「显式 null」：缺省 → `None`（不修改），
+/// 显式 `null` → `Some(None)`（清空，例如 wireguard_public_endpoint）。
+fn double_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct PlatformNetworkSettingsUpdateRequest {
@@ -20,7 +29,8 @@ pub struct PlatformNetworkSettingsUpdateRequest {
     pub wireguard_team_prefix: Option<i16>,
     pub wireguard_port_min: Option<i32>,
     pub wireguard_port_max: Option<i32>,
-    pub wireguard_public_endpoint: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub wireguard_public_endpoint: Option<Option<String>>,
 }
 
 /// GET /api/admin/awd/network

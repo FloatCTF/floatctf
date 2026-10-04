@@ -144,7 +144,7 @@ async fn restore_settings(
         wireguard_team_prefix: Some(original.wireguard_team_prefix),
         wireguard_port_min: Some(original.wireguard_port_min),
         wireguard_port_max: Some(original.wireguard_port_max),
-        wireguard_public_endpoint: original.wireguard_public_endpoint.clone(),
+        wireguard_public_endpoint: Some(original.wireguard_public_endpoint.clone()),
     };
     network_settings_repo::update(db, patch)
         .await
@@ -245,6 +245,56 @@ async fn platform_settings_reject_invalid_pools() {
     .expect("legal settings update must succeed");
     assert_eq!(updated.wireguard_port_min, 30001);
     assert_eq!(updated.wireguard_port_max, 39999);
+
+    restore_settings(&db, &original).await;
+}
+
+/// §90.1：`wireguard_public_endpoint` 三重语义——设置 / 省略不动 / 显式清空。
+#[tokio::test]
+async fn platform_settings_public_endpoint_set_and_clear() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let _guard = pool_lock().await;
+    let original = network_settings_repo::get(&db)
+        .await
+        .expect("settings singleton");
+
+    let set = network_settings_repo::update(
+        &db,
+        network_settings_repo::NetworkSettingsPatch {
+            wireguard_public_endpoint: Some(Some("vpn.example.com:51820".into())),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("set public endpoint");
+    assert_eq!(
+        set.wireguard_public_endpoint.as_deref(),
+        Some("vpn.example.com:51820")
+    );
+
+    // 省略字段（None）→ 不得清空既有值
+    let untouched =
+        network_settings_repo::update(&db, network_settings_repo::NetworkSettingsPatch::default())
+            .await
+            .expect("empty patch");
+    assert_eq!(
+        untouched.wireguard_public_endpoint.as_deref(),
+        Some("vpn.example.com:51820")
+    );
+
+    // 显式 null（Some(None)）→ 清空
+    let cleared = network_settings_repo::update(
+        &db,
+        network_settings_repo::NetworkSettingsPatch {
+            wireguard_public_endpoint: Some(None),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("clear public endpoint");
+    assert_eq!(cleared.wireguard_public_endpoint, None);
 
     restore_settings(&db, &original).await;
 }

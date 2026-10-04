@@ -57,8 +57,9 @@ pub async fn update(
     if let Some(v) = patch.wireguard_port_max {
         am.wireguard_port_max = Set(v);
     }
+    // Some(Some(v)) = 设置；Some(None) = 清空（显式 null）；None = 不修改
     if let Some(v) = patch.wireguard_public_endpoint {
-        am.wireguard_public_endpoint = Set(Some(v));
+        am.wireguard_public_endpoint = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().into());
     am.update(db)
@@ -75,7 +76,8 @@ pub struct NetworkSettingsPatch {
     pub wireguard_team_prefix: Option<i16>,
     pub wireguard_port_min: Option<i32>,
     pub wireguard_port_max: Option<i32>,
-    pub wireguard_public_endpoint: Option<String>,
+    /// 双重 Option：`None` = 不修改，`Some(None)` = 清空，`Some(Some(v))` = 设置。
+    pub wireguard_public_endpoint: Option<Option<String>>,
 }
 
 impl Default for NetworkSettingsPatch {

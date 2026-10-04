@@ -148,6 +148,22 @@ export type AwdScoreRow = {
 	rank: number;
 };
 
+/** 预检运行记录（GET /api/admin/events/{event_id}/awd/prechecks）。
+ *
+ * `error_msg` 为后端落库的 JSON 文本：
+ * `{"errors":[{"component","error"}],"notes":[{"component","note"}]}`。
+ */
+export type AwdPrecheckRun = {
+	id: string;
+	event_id: string;
+	status: string;
+	trigger?: string | null;
+	revision?: number | null;
+	error_msg?: string | null;
+	started_at?: string | null;
+	completed_at?: string | null;
+};
+
 /** 选手端 AWD 赛事状态（GET /api/events/{event_id}/awd/status）。 */
 export type AwdPlayerStatus = {
 	event_id: string;
@@ -304,6 +320,13 @@ export const awdAdminApi = {
 	},
 	precheck: async (eventId: string): Promise<UniResponse<string>> => {
 		const res = await admin_api.post(`/events/${eventId}/awd/precheck`);
+		return res.data;
+	},
+	// 最近一次预检的 errors/notes：运维页据此展示失败原因（原先只显示 Verification Failed）。
+	prechecks: async (
+		eventId: string,
+	): Promise<UniResponse<AwdPrecheckRun[]>> => {
+		const res = await admin_api.get(`/events/${eventId}/awd/prechecks`);
 		return res.data;
 	},
 	scores: async (eventId: string): Promise<UniResponse<AwdScoreRow[]>> => {
@@ -548,9 +571,7 @@ export const awdAdminApi = {
 /** 选手端 AWD 接口（用户 JWT）。 */
 export const awdPlayerApi = {
 	/** 获取 AWD 赛事状态（phase, round, ban state, score）。 */
-	status: async (
-		eventId: string,
-	): Promise<UniResponse<AwdPlayerStatus>> => {
+	status: async (eventId: string): Promise<UniResponse<AwdPlayerStatus>> => {
 		const res = await service_api.get(`/events/${eventId}/awd/status`);
 		return res.data;
 	},

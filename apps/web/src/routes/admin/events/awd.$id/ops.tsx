@@ -13,7 +13,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { adminApi } from "@/api";
-import type { AwdScoreRow } from "@/api/awd";
+import type { AwdPrecheckRun, AwdScoreRow } from "@/api/awd";
 import { useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../../route";
 
@@ -21,6 +21,29 @@ export const Route = createFileRoute("/admin/events/awd/$id/ops")({
 	component: RouteComponent,
 	loader: AdminRouteGuard,
 });
+
+type PrecheckEntry = { component: string; error?: string; note?: string };
+type PrecheckReport = { errors: PrecheckEntry[]; notes: PrecheckEntry[] };
+
+/** 解析预检落库的 error_msg JSON；非法内容按单条错误展示，避免吞掉原因。 */
+function parsePrecheckReport(raw?: string | null): PrecheckReport {
+	if (!raw) return { errors: [], notes: [] };
+	try {
+		const parsed = JSON.parse(raw) as {
+			errors?: PrecheckEntry[];
+			notes?: PrecheckEntry[];
+		};
+		return { errors: parsed.errors ?? [], notes: parsed.notes ?? [] };
+	} catch {
+		return { errors: [{ component: "precheck", error: raw }], notes: [] };
+	}
+}
+
+function formatPrecheckTime(value?: string | null) {
+	if (!value) return "-";
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
 
 function RouteComponent() {
 	const { id } = Route.useParams();
@@ -38,12 +61,22 @@ function RouteComponent() {
 		queryFn: () => adminApi.awd.scores(id),
 	});
 
+	// 预检失败原因（errors/notes）此前只落在数据库里，运维页必须能直接看到。
+	const prechecks = useQuery({
+		queryKey: ["admin-awd-prechecks", id],
+		queryFn: () => adminApi.awd.prechecks(id),
+	});
+
 	const awd = statusQuery.data?.data ?? null;
+	const latestPrecheck: AwdPrecheckRun | null =
+		prechecks.data?.data?.[0] ?? null;
+	const precheckReport = parsePrecheckReport(latestPrecheck?.error_msg);
 
 	const onOk = (label: string) => () => {
 		banner.showBanner("success", `${label} ok`);
 		qc.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
 		qc.invalidateQueries({ queryKey: ["admin-awd-status", id] });
+		qc.invalidateQueries({ queryKey: ["admin-awd-prechecks", id] });
 		qc.invalidateQueries({ queryKey: ["event", id] });
 	};
 
@@ -135,9 +168,10 @@ function RouteComponent() {
 				{/* Contextual state banner */}
 				{isFinalSettlement && (
 					<InlineMessage variant="warning" className="mb-2">
-						<strong>Final Settlement</strong> — Final Judge checks are being settled.
-						Competition actions are closed. The event will become Finished when all
-						final Judge tasks are terminal and scoring is settled.
+						<strong>Final Settlement</strong> — Final Judge checks are being
+						settled. Competition actions are closed. The event will become
+						Finished when all final Judge tasks are terminal and scoring is
+						settled.
 					</InlineMessage>
 				)}
 				{status === "network_error" && (
@@ -153,46 +187,46 @@ function RouteComponent() {
 				)}
 				{isFinished && (
 					<InlineMessage variant="success" className="mb-2">
-						<strong>{status === "archived" ? "Archived" : "Finished"}</strong> — Competition ended.
+						<strong>{status === "archived" ? "Archived" : "Finished"}</strong> —
+						Competition ended.
 						{status === "finished" && " Archive when ready."}
 					</InlineMessage>
 				)}
 
 				<ButtonGroup>
 					{/* Pre-Running: Deploy, Precheck, Start */}
-					{["draft", "configuring", "deploy_failed"].includes(status) && !isFinalSettlement && (
-						<Button
-							variant="primary"
-							disabled={pending}
-							onClick={() => deploy.mutate()}
-						>
-							Deploy
-						</Button>
-					)}
-					{["deployed", "verification_failed", "configuring", "draft"].includes(status) && !isFinalSettlement && (
-						<Button
-							disabled={pending}
-							onClick={() => precheck.mutate()}
-						>
-							Precheck
-						</Button>
-					)}
-					{["verified", "start_blocked"].includes(status) && !isFinalSettlement && (
-						<Button
-							variant="primary"
-							disabled={pending}
-							onClick={() => start.mutate()}
-						>
-							Start
-						</Button>
-					)}
+					{["draft", "configuring", "deploy_failed"].includes(status) &&
+						!isFinalSettlement && (
+							<Button
+								variant="primary"
+								disabled={pending}
+								onClick={() => deploy.mutate()}
+							>
+								Deploy
+							</Button>
+						)}
+					{["deployed", "verification_failed", "configuring", "draft"].includes(
+						status,
+					) &&
+						!isFinalSettlement && (
+							<Button disabled={pending} onClick={() => precheck.mutate()}>
+								Precheck
+							</Button>
+						)}
+					{["verified", "start_blocked"].includes(status) &&
+						!isFinalSettlement && (
+							<Button
+								variant="primary"
+								disabled={pending}
+								onClick={() => start.mutate()}
+							>
+								Start
+							</Button>
+						)}
 
 					{/* Running (normal): Pause only — no manual Finish */}
 					{status === "running" && !isFinalSettlement && (
-						<Button
-							disabled={pending}
-							onClick={() => pause.mutate()}
-						>
+						<Button disabled={pending} onClick={() => pause.mutate()}>
 							Pause
 						</Button>
 					)}
@@ -267,6 +301,50 @@ function RouteComponent() {
 				)}
 			</section>
 
+			{/* Precheck Report：失败原因（errors/notes） */}
+			{latestPrecheck && (
+				<section>
+					<h4 className="font-bold mb-2">Precheck Report</h4>
+					<InlineMessage
+						variant={
+							precheckReport.errors.length === 0 ? "success" : "critical"
+						}
+						className="mb-2"
+					>
+						<strong>Precheck {latestPrecheck.status}</strong> —{" "}
+						{formatPrecheckTime(
+							latestPrecheck.completed_at ?? latestPrecheck.started_at,
+						)}
+						{latestPrecheck.revision !== null &&
+							latestPrecheck.revision !== undefined &&
+							` · revision ${latestPrecheck.revision}`}
+					</InlineMessage>
+					{precheckReport.errors.length > 0 && (
+						<ul className="mb-2 flex list-disc flex-col gap-1 pl-6 text-sm">
+							{precheckReport.errors.map((entry, index) => (
+								<li key={`${entry.component}-${index}`}>
+									<code>{entry.component}</code>: {entry.error}
+								</li>
+							))}
+						</ul>
+					)}
+					{precheckReport.notes.length > 0 && (
+						<details className="text-sm">
+							<summary className="cursor-pointer">
+								Details ({precheckReport.notes.length})
+							</summary>
+							<ul className="mt-1 flex list-disc flex-col gap-1 pl-6 text-gray-600">
+								{precheckReport.notes.map((entry, index) => (
+									<li key={`${entry.component}-${index}`}>
+										<code>{entry.component}</code>: {entry.note}
+									</li>
+								))}
+							</ul>
+						</details>
+					)}
+				</section>
+			)}
+
 			{/* Score Adjust */}
 			{!isFinished && (
 				<section>
@@ -332,11 +410,7 @@ function RouteComponent() {
 			{/* Scoreboard */}
 			<section>
 				<h4 className="font-bold mb-2">Scoreboard</h4>
-				{scores.isLoading ? (
-					<Spinner />
-				) : (
-					<AdminScoreboard rows={rows} />
-				)}
+				{scores.isLoading ? <Spinner /> : <AdminScoreboard rows={rows} />}
 			</section>
 		</div>
 	);

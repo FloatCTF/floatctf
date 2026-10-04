@@ -11,7 +11,9 @@ export default defineConfig({
         "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
     },
     plugins: [
-        TanStackRouterVite({ autoCodeSplitting: true }),
+        // Vitest 下关闭路由代码分割：分割后的页面是懒加载组件，
+        // 单测里渲染路由页面会一直停在 Suspense fallback。开发/构建仍开启。
+        TanStackRouterVite({ autoCodeSplitting: !process.env.VITEST }),
         viteReact(),
         tailwindcss(),
     ],

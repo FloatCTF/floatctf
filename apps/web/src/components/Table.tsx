@@ -337,6 +337,8 @@ export const GenericTable = <T extends object>({
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [subject] });
             banner.showBanner("success", `Create ${subject} successfully`);
+            // 成功后必须关闭表单对话框，否则用户会以为提交失败并重复提交。
+            onDialogClose();
         },
         onError: (error) => {
             banner.showErrorBanner(error);
@@ -348,6 +350,7 @@ export const GenericTable = <T extends object>({
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [subject] });
             banner.showBanner("success", `Update ${subject} successfully`);
+            onDialogClose();
         },
         onError: (error) => {
             banner.showErrorBanner(error);

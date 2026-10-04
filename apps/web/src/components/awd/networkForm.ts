@@ -88,6 +88,13 @@ function parseBoundedInteger(
 	return parsed;
 }
 
+/**
+ * AWD 运行时允许的最大赛事子网长度：预检 `validate_event_network` 要求
+ * `gamebox_cidr` 为 /16 或更大（`gamebox_cidr must be /16 or smaller`），
+ * 因此赛事子网长度填入值不得大于 16，否则部署后预检必然失败。
+ */
+export const AWD_MAX_EVENT_PREFIX = 16;
+
 /** 校验子网长度字段，返回错误文案；通过时返回 undefined。 */
 function prefixError(
 	value: string,
@@ -199,7 +206,21 @@ export function validatePlatformNetworkForm(
 		gamebox?.prefix,
 		`不得小于地址池长度 /${gamebox?.prefix}。`,
 	);
-	if (gameboxEventPrefix) errors.gamebox_event_prefix = gameboxEventPrefix;
+	if (gameboxEventPrefix) {
+		errors.gamebox_event_prefix = gameboxEventPrefix;
+	} else {
+		const parsedEventPrefix = parseBoundedInteger(
+			form.gamebox_event_prefix,
+			0,
+			MAX_PREFIX,
+		);
+		if (
+			parsedEventPrefix !== null &&
+			parsedEventPrefix > AWD_MAX_EVENT_PREFIX
+		) {
+			errors.gamebox_event_prefix = `不得超过 ${AWD_MAX_EVENT_PREFIX}：AWD 运行时要求赛事网段为 /${AWD_MAX_EVENT_PREFIX} 或更大。`;
+		}
+	}
 	const gameboxTeamPrefix = prefixError(
 		form.gamebox_team_prefix,
 		"请填写 GameBox 队伍子网长度。",
@@ -286,6 +307,15 @@ export function validateManualAllocationForm(
 		errors.gamebox_cidr = "格式不正确，应为 CIDR（例如 10.10.20.0/24）。";
 	} else if (gamebox.hasHostBits) {
 		errors.gamebox_cidr = HOST_BITS_MESSAGE;
+	}
+	// AWD 运行时要求赛事网段 /16 或更大（预检 gamebox_cidr must be /16 or smaller）。
+	if (
+		!errors.gamebox_cidr &&
+		gamebox &&
+		!gamebox.hasHostBits &&
+		gamebox.prefix > AWD_MAX_EVENT_PREFIX
+	) {
+		errors.gamebox_cidr = `不得小于 /${AWD_MAX_EVENT_PREFIX}：AWD 运行时要求赛事网段为 /${AWD_MAX_EVENT_PREFIX} 或更大。`;
 	}
 	const wireguard = parseIpv4Cidr(form.wireguard_cidr);
 	if (!form.wireguard_cidr.trim()) {

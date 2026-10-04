@@ -494,10 +494,10 @@ function RouteComponent() {
 								<Field
 									label="赛事子网长度"
 									keyName="gamebox_event_prefix"
-									caption="每个赛事从地址池中划分的子网长度，不得小于地址池长度。"
+									caption="每个赛事从地址池中划分的子网长度，不得小于地址池长度，且不得超过 16（AWD 运行时要求赛事网段为 /16 或更大）。"
 									value={form.gamebox_event_prefix}
 									onChange={setField("gamebox_event_prefix")}
-									placeholder="20"
+									placeholder="16"
 									type="number"
 									min={0}
 									max={32}
@@ -617,7 +617,7 @@ function RouteComponent() {
 								<Field
 									label="公开接入地址"
 									keyName="wireguard_public_endpoint"
-									caption="写入玩家 WireGuard 配置的服务端地址，格式 host:port；留空表示不下发该字段。"
+									caption="格式 host:port，用于记录对玩家公开的接入地址。玩家 WireGuard 配置中的接入地址取自系统设置 NODE_IP，端口取自各赛事分配到的监听端口，本项不参与配置下发。"
 									value={form.wireguard_public_endpoint}
 									onChange={setField("wireguard_public_endpoint")}
 									placeholder="vpn.example.com:51820"
@@ -683,6 +683,8 @@ function RouteComponent() {
 						>
 							<GenericTable
 								subject={ALLOCATIONS_KEY}
+								// 区块标题已是「当前网络分配」，隐藏 GenericTable 的内部键名标题。
+								hideTitle
 								columns={allocationColumns}
 								queryFn={allocationQueryFn}
 								getRowId={(row) => `${row.event_id}:${row.kind}`}

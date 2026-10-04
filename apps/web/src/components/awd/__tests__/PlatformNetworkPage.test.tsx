@@ -18,11 +18,11 @@ import type {
 
 const fixtures = vi.hoisted(() => {
 	const settings: PlatformNetworkSettings = {
-		gamebox_pool: "10.10.0.0/16",
-		gamebox_event_prefix: 20,
+		gamebox_pool: "10.96.0.0/12",
+		gamebox_event_prefix: 16,
 		gamebox_team_prefix: 24,
-		wireguard_pool: "10.20.0.0/16",
-		wireguard_event_prefix: 20,
+		wireguard_pool: "10.112.0.0/12",
+		wireguard_event_prefix: 16,
 		wireguard_team_prefix: 24,
 		wireguard_port_min: 51820,
 		wireguard_port_max: 51830,
@@ -53,7 +53,7 @@ const fixtures = vi.hoisted(() => {
 			event_id: "11111111-1111-1111-1111-111111111111",
 			event_title: "示例赛事",
 			kind: "gamebox",
-			cidr: "10.10.0.0/20",
+			cidr: "10.96.0.0/16",
 			allocated_at: "2026-01-01T00:00:00+00:00",
 			released_at: null,
 			active: true,
@@ -147,7 +147,7 @@ describe("平台网络配置页", () => {
 		// 表单值来自 GET 返回值
 		expect(screen.getByPlaceholderText("10.10.0.0/16")).toHaveProperty(
 			"value",
-			"10.10.0.0/16",
+			"10.96.0.0/12",
 		);
 		expect(screen.getByPlaceholderText("vpn.example.com:51820")).toHaveProperty(
 			"value",
@@ -182,11 +182,12 @@ describe("平台网络配置页", () => {
 	it("校验不通过时给出提示并禁用保存", async () => {
 		renderPage();
 
+		// 池为 /12，赛事子网长度填 10 触发「不得小于地址池长度」
 		const eventPrefix = (await screen.findAllByLabelText("赛事子网长度"))[0];
-		fireEvent.change(eventPrefix, { target: { value: "12" } });
+		fireEvent.change(eventPrefix, { target: { value: "10" } });
 
 		expect(
-			(await screen.findAllByText(/不得小于地址池长度 \/16。/)).length,
+			(await screen.findAllByText(/不得小于地址池长度 \/12。/)).length,
 		).toBeGreaterThanOrEqual(1);
 		expect(
 			screen.getByRole("button", { name: "保存配置" }).hasAttribute("disabled"),
@@ -197,7 +198,8 @@ describe("平台网络配置页", () => {
 		renderPage();
 
 		const wireguardPool = await screen.findByPlaceholderText("10.20.0.0/16");
-		fireEvent.change(wireguardPool, { target: { value: "10.10.128.0/17" } });
+		// 与 GameBox 池 10.96.0.0/12 重叠
+		fireEvent.change(wireguardPool, { target: { value: "10.100.0.0/17" } });
 
 		expect(
 			(await screen.findAllByText(/两个地址池不允许重叠/)).length,
@@ -220,10 +222,10 @@ describe("平台网络配置页", () => {
 		);
 		expect(fixtures.updatePlatformNetwork).toHaveBeenCalledWith({
 			gamebox_pool: "10.99.0.0/16",
-			gamebox_event_prefix: 20,
+			gamebox_event_prefix: 16,
 			gamebox_team_prefix: 24,
-			wireguard_pool: "10.20.0.0/16",
-			wireguard_event_prefix: 20,
+			wireguard_pool: "10.112.0.0/12",
+			wireguard_event_prefix: 16,
 			wireguard_team_prefix: 24,
 			wireguard_public_endpoint: "vpn.example.com:51820",
 			wireguard_port_min: 51820,
@@ -242,7 +244,7 @@ describe("平台网络配置页", () => {
 		await waitFor(() =>
 			expect(screen.getByPlaceholderText("10.10.0.0/16")).toHaveProperty(
 				"value",
-				"10.10.0.0/16",
+				"10.96.0.0/12",
 			),
 		);
 		expect(

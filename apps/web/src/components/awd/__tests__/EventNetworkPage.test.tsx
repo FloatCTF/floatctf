@@ -25,11 +25,11 @@ const fixtures = vi.hoisted(() => {
 	const network: EventNetworkInfo = {
 		event_id: EVENT_ID,
 		allocation_mode: "automatic",
-		gamebox_cidr: "10.10.20.0/24",
-		wireguard_cidr: "10.20.20.0/24",
-		infrastructure_subnet: "10.10.20.0/28",
-		flagserver_ip: "10.10.20.2",
-		judgeserver_ip: "10.10.20.3",
+		gamebox_cidr: "10.96.0.0/16",
+		wireguard_cidr: "10.112.0.0/16",
+		infrastructure_subnet: "10.96.0.0/28",
+		flagserver_ip: "10.96.0.2",
+		judgeserver_ip: "10.96.0.3",
 		wireguard_interface_name: "wg-awd-aaaa",
 		wireguard_listen_port: 51820,
 		docker_network_name: "awd-aaaa",
@@ -147,14 +147,19 @@ describe("赛事网络页", () => {
 		});
 		expect(manualButton.hasAttribute("disabled")).toBe(true);
 
-		const gameboxCidr = screen.getByPlaceholderText("10.10.20.0/24");
-		fireEvent.change(gameboxCidr, { target: { value: "10.10.20.0" } });
+		const gameboxCidr = screen.getByPlaceholderText("10.96.0.0/16");
+		fireEvent.change(gameboxCidr, { target: { value: "10.96.0.0" } });
 		expect(await screen.findByText(/格式不正确，应为 CIDR/)).toBeDefined();
 		expect(manualButton.hasAttribute("disabled")).toBe(true);
 
-		fireEvent.change(gameboxCidr, { target: { value: "10.10.20.0/24" } });
-		fireEvent.change(screen.getByPlaceholderText("10.20.20.0/24"), {
-			target: { value: "10.20.20.0/24" },
+		// /20 不满足 AWD 运行时要求（赛事网段须 /16 或更大）
+		fireEvent.change(gameboxCidr, { target: { value: "10.96.0.0/20" } });
+		expect(await screen.findByText(/不得小于 \/16/)).toBeDefined();
+		expect(manualButton.hasAttribute("disabled")).toBe(true);
+
+		fireEvent.change(gameboxCidr, { target: { value: "10.96.0.0/16" } });
+		fireEvent.change(screen.getByPlaceholderText("10.112.0.0/16"), {
+			target: { value: "10.112.0.0/16" },
 		});
 		fireEvent.change(screen.getByPlaceholderText("51820"), {
 			target: { value: "51820" },
@@ -170,8 +175,8 @@ describe("赛事网络页", () => {
 				fixtures.EVENT_ID,
 				{
 					allocation_mode: "manual",
-					gamebox_cidr: "10.10.20.0/24",
-					wireguard_cidr: "10.20.20.0/24",
+					gamebox_cidr: "10.96.0.0/16",
+					wireguard_cidr: "10.112.0.0/16",
 					wireguard_listen_port: 51820,
 				},
 			),
@@ -184,11 +189,11 @@ describe("赛事网络页", () => {
 
 		expect(await screen.findByText("已分配")).toBeDefined();
 		expect(screen.getByText("自动分配")).toBeDefined();
-		expect(screen.getByText("10.10.20.0/24")).toBeDefined();
-		expect(screen.getByText("10.20.20.0/24")).toBeDefined();
-		expect(screen.getByText("10.10.20.0/28")).toBeDefined();
-		expect(screen.getByText("10.10.20.2")).toBeDefined();
-		expect(screen.getByText("10.10.20.3")).toBeDefined();
+		expect(screen.getByText("10.96.0.0/16")).toBeDefined();
+		expect(screen.getByText("10.112.0.0/16")).toBeDefined();
+		expect(screen.getByText("10.96.0.0/28")).toBeDefined();
+		expect(screen.getByText("10.96.0.2")).toBeDefined();
+		expect(screen.getByText("10.96.0.3")).toBeDefined();
 		expect(screen.getByText("wg-awd-aaaa")).toBeDefined();
 		expect(screen.getByText("awd-aaaa")).toBeDefined();
 		expect(screen.getByText("infrastructure_subnet")).toBeDefined();

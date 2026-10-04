@@ -287,16 +287,16 @@ function RouteComponent() {
 
 						<Section
 							title="手动指定网段"
-							description="如自动分配结果不符合规划，可显式指定网段。网段必须合法且互不重叠，可以不在平台地址池内，但不得与平台已有分配或宿主机占用重叠；GameBox 网段不得比平台配置的队伍子网更小。"
+							description="如自动分配结果不符合规划，可显式指定网段。网段必须合法且互不重叠，可以不在平台地址池内，但不得与平台已有分配或宿主机占用重叠；GameBox 网段不得比平台配置的队伍子网更小，且必须为 /16 或更大（AWD 运行时要求）。"
 						>
 							<div style={FIELD_GRID}>
 								<Field
 									label="GameBox 网段"
 									keyName="gamebox_cidr"
-									caption="必填。赛事容器使用的网段，例如 10.10.20.0/24。"
+									caption="必填。赛事容器使用的网段，例如 10.96.0.0/16；必须为 /16 或更大。"
 									value={manual.gamebox_cidr}
 									onChange={setManualField("gamebox_cidr")}
-									placeholder="10.10.20.0/24"
+									placeholder="10.96.0.0/16"
 									monospace
 									error={
 										manual.gamebox_cidr.trim()
@@ -310,7 +310,7 @@ function RouteComponent() {
 									caption="必填。队伍隧道使用的网段，例如 10.20.20.0/24。"
 									value={manual.wireguard_cidr}
 									onChange={setManualField("wireguard_cidr")}
-									placeholder="10.20.20.0/24"
+									placeholder="10.112.0.0/16"
 									monospace
 									error={
 										manual.wireguard_cidr.trim()

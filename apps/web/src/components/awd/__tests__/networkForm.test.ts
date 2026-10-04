@@ -13,7 +13,7 @@ import {
 
 const VALID_FORM: PlatformNetworkForm = {
 	gamebox_pool: "10.10.0.0/16",
-	gamebox_event_prefix: "20",
+	gamebox_event_prefix: "16",
 	gamebox_team_prefix: "24",
 	wireguard_pool: "10.20.0.0/16",
 	wireguard_event_prefix: "20",
@@ -170,10 +170,28 @@ describe("validatePlatformNetworkForm", () => {
 		expect(errors.gamebox_event_prefix).toContain("/16");
 	});
 
+	it("rejects an event prefix narrower than /16 (AWD runtime requirement)", () => {
+		const errors = validatePlatformNetworkForm({
+			...VALID_FORM,
+			gamebox_event_prefix: "20",
+		});
+		expect(errors.gamebox_event_prefix).toContain("16");
+	});
+
+	it("accepts exactly /16 as the event prefix", () => {
+		expect(
+			validatePlatformNetworkForm({
+				...VALID_FORM,
+				gamebox_event_prefix: "16",
+				gamebox_team_prefix: "24",
+			}).gamebox_event_prefix,
+		).toBeUndefined();
+	});
+
 	it("rejects a team prefix shorter than the event prefix", () => {
 		const errors = validatePlatformNetworkForm({
 			...VALID_FORM,
-			gamebox_team_prefix: "18",
+			gamebox_team_prefix: "12",
 		});
 		expect(errors.gamebox_team_prefix).toBeTruthy();
 	});
@@ -212,18 +230,36 @@ describe("validatePlatformNetworkForm", () => {
 });
 
 describe("validateManualAllocationForm", () => {
+	it("rejects a gamebox CIDR narrower than /16 (AWD runtime requirement)", () => {
+		const errors = validateManualAllocationForm({
+			gamebox_cidr: "10.96.0.0/20",
+			wireguard_cidr: "10.112.0.0/24",
+			wireguard_listen_port: "",
+		});
+		expect(errors.gamebox_cidr).toContain("/16");
+	});
+
+	it("accepts a /16 gamebox CIDR", () => {
+		const errors = validateManualAllocationForm({
+			gamebox_cidr: "10.96.0.0/16",
+			wireguard_cidr: "10.112.0.0/24",
+			wireguard_listen_port: "",
+		});
+		expect(errors.gamebox_cidr).toBeUndefined();
+	});
+
 	it("accepts valid CIDRs with an optional port", () => {
 		expect(
 			validateManualAllocationForm({
-				gamebox_cidr: "10.10.20.0/24",
-				wireguard_cidr: "10.20.20.0/24",
+				gamebox_cidr: "10.96.0.0/16",
+				wireguard_cidr: "10.112.0.0/24",
 				wireguard_listen_port: "",
 			}),
 		).toEqual({});
 		expect(
 			validateManualAllocationForm({
-				gamebox_cidr: "10.10.20.0/24",
-				wireguard_cidr: "10.20.20.0/24",
+				gamebox_cidr: "10.96.0.0/16",
+				wireguard_cidr: "10.112.0.0/24",
 				wireguard_listen_port: "51820",
 			}),
 		).toEqual({});

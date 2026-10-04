@@ -86,6 +86,29 @@ pub async fn host_status(_db: &DatabaseConnection) -> AwdResult<PlatformHostStat
     let env_snap = env::discover_environment().await;
     let capability = env::check_host_capability().await;
 
+    // 生产 API 容器内不安装 nft/iptables（cap_drop=ALL、read-only rootfs，只能经 helper 操作宿主），
+    // 因此宿主 nftables 能力必须以 helper 为准：用 ListNftTable 探测 helper 侧的 nft 可用性。
+    let helper_nft = {
+        let client = crate::infrastructure::helper::HelperClient::new(
+            helper_protocol::DEFAULT_CONTROL_SOCKET_PATH,
+        );
+        client
+            .call(helper_protocol::Request::ListNftTable {
+                table: super::super::infrastructure::firewall::TABLE_NAME.to_string(),
+            })
+            .await
+            .is_ok()
+    };
+    let nftables = if helper_nft {
+        match env_snap.nft_version.clone() {
+            // 原生开发（API 直接跑在宿主）时能拿到真实版本号。
+            Some(version) => format!("Healthy ({version})"),
+            None => "Healthy (via helper)".to_string(),
+        }
+    } else {
+        "Missing".to_string()
+    };
+
     // WireGuard：内核模块 / 命令存在性（观测）
     let wg_healthy = std::path::Path::new("/sys/module/wireguard").exists() || {
         let runner = super::super::system::command::RealCommandRunner;
@@ -100,12 +123,18 @@ pub async fn host_status(_db: &DatabaseConnection) -> AwdResult<PlatformHostStat
         .ok()
         .map(|s| s.trim().to_string());
 
+    // 容器内观测不到 nft/iptables 属正常：显式说明探测位置，避免误判为宿主缺失。
+    let mut notes = env_snap.notes.clone();
+    if env_snap.nft_version.is_none() {
+        notes.insert(
+            0,
+            "宿主防火墙/网络事实经 floatctf-helper 观测（API 容器内不安装 nft/iptables）。"
+                .to_string(),
+        );
+    }
+
     Ok(PlatformHostStatus {
-        nftables: env_snap
-            .nft_version
-            .clone()
-            .map(|v| format!("Healthy ({v})"))
-            .unwrap_or_else(|| "Missing".to_string()),
+        nftables,
         wireguard: if wg_healthy {
             "Healthy".to_string()
         } else {
@@ -133,7 +162,7 @@ pub async fn host_status(_db: &DatabaseConnection) -> AwdResult<PlatformHostStat
         }),
         ipv6_policy: "blocked".to_string(), // AWD v6 无路由 + 规则默认 drop（§dda2c98 决策）
         capability_supported: matches!(capability, Ok(env::HostNetworkCapability::Supported)),
-        notes: env_snap.notes.clone(),
+        notes,
     })
 }
 

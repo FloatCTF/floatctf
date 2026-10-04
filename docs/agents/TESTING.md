@@ -77,6 +77,22 @@ cargo test --test http_auth_contract      # API 契约（需 API 运行）
 cargo fmt --all && cargo check -p floatctf  # 提交前必跑
 ```
 
+## 真实宿主 AWD E2E（helper + Docker + WireGuard + nftables）
+
+业务级验收脚本只应在准备好的 Linux AWD 开发机上执行：它们使用隔离的 PostgreSQL/Redis/API
+端口，但会真实创建容器、WireGuard 接口与 nftables 表（经 `floatctf-helper`），结束时自行清理。
+
+```bash
+scripts/test-awd-business-e2e.sh                            # baseline：2x30s 完整比赛 + 精确计分账本
+AWD_E2E_SCENARIO=hardening scripts/test-awd-business-e2e.sh # 40s 硬化期 + 暂停/恢复边界
+AWD_E2E_SCENARIO=reset scripts/test-awd-business-e2e.sh     # 靶机重置：免费/罚分/归属/暂停/结算边界
+scripts/test-awd-boundaries-e2e.sh                          # 顺序执行 hardening + reset 两个场景
+```
+
+前置条件（脚本 preflight 会逐项检查并说明失败原因）：`floatctf-helper.service` active、
+`floatctf/awd-flagserver:latest` 与 `floatctf/awd-judgeserver:latest` 镜像存在、开发库无
+active AWD 赛事、无残留 `fctf-awd-*` 网络 / `fawg_*` 接口 / AWD 容器。
+
 ## 宿主代理（HTTP_PROXY）与内网直连
 
 平台内部探针/评测都直连 Docker 内网（`10.42.x`、`10.43.x`）。宿主一旦设置

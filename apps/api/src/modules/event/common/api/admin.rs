@@ -1,5 +1,7 @@
 //! 管理端赛事 HTTP 处理器——薄适配 `admin_service`。
 
+use actix_web::web;
+
 use crate::api::dto::map_dto_vec;
 
 use crate::modules::event::common::api::EventsDto;
@@ -122,15 +124,81 @@ pub async fn get_event(
 }
 
 /// DELETE /api/admin/events
+///
+/// AWD 赛事的容器 / Docker 网络 / WireGuard 接口 / nftables 规则必须显式拆除：
+/// DB 行删除后这些宿主资源无法再被解析，因此先快照、删除行、再按快照拆除。
 #[delete("")]
 pub async fn delete_event(
     user: SuperAdminJwtGuard,
     ctx: ReqCtx,
+    awd: web::Data<crate::bootstrap::state::AwdDependencies>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
     let user = user.into_inner();
     let dir = dir.into_inner();
+
+    let mut snapshots = Vec::new();
+    for event_id in &dir.id_list {
+        match crate::modules::event::awd::service::archive_service::snapshot_event_runtime(
+            ctx.db.get_ref(),
+            awd.containers.as_ref(),
+            *event_id,
+        )
+        .await
+        {
+            Ok(Some(snapshot)) => snapshots.push(snapshot),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                "[Delete] snapshot AWD runtime for {} failed: {}",
+                event_id,
+                error
+            ),
+        }
+    }
+
     let deleted_count = svc::delete_events(ctx.db.get_ref(), dir.id_list).await?;
+
+    for snapshot in &snapshots {
+        // 删除失败（例如受保护赛事）时不得拆运行时，否则赛事记录仍在而容器已消失。
+        match events::Entity::find_by_id(snapshot.event_id)
+            .one(ctx.db.get_ref())
+            .await
+        {
+            Ok(Some(_)) => {
+                tracing::warn!(
+                    "[Delete] event {} still exists after delete; skipping runtime teardown",
+                    snapshot.event_id
+                );
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[Delete] cannot confirm deletion of {}: {}; skipping runtime teardown",
+                    snapshot.event_id,
+                    error
+                );
+                continue;
+            }
+        }
+
+        if let Err(error) =
+            crate::modules::event::awd::service::archive_service::teardown_event_runtime(
+                ctx.db.get_ref(),
+                awd.containers.as_ref(),
+                awd.network.as_ref(),
+                awd.firewall.as_ref(),
+                snapshot,
+            )
+            .await
+        {
+            tracing::warn!(
+                "[Delete] teardown AWD runtime for {} failed: {}",
+                snapshot.event_id,
+                error
+            );
+        }
+    }
 
     ctx.log
         .add_log(

@@ -241,3 +241,160 @@ pub async fn quick_archive(db: &DatabaseConnection, event_id: Uuid) -> AwdResult
     .await?;
     Ok(())
 }
+
+/// 删除赛事前的运行时快照（DB 行删除后无法再解析这些宿主资源标识）。
+#[derive(Debug, Clone, Default)]
+pub struct EventRuntimeSnapshot {
+    pub event_id: Uuid,
+    /// container_name -> container_id（container_id 缺省时回落为 container_name）
+    pub containers: BTreeMap<String, String>,
+    pub wg_interface: Option<String>,
+    pub gamebox_cidr: Option<String>,
+    pub docker_network_id: Option<String>,
+}
+
+/// 采集 AWD 运行时快照；非 AWD 赛事返回 `None`。
+pub async fn snapshot_event_runtime(
+    db: &DatabaseConnection,
+    containers: &dyn AwdContainerRuntime,
+    event_id: Uuid,
+) -> AwdResult<Option<EventRuntimeSnapshot>> {
+    if event_repo::find_by_event_id(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+
+    let mut snapshot = EventRuntimeSnapshot {
+        event_id,
+        ..Default::default()
+    };
+
+    let instances = gamebox_repo::find_instances_by_event(db, event_id)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    for (_, root) in &instances {
+        snapshot.containers.insert(
+            root.container_name.clone(),
+            root.container_id
+                .clone()
+                .unwrap_or_else(|| root.container_name.clone()),
+        );
+    }
+
+    let infra_resources = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(
+            awd_runtime_resources::Column::ResourceType
+                .is_in(["flagserver".to_string(), "judgeserver".to_string()]),
+        )
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?;
+    for resource in infra_resources {
+        let target = resource
+            .resource_name
+            .clone()
+            .unwrap_or_else(|| resource.resource_id.clone());
+        snapshot.containers.insert(resource.resource_id, target);
+    }
+
+    if let Ok(live) = containers.list_event_containers(event_id).await {
+        for state in live {
+            snapshot
+                .containers
+                .insert(state.container_name, state.container_id);
+        }
+    }
+
+    if let Some(net) =
+        crate::modules::event::awd::repo::event_network_repo::find_by_event_id(db, event_id).await?
+    {
+        snapshot.wg_interface = Some(net.wireguard_interface_name.clone());
+        snapshot.gamebox_cidr = Some(net.gamebox_cidr.to_string());
+    }
+
+    snapshot.docker_network_id = awd_runtime_resources::Entity::find()
+        .filter(awd_runtime_resources::Column::EventId.eq(event_id))
+        .filter(awd_runtime_resources::Column::ResourceType.eq("docker_network"))
+        .one(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .map(|r| r.resource_id);
+
+    Ok(Some(snapshot))
+}
+
+/// 删除赛事后的物理拆除（调用时 DB 行已删除，故 reconcile 的 desired set 已不含该赛事）。
+///
+/// 顺序：容器 → Docker 29 anti-spoof 规则 → WireGuard 接口 → Docker 网络 → 全局 firewall reconcile。
+pub async fn teardown_event_runtime(
+    db: &DatabaseConnection,
+    containers: &dyn AwdContainerRuntime,
+    network: &dyn AwdNetworkRuntime,
+    firewall: &dyn crate::modules::event::awd::infrastructure::firewall::FirewallRuntime,
+    snapshot: &EventRuntimeSnapshot,
+) -> AwdResult<()> {
+    for (container_name, target) in &snapshot.containers {
+        if let Err(e) = containers.stop_container(target).await {
+            info!(
+                "[Delete] stop {} ({}): {} — continuing remove",
+                target, container_name, e
+            );
+        }
+        if let Err(e) = containers.remove_container(target).await {
+            info!(
+                "[Delete] remove {} ({}): {} — continuing",
+                target, container_name, e
+            );
+        }
+    }
+
+    // 规则按接口名匹配，不依赖接口存在，需在接口/桥删除前移除。
+    if let (Some(wg_interface), Some(gamebox_cidr)) = (
+        snapshot.wg_interface.as_ref(),
+        snapshot.gamebox_cidr.as_ref(),
+    ) {
+        crate::modules::event::awd::infrastructure::firewall::HelperDockerForwardRuntime::new()
+            .remove_access(
+                &crate::modules::event::awd::infrastructure::firewall::DockerForwardAccessSpec {
+                    wg_interface: wg_interface.clone(),
+                    bridge_name: crate::modules::event::awd::domain::network::docker_bridge_name(
+                        &snapshot.event_id,
+                    ),
+                    gamebox_cidr: gamebox_cidr.clone(),
+                },
+            )
+            .await;
+    }
+
+    if let Some(iface) = snapshot.wg_interface.as_ref()
+        && let Err(e) = network.remove_wireguard(iface).await
+    {
+        warn!("[Delete] remove_wireguard {}: {} — continuing", iface, e);
+    }
+
+    if let Some(network_id) = snapshot.docker_network_id.as_ref()
+        && let Err(e) = containers.remove_event_network(network_id).await
+    {
+        info!("[Delete] remove network {}: {}", network_id, e);
+    }
+
+    use crate::modules::event::awd::service::firewall_service;
+    let remaining = firewall_service::build_desired_state(
+        db,
+        firewall_service::current_network_revision(db).await,
+    )
+    .await?;
+    let revision = firewall_service::next_network_revision(db).await?;
+    if remaining.is_empty() {
+        firewall_service::reconcile_empty(firewall, revision).await?;
+    } else {
+        firewall_service::reconcile_global(db, firewall, revision).await?;
+    }
+
+    info!("[Delete] Event {} runtime torn down", snapshot.event_id);
+    Ok(())
+}

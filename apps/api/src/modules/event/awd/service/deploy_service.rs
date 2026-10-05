@@ -430,10 +430,22 @@ async fn ensure_teams_and_gameboxes(
     docker_network_name: &str,
 ) -> AwdResult<()> {
     // ── 部署前跨赛事重叠校验（新数据源：awd_event_networks，§19）──
+    //
+    // F55：**已归档赛事不再占用网段**。自动分配器把已归档赛事的分配视为空闲，
+    // 若此处仍把它们计入重叠检查，就会出现「分配成功 → 部署 409 冲突」的不一致
+    // （实测：新赛事拿到 10.96.0.0/16，与归档赛事 376a9300 冲突而部署失败）。
+    let archived_events: std::collections::HashSet<Uuid> = awd_events::Entity::find()
+        .filter(awd_events::Column::Status.eq(AwdEventStatus::Archived))
+        .all(db)
+        .await
+        .map_err(|e| AwdError::Database(e.to_string()))?
+        .into_iter()
+        .map(|e| e.event_id)
+        .collect();
     let other_event_networks = event_network_repo::list_all(db)
         .await?
         .into_iter()
-        .filter(|en| en.event_id != event_id)
+        .filter(|en| en.event_id != event_id && !archived_events.contains(&en.event_id))
         .collect::<Vec<_>>();
     let other_networks = awd_team_networks::Entity::find()
         .filter(awd_team_networks::Column::EventId.ne(event_id))

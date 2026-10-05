@@ -64,7 +64,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "runtime_generation",
-			header: "Gen",
+			header: "代数",
 			field: "runtime_generation",
 			renderCell: (row: AdminInstanceRow) => (
 				<span>{row.runtime_generation ?? "-"}</span>

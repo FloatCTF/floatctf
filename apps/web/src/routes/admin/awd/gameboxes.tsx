@@ -491,7 +491,7 @@ export function CheckButton({
 			},
 			{
 				accessorKey: "package_dir",
-				header: "Package Dir",
+				header: "题目包目录",
 				field: "package_dir",
 				label: "包目录",
 				renderCell: (row: GameBoxCheckResult) => {

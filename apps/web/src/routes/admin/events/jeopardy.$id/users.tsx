@@ -76,7 +76,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "event_user.joined_at",
-            header: "Joined At",
+            header: "加入时间",
             field: "event_user.joined_at",
             renderCell: (row: EventUserResult) => {
                 return <span>{DatetimeToShow(row.event_user.joined_at)}</span>;

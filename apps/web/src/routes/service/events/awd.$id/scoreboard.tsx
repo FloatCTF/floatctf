@@ -88,13 +88,13 @@ function ScoreBoard({
 		},
 		{
 			accessorKey: "attack_score",
-			header: "Attack",
+			header: "攻破",
 			field: "attack_score",
 			renderCell: (row: AwdScoreRow) => <span>{row.attack_score}</span>,
 		},
 		{
 			accessorKey: "defense_score",
-			header: "Defense",
+			header: "防守",
 			field: "defense_score",
 			renderCell: (row: AwdScoreRow) => <span>{row.defense_score}</span>,
 		},

@@ -106,7 +106,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "health_status",
-			header: "Health",
+			header: "健康",
 			field: "health_status",
 		},
 		{

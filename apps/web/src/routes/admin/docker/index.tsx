@@ -20,7 +20,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "id",
-			header: "Container ID",
+			header: "容器 ID",
 			field: "id",
 			rowHeader: true,
 			renderCell: (row: FloatDockerContainer) => (
@@ -30,7 +30,7 @@ function RouteComponent() {
 		{ accessorKey: "name", header: "名称", field: "name" },
 		{ accessorKey: "image", header: "镜像", field: "image" },
 		{ accessorKey: "status", header: "状态", field: "status" },
-		{ accessorKey: "ports", header: "Ports", field: "ports" },
+		{ accessorKey: "ports", header: "端口", field: "ports" },
 		{
 			accessorKey: "created",
 			header: "创建时间",

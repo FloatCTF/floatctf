@@ -87,7 +87,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "kind",
-			header: "Kind",
+			header: "类型",
 			field: "kind",
 			renderCell: (row: AwdpEvaluationDto) => (
 				<span className="text-xs opacity-70">{row.kind}</span>

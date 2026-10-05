@@ -105,7 +105,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "joined",
-			header: "Joined",
+			header: "已加入",
 			field: "joined",
 			renderCell: (row: EventInfo) => (
 				<span>{row.joined ? <CheckIcon /> : <></>}</span>

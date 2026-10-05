@@ -92,13 +92,13 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "challenge.category",
-			header: "Challenge Category",
+			header: "题目分类",
 			field: "challenge.category",
 			sortBy: true,
 		},
 		{
 			accessorKey: "event_challenge.points",
-			header: "Challenge Points",
+			header: "题目分值",
 			field: "event_challenge.points",
 			sortBy: true,
 		},

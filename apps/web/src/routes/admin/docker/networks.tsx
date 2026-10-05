@@ -35,15 +35,15 @@ function RouteComponent() {
     const columns = [
         {
             accessorKey: "id",
-            header: "Network ID",
+            header: "网络 ID",
             field: "id",
             rowHeader: true,
         },
         { accessorKey: "name", header: "名称", field: "name" },
-        { accessorKey: "driver", header: "Driver", field: "driver" },
+        { accessorKey: "driver", header: "驱动", field: "driver" },
         { accessorKey: "scope", header: "Scope", field: "scope" },
-        { accessorKey: "subnet", header: "Subnet", field: "subnet" },
-        { accessorKey: "gateway", header: "Gateway", field: "gateway" },
+        { accessorKey: "subnet", header: "子网", field: "subnet" },
+        { accessorKey: "gateway", header: "网关", field: "gateway" },
     ];
 
     const filterKeys = ["name"];

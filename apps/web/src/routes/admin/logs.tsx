@@ -61,7 +61,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "superadmin_id",
-            header: "Admin ID",
+            header: "管理员 ID",
             field: "superadmin_id",
         },
         {

@@ -22,7 +22,7 @@ function RouteComponent() {
     { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
     {
       accessorKey: "key",
-      header: "Key",
+      header: "键",
       field: "key",
       label: "配置键",
       sortBy: true,

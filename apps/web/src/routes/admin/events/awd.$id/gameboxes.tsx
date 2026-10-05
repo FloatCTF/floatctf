@@ -50,17 +50,17 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "host_offset",
-			header: "Host Offset",
+			header: "主机编号",
 			field: "host_offset",
 		},
 		{
 			accessorKey: "attack_score",
-			header: "Attack Score",
+			header: "攻破得分",
 			field: "attack_score",
 		},
 		{
 			accessorKey: "judge_down_penalty",
-			header: "Down Penalty",
+			header: "宕机罚分",
 			field: "judge_down_penalty",
 		},
 		{

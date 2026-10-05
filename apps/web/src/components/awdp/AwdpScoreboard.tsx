@@ -146,7 +146,7 @@ function GameboxTable({ data }: { data: AwdpScoreboardDetail }) {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "Gamebox",
+			header: "靶机",
 			field: "name",
 			rowHeader: true,
 			renderCell: (row: GameboxCountRow) => (

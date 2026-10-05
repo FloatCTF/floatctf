@@ -77,7 +77,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "team.banned",
-            header: "Ban",
+            header: "封禁",
             field: "team.banned",
             renderCell: (row: TeamResult) => (
                 row.team.banned ? (

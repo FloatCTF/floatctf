@@ -208,7 +208,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Flag Prefix",
+			header: "Flag 前缀",
 			field: "flag_prefix",
 			label: "Flag 前缀",
 			render: (

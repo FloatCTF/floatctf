@@ -587,7 +587,7 @@ export function CheckButton({
 			},
 			{
 				accessorKey: "attachment",
-				header: "Attachment",
+				header: "附件",
 				field: "attachment",
 				renderCell: (row: ChallengeCheckResult) => {
 					return <span>{row.attachment ? <CheckIcon /> : <></>}</span>;

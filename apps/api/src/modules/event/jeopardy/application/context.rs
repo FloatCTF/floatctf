@@ -189,7 +189,7 @@ impl EventContext {
         event_users::Entity::find_by_id((self.event.id, self.user.id))
             .one(self.db.get_ref())
             .await?
-            .ok_or_else(|| anyhow!("User not joined the event!"))?;
+            .ok_or_else(|| anyhow!("你尚未加入本赛事"))?;
         Ok(())
     }
 }

@@ -408,7 +408,7 @@ pub async fn launch_instance(
 
     let instance = jeopardy_instance::launch_instance(&event_ctx, lir.challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(format!("when launch instance:{}", e)))?;
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     ctx.log
         .add_log(

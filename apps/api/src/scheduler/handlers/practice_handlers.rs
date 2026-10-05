@@ -34,6 +34,12 @@ impl TaskHandler for CleanRunningInstancesHandler {
 
         let service =
             InstanceService::with_docker(self.db.get_ref().clone(), self.docker.get_ref().clone());
+        // F54：先做存活性对账（容器已被外部删除的实例），再按 TTL 清理。
+        match service.reconcile_missing_containers(300).await {
+            Ok(n) if n > 0 => tracing::info!(reconciled = n, "[Liveness] 僵尸实例已对账"),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "[Liveness] 对账失败，继续执行 TTL 清理"),
+        }
         let report = service.cleanup_running().await?;
 
         for instance_id in report.completed {

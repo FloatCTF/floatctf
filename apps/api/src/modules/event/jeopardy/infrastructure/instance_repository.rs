@@ -71,7 +71,11 @@ pub async fn list_cleanup_candidates(
     db: &DatabaseConnection,
 ) -> Result<Vec<InstanceRow>, sea_orm::DbErr> {
     let now = chrono::Utc::now().fixed_offset();
-    let rows = event_challenge_instance::Entity::find()
+    // 注意：必须**直接查 event_instances**。此前写成
+    // `event_challenge_instance::Entity::find().filter(event_instances::Column::…)`
+    // ——在基实体上过滤关联表的列，实测匹配不到任何行，导致清理任务每次
+    // 都是 0 候选、僵尸实例无限累积（F54 根因）。
+    let runtimes = event_instances::Entity::find()
         .filter(
             Condition::any()
                 .add(event_instances::Column::RuntimeState.eq("failed"))
@@ -81,13 +85,37 @@ pub async fn list_cleanup_candidates(
                         .add(event_instances::Column::ExpiresAt.lte(now)),
                 ),
         )
-        .find_also_related(event_instances::Entity)
         .all(db)
         .await?;
-    Ok(rows
+    if runtimes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<Uuid> = runtimes.iter().map(|r| r.id).collect();
+    let instances = event_challenge_instance::Entity::find()
+        .filter(event_challenge_instance::Column::Id.is_in(ids))
+        .all(db)
+        .await?;
+    let by_id: std::collections::HashMap<Uuid, event_challenge_instance::Model> =
+        instances.into_iter().map(|i| (i.id, i)).collect();
+    Ok(runtimes
         .into_iter()
-        .filter_map(|(i, r)| r.map(|r| (i, r)))
+        .filter_map(|r| by_id.get(&r.id).cloned().map(|i| (i, r)))
         .collect())
+}
+
+/// 存活性对账候选（F54）：标记 `running` 但 `updated_at` 已早于 `now - min_age_secs`
+/// 的实例。用于发现「容器已被外部删除 / 宿主重启 / 容器运行时被清理」而 DB 仍记为
+/// running 的僵尸记录（此前只有 TTL 到期才会被清理，实测 90 秒后仍不自愈）。
+pub async fn list_running_older_than(
+    db: &DatabaseConnection,
+    min_age_secs: i64,
+) -> Result<Vec<event_instances::Model>, sea_orm::DbErr> {
+    let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(min_age_secs)).fixed_offset();
+    event_instances::Entity::find()
+        .filter(event_instances::Column::RuntimeState.eq("running"))
+        .filter(event_instances::Column::UpdatedAt.lte(cutoff))
+        .all(db)
+        .await
 }
 
 /// 删除同容器名、状态为 `completed` 的旧实例行。

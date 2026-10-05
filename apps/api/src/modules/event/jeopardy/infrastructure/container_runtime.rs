@@ -33,6 +33,15 @@ pub struct ChallengeRuntimeSpec {
 pub trait InstanceRuntime: Send + Sync {
     async fn launch(&self, spec: &ChallengeRuntimeSpec, identifier: &str) -> anyhow::Result<u16>;
     async fn stop_and_remove(&self, identifier: &str) -> anyhow::Result<()>;
+
+    /// 容器是否仍存在（F54 存活性对账用）。
+    ///
+    /// 默认返回 true（不参与对账），便于 mock/测试实现无需关心；Docker 实现会区分
+    /// 「确定不存在」与「运行时抖动」：只有前者返回 Ok(false)，后者返回 Err 让调用方
+    /// 跳过，避免把暂时不可达的实例误判为僵尸。
+    async fn container_exists(&self, _identifier: &str) -> anyhow::Result<bool> {
+        Ok(true)
+    }
 }
 
 pub struct DockerInstanceRuntime {
@@ -104,6 +113,24 @@ impl InstanceRuntime for DockerInstanceRuntime {
         self.runtime
             .stop_and_remove(identifier, IMMEDIATE_STOP_TIMEOUT)
             .await
+    }
+
+    async fn container_exists(&self, identifier: &str) -> anyhow::Result<bool> {
+        // 用容器列表判断存在性：helper 对**单个缺失容器**的 inspect 会被归一化成
+        // 403/404（消息文本随版本变化），而列表接口在平台内被稳定使用。列出全部
+        // （含已停止）容器后按名称比对，避免依赖错误消息文本。
+        let all = self
+            .runtime
+            .list_containers(fcmc::ContainerFilter {
+                all: true,
+                ..Default::default()
+            })
+            .await?;
+        let target = identifier.trim_start_matches('/');
+        Ok(all.iter().any(|c| {
+            let name = c.container_name.trim_start_matches('/');
+            name == target || c.container_id.starts_with(target)
+        }))
     }
 }
 

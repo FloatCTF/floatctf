@@ -263,6 +263,43 @@ impl InstanceService {
         Ok(true)
     }
 
+    /// 存活性对账（F54）：把「标记 running 但容器已不存在」的实例收敛为 `failed`。
+    ///
+    /// 仅处理 `updated_at` 早于 `min_age_secs` 的记录（避免与刚启动的实例竞态），
+    /// 且只在运行时**确定**容器不存在时收敛；docker 抖动等错误只记日志、不动状态。
+    pub async fn reconcile_missing_containers(&self, min_age_secs: i64) -> anyhow::Result<usize> {
+        let candidates = repo::list_running_older_than(&self.db, min_age_secs).await?;
+        tracing::info!(
+            candidates = candidates.len(),
+            min_age_secs,
+            "[Liveness] 存活性对账开始"
+        );
+        let mut reconciled = 0usize;
+        for runtime in candidates {
+            match self.runtime.container_exists(&runtime.container_name).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    repo::transition_runtime_state(&self.db, runtime.id, "running", "failed")
+                        .await?;
+                    tracing::info!(
+                        instance_id = %runtime.id,
+                        container = %runtime.container_name,
+                        "[Liveness] 容器已不存在，running → failed"
+                    );
+                    reconciled += 1;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        instance_id = %runtime.id,
+                        error = %error,
+                        "[Liveness] 无法确认容器状态，跳过本轮对账"
+                    );
+                }
+            }
+        }
+        Ok(reconciled)
+    }
+
     pub async fn cleanup_running(&self) -> anyhow::Result<CleanupReport> {
         let instances = repo::list_cleanup_candidates(&self.db).await?;
         let mut report = CleanupReport::default();

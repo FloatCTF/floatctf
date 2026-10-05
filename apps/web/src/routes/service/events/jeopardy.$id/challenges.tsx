@@ -274,7 +274,7 @@ function ChallengeDialog({
 	const submitFlag = useMutation({
 		mutationFn: serviceApi.submit.submitSingle,
 		onSuccess: (_data) => {
-			banner.showBanner("success", "Flag is correct!");
+			banner.showBanner("success", "提交成功，该题已解出");
 			queryClient.invalidateQueries({
 				queryKey: ["eventChallenges", eventId],
 			});

@@ -231,7 +231,7 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 	const submitFlag = useMutation({
 		mutationFn: serviceApi.submit.submit,
 		onSuccess: (_data) => {
-			banner.showBanner("success", "Flag is correct!");
+			banner.showBanner("success", "提交成功，该题已解出");
 			challengeStatus.isRunning = false;
 			challengeStatus.instance = {} as Instances;
 		},

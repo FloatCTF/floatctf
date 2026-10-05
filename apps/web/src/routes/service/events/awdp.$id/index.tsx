@@ -117,7 +117,7 @@ function RouteComponent() {
 	if (!eventData || !ev) {
 		return (
 			<div className="p-4">
-				<InlineMessage variant="warning">Event not found.</InlineMessage>
+				<InlineMessage variant="warning">未找到该赛事。</InlineMessage>
 			</div>
 		);
 	}
@@ -125,7 +125,7 @@ function RouteComponent() {
 		return (
 			<div className="p-4">
 				<InlineMessage variant="warning">
-					You are not joined this event.
+					你尚未加入本赛事。
 				</InlineMessage>
 			</div>
 		);

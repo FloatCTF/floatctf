@@ -74,7 +74,7 @@ function RouteComponent() {
 	const submitFlag = useMutation({
 		mutationFn: serviceApi.submit.submit,
 		onSuccess: (_data) => {
-			banner.showBanner("success", "Flag is correct!");
+			banner.showBanner("success", "提交成功，该题已解出");
 			// 由后端关闭
 			challengeStatus.isRunning = false;
 			challengeStatus.instance = {} as Instances;

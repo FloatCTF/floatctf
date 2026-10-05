@@ -337,12 +337,12 @@ export function AwdpWorkbench({
 				banner.showBanner(
 					res.scored ? "success" : "warning",
 					res.scored
-						? "Flag accepted, +score"
-						: "Flag accepted (already broken)",
+						? "提交成功，已计分"
+						: "提交成功（此前已攻破）",
 				);
 				setFlagInputs((prev) => ({ ...prev, [gb.id]: "" }));
 			} else {
-				banner.showBanner("critical", "Flag rejected");
+				banner.showBanner("critical", "提交失败：flag 无效");
 			}
 		} catch (e) {
 			banner.showErrorBanner(e);

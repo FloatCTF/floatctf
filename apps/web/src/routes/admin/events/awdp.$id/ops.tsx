@@ -50,7 +50,7 @@ function RouteComponent() {
 	const breakToFix = useMutation({
 		mutationFn: () => awdpAdminApi.breakToFix(id),
 		onSuccess: () => {
-			banner.showBanner("success", "Break → Fix (all instances reset)");
+			banner.showBanner("success", "已切换到修复阶段（所有实例已重置）");
 			invalidate();
 		},
 		onError: (e) => banner.showErrorBanner(e),
@@ -80,13 +80,13 @@ function RouteComponent() {
 						disabled={phase !== "pending" || pending}
 						onClick={() => start.mutate()}
 					>
-						Start (→ Break)
+						开始（→ 攻破阶段）
 					</Button>
 					<Button
 						disabled={phase !== "break" || pending}
 						onClick={() => breakToFix.mutate()}
 					>
-						Break → Fix
+						攻破 → 修复
 					</Button>
 					<Button
 						variant="danger"
@@ -101,7 +101,7 @@ function RouteComponent() {
 							if (ok) finish.mutate();
 						}}
 					>
-						Finish (→ Ended)
+						结束（→ 已结束）
 					</Button>
 				</ButtonGroup>
 				{pending && (
@@ -119,7 +119,7 @@ function RouteComponent() {
 					</li>
 					<li>手动按钮用于提前推进阶段。</li>
 					<li>
-						Break → Fix 会把全部实例重置为 pristine（runtime_generation
+						攻破 → 修复 会把全部实例重置为 pristine（runtime_generation
 						+1，公开端口不变）。
 					</li>
 				</ul>

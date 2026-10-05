@@ -135,7 +135,7 @@ function RouteComponent() {
 			setDirty(false);
 			// 保存成功后继续编辑 Fix 参数时仍按 ×0.6 规则联动（除非再次手动改 Break Score）。
 			breakScoreTouched.current = false;
-			banner.showBanner("success", "AWDP configuration saved");
+			banner.showBanner("success", "AWDP 配置已保存");
 			qc.invalidateQueries({ queryKey: ["awdp-config", id] });
 			qc.invalidateQueries({ queryKey: ["event", id] });
 		},
@@ -343,7 +343,7 @@ function RouteComponent() {
 
 				<Section title="Break & Fix">
 					<NumberField
-						label="Fix Duration"
+						label="修复阶段时长（秒）"
 						caption={
 							`Fix 阶段时长（秒）。取整为整数回合：当前 ${formatDuration(effectiveFixSecs)}（${totalRounds} 回合 × ${formatDuration(turnSecs)}）。` +
 							(fixHint ? ` ${fixHint}` : "")
@@ -365,7 +365,7 @@ function RouteComponent() {
 						warn={breakBelowMin}
 					/>
 					<NumberField
-						label="Turn Interval"
+						label="回合间隔（秒）"
 						caption={`每回合时长（秒），默认 10min。回合数 = Fix ÷ Turn（Fix 将取整为 Turn 的整数倍）。`}
 						value={form.fixRoundIntervalSecs}
 						onChange={set("fixRoundIntervalSecs")}
@@ -377,7 +377,7 @@ function RouteComponent() {
 
 				<Section title="Scoring">
 					<NumberField
-						label="Break Score"
+						label="攻破得分"
 						caption={`Break 阶段一次性得分（每 GameBox）；默认 = Fix 满分 × 0.6（当前 ${deriveBreakScore(form)}）。改 Fix/回合时自动重算，手动改过则不再跟随。`}
 						value={form.breakScore}
 						onChange={set("breakScore")}
@@ -385,7 +385,7 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<NumberField
-						label="Fix Score / Turn"
+						label="每回合修复得分"
 						caption="Fix 阶段每回合 PATCHED 得分。"
 						value={form.fixRoundScore}
 						onChange={set("fixRoundScore")}
@@ -437,7 +437,7 @@ function RouteComponent() {
 						}
 						onClick={submit}
 					>
-						{save.isPending ? "Saving…" : "Save AWDP Configuration"}
+						{save.isPending ? "保存中…" : "保存 AWDP 配置"}
 					</Button>
 				</Box>
 			</Box>

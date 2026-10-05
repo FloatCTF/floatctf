@@ -104,6 +104,8 @@ pub async fn admin_create_user(
     let admin = admin.into_inner();
     let cur = cur.into_inner();
 
+    super::validate_account_fields(&cur.username, &cur.password, &cur.email)?;
+
     let hashed_password = {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
@@ -117,14 +119,20 @@ pub async fn admin_create_user(
     };
 
     let new_user = users::ActiveModel {
-        username: Set(cur.username),
+        username: Set(cur.username.trim().to_string()),
         password: Set(hashed_password),
-        email: Set(cur.email),
+        email: Set(cur.email.trim().to_string()),
         nickname: Set(cur.nickname),
         ..Default::default()
     };
 
-    let user = new_user.insert(ctx.db.get_ref()).await?;
+    let user = match new_user.insert(ctx.db.get_ref()).await {
+        Ok(user) => user,
+        Err(error) if crate::api::is_unique_violation(&error.to_string()) => {
+            return Err(AppError::Conflict("用户名已被占用".into()));
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     ctx.log
         .add_log(
@@ -168,11 +176,28 @@ pub async fn admin_patch_user(
 
     let mut m_user = user.into_active_model();
 
-    pur.username.map(|u| {
-        m_user.username = Set(u);
-    });
+    if let Some(u) = pur.username.as_deref() {
+        let trimmed = u.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::Validation("用户名不能为空".into()));
+        }
+        if trimmed.chars().count() > 64 {
+            return Err(AppError::Validation("用户名最长 64 个字符".into()));
+        }
+        m_user.username = Set(trimmed.to_string());
+    }
+    if let Some(email) = pur.email.as_deref() {
+        let trimmed = email.trim();
+        if !trimmed.is_empty() && !trimmed.contains('@') {
+            return Err(AppError::Validation("邮箱格式不正确".into()));
+        }
+        m_user.email = Set(trimmed.to_string());
+    }
 
     if let Some(p) = pur.password {
+        if p.chars().count() < 8 {
+            return Err(AppError::Validation("密码至少 8 位".into()));
+        }
         let hashed_password = {
             let salt = SaltString::generate(&mut OsRng);
             let argon2 = Argon2::default();
@@ -188,16 +213,18 @@ pub async fn admin_patch_user(
         m_user.password = Set(hashed_password);
     }
 
-    pur.email.map(|e| {
-        m_user.email = Set(e);
-    });
-
     pur.nickname.map(|n| {
         m_user.nickname = Set(n);
     });
     m_user.updated_at = Set(Utc::now().into());
 
-    let user = m_user.update(ctx.db.get_ref()).await?;
+    let user = match m_user.update(ctx.db.get_ref()).await {
+        Ok(user) => user,
+        Err(error) if crate::api::is_unique_violation(&error.to_string()) => {
+            return Err(AppError::Conflict("用户名已被占用".into()));
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     ctx.log
         .add_log(

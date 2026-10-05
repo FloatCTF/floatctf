@@ -191,3 +191,14 @@ fn fallback_message(message: &str, fallback: &str) -> String {
         trimmed.to_string()
     }
 }
+
+/// 判断数据库错误是否为唯一约束冲突（SeaORM 不暴露 PG 错误码，只能按消息匹配）。
+///
+/// 唯一约束冲突属于业务冲突，必须映射成 4xx 中文提示；直接冒泡会变成 500
+/// 并把约束名等内部信息回传给用户。
+pub fn is_unique_violation(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("duplicate key")
+        || lower.contains("unique constraint")
+        || lower.contains("23505")
+}

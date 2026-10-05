@@ -85,6 +85,8 @@ pub struct CreateUserRequest {
 pub async fn create_user(ctx: ReqCtx, cur: Json<CreateUserRequest>) -> UniResult<String> {
     let cur = cur.into_inner();
 
+    super::validate_account_fields(&cur.username, &cur.password, &cur.email)?;
+
     let hashed_password = {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
@@ -98,14 +100,20 @@ pub async fn create_user(ctx: ReqCtx, cur: Json<CreateUserRequest>) -> UniResult
     };
 
     let new_user = users::ActiveModel {
-        username: Set(cur.username),
+        username: Set(cur.username.trim().to_string()),
         password: Set(hashed_password),
-        email: Set(cur.email),
+        email: Set(cur.email.trim().to_string()),
         nickname: Set(cur.nickname),
         ..Default::default()
     };
 
-    let user = new_user.insert(ctx.db.get_ref()).await?;
+    let user = match new_user.insert(ctx.db.get_ref()).await {
+        Ok(user) => user,
+        Err(error) if crate::api::is_unique_violation(&error.to_string()) => {
+            return Err(AppError::Conflict("用户名已被占用".into()));
+        }
+        Err(error) => return Err(error.into()),
+    };
     ctx.log
         .add_log(
             "INFO",

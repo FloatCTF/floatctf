@@ -407,13 +407,24 @@ pub async fn create_team(
                     return Err(AppError::BadRequest("already joined team".to_string()));
                 }
 
-                let team = event_teams::ActiveModel {
+                let team = match (event_teams::ActiveModel {
                     name: Set(name),
                     event_id: Set(event_id),
                     ..Default::default()
-                }
+                })
                 .insert(tx)
-                .await?;
+                .await
+                {
+                    Ok(team) => team,
+                    // 唯一约束（event_id, name）：重名是业务错误，不能把原始 DB 错误
+                    // 冒泡成 500（会向用户泄漏约束名等内部信息）。
+                    Err(error) if is_unique_violation(&error.to_string()) => {
+                        return Err(AppError::BadRequest(
+                            "队伍名称已存在，请更换名称".to_string(),
+                        ));
+                    }
+                    Err(error) => return Err(error.into()),
+                };
 
                 // Historical versions could leave an event_users row without membership.
                 // Reuse it instead of trapping the user; new writes always stay atomic.
@@ -813,4 +824,13 @@ pub fn player_event_filter_mappings() -> [FilterMapping; 4] {
             }),
         },
     ]
+}
+
+/// 唯一约束冲突判定：SeaORM 不会把 PG 错误码暴露成类型，这里按消息匹配
+/// （`duplicate key` / `unique constraint` / SQLSTATE 23505）。
+fn is_unique_violation(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("duplicate key")
+        || lower.contains("unique constraint")
+        || lower.contains("23505")
 }

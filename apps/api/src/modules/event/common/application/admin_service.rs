@@ -159,10 +159,13 @@ pub async fn create_event(
         req.participant_mode.clone(),
     )
     .map_err(|e| AppError::Validation(e.to_string()))?;
+    // 标题必填：空标题赛事在列表/详情页都无法辨认（前端同样拦截，后端兜底）。
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err(AppError::Validation("赛事标题不能为空".into()));
+    }
     if req.start_time >= req.end_time {
-        return Err(AppError::Validation(
-            "event start_time must be before end_time".into(),
-        ));
+        return Err(AppError::Validation("赛事开始时间必须早于结束时间".into()));
     }
     let new_event = events::ActiveModel {
         // 练习模式（purpose='practice'）即虚拟赛事，由 events_virtual_by_purpose_check 约束。
@@ -171,7 +174,7 @@ pub async fn create_event(
         purpose: Set(mode.purpose),
         participant_mode: Set(mode.participant_mode),
         system_key: Set(None),
-        title: Set(req.title),
+        title: Set(title),
         description: Set(req.description),
         start_time: Set(req.start_time),
         hidden: Set(req.hidden),
@@ -211,7 +214,11 @@ where
     let mut m_event = event.into_active_model();
 
     if let Some(t) = req.title {
-        m_event.title = Set(t);
+        let title = t.trim().to_string();
+        if title.is_empty() {
+            return Err(AppError::Validation("赛事标题不能为空".into()));
+        }
+        m_event.title = Set(title);
     }
     if let Some(d) = req.description {
         m_event.description = Set(d.into());
@@ -241,9 +248,7 @@ where
             .end_time
             .ok_or_else(|| AppError::Validation("competition event end_time is required".into()))?;
         if updated.start_time >= end {
-            return Err(AppError::Validation(
-                "event start_time must be before end_time".into(),
-            ));
+            return Err(AppError::Validation("赛事开始时间必须早于结束时间".into()));
         }
     }
 

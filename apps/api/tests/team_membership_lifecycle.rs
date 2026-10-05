@@ -208,6 +208,42 @@ async fn user_cannot_join_two_teams_and_failed_join_is_atomic() {
     assert!(enrolled(&db, event.id, member.id).await);
 }
 
+/// 重名建队是业务错误（400），不能把数据库唯一约束错误冒泡成 500。
+#[actix_web::test]
+async fn duplicate_team_name_is_a_business_error() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let cap_a = seed_user(&db, "dup-name-a").await;
+    let cap_b = seed_user(&db, "dup-name-b").await;
+    let event = seed_team_event(&db, "dup-name", true, false, false).await;
+    let web_db = web::Data::new(db.clone());
+
+    player_service::create_team(&web_db, event.id, cap_a.id, "same-name".into())
+        .await
+        .expect("first team with the name");
+
+    let duplicate =
+        player_service::create_team(&web_db, event.id, cap_b.id, "same-name".into()).await;
+    match duplicate {
+        Err(floatctf::api::AppError::BadRequest(message)) => {
+            assert!(
+                message.contains("已存在"),
+                "message should explain the conflict: {message}"
+            );
+        }
+        other => panic!("duplicate team name must be BadRequest, got {other:?}"),
+    }
+
+    // 失败的创建不得留下半成品
+    let teams = event_teams::Entity::find()
+        .filter(event_teams::Column::EventId.eq(event.id))
+        .all(&db)
+        .await
+        .expect("query teams");
+    assert_eq!(teams.len(), 1, "failed create must not insert a team");
+}
+
 #[actix_web::test]
 async fn cross_event_team_id_is_rejected_without_side_effects() {
     let Some(db) = connect_or_skip().await else {

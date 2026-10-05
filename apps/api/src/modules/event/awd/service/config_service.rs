@@ -54,7 +54,7 @@ impl AwdEventConfigPatch {
             && !(0..=1_000_000_000).contains(&value)
         {
             return Err(AwdError::Validation(
-                "initial_score must be between 0 and 1000000000".into(),
+                "初始分数必须在 0 到 1000000000 之间".into(),
             ));
         }
         validate_range("free_reset_count", self.free_reset_count, 0, 100)?;
@@ -62,7 +62,7 @@ impl AwdEventConfigPatch {
             && !(0..=1_000_000_000).contains(&value)
         {
             return Err(AwdError::Validation(
-                "extra_reset_penalty must be between 0 and 1000000000".into(),
+                "额外重置罚分必须在 0 到 1000000000 之间".into(),
             ));
         }
         validate_range(
@@ -143,10 +143,28 @@ fn validate_range(name: &str, value: Option<i32>, min: i32, max: i32) -> AwdResu
         && !(min..=max).contains(&value)
     {
         return Err(AwdError::Validation(format!(
-            "{name} must be between {min} and {max}"
+            "{}必须在 {min} 到 {max} 之间",
+            field_label(name)
         )));
     }
     Ok(())
+}
+
+/// 校验提示用的字段中文名（未收录的字段回落为原始键名，避免提示丢失字段信息）。
+fn field_label(key: &str) -> String {
+    match key {
+        "round_count" => "回合数".to_string(),
+        "round_duration_secs" => "单回合时长（秒）".to_string(),
+        "initial_score" => "初始分数".to_string(),
+        "free_reset_count" => "免费重置次数".to_string(),
+        "extra_reset_penalty" => "额外重置罚分".to_string(),
+        "judge_max_concurrency" => "评测最大并发".to_string(),
+        "judge_default_timeout_secs" => "评测默认超时（秒）".to_string(),
+        "judge_retry_interval_secs" => "评测重试间隔（秒）".to_string(),
+        "judge_grace_period_secs" => "评测宽限期（秒）".to_string(),
+        "archive_retention_hours" => "归档保留时长（小时）".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn assert_config_editable(status: &AwdEventStatus) -> AwdResult<()> {

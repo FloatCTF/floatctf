@@ -284,7 +284,11 @@
 ### 发现
 
 - **F53（已修 + 已部署）**：未参赛者启动实例返回英文 `when launch instance:User not joined the event!` ✗ → `context.rs` 的 `User not joined the event!` 改为「你尚未加入本赛事」，并去掉 `instances.rs` 的 `"when launch instance:{}"` 英文包装前缀。
-- **F54（待修，根因已定位）**：**僵尸实例状态**——DB 中 **16 条 `runtime_state='running'` 但容器已不存在**（含我注入时杀掉的那个）。实测 **90 秒后仍未自愈** ✗（清理任务每 30s 跑，但不处理它）。根因：`instance_repository::list_cleanup_candidates` 只挑选 `failed` 或 **`running 且 expires_at <= now`**（TTL 到期），**没有"容器存活性对账"**。影响：UI 显示"运行中"、可能挡住该玩家再次启动、资源账目虚高。建议修复：新增存活性对账（`running` 且 `updated_at` 早于 N 分钟 → inspect 容器；**仅在确定 NotFound 时**对账为 failed，其它错误不动），在 `system.practice.clean` 里先跑。
+- **F54（已修 + 生产验证）**：**僵尸实例状态**——DB 中 **16 条 `runtime_state='running'` 但容器已不存在**（含我注入时杀掉的那个）。实测 **90 秒后仍未自愈** ✗（清理任务每 30s 跑，但不处理它）。根因：`instance_repository::list_cleanup_candidates` 只挑选 `failed` 或 **`running 且 expires_at <= now`**（TTL 到期），**没有"容器存活性对账"**。影响：UI 显示"运行中"、可能挡住该玩家再次启动、资源账目虚高。**实施与验证**：新增 `InstanceService::reconcile_missing_containers`（在 `system.practice.clean` 里先跑），实例运行时新增 `container_exists`（默认 true 便于 mock；Docker 实现用**容器列表按名比对**，不依赖被归一化的错误文本），仅对 `running` 且 `updated_at` 早于 5 分钟的实例探活，**只有确定容器不存在**才收敛为 `failed`，其它错误只记日志。部署后 **25 秒内 6 条僵尸全部 running → failed**（running=0 / failed=6，逐条日志）✓。
+
+  **更深一层根因**：`list_cleanup_candidates` 写成 `event_challenge_instance::Entity::find().filter(event_instances::Column::…)` —— **在基实体上过滤关联表的列，实测匹配不到任何行**（对账日志 `candidates=0` 即证据），因此 TTL 清理**从未生效**、僵尸实例无限累积。已改为直查 `event_instances` 再按 id 关联，同批修复。
+
+  **残余风险**：暂未观察到误判（本轮 6 条全为真僵尸、无误杀），误判由「5 分钟年龄门槛 + 仅确定缺失」双重保护；如后续遇到 docker 抖动期间的实例，对账会跳过并留待下一轮。
 - 次要观察：Redis **未设 maxmemory** ✗（长期运行下内存无上限，建议设置上限与淘汰策略）；实例清理任务每 30s 以 INFO 打印整条 Model（含锁字段）✗，属日志噪音，规模化后影响日志体量。
 
 ### 覆盖度说明（诚实标注）

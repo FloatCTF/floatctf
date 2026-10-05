@@ -187,7 +187,7 @@ pub async fn get_challenges(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     // 跨表过滤：name / category 属于 challenges 表，通过 resolve_cross_filters 预查 ID
     let cross_ids = resolve_cross_filters::<challenges::Entity>(
@@ -284,7 +284,7 @@ pub async fn set_challenge_points(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let challenge_ids: Vec<Uuid> = sdr
         .challenge_id
@@ -361,7 +361,7 @@ pub async fn hidden_challenges(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let mut event_challenges_list = Vec::new();
 
@@ -369,14 +369,14 @@ pub async fn hidden_challenges(
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
         let event_challenge = jeopardy_event_challenges::Entity::find()
             .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
             .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
         let mut event_challenge: jeopardy_event_challenges::ActiveModel = event_challenge.into();
         event_challenge.hidden = Set(true);
@@ -390,14 +390,14 @@ pub async fn hidden_challenges(
             let challenge = challenges::Entity::find_by_id(challenge_id)
                 .one(ctx.db.get_ref())
                 .await?
-                .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+                .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
             let event_challenge = jeopardy_event_challenges::Entity::find()
                 .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
                 .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
                 .one(ctx.db.get_ref())
                 .await?
-                .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+                .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
             let mut event_challenge: jeopardy_event_challenges::ActiveModel =
                 event_challenge.into();
@@ -445,7 +445,7 @@ pub async fn open_challenges(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let mut event_challenges_list = Vec::new();
 
@@ -453,14 +453,14 @@ pub async fn open_challenges(
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
         let event_challenge = jeopardy_event_challenges::Entity::find()
             .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
             .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
         let mut event_challenge: jeopardy_event_challenges::ActiveModel = event_challenge.into();
         event_challenge.hidden = Set(false);
@@ -474,14 +474,14 @@ pub async fn open_challenges(
             let challenge = challenges::Entity::find_by_id(challenge_id)
                 .one(ctx.db.get_ref())
                 .await?
-                .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+                .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
             let event_challenge = jeopardy_event_challenges::Entity::find()
                 .filter(jeopardy_event_challenges::Column::EventId.eq(event.id))
                 .filter(jeopardy_event_challenges::Column::ChallengeId.eq(challenge.id))
                 .one(ctx.db.get_ref())
                 .await?
-                .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+                .ok_or(AppError::NotFound(format!("未找到 {}", challenge_id)))?;
 
             let mut event_challenge: jeopardy_event_challenges::ActiveModel =
                 event_challenge.into();

@@ -35,7 +35,7 @@ pub async fn add_team(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
     if event.participant_mode != crate::entity::sea_orm_active_enums::ParticipantMode::Team {
         return AppError::BadRequest("teams require team participant mode".to_string()).into();
     }
@@ -154,7 +154,7 @@ pub async fn get_teams(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let mappings = [
         FilterMapping {
@@ -261,7 +261,7 @@ pub async fn get_team_members(
         .filter(event_teams::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", team_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", team_id)))?;
 
     let stmt = event_team
         .find_related(event_team_members::Entity)
@@ -316,7 +316,7 @@ pub async fn add_user_to_team(
     let event = events::Entity::find_by_id(event_id)
         .one(&txn)
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
     if event.participant_mode != crate::entity::sea_orm_active_enums::ParticipantMode::Team {
         return AppError::BadRequest("teams require team participant mode".to_string()).into();
     }
@@ -325,12 +325,12 @@ pub async fn add_user_to_team(
         .filter(event_teams::Column::EventId.eq(event_id))
         .one(&txn)
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", team_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", team_id)))?;
 
     let user_model = users::Entity::find_by_id(user_id)
         .one(&txn)
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", user_id)))?;
 
     let existing_membership = event_team_members::Entity::find()
         .filter(event_team_members::Column::EventId.eq(event_id))
@@ -460,7 +460,7 @@ pub async fn ban_team(
         .filter(event_teams::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", team_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", team_id)))?;
 
     let mut event_team: event_teams::ActiveModel = event_team.into();
     event_team.banned = Set(true);
@@ -497,7 +497,7 @@ pub async fn unbanned_team(
         .filter(event_teams::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", team_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", team_id)))?;
 
     let mut event_team: event_teams::ActiveModel = event_team.into();
     event_team.banned = Set(false);

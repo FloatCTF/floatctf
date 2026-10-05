@@ -33,7 +33,7 @@ pub async fn add_user(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
     if event.participant_mode == crate::entity::sea_orm_active_enums::ParticipantMode::Team {
         return AppError::BadRequest(
             "team event users must be added through the team membership endpoint".to_string(),
@@ -50,7 +50,7 @@ pub async fn add_user(
             let u = users::Entity::find_by_id(user_id)
                 .one(ctx.db.get_ref())
                 .await?
-                .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+                .ok_or(AppError::NotFound(format!("未找到 {}", user_id)))?;
 
             let new_event_user = event_users::ActiveModel {
                 event_id: Set(event.id),
@@ -85,7 +85,7 @@ pub async fn add_user(
         let u = users::Entity::find_by_id(user_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", user_id)))?;
 
         let new_event_user = event_users::ActiveModel {
             event_id: Set(event.id),
@@ -129,7 +129,7 @@ pub async fn remove_user(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
     if event.participant_mode == crate::entity::sea_orm_active_enums::ParticipantMode::Team {
         return AppError::BadRequest(
             "team event users must be removed through the team membership endpoint".to_string(),
@@ -180,7 +180,7 @@ pub async fn get_users(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     // 跨表过滤：username / nickname 属于 users 表
     let cross_ids = resolve_cross_filters::<users::Entity>(
@@ -247,7 +247,7 @@ pub async fn get_users(
         let user = users::Entity::find_by_id(eu.user_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", eu.user_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", eu.user_id)))?;
         result.push(EventUserResult {
             user,
             event_user: eu,
@@ -273,18 +273,18 @@ pub async fn banned_user(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let u = users::Entity::find_by_id(user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", user_id)))?;
 
     let event_user = event_users::Entity::find_by_id((event.id, u.id))
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(
-            " {} not exist in {}",
+            "在 {} 中未找到 {}",
             user_id, event_id
         )))?;
 
@@ -321,18 +321,18 @@ pub async fn unbanned_user(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let u = users::Entity::find_by_id(user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", user_id)))?;
 
     let event_user = event_users::Entity::find_by_id((event.id, u.id))
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(
-            " {} not exist in {}",
+            "在 {} 中未找到 {}",
             user_id, event_id
         )))?;
 

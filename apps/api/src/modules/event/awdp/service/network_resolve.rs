@@ -57,7 +57,7 @@ pub async fn resolve_instance_by_network_ip(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::Forbidden("awdp instance not found".into()))?;
+        .ok_or_else(|| AwdpError::Forbidden("未找到该 AWDP 实例".into()))?;
     Ok((instance, ext))
 }
 

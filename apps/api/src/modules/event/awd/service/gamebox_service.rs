@@ -67,7 +67,7 @@ pub async fn resolve_event_gamebox_spec(
     let eg = event_gamebox_repo::find_event_gamebox_by_id(db, event_gamebox_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("EventGameBox not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该赛事靶机".into()))?;
 
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id)
         .await

@@ -34,7 +34,7 @@ pub async fn add_event_announcement(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let new_event_announcement = event_announcements::ActiveModel {
         event_id: Set(event.id),
@@ -86,7 +86,7 @@ pub async fn patch_event_announcement(
         .filter(event_announcements::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?
         .into_active_model();
     atr.title.map(|title| event_announcement.title = Set(title));
     atr.content
@@ -161,7 +161,7 @@ pub async fn get_event_announcement(
         .filter(event_announcements::Column::EventId.eq(event_id))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     UniResponse::ok(Some(event_announcement.into())).into()
 }

@@ -32,7 +32,7 @@ pub async fn get_my_gameboxes(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
 
     let instances =
         gamebox_repo::find_instances_by_team(ctx.db.get_ref(), event_id, membership.team_id)
@@ -97,11 +97,9 @@ pub async fn reset_my_gamebox(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
     if awd_event.status.is_terminal() {
-        return Err(AppError::Forbidden(
-            "Cannot reset gamebox after event is finished".into(),
-        ));
+        return Err(AppError::Forbidden("赛事已结束，无法重置靶机".into()));
     }
     // Guard: Final settlement (no active round) also blocks reset
     if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
@@ -115,9 +113,7 @@ pub async fn reset_my_gamebox(
                 .await
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
-                return Err(AppError::Forbidden(
-                    "Cannot reset gamebox during final settlement".into(),
-                ));
+                return Err(AppError::Forbidden("正在最终结算，无法重置靶机".into()));
             }
         }
     }
@@ -126,7 +122,7 @@ pub async fn reset_my_gamebox(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
 
     // P5-10 限流：reset（每队伍每小时）
     awd.rate_limiter
@@ -174,11 +170,9 @@ pub async fn submit_flag(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
     if awd_event.status.is_terminal() {
-        return Err(AppError::Forbidden(
-            "Cannot submit flag after event is finished".into(),
-        ));
+        return Err(AppError::Forbidden("赛事已结束，无法提交 flag".into()));
     }
 
     // P5-10 限流：submit（每用户每分钟）
@@ -195,7 +189,7 @@ pub async fn submit_flag(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
 
     let attacker_team_id = membership.team_id;
 
@@ -278,11 +272,9 @@ pub async fn get_ssh_config(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
     if awd_event.status.is_terminal() {
-        return Err(AppError::Forbidden(
-            "SSH access is disabled after event is finished".into(),
-        ));
+        return Err(AppError::Forbidden("赛事已结束，SSH 访问已关闭".into()));
     }
     if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
         && awd_event.phase == crate::entity::sea_orm_active_enums::AwdPhase::Attack
@@ -295,9 +287,7 @@ pub async fn get_ssh_config(
                 .await
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
-                return Err(AppError::Forbidden(
-                    "SSH access is disabled during final settlement".into(),
-                ));
+                return Err(AppError::Forbidden("正在最终结算，SSH 访问已关闭".into()));
             }
         }
     }
@@ -309,7 +299,7 @@ pub async fn get_ssh_config(
         .one(ctx.db.get_ref())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("You are not in a team for this event".into()))?;
+        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
 
     use crate::entity::awd_team_networks;
     let team_net = awd_team_networks::Entity::find()
@@ -405,10 +395,10 @@ pub async fn get_wireguard_config(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
     if awd_event.status.is_terminal() {
         return Err(AppError::Forbidden(
-            "WireGuard access is disabled after event is finished".into(),
+            "赛事已结束，WireGuard 访问已关闭".into(),
         ));
     }
     if awd_event.status == crate::entity::sea_orm_active_enums::AwdEventStatus::Running
@@ -423,7 +413,7 @@ pub async fn get_wireguard_config(
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if event_service::is_final_settlement(&awd_event, latest.as_ref()) {
                 return Err(AppError::Forbidden(
-                    "WireGuard access is disabled during final settlement".into(),
+                    "正在最终结算，WireGuard 访问已关闭".into(),
                 ));
             }
         }
@@ -437,7 +427,7 @@ pub async fn get_wireguard_config(
         .one(ctx.db.get_ref())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("Not in a team".into()))?;
+        .ok_or_else(|| AppError::NotFound("你尚未加入队伍".into()))?;
 
     let (peer, peer_privkey) =
         crate::modules::event::awd::service::wireguard_service::ensure_peer_for_user(
@@ -470,7 +460,7 @@ pub async fn get_wireguard_config(
         .one(ctx.db.get_ref())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
 
     let server_pubkey = awd_event
         .wg_server_public_key
@@ -553,7 +543,7 @@ pub async fn get_player_status(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(AppError::from)?
-        .ok_or_else(|| AppError::Forbidden("Not a member of this event".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你不是本赛事的参赛者".into()))?;
 
     let awd = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await

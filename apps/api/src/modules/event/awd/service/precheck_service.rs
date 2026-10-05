@@ -66,7 +66,7 @@ pub async fn run_precheck(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     // Event Network 已分配是预检前提（§62 结构性检查数据源）
     let event_network = event_network_repo::find_by_event_id(db, event_id)
@@ -949,7 +949,7 @@ async fn read_configuration_generation(
         .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
     Ok(row.configuration_generation)
 }
 

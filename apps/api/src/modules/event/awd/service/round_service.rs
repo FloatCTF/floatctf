@@ -112,7 +112,7 @@ pub async fn start_round(
     let awd_event = event_repo::find_by_event_id(&txn, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     if awd_event.status != AwdEventStatus::Running {
         warn!(
@@ -306,7 +306,7 @@ pub async fn end_round(
     let awd_event = event_repo::find_by_event_id(&txn, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     let round_count = awd_event.round_count;
     let round_number = round.round_number;
@@ -455,7 +455,7 @@ pub async fn restore_round_scheduling(
             let awd_event = event_repo::find_by_event_id(db, event_id)
                 .await
                 .map_err(|e| AwdError::Database(e.to_string()))?
-                .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+                .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
             if awd_event.status == AwdEventStatus::Running && awd_event.phase == AwdPhase::Attack {
                 recover_round_gap(db, event_id, network, firewall, publisher).await
             } else {
@@ -520,7 +520,7 @@ pub async fn recover_round_gap(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     let round_count = match awd_event.round_count {
         Some(rc) if rc > 0 => rc,

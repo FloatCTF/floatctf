@@ -50,7 +50,7 @@ pub async fn attach_gamebox(
     let gamebox: gameboxes::Model = library::find_gamebox_by_id(db, gamebox_id)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("GameBox not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该靶机".into()))?;
 
     if gamebox.build_status.as_deref() != Some(crate::modules::gamebox::BUILD_STATUS_READY) {
         return Err(AwdpError::Validation(format!(
@@ -124,7 +124,7 @@ pub async fn ensure_mounted(
     let gamebox: gameboxes::Model = library::find_gamebox_by_id(db, gamebox_id)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("GameBox not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该靶机".into()))?;
     let now = Utc::now().into();
     let model = awdp_event_gameboxes::ActiveModel {
         id: Set(Uuid::new_v4()),

@@ -343,7 +343,7 @@ pub async fn get_instance(
     let seed = event_challenge_instance::Entity::find_by_id(instance_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", instance_id)))?;
     let event = events::Entity::find_by_id(seed.event_id)
         .one(ctx.db.get_ref())
         .await?
@@ -361,7 +361,7 @@ pub async fn get_instance(
             .await
             .map_err(|e| AppError::BadRequest(format!("get instance:{e}")))?
             .filter(|(model, _)| model.id == instance_id)
-            .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+            .ok_or(AppError::NotFound(format!("未找到 {}", instance_id)))?;
 
     let mut dto = InstancesDto::from_pair(&model, &runtime);
     dto.flag.clear();
@@ -428,7 +428,7 @@ pub async fn launch_instance(
         .find_also_related(event_instances::Entity)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("instance not found".into()))?;
+        .ok_or(AppError::NotFound("未找到该实例".into()))?;
     let runtime = runtime.ok_or(AppError::NotFound("instance runtime not found".into()))?;
 
     UniResponse::ok(Some(InstancesDto::from_pair(&instance, &runtime))).into()
@@ -449,7 +449,7 @@ pub async fn destroy_instance(
     let instance = event_challenge_instance::Entity::find_by_id(instance_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", instance_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", instance_id)))?;
 
     let event = events::Entity::find_by_id(instance.event_id)
         .one(ctx.db.get_ref())

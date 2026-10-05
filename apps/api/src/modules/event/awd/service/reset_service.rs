@@ -137,7 +137,7 @@ pub async fn execute_reset(
     let awd_event = event_repo::find_by_event_id(db, ctx.event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     // 2. Load instance（先解析真实 team_id，再按 actor 做 ownership 校验）
     // pair：扩展（AWD 领域状态）+ 归一化根（容器实现/代际/名称）。

@@ -195,7 +195,7 @@ pub async fn create_competition_run(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("event not found".into()))?
+        .ok_or_else(|| AwdpError::NotFound("未找到该赛事".into()))?
         .start_time
         .with_timezone(&Utc);
 
@@ -361,7 +361,7 @@ pub async fn transition_phase(
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?;
 
     // CAS：并发 phase 迁移拒绝。
     if current.phase != expected {
@@ -426,7 +426,7 @@ pub async fn transition_fix_to_break(db: &DatabaseConnection, run_id: Uuid) -> A
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?;
 
     if current.gamebox_id.is_none() {
         txn.rollback()
@@ -485,7 +485,7 @@ pub async fn launch_practice_run(db: &DatabaseConnection, run_id: Uuid) -> AwdpR
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?;
     if current.gamebox_id.is_none() {
         txn.rollback()
             .await
@@ -528,7 +528,7 @@ pub async fn end_practice_session(db: &DatabaseConnection, run_id: Uuid) -> Awdp
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?;
     if current.gamebox_id.is_none() {
         txn.rollback()
             .await
@@ -573,7 +573,7 @@ async fn rewind_practice_to_break(
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?;
 
     if current.gamebox_id.is_none() {
         txn.rollback()
@@ -636,7 +636,7 @@ pub async fn touch_tick_state(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp run not found".into()))?
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 运行".into()))?
         .into();
     am.current_round = Set(current_round);
     am.next_action_at = Set(Some(next_action_at.into()));

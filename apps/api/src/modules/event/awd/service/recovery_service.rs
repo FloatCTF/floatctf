@@ -376,7 +376,7 @@ pub async fn handle_network_error(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     let now = chrono::Utc::now();
     let remaining: i32;

@@ -34,7 +34,7 @@ pub async fn archive_event(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
     let event_network =
         crate::modules::event::awd::repo::event_network_repo::find_by_event_id(db, event_id)
             .await?;
@@ -244,7 +244,7 @@ pub async fn quick_archive(db: &DatabaseConnection, event_id: Uuid) -> AwdResult
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
     event_repo::transition_event(
         db,
         awd_event.id,

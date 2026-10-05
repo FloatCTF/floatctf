@@ -34,7 +34,7 @@ async fn resolve_subject(ctx: &ReqCtx, event_id: Uuid, user_id: Uuid) -> Result<
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.participant_mode == ParticipantMode::Team {
         let team_id =
             crate::modules::event::awdp::service::authorization::require_event_team_participant(
@@ -95,7 +95,7 @@ pub async fn get_overview(
     let event = events::Entity::find_by_id(event_id)
         .one(db)
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }
@@ -528,7 +528,7 @@ pub async fn get_scoreboard(
         .filter(events::Column::Hidden.eq(false))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }
@@ -551,7 +551,7 @@ pub async fn get_trend(
         .filter(events::Column::Hidden.eq(false))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }
@@ -575,7 +575,7 @@ pub async fn get_scoreboard_detail(
         .filter(events::Column::Hidden.eq(false))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }

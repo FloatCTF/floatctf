@@ -122,12 +122,12 @@ pub async fn find_by_instance_id(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp instance not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 实例".into()))?;
     let instance = event_instances::Entity::find_by_id(instance_id)
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("instance not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该实例".into()))?;
     Ok((instance, ext))
 }
 
@@ -140,7 +140,7 @@ pub async fn increment_reset_count(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp instance not found".into()))?
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 实例".into()))?
         .into();
     let next = *am.reset_count.as_ref() + 1;
     am.reset_count = Set(next);
@@ -162,7 +162,7 @@ pub async fn update_runtime_state(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("instance not found".into()))?
+        .ok_or_else(|| AwdpError::NotFound("未找到该实例".into()))?
         .into();
     am.runtime_state = Set(runtime_state.to_string());
     if let Some(cid) = container_id {

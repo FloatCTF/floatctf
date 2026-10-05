@@ -106,7 +106,7 @@ pub async fn update_config(
         .one(&txn)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AwdpError::Validation(format!(
             "event {event_id} is not an AWDP event"

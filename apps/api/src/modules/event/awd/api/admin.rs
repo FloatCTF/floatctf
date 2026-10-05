@@ -80,7 +80,7 @@ pub async fn create_awd_event(
         .lock(LockType::Update)
         .one(&txn)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Event {} not found", b.event_id)))?;
+        .ok_or_else(|| AppError::NotFound(format!("未找到该赛事（{}）", b.event_id)))?;
     if event.family != crate::entity::sea_orm_active_enums::EventFamily::Awd {
         return Err(AppError::BadRequest(format!(
             "Event {} is not an AWD team Event",
@@ -90,7 +90,7 @@ pub async fn create_awd_event(
     let event_id = event.id;
     let end = event
         .end_time
-        .ok_or_else(|| AppError::Validation("competition event end_time is required".into()))?;
+        .ok_or_else(|| AppError::Validation("竞赛赛事必须设置结束时间".into()))?;
     if planned_start_at.is_some_and(|start_at| start_at >= end) {
         return Err(AppError::Validation(
             "planned_start_at must be before the event end_time".into(),
@@ -101,7 +101,7 @@ pub async fn create_awd_event(
         .is_some()
     {
         return Err(AppError::Conflict(
-            "AWD event is already configured; use PATCH to update it".into(),
+            "该 AWD 赛事已配置，请用 PATCH 更新".into(),
         ));
     }
 
@@ -221,7 +221,7 @@ pub async fn configure_awd_event(
     request.validate().map_err(AppError::from)?;
     if request.expected_updated_at.is_none() {
         return Err(AppError::Validation(
-            "expected_updated_at is required when updating AWD configuration".into(),
+            "更新 AWD 配置必须携带 expected_updated_at".into(),
         ));
     }
     if !request.has_changes() {
@@ -695,7 +695,7 @@ pub async fn rotate_tokens(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
     let new_key_version = awd_event.key_version + 1;
 
     let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;

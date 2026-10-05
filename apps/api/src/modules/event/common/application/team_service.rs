@@ -35,7 +35,7 @@ pub async fn require_member(
 ) -> AwdResult<Uuid> {
     find_user_team(db, event_id, user_id)
         .await?
-        .ok_or_else(|| AwdError::NotFound("You are not in a team for this event".into()))
+        .ok_or_else(|| AwdError::NotFound("你尚未加入本赛事的队伍".into()))
 }
 
 /// 检查用户是否为其战队队长。
@@ -103,6 +103,6 @@ pub async fn leave_team(db: &DatabaseConnection, event_id: Uuid, user_id: Uuid) 
             .map_err(|e| AwdError::Database(e.to_string()))?;
             Ok(())
         }
-        None => Err(AwdError::NotFound("Not in a team for this event".into())),
+        None => Err(AwdError::NotFound("你尚未加入队伍 for this event".into())),
     }
 }

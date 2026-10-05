@@ -137,7 +137,7 @@ pub async fn submit_writeup(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
     if event.purpose != crate::entity::sea_orm_active_enums::EventPurpose::Competition {
         return Err(AppError::BadRequest(
             "Writeup submission is only available for competition events".into(),

@@ -174,7 +174,7 @@ pub async fn consume_proof(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::Conflict("evaluation not found".into()))?;
+        .ok_or_else(|| AwdpError::Conflict("未找到该评测".into()))?;
     if ev.status != AwdpEvaluationStatus::Running {
         return Err(AwdpError::Conflict(format!(
             "evaluation not running (status={:?})",

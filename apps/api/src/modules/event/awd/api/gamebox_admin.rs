@@ -215,7 +215,7 @@ pub async fn build_gamebox(
         let gb = gameboxes::Entity::find_by_id(gb_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!("gamebox {} not exist", gb_id)))?;
+            .ok_or(AppError::NotFound(format!("靶机 {} 不存在", gb_id)))?;
 
         let (is_ok, message) = if gb.build_status.as_deref() == Some(BUILD_STATUS_READY) {
             match gamebox::effective_image_ref_from_gamebox(&gb) {
@@ -503,7 +503,7 @@ pub async fn add_event_gamebox(
     let gb = gamebox_lib_repo::find_gamebox_by_id(db, req.gamebox_id)
         .await
         .map_err(AppError::from)?
-        .ok_or_else(|| AppError::NotFound("GameBox not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该靶机".into()))?;
     if gb.build_status.as_deref() != Some(BUILD_STATUS_READY) {
         return Err(AppError::Validation(format!(
             "GameBox '{}' has no ready package; import a package first (status={:?})",
@@ -544,7 +544,9 @@ pub async fn add_event_gamebox(
                     break;
                 }
             }
-            free.ok_or_else(|| AppError::Conflict("no free host_offset (2..254) for event".into()))?
+            free.ok_or_else(|| {
+                AppError::Conflict("该赛事已无可用主机编号（2..254 已用尽）".into())
+            })?
         }
     };
 
@@ -635,7 +637,7 @@ pub async fn update_event_gamebox(
         .map_err(AppError::from)?
         .into_iter()
         .find(|d| d.event_gamebox.id == event_gamebox_id)
-        .ok_or_else(|| AppError::NotFound("EventGameBox not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事靶机".into()))?;
     UniResponse::ok(to_event_gamebox_dto(d).into()).into()
 }
 
@@ -657,7 +659,7 @@ pub async fn delete_event_gamebox(
         None => return UniResponse::ok_none().into(),
     };
     if eg.event_id != event_id {
-        return Err(AppError::NotFound("EventGameBox not found".into()).into());
+        return Err(AppError::NotFound("未找到该赛事靶机".into()).into());
     }
 
     let instance_count = crate::entity::event_gamebox_instances::Entity::find()

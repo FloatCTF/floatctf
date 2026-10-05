@@ -39,12 +39,12 @@ pub async fn start_event(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     // Validate: must be verified
     if awd_event.status != AwdEventStatus::Verified {
         return Err(AwdError::InvalidState(format!(
-            "Cannot start event in {:?} status. Must be verified.",
+            "当前状态（{:?}）无法开始比赛，需先完成验证",
             awd_event.status
         )));
     }
@@ -217,12 +217,10 @@ pub async fn pause_event(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     if awd_event.status != AwdEventStatus::Running {
-        return Err(AwdError::InvalidState(
-            "Can only pause a running event".into(),
-        ));
+        return Err(AwdError::InvalidState("只有进行中的比赛才能暂停".into()));
     }
 
     let now = chrono::Utc::now();
@@ -323,7 +321,7 @@ pub async fn resume_event(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     if awd_event.status != AwdEventStatus::Paused
         && awd_event.status != AwdEventStatus::NetworkError
@@ -571,7 +569,7 @@ pub async fn maybe_finish_event(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     // Already Finished
     if awd_event.status == AwdEventStatus::Finished {

@@ -210,7 +210,7 @@ async fn load_awd_event(db: &DatabaseConnection, event_id: Uuid) -> AwdResult<aw
         .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))
 }
 
 /// 吊销对等体（禁用该用户的 WireGuard 隧道）。

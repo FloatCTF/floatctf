@@ -50,7 +50,7 @@ pub async fn issue_flag(
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
 
     use crate::modules::event::awd::crypto::AwdCrypto;
     let crypto = AwdCrypto::from_config_secret().map_err(|e| AppError::Internal(e.to_string()))?;
@@ -343,7 +343,7 @@ pub async fn judge_result(
                 let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
                     .await
                     .map_err(|e| AppError::Database(e.to_string()))?
-                    .ok_or_else(|| AppError::NotFound("AWD event not found".into()))?;
+                    .ok_or_else(|| AppError::NotFound("未找到该 AWD 赛事".into()))?;
                 let frozen =
                     awd_event.status != AwdEventStatus::Running || !awd_event.phase.allows_judge();
 

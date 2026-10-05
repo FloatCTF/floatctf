@@ -93,7 +93,7 @@ async fn require_trainable_gamebox(
 ) -> AwdpResult<gameboxes::Model> {
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, gamebox_id).await?;
     if gamebox.hidden {
-        return Err(AwdpError::NotFound("GameBox not found".into()));
+        return Err(AwdpError::NotFound("未找到该靶机".into()));
     }
     if gamebox.build_status.as_deref() != Some(crate::modules::gamebox::BUILD_STATUS_READY) {
         return Err(AwdpError::Validation(format!(

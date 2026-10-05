@@ -588,7 +588,7 @@ async fn handle_hardening_end(
 
     let event = event_repo::find_by_event_id(db, event_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("AWD event not found"))?;
+        .ok_or_else(|| anyhow::anyhow!("未找到该 AWD 赛事"))?;
 
     // 幂等：非 Running 或非 Hardening 则跳过
     if event.status != AwdEventStatus::Running || event.phase != AwdPhase::Hardening {
@@ -626,7 +626,7 @@ async fn handle_hardening_end(
     let ev = event_repo::find_by_event_id(&txn, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     if ev.status != AwdEventStatus::Running || ev.phase != AwdPhase::Hardening {
         txn.rollback()

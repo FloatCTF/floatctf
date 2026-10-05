@@ -147,7 +147,7 @@ impl AwdEventConfigRequest {
         }
         if self.clear_planned_start && self.planned_start_at.is_some() {
             return Err(AwdError::Validation(
-                "planned_start_at and clear_planned_start cannot be used together".into(),
+                "planned_start_at 与 clear_planned_start 不能同时提供".into(),
             ));
         }
         if let Some(start_at) = self.planned_start_at

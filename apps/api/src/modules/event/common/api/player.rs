@@ -69,7 +69,7 @@ pub async fn get_event_capabilities(
         .filter(events::Column::Hidden.eq(false))
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
     let caps = crate::modules::event::common::domain::capability::EventCapabilities::for_mode(
         &event.mode_unchecked(),
     );

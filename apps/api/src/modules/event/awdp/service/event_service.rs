@@ -209,7 +209,7 @@ pub async fn event_subjects(db: &DatabaseConnection, event_id: Uuid) -> AwdpResu
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该赛事".into()))?;
 
     let subjects: Vec<Subject> = match event.participant_mode {
         ParticipantMode::Individual => event_users::Entity::find()

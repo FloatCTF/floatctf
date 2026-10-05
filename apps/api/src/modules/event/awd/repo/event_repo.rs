@@ -244,7 +244,7 @@ where
         .one(&txn)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
 
     // 2. 转移合法性
     event
@@ -334,7 +334,7 @@ pub async fn touch_configuration<C: ConnectionTrait + Send>(
         .filter(awd_events::Column::EventId.eq(id))
         .one(db)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("未找到该 AWD 赛事".to_string()))?;
     let next = event.configuration_generation + 1;
     let active: awd_events::ActiveModel = awd_events::ActiveModel {
         id: Set(event.id),
@@ -361,7 +361,7 @@ where
     let event = awd_events::Entity::find_by_id(id)
         .one(db)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("未找到该 AWD 赛事".to_string()))?;
 
     transition_event(db, id, event.status.clone(), status, Default::default())
         .await
@@ -381,7 +381,7 @@ where
         .lock(LockType::Update)
         .one(&txn)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("未找到该 AWD 赛事".to_string()))?;
 
     event
         .phase
@@ -426,7 +426,7 @@ where
     let event = awd_events::Entity::find_by_id(id)
         .one(db)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("AWD event not found".to_string()))?;
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("未找到该 AWD 赛事".to_string()))?;
 
     if !matches!(
         event.status,

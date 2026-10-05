@@ -239,7 +239,7 @@ where
         .lock(LockType::Update)
         .one(&txn)
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
     if event.system_key.is_some() {
         return Err(AppError::Validation(
             "SystemManagedEvent: system-managed events cannot be patched via ordinary admin API"
@@ -286,7 +286,7 @@ where
     if updated.purpose == EventPurpose::Competition {
         let end = updated
             .end_time
-            .ok_or_else(|| AppError::Validation("competition event end_time is required".into()))?;
+            .ok_or_else(|| AppError::Validation("竞赛赛事必须设置结束时间".into()))?;
         if updated.start_time >= end {
             return Err(AppError::Validation("赛事开始时间必须早于结束时间".into()));
         }
@@ -303,9 +303,9 @@ where
             let planned_start =
                 crate::modules::event::awd::scheduler::find_event_start_schedule(&txn, event_id)
                     .await?;
-            let end = updated.end_time.ok_or_else(|| {
-                AppError::Validation("competition event end_time is required".into())
-            })?;
+            let end = updated
+                .end_time
+                .ok_or_else(|| AppError::Validation("竞赛赛事必须设置结束时间".into()))?;
             if planned_start.is_some_and(|start_at| start_at >= end) {
                 return Err(AppError::Validation(
                     "event end_time must be after the AWD planned_start_at".into(),
@@ -369,7 +369,7 @@ pub async fn get_event(db: &DatabaseConnection, event_id: Uuid) -> Result<events
     events::Entity::find_by_id(event_id)
         .one(db)
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))
 }
 
 pub async fn delete_events(db: &DatabaseConnection, id_list: Vec<Uuid>) -> Result<u64, AppError> {
@@ -460,7 +460,7 @@ pub async fn get_data_present(db: WebDb, event_id: Uuid) -> Result<DataPresent, 
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到 {}", event_id)))?;
 
     let user_count = event_users::Entity::find()
         .filter(event_users::Column::EventId.eq(event_id))

@@ -347,7 +347,7 @@ pub async fn finish_with_lease(
         txn.rollback()
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?;
-        return Err(AwdpError::NotFound("evaluation not found".into()));
+        return Err(AwdpError::NotFound("未找到该评测".into()));
     };
 
     let now = Utc::now();
@@ -430,7 +430,7 @@ pub async fn release_or_fail(
         txn.rollback()
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?;
-        return Err(AwdpError::NotFound("evaluation not found".into()));
+        return Err(AwdpError::NotFound("未找到该评测".into()));
     };
 
     let now = Utc::now();
@@ -498,7 +498,7 @@ pub async fn finish(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("evaluation not found".into()))?
+        .ok_or_else(|| AwdpError::NotFound("未找到该评测".into()))?
         .into();
     am.status = Set(status);
     if let Some(v) = healthcheck_result {
@@ -536,7 +536,7 @@ pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> AwdpResult<awdp_ev
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("evaluation not found".into()))
+        .ok_or_else(|| AwdpError::NotFound("未找到该评测".into()))
 }
 
 /// run 的全部评估（选手视角过滤在 service 层）。

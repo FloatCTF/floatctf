@@ -22,7 +22,7 @@ async fn ensure_awdp_event(ctx: &ReqCtx, event_id: Uuid) -> Result<(), AppError>
     let event = crate::entity::events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     if event.family != EventFamily::Awdp {
         return Err(AppError::Validation("not an AWDP event".into()));
     }
@@ -373,7 +373,7 @@ pub async fn get_data(
     let event = crate::entity::events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     let present = data::get_data_present(ctx.db.get_ref(), &event)
         .await
         .map_err(AppError::from)?;
@@ -392,7 +392,7 @@ pub async fn get_scores(
     let event = crate::entity::events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound("event not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("未找到该赛事".into()))?;
     let rows =
         crate::modules::event::awdp::service::scoreboard::get_scoreboard(ctx.db.get_ref(), &event)
             .await

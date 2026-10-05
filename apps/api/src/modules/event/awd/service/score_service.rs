@@ -109,7 +109,7 @@ pub async fn record_adjustment(
     let awd_event = event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("AWD event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该 AWD 赛事".into()))?;
     if awd_event.status.is_terminal() {
         return Err(AwdError::InvalidState(
             "Cannot adjust score after event is finished".into(),

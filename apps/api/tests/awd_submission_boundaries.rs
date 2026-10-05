@@ -460,7 +460,7 @@ async fn stale_flag_from_previous_round_rejected() {
         .expect_err("stale flag must be rejected after rotation");
     assert!(matches!(err, AwdError::NotFound(_)), "got {err:?}");
     assert!(
-        err.to_string().contains("Invalid or expired flag"),
+        err.to_string().contains("flag 无效或已过期"),
         "got {err}"
     );
 
@@ -491,7 +491,7 @@ async fn self_attack_rejected() {
         .expect_err("self attack must be rejected");
     assert!(matches!(err, AwdError::Forbidden(_)), "got {err:?}");
     assert!(
-        err.to_string().contains("your own team's flag"),
+        err.to_string().contains("不能提交本队自己的 flag"),
         "got {err}"
     );
 

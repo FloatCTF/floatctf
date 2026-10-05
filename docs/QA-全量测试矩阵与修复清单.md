@@ -91,6 +91,9 @@
 | **F1/F2/F7** | 登录失败显示 axios 英文原文；表单缺 autoComplete；横幅标题硬编码 `title` | 体验 | 统一 `formatApiError` + 中文兜底 + 无障碍 | `badaaf7` |
 | **F10** | 手动分配网段错误示例是不可用的 `/24` | 照抄即报错 | 示例改 `/16` | `0fefcd0` |
 | **F16** | AWD 配置页/运维页/玩家端全英文 | 可用性 | 全面中文化 | `1e7b6b0` |
+| **F28** | 题目 `build_status=failed` 后 **Scan 不重导入、Check 只校验不回写**，管理员只能删库重扫 | 可维护性 | Check 在镜像可 inspect 时把状态修回 `ready` 并 pin image_id、清空 build_error | `6fe9526` |
+| **F36** | 除用户/赛事外，其余管理端对话框字段标签仍是原始键名（`name`/`content`/`task_key`…） | 可用性 | 10 个页面共 73 处补中文标签 | `6fe9526` |
+| **F37** | 定时任务可注册**未知 task_key**、`cron` 不填表达式、`once` 不填执行时间（永远不会执行） | 可维护性 | 任务键必须命中 `TaskKey` 注册表；触发方式白名单 + 必需字段 + Cron 可解析校验（创建与更新共用） | `afa0ce3` |
 
 ---
 
@@ -108,7 +111,19 @@
 | `awd_live` 真实宿主归档用例 | 默认被 `#[ignore]`（需隔离 PG + helper + Docker/WireGuard/nftables），已在生产实测 F11 |
 | 跨轮旧 flag 拒绝 | 需 ≥2 回合赛事；已有 `awd_submission_boundaries` 集成用例覆盖（9 例全通过）|
 
-## 五、运行态与门禁
+## 五、管理端补充实测（第 3 轮）
+
+| 项 | 操作 | 结果 |
+|---|---|---|
+| 公告 CRUD | 新增（title/content）→ 库与列表一致 → 删除 | ✓ |
+| Weapons CRUD | 新增（名称/分类/描述）→ 库一致 → 删除 | ✓ |
+| 题目集 CRUD | 新增 → 行内编辑写库 → 删除 | ✓ |
+| Discussions（管理） | 页面无新增入口（讨论由玩家发起，管理端仅查看/审核） | ✓ 符合设计 |
+| Scheduled Tasks | 分类正确（6+7=13）；**未知任务键/cron 缺表达式/once 缺执行时间/非法 cron → 400**，合法任务 → 200 | ✓（F37 修复后）|
+| Challenges Check | 手工置 `failed` → 浏览器点 Check → `ready` + image_id pin | ✓（F28 修复后）|
+| 对话框标签 | weapons/scheduled_tasks/challenge_sets 等抽查均为中文 | ✓（F36 修复后）|
+
+## 六、运行态与门禁
 
 - 生产：API `floatctf/api:0.3.3` healthy；前端 `index-Bcw-Nr6T.js`；每次部署都有 `*.bak-*` 备份。
 - 门禁：全量 Rust `scripts/test-rust.sh` PASS（期间抓到 1 例我引入的回归：练习防御误伤自建练习赛 → 已修 `1c3f4bd`）；前端 **218 用例 PASS**、`tsc`、`biome lint`、`vite build` 全绿。

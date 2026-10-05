@@ -208,5 +208,5 @@ pub async fn find_awd_event(
     event_repo::find_by_event_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound(format!("awd event {event_id}")))
+        .ok_or_else(|| AwdError::NotFound(format!("未找到该 AWD 赛事（{event_id}）")))
 }

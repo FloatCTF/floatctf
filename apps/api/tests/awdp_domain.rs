@@ -278,7 +278,7 @@ async fn config_defaults_and_update_lifecycle() {
     let err = event_repo::update_config(&db, ev.id, too_long)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("at least"), "{err}");
+    assert!(err.to_string().contains("至少"), "错误文案应为中文：{err}");
 
     // 零值拒绝（plan §76）。
     let cur = event_repo::require_by_event_id(&db, ev.id).await.unwrap();
@@ -290,7 +290,10 @@ async fn config_defaults_and_update_lifecycle() {
     let err = event_repo::update_config(&db, ev.id, zero)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("> 0"), "{err}");
+    assert!(
+        err.to_string().contains("必须大于 0"),
+        "错误文案应为中文：{err}"
+    );
     let zero_score = AwdpConfigPatch {
         expected_updated_at: Some(cur.updated_at.into()),
         break_score: Some(-5),
@@ -299,7 +302,10 @@ async fn config_defaults_and_update_lifecycle() {
     let err = event_repo::update_config(&db, ev.id, zero_score)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains(">= 0"), "{err}");
+    assert!(
+        err.to_string().contains("必须大于等于 0"),
+        "错误文案应为中文：{err}"
+    );
 
     // 乐观锁冲突。
     let stale = AwdpConfigPatch {

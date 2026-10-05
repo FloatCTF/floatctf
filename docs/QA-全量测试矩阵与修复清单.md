@@ -210,6 +210,12 @@
 - **F47** `wireguard_public_endpoint` 接受任意字符串（实测 "not-a-url" 落库并会下发客户端）→ 新增格式校验（IP 或含点域名 + 可选 1..=65535 端口，含单测）✓
 - **F48** AWDP `fix_round_score`/`break_score` 无上限（i64::MAX 可存，派生 break_score 在启动物化时溢出）→ 加 MAX_SCORE=1e9 上限 + 派生改饱和运算 ✓
 
+### 补充（第 8 轮续）
+
+- **flag 提交边界（真实浏览器）**：空字符串 / 纯空白 / 错误 flag 均被**干净拒绝**并提示「提交失败：flag 错误」✓；**尾部空白会被 trim 后判对**（提交成功）✓；成功后实例与输入框同时消失（状态边界符合预期）✓；无 500/异常。
+- **AWDP 配置校验文案中文化引发的测试断言修复**：`awdp_domain` 4 例因断言英文子串（`"> 0"`、`"at least"`、`">= 0"`）失败 → 我把断言改为匹配中文；同时补译 `break_duration_secs must be at least {}s …`、`expected_updated_at is required for config update`。修复后 `awdp_domain` **6/6 通过** ✓。
+- 已用脚本全量核对测试中的英文断言是否仍存在于源码（7 处疑点经人工核对均为测试本地字符串或 PG 约束消息，无需修改）✓。
+
 ### 尚未处理的边界（建议）
 
 1. **英文错误文案面**：权限/状态守卫返回英文，例如未认证 401「Invalid or missing token…」、非法 UUID 404「UUID parsing failed: …」、AWD 启动「Cannot start event in Configuring status.」、暂停「Can only pause a running event」；删除不存在事件返回 **空消息 404**。建议按模块批量中文化。

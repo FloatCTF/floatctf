@@ -91,9 +91,9 @@ pub async fn update_config(
     patch: AwdpConfigPatch,
 ) -> AwdpResult<awdp_events::Model> {
     patch.validate()?;
-    let expected = patch.expected_updated_at.ok_or_else(|| {
-        AwdpError::Validation("expected_updated_at is required for config update".into())
-    })?;
+    let expected = patch
+        .expected_updated_at
+        .ok_or_else(|| AwdpError::Validation("更新配置必须携带 expected_updated_at".into()))?;
 
     let txn = db
         .begin()
@@ -166,7 +166,7 @@ pub async fn update_config(
         (next.fix_duration_secs / next.fix_round_interval_secs) * next.fix_round_interval_secs;
     if fix <= 0 {
         return Err(AwdpError::Validation(
-            "fix_duration_secs must cover at least one full turn".into(),
+            "fix 时长至少需覆盖一个完整回合".into(),
         ));
     }
     next.fix_duration_secs = fix;
@@ -174,7 +174,7 @@ pub async fn update_config(
     next.break_duration_secs = total_secs - fix;
     if next.break_duration_secs < crate::modules::event::awdp::domain::config::BREAK_MIN_SECS {
         return Err(AwdpError::Validation(format!(
-            "break_duration_secs must be at least {}s (event total duration - fix duration too small)",
+            "break 时长至少需要 {} 秒（赛事总时长减去 fix 时长后过小）",
             crate::modules::event::awdp::domain::config::BREAK_MIN_SECS
         )));
     }

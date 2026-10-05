@@ -304,7 +304,7 @@ export function validateManualAllocationForm(
 	if (!form.gamebox_cidr.trim()) {
 		errors.gamebox_cidr = "请填写 GameBox 网段。";
 	} else if (!gamebox) {
-		errors.gamebox_cidr = "格式不正确，应为 CIDR（例如 10.10.20.0/24）。";
+		errors.gamebox_cidr = "格式不正确，应为 CIDR（例如 10.97.0.0/16）。";
 	} else if (gamebox.hasHostBits) {
 		errors.gamebox_cidr = HOST_BITS_MESSAGE;
 	}
@@ -321,7 +321,7 @@ export function validateManualAllocationForm(
 	if (!form.wireguard_cidr.trim()) {
 		errors.wireguard_cidr = "请填写 WireGuard 网段。";
 	} else if (!wireguard) {
-		errors.wireguard_cidr = "格式不正确，应为 CIDR（例如 10.20.20.0/24）。";
+		errors.wireguard_cidr = "格式不正确，应为 CIDR（例如 10.113.0.0/16）。";
 	} else if (wireguard.hasHostBits) {
 		errors.wireguard_cidr = HOST_BITS_MESSAGE;
 	}

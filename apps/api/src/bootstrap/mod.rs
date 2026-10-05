@@ -307,6 +307,14 @@ pub async fn run() -> Result<(), BootstrapError> {
                     extractor_error("路径参数格式错误", err.to_string())
                 }),
             )
+            // 未匹配路由：Actix 默认返回空体 404，前端无法解析出提示；
+            // 统一成平台 JSON 信封（中文），与其它错误路径一致。
+            .default_service(web::route().to(|| async {
+                actix_web::HttpResponse::NotFound().json(crate::api::UniResponse::<()>::err(
+                    404,
+                    "接口不存在".to_string(),
+                ))
+            }))
             .app_data(web::Data::new(
                 MultipartFormConfig::default().error_handler(|err, _req| {
                     let overflow = matches!(

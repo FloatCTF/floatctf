@@ -4,6 +4,7 @@ use crate::core::security::jwt::{Role, validate_jwt};
 use crate::entity::{super_admin, users};
 use crate::infrastructure::WebDb;
 use actix_web::FromRequest;
+use actix_web::ResponseError;
 use sea_orm::EntityTrait;
 
 pub struct UserJwtGuard(users::Model);
@@ -51,9 +52,12 @@ impl FromRequest for UserJwtGuard {
                 }
             }
 
-            Err(actix_web::error::ErrorUnauthorized(
-                "Invalid or missing token, or contact the admin",
-            ))
+            // 统一走平台 JSON 信封（Actix 的 ErrorUnauthorized 只会返回纯文本）。
+            Err(actix_web::error::InternalError::from_response(
+                "unauthorized",
+                crate::api::AppError::Unauthorized.error_response(),
+            )
+            .into())
         })
     }
 }
@@ -88,9 +92,12 @@ impl FromRequest for SuperAdminJwtGuard {
                 }
             }
 
-            Err(actix_web::error::ErrorUnauthorized(
-                "Invalid or missing token, or contact the admin",
-            ))
+            // 统一走平台 JSON 信封（Actix 的 ErrorUnauthorized 只会返回纯文本）。
+            Err(actix_web::error::InternalError::from_response(
+                "unauthorized",
+                crate::api::AppError::Unauthorized.error_response(),
+            )
+            .into())
         })
     }
 }

@@ -177,7 +177,7 @@ function RouteComponent() {
 									challengeStatus.flag = "";
 								}}
 							>
-								Submit
+								提交
 							</Button>
 						</div>
 					</div>

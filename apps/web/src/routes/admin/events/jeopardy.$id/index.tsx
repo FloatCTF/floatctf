@@ -315,7 +315,7 @@ function AddChallengeButton({
 				});
 			}}
 		>
-			Add
+			新增
 		</Button>
 	);
 	const columns = [

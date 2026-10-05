@@ -314,7 +314,7 @@ function ChallengeDialog({ open, title, onClose, id }: ChallengeDialogProps) {
 										});
 									}}
 								>
-									Submit
+									提交
 								</Button>
 							</div>
 						</div>

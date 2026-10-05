@@ -92,7 +92,7 @@ export const ActionSelect = <T,>({
                 });
               }}
             >
-              Import
+              导入
             </Button>
           </div>
         )}

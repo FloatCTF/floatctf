@@ -194,7 +194,7 @@ function AddUserButton({
                 });
             }}
         >
-            Add
+            新增
         </Button>
     );
     const filterKeys = ["id", "username", "nickname"];

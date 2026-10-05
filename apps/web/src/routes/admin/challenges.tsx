@@ -342,7 +342,7 @@ function ImportButton() {
 			)}
 			{/* 右边：导入按钮 */}
 			<Button variant="primary" onClick={handleClick}>
-				Import
+				导入
 			</Button>
 			<input
 				type="file"
@@ -526,7 +526,7 @@ export function CheckButton({
 				// /build 只对 build_status=ready 的题目生效；没有可构建项必须说明原因
 				banner.showBanner(
 					"warning",
-					"没有可构建的镜像：请先 Import 题目包，并确认 build_status 为 ready（否则请查看 build_error）",
+					"没有可构建的镜像：请先导入题目包，并确认 build_status 为 ready（否则请查看 build_error）",
 				);
 			} else {
 				banner.showBanner(
@@ -631,7 +631,7 @@ export function CheckButton({
 				</Dialog>
 			)}
 			<Button ref={buttonRef} onClick={() => setIsOpen(!isOpen)}>
-				Check
+				检查
 			</Button>
 		</>
 	);

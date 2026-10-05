@@ -643,7 +643,7 @@ export function AwdpWorkbench({
 								}
 								onClick={() => handleSubmitBreak(gb)}
 							>
-								Submit
+								提交
 							</Button>
 						</div>
 						{gb.broken && (

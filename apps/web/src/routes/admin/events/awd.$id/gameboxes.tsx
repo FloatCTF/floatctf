@@ -163,7 +163,7 @@ function AddGameBoxButton({
 				addMutation.mutate(Array.from(userSelectedRowIds));
 			}}
 		>
-			Add
+			新增
 		</Button>
 	);
 

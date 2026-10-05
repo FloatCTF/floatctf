@@ -547,7 +547,7 @@ export const GenericTable = <T extends object>({
                                 setIsOpen(true);
                             }}
                         >
-                            Add
+                            新增
                         </Button>
                     )}
 

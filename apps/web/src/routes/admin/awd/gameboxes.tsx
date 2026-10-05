@@ -536,7 +536,7 @@ export function CheckButton({
 				</Dialog>
 			)}
 			<Button ref={buttonRef} onClick={() => setIsOpen(!isOpen)}>
-				Check
+				检查
 			</Button>
 		</>
 	);
@@ -617,7 +617,7 @@ function ImportButton() {
 			)}
 			{/* 导入按钮 */}
 			<Button variant="primary" onClick={handleClick}>
-				Import
+				导入
 			</Button>
 			<input
 				type="file"

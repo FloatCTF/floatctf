@@ -124,7 +124,7 @@ function AddChallengeButton({
                 });
             }}
         >
-            Add
+            新增
         </Button>
     );
 

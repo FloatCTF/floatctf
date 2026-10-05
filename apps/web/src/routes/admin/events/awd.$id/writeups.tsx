@@ -72,7 +72,7 @@ function RouteComponent() {
     const custom_actions = (
         <div className="flex gap-1 mt-1">
             <Button variant="primary" onClick={() => exportMutation.mutate()}>
-                Export
+                导出
             </Button>
         </div>
     );

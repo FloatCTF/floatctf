@@ -384,7 +384,7 @@ function ChallengeDialog({
 										});
 									}}
 								>
-									Submit
+									提交
 								</Button>
 							</div>
 						</div>

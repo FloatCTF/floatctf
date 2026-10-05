@@ -55,7 +55,33 @@ impl AppError {
     }
 
     pub fn to_response(&self) -> UniResponse<()> {
-        UniResponse::err(self.code(), self.to_string())
+        UniResponse::err(self.code(), self.client_message())
+    }
+
+    /// 面向客户端的错误文案。
+    ///
+    /// `Database` 携带的是原始驱动/SQL 文本（含约束名、表结构），既不可读也不该外泄：
+    /// 详情只写服务端日志，客户端统一收到通用提示。其余变体是代码作者编写、面向用户的
+    /// 文案，原样返回。
+    fn client_message(&self) -> String {
+        // 只取业务文案本身：枚举 Display 前缀（"Not found: "/"Forbidden: "/"Validation error: "）
+        // 是给日志看的英文标签，混进用户提示会变成中英夹杂。
+        match self {
+            AppError::Database(detail) => {
+                tracing::error!(error = %detail, "database error");
+                "服务器内部错误，请稍后重试或联系管理员".to_string()
+            }
+            AppError::Unauthorized => "登录状态已失效，请重新登录".to_string(),
+            AppError::NotFound(message) => fallback_message(message, "请求的资源不存在或已被删除"),
+            AppError::Forbidden(message) => fallback_message(message, "没有权限执行该操作"),
+            AppError::Conflict(message) => fallback_message(message, "操作冲突，请刷新后重试"),
+            AppError::BadRequest(message)
+            | AppError::Validation(message)
+            | AppError::InvalidState(message) => {
+                fallback_message(message, "请求参数有误，请检查后重试")
+            }
+            AppError::Internal(message) => message.clone(),
+        }
     }
 }
 
@@ -153,5 +179,15 @@ impl<T> From<UniResponse<T>> for Result<UniResponse<T>, AppError> {
 impl<T> From<AppError> for Result<UniResponse<T>, AppError> {
     fn from(err: AppError) -> Self {
         Err(err)
+    }
+}
+
+/// 业务文案为空时回落为通用中文提示。
+fn fallback_message(message: &str, fallback: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
     }
 }

@@ -44,7 +44,13 @@ impl InstancesDto {
         Self {
             id: instance.id,
             status: runtime.runtime_state.clone(),
-            flag: instance.flag.clone(),
+            // 选手可见 DTO 一律不携带 flag。
+            //
+            // 历史缺陷：本字段原为 `instance.flag.clone()`，而只有 launch / list 两处调用点
+            // 各自补了 `dto.flag.clear()`；另外两处选手侧接口（事件题目实例、题库实例）
+            // 直接使用 from_pair，于是选手调一次接口即可拿到真实 flag 并直接提交计分，
+            // 完全绕过解题。此处统一脱敏，调用方无需再逐个 clear()。
+            flag: String::new(),
             content: instance.content.clone(),
             challenge_id: Some(instance.challenge_id),
             event_id: instance.event_id,

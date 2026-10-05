@@ -494,6 +494,20 @@ async fn real_helper_deploy_precheck_pause_resume_archive() {
         .expect("query archived")
         .expect("archived event exists");
     assert_eq!(archived.status, AwdEventStatus::Archived);
+    // §56/§89：归档成功后必须释放平台网段，否则已归档赛事会永久占用地址池。
+    let allocations = floatctf::entity::awd_network_allocations::Entity::find()
+        .filter(floatctf::entity::awd_network_allocations::Column::EventId.eq(event_id))
+        .all(&db)
+        .await
+        .expect("query allocations after archive");
+    assert!(
+        !allocations.is_empty(),
+        "fixture should have allocated event subnets before archiving"
+    );
+    assert!(
+        allocations.iter().all(|row| row.released_at.is_some()),
+        "archive must release every event network allocation: {allocations:?}"
+    );
     assert!(
         containers
             .list_event_containers(event_id)

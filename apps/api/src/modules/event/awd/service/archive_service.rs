@@ -40,6 +40,11 @@ pub async fn archive_event(
             .await?;
 
     if awd_event.status == AwdEventStatus::Archived {
+        // 自愈：早期版本归档时未释放网段（分配行 leaked），重复归档时补齐释放。
+        crate::modules::event::awd::service::event_network_service::release_allocations(
+            db, event_id,
+        )
+        .await?;
         return Ok(());
     }
     if awd_event.status != AwdEventStatus::Finished {
@@ -220,7 +225,16 @@ pub async fn archive_event(
         .await?;
     }
 
-    info!("[Archive] Event {} archived", event_id);
+    // 7. §56/§89：运行时清理成功后才释放平台网段（分配行保留为历史，仅标记 released_at）。
+    //    缺少这一步会让已归档赛事永久占用地址池：按默认平台配置每个赛事占一个 /16，
+    //    归档 16 个赛事后整个地址池耗尽，新赛事再也分配不到网段。
+    crate::modules::event::awd::service::event_network_service::release_allocations(db, event_id)
+        .await?;
+
+    info!(
+        "[Archive] Event {} archived and network allocations released",
+        event_id
+    );
     Ok(())
 }
 

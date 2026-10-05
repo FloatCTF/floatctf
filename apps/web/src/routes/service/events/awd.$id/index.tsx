@@ -116,10 +116,10 @@ function RouteComponent() {
 		onMutate: () => banner.hideBanner(),
 		onSuccess: (res) => {
 			if (res.code === 0) {
-				banner.showBanner("success", "Flag accepted");
+				banner.showBanner("success", "提交成功");
 				setFlag("");
 			} else {
-				banner.showBanner("critical", res.message || "Submit failed");
+				banner.showBanner("critical", res.message || "提交失败");
 			}
 		},
 		onError: (e) => banner.showErrorBanner(e),
@@ -154,7 +154,7 @@ function RouteComponent() {
 	if (!eventData || !ev) {
 		return (
 			<div className="p-4">
-				<InlineMessage variant="warning">Event not found.</InlineMessage>
+				<InlineMessage variant="warning">未找到该赛事。</InlineMessage>
 			</div>
 		);
 	}
@@ -162,7 +162,7 @@ function RouteComponent() {
 		return (
 			<div className="p-4">
 				<InlineMessage variant="warning">
-					You are not joined this event.
+					你尚未加入本赛事。
 				</InlineMessage>
 			</div>
 		);
@@ -187,7 +187,7 @@ function RouteComponent() {
 								<div className="flex items-center gap-2 mb-2">
 									<Heading as="h2">{myTeam?.team.name}</Heading>
 									{myTeam?.team.banned && (
-										<Label variant="danger">Banned</Label>
+										<Label variant="danger">已禁赛</Label>
 									)}
 								</div>
 								<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2">
@@ -219,7 +219,7 @@ function RouteComponent() {
 										disabled={isLeaving}
 										aria-label="Leave event"
 									>
-										{isLeaving ? "Leaving…" : "Leave"}
+										{isLeaving ? "退出中…" : "退出赛事"}
 									</Button>
 								)}
 							</div>
@@ -237,7 +237,7 @@ function RouteComponent() {
 									}}
 								>
 									<FormControl required>
-										<FormControl.Label>Team ID</FormControl.Label>
+										<FormControl.Label>队伍 ID</FormControl.Label>
 										<TextInput
 											value={teamId}
 											onChange={(e) => setTeamId(e.target.value)}
@@ -245,7 +245,7 @@ function RouteComponent() {
 										/>
 									</FormControl>
 									<Button variant="primary" type="submit">
-										Join
+										加入
 									</Button>
 								</form>
 								<form
@@ -259,7 +259,7 @@ function RouteComponent() {
 									}}
 								>
 									<FormControl required>
-										<FormControl.Label>Team Name</FormControl.Label>
+										<FormControl.Label>队伍名称</FormControl.Label>
 										<TextInput
 											value={teamName}
 											onChange={(e) => setTeamName(e.target.value)}
@@ -267,7 +267,7 @@ function RouteComponent() {
 										/>
 									</FormControl>
 									<Button variant="primary" type="submit">
-										Create
+										创建队伍
 									</Button>
 								</form>
 							</>
@@ -280,7 +280,7 @@ function RouteComponent() {
 							{flagState.allowed ? (
 								<>
 									<FormControl>
-										<FormControl.Label>Submit Flag</FormControl.Label>
+										<FormControl.Label>提交 Flag</FormControl.Label>
 										<TextInput
 											value={flag}
 											onChange={(e) => setFlag(e.target.value)}
@@ -295,7 +295,7 @@ function RouteComponent() {
 											submitFlagMutation.mutate({ event_id: id, flag })
 										}
 									>
-										Submit
+										提交
 									</Button>
 								</>
 							) : (
@@ -309,32 +309,31 @@ function RouteComponent() {
 					{/* AWD Status Info */}
 					{awdStatus && (
 						<section className="p-3 rounded border">
-							<h4 className="font-bold text-sm mb-2">AWD Status</h4>
+							<h4 className="font-bold text-sm mb-2">AWD 状态</h4>
 							{awdStatus.final_settlement && (
 								<div className="mb-2 p-2 rounded border border-[var(--attention-emphasis)] bg-[var(--attention-subtle)] text-sm">
-									<strong>Final settlement</strong> — The attack phase has
-									ended. Final Judge checks are being settled. The scoreboard
-									may still change until the event reaches Finished.
+									<strong>终局结算</strong> —— 攻击阶段已结束，最终评测正在结算；
+									在赛事进入「已结束」前排行榜仍可能变化。
 								</div>
 							)}
 							<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2 text-sm">
-								<dt className="font-bold text-[var(--fgColor-muted)]">Phase</dt>
+								<dt className="font-bold text-[var(--fgColor-muted)]">阶段</dt>
 								<dd>{awdStatus.phase}</dd>
-								<dt className="font-bold text-[var(--fgColor-muted)]">Round</dt>
+								<dt className="font-bold text-[var(--fgColor-muted)]">回合</dt>
 								<dd>
 									{awdStatus.current_round != null &&
 									awdStatus.round_count != null
 										? `${awdStatus.current_round} / ${awdStatus.round_count}`
 										: "-"}
 								</dd>
-								<dt className="font-bold text-[var(--fgColor-muted)]">Score</dt>
+								<dt className="font-bold text-[var(--fgColor-muted)]">得分</dt>
 								<dd className="font-mono">{awdStatus.score ?? "-"}</dd>
-								<dt className="font-bold text-[var(--fgColor-muted)]">Ban</dt>
+								<dt className="font-bold text-[var(--fgColor-muted)]">禁赛状态</dt>
 								<dd>
 									{awdStatus.banned ? (
 										<Label variant="danger">Banned</Label>
 									) : (
-										<Label variant="default">Active</Label>
+										<Label variant="default">正常</Label>
 									)}
 								</dd>
 							</dl>
@@ -349,9 +348,9 @@ function RouteComponent() {
 					<div className="flex items-center gap-2 mb-2">
 						<Heading as="h2">{ev.title}</Heading>
 						{joined ? (
-							<Label variant="success">Joined</Label>
+							<Label variant="success">已加入</Label>
 						) : (
-							<Label variant="attention">Unjoined</Label>
+							<Label variant="attention">未加入</Label>
 						)}
 					</div>
 					<dl className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2">

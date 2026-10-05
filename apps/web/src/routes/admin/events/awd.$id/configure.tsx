@@ -117,7 +117,7 @@ function RouteComponent() {
 		},
 		onSuccess: () => {
 			setDirty(false);
-			banner.showBanner("success", "AWD configuration saved");
+			banner.showBanner("success", "AWD 配置已保存");
 			qc.invalidateQueries({ queryKey: ["admin-awd-status", id] });
 			qc.invalidateQueries({ queryKey: ["event", id] });
 		},
@@ -158,19 +158,19 @@ function RouteComponent() {
 			form.archiveRetentionHours,
 		].map(Number);
 		if (numericFields.some((value) => !Number.isSafeInteger(value))) {
-			banner.showBanner("critical", "All numeric fields must be valid integers.");
+			banner.showBanner("critical", "所有数值字段都必须填写合法整数。");
 			return;
 		}
 		const ranges: Array<[number, number, number, string]> = [
-			[numericFields[0], 1, 1000, "Round Count"],
-			[numericFields[1], 30, 86_400, "Round Duration"],
-			[numericFields[2], 0, 1_000_000_000, "Initial Score"],
-			[numericFields[3], 0, 100, "Free Reset Count"],
-			[numericFields[4], 0, 1_000_000_000, "Extra Reset Penalty"],
-			[numericFields[5], 1, 1_000, "Max Concurrency"],
-			[numericFields[6], 1, 3_600, "Default Timeout"],
-			[numericFields[7], 1, 3_600, "Retry Interval"],
-			[numericFields[8], 1, 87_600, "Archive Retention"],
+			[numericFields[0], 1, 1000, "回合数"],
+			[numericFields[1], 30, 86_400, "单回合时长（秒）"],
+			[numericFields[2], 0, 1_000_000_000, "初始分数"],
+			[numericFields[3], 0, 100, "免费重置次数"],
+			[numericFields[4], 0, 1_000_000_000, "额外重置罚分"],
+			[numericFields[5], 1, 1_000, "评测最大并发"],
+			[numericFields[6], 1, 3_600, "评测默认超时（秒）"],
+			[numericFields[7], 1, 3_600, "评测重试间隔（秒）"],
+			[numericFields[8], 1, 87_600, "归档保留时长（小时）"],
 		];
 		const invalidRange = ranges.find(
 			([value, min, max]) => value < min || value > max,
@@ -178,7 +178,7 @@ function RouteComponent() {
 		if (invalidRange) {
 			banner.showBanner(
 				"critical",
-				`${invalidRange[3]} must be between ${invalidRange[1]} and ${invalidRange[2]}.`,
+				`${invalidRange[3]}必须在 ${invalidRange[1]} 到 ${invalidRange[2]} 之间。`,
 			);
 			return;
 		}
@@ -217,7 +217,7 @@ function RouteComponent() {
 			) {
 				banner.showBanner(
 					"critical",
-					"Planned Start must be a valid future time.",
+					"计划开赛时间必须是合法的未来时间。",
 				);
 				return;
 			}
@@ -251,11 +251,11 @@ function RouteComponent() {
 					<div>
 						<h3 className="m-0">AWD Configure</h3>
 						<p className="color-fg-muted mb-0 mt-1">
-							Configure rounds, scoring, Reset policy, Judge, and lifecycle parameters.
+							配置回合、计分、重置策略、评测与生命周期参数。
 						</p>
 					</div>
 					<Label variant={config ? "success" : "accent"}>
-						{config ? config.status : "not configured"}
+						{config ? config.status : "未配置"}
 					</Label>
 				</div>
 
@@ -297,15 +297,15 @@ function RouteComponent() {
 							borderRadius: 2,
 						}}
 					>
-						<h4 className="mb-2">Timing Preview</h4>
+						<h4 className="mb-2">时间预览</h4>
 						<div className="grid grid-cols-2 gap-2 text-sm">
-							<span className="text-[var(--fgColor-muted)]">Event Duration</span>
+							<span className="text-[var(--fgColor-muted)]">赛事时长</span>
 							<span className="font-mono">{formatDuration(eventDuration)}</span>
-							<span className="text-[var(--fgColor-muted)]">Attack Duration</span>
+							<span className="text-[var(--fgColor-muted)]">攻击时长</span>
 							<span className="font-mono">
 								{roundCount} rounds × {roundDur}s = {formatDuration(attackDuration)}
 							</span>
-							<span className="text-[var(--fgColor-muted)]">Hardening Duration</span>
+							<span className="text-[var(--fgColor-muted)]">硬化时长</span>
 							<span className="font-mono">
 								{hardeningDuration != null && hardeningDuration >= 0
 									? formatDuration(hardeningDuration)
@@ -314,16 +314,16 @@ function RouteComponent() {
 						</div>
 						{!timingValid && (
 							<p className="text-sm color-fg-danger mt-2">
-								⚠ Attack duration ({roundCount} × {roundDur}s = {formatDuration(attackDuration)}) exceeds event duration ({formatDuration(eventDuration)}). Configuration will be rejected.
+								⚠ 攻击时长（{roundCount} × {roundDur}s = {formatDuration(attackDuration)}）超过赛事时长（{formatDuration(eventDuration)}），配置将被拒绝。
 							</p>
 						)}
 					</Box>
 				)}
 
-				<Section title="Match & Schedule">
+				<Section title="赛程设置">
 					<NumberField
-						label="Round Count"
-						caption="Total number of Attack rounds (1–1000)."
+						label="回合数"
+						caption="攻击回合总数（1–1000）。"
 						value={form.roundCount}
 						onChange={set("roundCount")}
 						min={1}
@@ -331,8 +331,8 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<NumberField
-						label="Round Duration"
-						caption="Seconds per round (30–86400)."
+						label="单回合时长（秒）"
+						caption="每个回合的秒数（30–86400）。"
 						value={form.roundDurationSecs}
 						onChange={set("roundDurationSecs")}
 						min={30}
@@ -340,9 +340,9 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<FormControl disabled={!editable}>
-						<FormControl.Label>Planned Start</FormControl.Label>
+						<FormControl.Label>计划开赛时间</FormControl.Label>
 						<FormControl.Caption>
-							Optional; leave empty for manual Start from Operations.
+							可选；留空表示由运维页手动开赛。
 						</FormControl.Caption>
 						<TextInput
 							type="datetime-local"
@@ -352,10 +352,10 @@ function RouteComponent() {
 					</FormControl>
 				</Section>
 
-				<Section title="Scoring">
+				<Section title="计分">
 					<NumberField
-						label="Initial Score"
-						caption="Starting score for each team (0–1,000,000,000)."
+						label="初始分数"
+						caption="每支队伍的初始分数（0–1,000,000,000）。"
 						value={form.initialScore}
 						onChange={set("initialScore")}
 						min={0}
@@ -364,10 +364,10 @@ function RouteComponent() {
 					/>
 				</Section>
 
-				<Section title="Reset Policy">
+				<Section title="重置策略">
 					<NumberField
-						label="Free Reset Count"
-						caption="Number of free Resets per team."
+						label="免费重置次数"
+						caption="每支队伍的免费重置次数。"
 						value={form.freeResetCount}
 						onChange={set("freeResetCount")}
 						min={0}
@@ -375,8 +375,8 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<NumberField
-						label="Extra Reset Penalty"
-						caption="Score penalty per extra Reset."
+						label="额外重置罚分"
+						caption="每次超出免费次数的重置扣分。"
 						value={form.extraResetPenalty}
 						onChange={set("extraResetPenalty")}
 						min={0}
@@ -385,10 +385,10 @@ function RouteComponent() {
 					/>
 				</Section>
 
-				<Section title="Judge Policy">
+				<Section title="评测策略">
 					<NumberField
-						label="Max Concurrency"
-						caption="Maximum concurrent Judge tasks per event."
+						label="评测最大并发"
+						caption="本赛事同时执行的评测任务上限。"
 						value={form.judgeMaxConcurrency}
 						onChange={set("judgeMaxConcurrency")}
 						min={1}
@@ -396,8 +396,8 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<NumberField
-						label="Default Timeout"
-						caption="Judge default timeout (seconds)."
+						label="评测默认超时（秒）"
+						caption="评测任务的默认超时时间（秒）。"
 						value={form.judgeDefaultTimeoutSecs}
 						onChange={set("judgeDefaultTimeoutSecs")}
 						min={1}
@@ -405,8 +405,8 @@ function RouteComponent() {
 						disabled={!editable}
 					/>
 					<NumberField
-						label="Retry Interval"
-						caption="Judge retry interval (seconds)."
+						label="评测重试间隔（秒）"
+						caption="评测任务的重试间隔（秒）。"
 						value={form.judgeRetryIntervalSecs}
 						onChange={set("judgeRetryIntervalSecs")}
 						min={1}
@@ -415,10 +415,10 @@ function RouteComponent() {
 					/>
 				</Section>
 
-				<Section title="Lifecycle">
+				<Section title="生命周期">
 					<NumberField
-						label="Archive Retention"
-						caption="Hours to retain after Finished before auto-archive."
+						label="归档保留时长（小时）"
+						caption="赛事结束后自动归档前的保留小时数。"
 						value={form.archiveRetentionHours}
 						onChange={set("archiveRetentionHours")}
 						min={1}
@@ -438,8 +438,8 @@ function RouteComponent() {
 						{save.isPending
 							? "Saving…"
 							: config
-								? "Save AWD Configuration"
-								: "Create AWD Configuration"}
+								? "保存 AWD 配置"
+								: "创建 AWD 配置"}
 					</Button>
 				</Box>
 			</Box>

@@ -73,7 +73,7 @@ function RouteComponent() {
 	const precheckReport = parsePrecheckReport(latestPrecheck?.error_msg);
 
 	const onOk = (label: string) => () => {
-		banner.showBanner("success", `${label} ok`);
+		banner.showBanner("success", `${label}成功`);
 		qc.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
 		qc.invalidateQueries({ queryKey: ["admin-awd-status", id] });
 		qc.invalidateQueries({ queryKey: ["admin-awd-prechecks", id] });
@@ -82,43 +82,43 @@ function RouteComponent() {
 
 	const deploy = useMutation({
 		mutationFn: () => adminApi.awd.deploy(id),
-		onSuccess: onOk("Deploy"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("部署"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const precheck = useMutation({
 		mutationFn: () => adminApi.awd.precheck(id),
-		onSuccess: onOk("Precheck"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("预检"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const start = useMutation({
 		mutationFn: () => adminApi.awd.start(id),
-		onSuccess: onOk("Start"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("开赛"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const pause = useMutation({
 		mutationFn: () => adminApi.awd.pause(id),
-		onSuccess: onOk("Pause"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("暂停"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const resume = useMutation({
 		mutationFn: () => adminApi.awd.resume(id),
-		onSuccess: onOk("Resume"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("恢复"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const finish = useMutation({
 		mutationFn: () => adminApi.awd.finish(id),
-		onSuccess: onOk("Finish"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("结束比赛"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const archive = useMutation({
 		mutationFn: () => adminApi.awd.archive(id),
-		onSuccess: onOk("Archive"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("归档"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const rotate = useMutation({
 		mutationFn: () => adminApi.awd.rotateTokens(id),
-		onSuccess: onOk("Token Rotated"),
-		onError: banner.showErrorBanner,
+		onSuccess: onOk("令牌轮换"),
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	// Score Adjust
@@ -133,12 +133,12 @@ function RouteComponent() {
 				reason: adjReason.trim() || "manual adjustment",
 			}),
 		onSuccess: () => {
-			banner.showBanner("success", "Score adjusted");
+			banner.showBanner("success", "分数已调整");
 			qc.invalidateQueries({ queryKey: ["admin-awd-scores", id] });
 			setAdjDelta("0");
 			setAdjReason("");
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const pending =
@@ -163,33 +163,30 @@ function RouteComponent() {
 
 			{/* Lifecycle Actions */}
 			<section>
-				<h4 className="font-bold mb-2">Lifecycle</h4>
+				<h4 className="font-bold mb-2">生命周期</h4>
 
 				{/* Contextual state banner */}
 				{isFinalSettlement && (
 					<InlineMessage variant="warning" className="mb-2">
-						<strong>Final Settlement</strong> — Final Judge checks are being
-						settled. Competition actions are closed. The event will become
-						Finished when all final Judge tasks are terminal and scoring is
-						settled.
+						<strong>终局结算</strong> —— 最终评测正在结算，赛事操作已关闭；
+						待所有评测任务结束且分数结算完成后，赛事将变为「已结束」。
 					</InlineMessage>
 				)}
 				{status === "network_error" && (
 					<InlineMessage variant="critical" className="mb-2">
-						<strong>Network Error</strong> — Platform infrastructure failure.
-						Resume after recovery.
+						<strong>网络异常</strong> —— 平台基础设施故障，恢复后请点击「恢复」。
 					</InlineMessage>
 				)}
 				{status === "paused" && (
 					<InlineMessage variant="warning" className="mb-2">
-						<strong>Paused</strong> — Competition frozen. Resume to continue.
+						<strong>已暂停</strong> —— 比赛已冻结，点击「恢复」继续。
 					</InlineMessage>
 				)}
 				{isFinished && (
 					<InlineMessage variant="success" className="mb-2">
-						<strong>{status === "archived" ? "Archived" : "Finished"}</strong> —
+						<strong>{status === "archived" ? "已归档" : "已结束"}</strong> —
 						Competition ended.
-						{status === "finished" && " Archive when ready."}
+						{status === "finished" && " 可随时归档。"}
 					</InlineMessage>
 				)}
 
@@ -202,7 +199,7 @@ function RouteComponent() {
 								disabled={pending}
 								onClick={() => deploy.mutate()}
 							>
-								Deploy
+								部署
 							</Button>
 						)}
 					{["deployed", "verification_failed", "configuring", "draft"].includes(
@@ -210,7 +207,7 @@ function RouteComponent() {
 					) &&
 						!isFinalSettlement && (
 							<Button disabled={pending} onClick={() => precheck.mutate()}>
-								Precheck
+								预检
 							</Button>
 						)}
 					{["verified", "start_blocked"].includes(status) &&
@@ -220,14 +217,14 @@ function RouteComponent() {
 								disabled={pending}
 								onClick={() => start.mutate()}
 							>
-								Start
+								开赛
 							</Button>
 						)}
 
 					{/* Running (normal): Pause only — no manual Finish */}
 					{status === "running" && !isFinalSettlement && (
 						<Button disabled={pending} onClick={() => pause.mutate()}>
-							Pause
+							暂停
 						</Button>
 					)}
 
@@ -238,7 +235,7 @@ function RouteComponent() {
 							disabled={pending}
 							onClick={() => resume.mutate()}
 						>
-							Resume
+							恢复
 						</Button>
 					)}
 
@@ -249,7 +246,7 @@ function RouteComponent() {
 							disabled={pending}
 							onClick={() => resume.mutate()}
 						>
-							Resume
+							恢复
 						</Button>
 					)}
 
@@ -260,7 +257,7 @@ function RouteComponent() {
 							disabled={pending}
 							onClick={async () => {
 								const ok = await confirmDialog({
-									title: "Archive event?",
+									title: "归档赛事？",
 									content:
 										"Archived events cannot be modified. GameBox containers may be cleaned up.",
 									confirmButtonType: "danger",
@@ -268,7 +265,7 @@ function RouteComponent() {
 								if (ok) archive.mutate();
 							}}
 						>
-							Archive
+							归档
 						</Button>
 					)}
 				</ButtonGroup>
@@ -281,7 +278,7 @@ function RouteComponent() {
 							disabled={pending}
 							onClick={async () => {
 								const ok = await confirmDialog({
-									title: "Rotate internal tokens?",
+									title: "轮换内部令牌？",
 									content:
 										"Will increment key_version, re-encrypt, and rebuild FlagServer/JudgeServer containers.",
 									confirmButtonType: "danger",
@@ -289,7 +286,7 @@ function RouteComponent() {
 								if (ok) rotate.mutate();
 							}}
 						>
-							Rotate Tokens
+							轮换内部令牌
 						</Button>
 					</div>
 				)}
@@ -304,7 +301,7 @@ function RouteComponent() {
 			{/* Precheck Report：失败原因（errors/notes） */}
 			{latestPrecheck && (
 				<section>
-					<h4 className="font-bold mb-2">Precheck Report</h4>
+					<h4 className="font-bold mb-2">预检报告</h4>
 					<InlineMessage
 						variant={
 							precheckReport.errors.length === 0 ? "success" : "critical"
@@ -348,7 +345,7 @@ function RouteComponent() {
 			{/* Score Adjust */}
 			{!isFinished && (
 				<section>
-					<h4 className="font-bold mb-2">Score Adjust (audited)</h4>
+					<h4 className="font-bold mb-2">分数调整（记审计）</h4>
 					<Box
 						sx={{
 							p: 3,
@@ -359,7 +356,7 @@ function RouteComponent() {
 					>
 						<div className="flex items-center gap-2 flex-wrap">
 							<FormControl disabled={adjust.isPending}>
-								<FormControl.Label>Team</FormControl.Label>
+								<FormControl.Label>队伍</FormControl.Label>
 								<select
 									className="border rounded px-2 py-1 text-sm"
 									value={adjTeam}
@@ -375,7 +372,7 @@ function RouteComponent() {
 								</select>
 							</FormControl>
 							<FormControl disabled={adjust.isPending}>
-								<FormControl.Label>Delta</FormControl.Label>
+								<FormControl.Label>分数增减</FormControl.Label>
 								<TextInput
 									aria-label="delta"
 									placeholder="e.g. 100 or -50"
@@ -386,7 +383,7 @@ function RouteComponent() {
 								/>
 							</FormControl>
 							<FormControl disabled={adjust.isPending}>
-								<FormControl.Label>Reason</FormControl.Label>
+								<FormControl.Label>原因</FormControl.Label>
 								<TextInput
 									aria-label="reason"
 									placeholder="reason"
@@ -400,7 +397,7 @@ function RouteComponent() {
 								disabled={!adjTeam || adjust.isPending || pending}
 								onClick={() => adjust.mutate()}
 							>
-								Apply
+								应用
 							</Button>
 						</div>
 					</Box>
@@ -409,7 +406,7 @@ function RouteComponent() {
 
 			{/* Scoreboard */}
 			<section>
-				<h4 className="font-bold mb-2">Scoreboard</h4>
+				<h4 className="font-bold mb-2">排行榜</h4>
 				{scores.isLoading ? <Spinner /> : <AdminScoreboard rows={rows} />}
 			</section>
 		</div>
@@ -422,10 +419,10 @@ function AdminScoreboard({ rows }: { rows: AwdScoreRow[] }) {
 			<thead>
 				<tr>
 					<th align="left">#</th>
-					<th align="left">Team</th>
-					<th align="right">Attack</th>
-					<th align="right">Defense</th>
-					<th align="right">Total</th>
+					<th align="left">队伍</th>
+					<th align="right">攻击分</th>
+					<th align="right">防守分</th>
+					<th align="right">总分</th>
 				</tr>
 			</thead>
 			<tbody>

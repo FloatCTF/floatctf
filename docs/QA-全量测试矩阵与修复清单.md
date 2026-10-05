@@ -142,7 +142,11 @@
 | 补丁提交 | 构造 `patch.tar.gz`（根 `patch.sh`）→ 玩家接口上传 | ✓ `{"status":"applied"}`，`awdp_patch_submissions` 记录 applied/exit=0 |
 | 结束 | 运维页 `Finish (→ Ended)` | ✓ 中文确认框「确认结束赛事？…剩余评估仍会结算」，phase=**ended** |
 
-**F40（待确认）**：补丁状态为 `applied`（04:44:27），但随后 **round 4/5/6 的官方评测仍为 `no_patch`**，未产生 `fix` 计分事件。与「PATCHED → 从当前轮起全部剩余回合 +fix_round_score」的代码注释语义不符，需要确认：竞赛模式下补丁是否仅对提交当轮有效（若是，选手每轮都需重新提交，与文档描述不一致）。
+**F40（已定论：非缺陷）**：补丁 `fix_round_id` = 第 4 回合（04:43:53~04:44:53），第 4 回合评测（04:45:00）**确实找到了补丁**（否则应为 `no_patch`），但因该实例当时不可达而以 **`service_down`** 结算；第 5/6 回合按其自身 `round_id` 检查补丁 → `no_patch` 属**设计内语义**（`judge_worker` 注释「本轮无 APPLIED patch 短路」，plan §22）。结论：竞赛模式**按回合**要求补丁；PATCHED 时按「当前轮起全部剩余回合」扫分。本次未得分是因为我的补丁导致实例健康检查失败，而非平台漏判。
+
+**F41（不成立）**：AWDP 赛事 `Finish (→ Ended)` 后，本赛事容器已全部拆除（按 `io.floatctf.event_id` 核对为空）。
+
+**测试卫生（非产品缺陷）**：每跑一轮全量 `scripts/test-rust.sh` 会留下约 35 个容器（AWDP 真实宿主用例的 judge/instance 容器未回收）。本次两批共清理 **173 + 145** 个残留容器与 107 个网络。建议后续给这些用例补 teardown。
 
 ## 七、运行态与门禁
 

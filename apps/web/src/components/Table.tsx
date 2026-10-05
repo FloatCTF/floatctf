@@ -53,6 +53,10 @@ export type Column<T> = {
 export type MutationColumn = {
     header: string;
     field: string;
+    /** 对话框字段标签；缺省时回落为 `field`（原始键名）。 */
+    label?: string;
+    /** 标记必填：标签显示星号并让输入框走浏览器原生必填校验。 */
+    required?: boolean;
     render: ReactElement;
     /** 仅在新增对话框展示（不可变身份字段等）。 */
     createOnly?: boolean;
@@ -357,6 +361,31 @@ export const GenericTable = <T extends object>({
         },
     });
 
+    /** 对话框内可见的字段列（add/modify 过滤后）。 */
+    const visibleMutationColumns = (mutationColumns ?? []).filter((column) => {
+        if (dialogMode === "add" && column.editOnly) return false;
+        if (dialogMode === "modify" && column.createOnly) return false;
+        return true;
+    });
+
+    /**
+     * 提交前检查必填字段。
+     *
+     * Primer 的 TextInput 不会把 `required` 透传到 DOM，浏览器原生校验形同虚设，
+     * 于是空值会直接打到后端（得到 400）。这里统一在提交前拦截并给出中文字段名。
+     */
+    const missingRequiredLabel = (): string | null => {
+        const data = mutationData as Record<string, unknown> | undefined;
+        for (const column of visibleMutationColumns) {
+            if (!column.required) continue;
+            const value = data?.[column.field];
+            if (value === undefined || value === null || String(value).trim() === "") {
+                return column.label ?? column.field;
+            }
+        }
+        return null;
+    };
+
     if (isLoading) {
         return (
             <Table.Skeleton
@@ -380,6 +409,8 @@ export const GenericTable = <T extends object>({
                     position="right"
                 >
                     <div className="w-full gap-1 flex-col flex">
+                        {/* 表单提交失败时，页面级横幅会被抽屉遮住，这里再渲染一份 */}
+                        <banner.BannerComponent className="mb-2" />
                         {mutationColumns
                             ?.filter((column) => {
                                 if (dialogMode === "add" && column.editOnly) {
@@ -394,9 +425,13 @@ export const GenericTable = <T extends object>({
                                 return true;
                             })
                             .map((column) => (
-                            <FormControl key={column.field} className="w-full">
+                            <FormControl
+                                key={column.field}
+                                className="w-full"
+                                required={column.required}
+                            >
                                 <FormControl.Label>
-                                    {column.field}
+                                    {column.label ?? column.field}
                                 </FormControl.Label>
                                 {cloneElement(
                                     column.render as ReactElement<{
@@ -411,11 +446,19 @@ export const GenericTable = <T extends object>({
                                 className="w-full"
                                 variant="primary"
                                 onClick={() => {
+                                    const missing = missingRequiredLabel();
+                                    if (missing) {
+                                        banner.showBanner(
+                                            "critical",
+                                            `请填写「${missing}」`,
+                                        );
+                                        return;
+                                    }
                                     if (mutationData)
                                         createMutation.mutate(mutationData);
                                 }}
                             >
-                                Create
+                                创建
                             </Button>
                         )) ||
                             (dialogMode === "modify" && (
@@ -424,6 +467,14 @@ export const GenericTable = <T extends object>({
                                         className="w-full"
                                         variant="primary"
                                         onClick={() => {
+                                            const missing = missingRequiredLabel();
+                                            if (missing) {
+                                                banner.showBanner(
+                                                    "critical",
+                                                    `请填写「${missing}」`,
+                                                );
+                                                return;
+                                            }
                                             if (mutationData && originalRow) {
                                                 const payload = diffToPatch(
                                                     originalRow,
@@ -435,10 +486,11 @@ export const GenericTable = <T extends object>({
                                                     mutationData,
                                                 ); // fallback
                                             }
-                                            setIsOpen(false);
+                                            // 关闭交给 patchMutation.onSuccess：
+                                            // 失败时保留表单，避免用户输入被吞掉。
                                         }}
                                     >
-                                        Update
+                                        保存
                                     </Button>
                                     <Button
                                         className="w-full"

@@ -180,8 +180,11 @@ function RouteComponent() {
 		{
 			header: "Title",
 			field: "title",
+			label: "赛事标题",
+			required: true,
 			render: (
 				<TextInput
+					required
 					value={mutationEvent.title}
 					onChange={(e) => {
 						mutationEvent.title = e.target.value;
@@ -192,6 +195,7 @@ function RouteComponent() {
 		{
 			header: "Description",
 			field: "description",
+			label: "赛事简介",
 			render: (
 				<Textarea
 					value={mutationEvent.description}
@@ -204,6 +208,7 @@ function RouteComponent() {
 		{
 			header: "Flag Prefix",
 			field: "flag_prefix",
+			label: "Flag 前缀",
 			render: (
 				<TextInput
 					value={mutationEvent.flag_prefix}
@@ -216,6 +221,7 @@ function RouteComponent() {
 		{
 			header: "Family",
 			field: "family",
+			label: "赛制",
 			// 身份在创建后不可变——仅在新增时展示。
 			createOnly: true,
 			render: (
@@ -238,6 +244,7 @@ function RouteComponent() {
 		{
 			header: "Participant",
 			field: "participant_mode",
+			label: "参赛模式",
 			createOnly: true,
 			render: (
 				<Select
@@ -263,6 +270,7 @@ function RouteComponent() {
 		{
 			header: "Hidden",
 			field: "hidden",
+			label: "隐藏赛事",
 			render: (
 				<Stack direction="horizontal" align="center">
 					<ToggleSwitch
@@ -278,6 +286,7 @@ function RouteComponent() {
 		{
 			header: "Joinable",
 			field: "allow_join",
+			label: "允许加入",
 			render: (
 				<Stack direction="horizontal" align="center">
 					<ToggleSwitch
@@ -293,6 +302,7 @@ function RouteComponent() {
 		{
 			header: "Rules",
 			field: "rules",
+			label: "赛事规则",
 			render: (
 				<Textarea
 					value={mutationEvent.rules}
@@ -305,6 +315,7 @@ function RouteComponent() {
 		{
 			header: "Start Time",
 			field: "start_time",
+			label: "开始时间",
 
 			render: (
 				<input
@@ -325,6 +336,7 @@ function RouteComponent() {
 		{
 			header: "End Time",
 			field: "end_time",
+			label: "结束时间",
 			render: (
 				<input
 					type="datetime-local"

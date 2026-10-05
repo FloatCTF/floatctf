@@ -5,6 +5,7 @@ use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
     core::system_ids::scheduled_task_system_ids,
     entity::scheduled_tasks,
+    scheduler::TaskKey,
 };
 use sea_orm::Condition;
 use std::str::FromStr;
@@ -27,6 +28,57 @@ pub struct CreateScheduledTaskRequest {
     pub protected: bool,
 }
 
+/// 定时任务字段校验（创建与更新共用）。
+///
+/// 历史缺陷：零校验可以注册**未知 task_key**、或 trigger_type=cron 却不填
+/// Cron 表达式，任务永远不会正常执行（也无法被处理器分发）。
+fn validate_scheduled_task_fields(
+    task_name: Option<&str>,
+    task_key: Option<&str>,
+    trigger_type: Option<&str>,
+    cron_expr: Option<&str>,
+    execute_at: Option<&chrono::DateTime<chrono::FixedOffset>>,
+) -> Result<(), AppError> {
+    if let Some(name) = task_name {
+        if name.trim().is_empty() {
+            return Err(AppError::Validation("任务名称不能为空".into()));
+        }
+    }
+    if let Some(key) = task_key {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(AppError::Validation("任务键不能为空".into()));
+        }
+        TaskKey::from_str(key).map_err(|_| AppError::Validation(format!("未知任务键：{key}")))?;
+    }
+    if let Some(trigger) = trigger_type {
+        match trigger.trim() {
+            "once" => {
+                if execute_at.is_none() {
+                    return Err(AppError::Validation(
+                        "触发方式 once 必须填写执行时间".into(),
+                    ));
+                }
+            }
+            "cron" => {
+                let expr = cron_expr.map(str::trim).unwrap_or_default();
+                if expr.is_empty() {
+                    return Err(AppError::Validation(
+                        "触发方式 cron 必须填写 Cron 表达式".into(),
+                    ));
+                }
+                cron::Schedule::from_str(expr)
+                    .map_err(|e| AppError::Validation(format!("Cron 表达式无效：{e}")))?;
+            }
+            "startup" => {}
+            other => {
+                return Err(AppError::Validation(format!("不支持的触发方式：{other}")));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// POST /api/admin/scheduled_tasks
 #[post("")]
 pub async fn create_scheduled_task(
@@ -36,12 +88,19 @@ pub async fn create_scheduled_task(
 ) -> UniResult<ScheduledTasksDto> {
     let user = user.into_inner();
     let ctr = ctr.into_inner();
+    validate_scheduled_task_fields(
+        Some(&ctr.task_name),
+        Some(&ctr.task_key),
+        Some(&ctr.trigger_type),
+        ctr.cron_expr.as_deref(),
+        ctr.execute_at.as_ref(),
+    )?;
     let now = Utc::now();
 
     let new_task = scheduled_tasks::ActiveModel {
-        task_name: Set(ctr.task_name),
-        task_key: Set(ctr.task_key),
-        trigger_type: Set(ctr.trigger_type),
+        task_name: Set(ctr.task_name.trim().to_string()),
+        task_key: Set(ctr.task_key.trim().to_string()),
+        trigger_type: Set(ctr.trigger_type.trim().to_string()),
         group_id: Set(ctr.group_id),
         cron_expr: Set(ctr.cron_expr),
         execute_at: Set(ctr.execute_at.map(|t| t.into())),
@@ -150,6 +209,33 @@ pub async fn patch_scheduled_task(
     }
     if let Some(error_msg) = ptr.error_msg {
         m_task.error_msg = Set(error_msg);
+    }
+
+    // 校验生效值（Set 为本请求修改，Unchanged 为库中现值），避免 PATCH 绕过创建校验。
+    {
+        fn text(v: &sea_orm::ActiveValue<String>) -> Option<&str> {
+            match v {
+                sea_orm::ActiveValue::Set(s) | sea_orm::ActiveValue::Unchanged(s) => {
+                    Some(s.as_str())
+                }
+                _ => None,
+            }
+        }
+        let cron = match &m_task.cron_expr {
+            sea_orm::ActiveValue::Set(v) | sea_orm::ActiveValue::Unchanged(v) => v.as_deref(),
+            _ => None,
+        };
+        let exec = match &m_task.execute_at {
+            sea_orm::ActiveValue::Set(v) | sea_orm::ActiveValue::Unchanged(v) => v.as_ref(),
+            _ => None,
+        };
+        validate_scheduled_task_fields(
+            text(&m_task.task_name),
+            text(&m_task.task_key),
+            text(&m_task.trigger_type),
+            cron,
+            exec,
+        )?;
     }
 
     m_task.updated_at = Set(Utc::now().into());

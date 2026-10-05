@@ -120,7 +120,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 		fireEvent.change(screen.getByPlaceholderText("flag{...}"), {
 			target: { value: "flag{1}" },
 		});
-		const submit = screen.getByRole("button", { name: /^Submit$/ });
+		const submit = screen.getByRole("button", { name: /^提交$/ });
 		const resetBtn = screen.getByRole("button", { name: /^Reset$/ });
 		expect(resetBtn.hasAttribute("disabled")).toBe(false);
 		expect(submit.hasAttribute("disabled")).toBe(false);
@@ -216,7 +216,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 			target: { value: "flag{1}" },
 		});
 		expect(
-			screen.getByRole("button", { name: /^Submit$/ }).hasAttribute("disabled"),
+			screen.getByRole("button", { name: /^提交$/ }).hasAttribute("disabled"),
 		).toBe(false);
 
 		fireEvent.click(screen.getByRole("button", { name: /^Fix$/ }));
@@ -228,7 +228,7 @@ describe("AwdpWorkbench 按钮互斥禁用", () => {
 			/^Fix$/,
 			/^End$/,
 			/^Reset$/,
-			/^Submit$/,
+			/^提交$/,
 		];
 		for (const name of expectedDisabled) {
 			expect(

@@ -106,7 +106,7 @@ function RouteComponent() {
 
 	const mutationColumns = [
 		{
-			header: "name",
+			header: "名称",
 			field: "name",
 			render: (
 				<TextInput
@@ -118,7 +118,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "category",
+			header: "分类",
 			field: "category",
 			render: (
 				<TextInput
@@ -130,7 +130,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "description",
+			header: "描述",
 			field: "description",
 			render: (
 				<TextInput
@@ -142,7 +142,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "hidden",
+			header: "隐藏",
 			field: "hidden",
 			render: (
 				<Stack direction="horizontal" align="center">
@@ -170,7 +170,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "container_port",
+			header: "容器端口",
 			field: "container_port",
 			render: (
 				<TextInput
@@ -185,7 +185,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "recommended_cpu_millis",
+			header: "推荐 CPU（毫核）",
 			field: "recommended_cpu_millis",
 			render: (
 				<TextInput
@@ -199,7 +199,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "recommended_memory_bytes",
+			header: "推荐内存（字节）",
 			field: "recommended_memory_bytes",
 			render: (
 				<TextInput
@@ -213,7 +213,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "recommended_pids_limit",
+			header: "推荐 PID 上限",
 			field: "recommended_pids_limit",
 			render: (
 				<TextInput

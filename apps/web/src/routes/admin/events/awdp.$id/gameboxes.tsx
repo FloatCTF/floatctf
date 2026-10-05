@@ -46,7 +46,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "awdp_source_code_dir",
-			header: "Source Dir",
+			header: "源码目录",
 			field: "awdp_source_code_dir",
 			renderCell: (row: AwdpAdminEventGameBoxDto) => (
 				<span className="font-mono text-xs">

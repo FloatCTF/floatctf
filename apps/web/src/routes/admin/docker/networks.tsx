@@ -41,7 +41,7 @@ function RouteComponent() {
         },
         { accessorKey: "name", header: "名称", field: "name" },
         { accessorKey: "driver", header: "驱动", field: "driver" },
-        { accessorKey: "scope", header: "Scope", field: "scope" },
+        { accessorKey: "scope", header: "作用域", field: "scope" },
         { accessorKey: "subnet", header: "子网", field: "subnet" },
         { accessorKey: "gateway", header: "网关", field: "gateway" },
     ];

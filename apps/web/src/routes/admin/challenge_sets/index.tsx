@@ -70,7 +70,7 @@ function RouteComponent() {
 	});
 	const mutationColumns = [
 		{
-			header: "name",
+			header: "名称",
 			field: "name",
 			label: "名称",
 			render: (
@@ -83,7 +83,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "description",
+			header: "描述",
 			field: "description",
 			label: "描述",
 			render: (

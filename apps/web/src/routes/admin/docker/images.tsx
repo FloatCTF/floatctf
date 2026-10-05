@@ -29,7 +29,7 @@ function RouteComponent() {
         { accessorKey: "id", header: "镜像 ID", field: "id", rowHeader: true },
         {
             accessorKey: "repo_tags",
-            header: "Tags",
+            header: "标签",
             field: "repo_tags",
             renderCell: (row: ImageInfo) => (
                 <span>{row.repo_tags.join(", ") || "<none>"}</span>

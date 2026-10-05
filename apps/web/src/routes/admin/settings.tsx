@@ -29,7 +29,7 @@ function RouteComponent() {
     },
     {
       accessorKey: "value",
-      header: "Value",
+      header: "值",
       field: "value",
       label: "配置值",
       renderCell: (s: SettingsDto) => <MyTruncate value={s.value} />,
@@ -37,7 +37,7 @@ function RouteComponent() {
 
     {
       accessorKey: "resolved_value",
-      header: "Resolved",
+      header: "已解决",
       field: "resolved_value",
       label: "解析值",
       renderCell: (s: SettingsDto) => <MyTruncate value={s.resolved_value} />,
@@ -76,7 +76,7 @@ function RouteComponent() {
   });
   const mutationColumns = [
     {
-      header: "key",
+      header: "键",
       field: "key",
       label: "配置键",
       render: (
@@ -102,7 +102,7 @@ function RouteComponent() {
       ),
     },
     {
-      header: "description",
+      header: "描述",
       field: "description",
       label: "描述",
       render: (
@@ -134,7 +134,7 @@ function RouteComponent() {
       ),
     },
     {
-      header: "protected",
+      header: "受保护",
       field: "protected",
       label: "受保护",
       render: (

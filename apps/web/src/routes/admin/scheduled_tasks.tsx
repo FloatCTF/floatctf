@@ -194,7 +194,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "cron_expr",
+			header: "Cron 表达式",
 			field: "cron_expr",
 			label: "Cron 表达式",
 			render: (
@@ -207,7 +207,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "execute_at",
+			header: "执行时间",
 			field: "execute_at",
 			label: "执行时间",
 			render: (
@@ -231,7 +231,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "expires_at",
+			header: "过期时间",
 			field: "expires_at",
 			label: "过期时间",
 			render: (
@@ -255,7 +255,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "description",
+			header: "描述",
 			field: "description",
 			label: "描述",
 			render: (
@@ -268,7 +268,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "enabled",
+			header: "启用",
 			field: "enabled",
 			label: "启用",
 			render: (
@@ -284,7 +284,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "protected",
+			header: "受保护",
 			field: "protected",
 			label: "受保护",
 			render: (

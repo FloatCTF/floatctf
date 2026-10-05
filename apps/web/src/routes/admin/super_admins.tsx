@@ -133,7 +133,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "password",
+            header: "密码",
             field: "password",
             label: "密码",
             render: (
@@ -148,7 +148,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "email",
+            header: "邮箱",
             field: "email",
             label: "邮箱",
             render: (

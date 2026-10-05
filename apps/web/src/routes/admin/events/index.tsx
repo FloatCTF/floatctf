@@ -303,7 +303,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Rules",
+			header: "规则",
 			field: "rules",
 			label: "赛事规则",
 			render: (

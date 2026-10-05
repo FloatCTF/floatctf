@@ -60,7 +60,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "instance.ref",
-			header: "Ref",
+			header: "引用",
 			field: "instance.ref",
 		},
 		{

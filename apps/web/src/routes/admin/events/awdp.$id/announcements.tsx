@@ -48,7 +48,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "content",
+			header: "内容",
 			field: "content",
 			label: "内容",
 			render: (

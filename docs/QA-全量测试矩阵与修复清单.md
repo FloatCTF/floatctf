@@ -148,7 +148,22 @@
 
 **测试卫生（非产品缺陷）**：每跑一轮全量 `scripts/test-rust.sh` 会留下约 35 个容器（AWDP 真实宿主用例的 judge/instance 容器未回收）。本次两批共清理 **173 + 145** 个残留容器与 107 个网络。建议后续给这些用例补 teardown。
 
-## 七、运行态与门禁
+## 七、第 5–6 轮补充（管理端收尾）
+
+| 项 | 操作 | 结果 |
+|---|---|---|
+| Super Admins | 新建 `qaadmin` → **可登录**（200 + JWT）→ 行内删除 → 回到 1 条 | ✓ |
+| Settings 编辑 | `INSTANCE_DESTROY_DELAY` 60 → 61 写库 → 回滚为 60 | ✓（生产配置改后即复原）|
+| Docker | 只读容器列表（10 行 + 过滤器 + 分页） | ✓ 无破坏性动作 |
+| Database | SQL 控制台默认**禁用**（`[features].unsafe_sql_admin=false`），错误提示可见；写入需 `/* ADMIN_CONFIRMED */` 前缀 | ✓ 策略正确 |
+| Terminal | xterm 真实连到 API 容器 shell（`POST /api/admin/terminal/session → 204`，提示符 `…:/var/lib/floatctf/runtime$`） | ✓ |
+| Player WriteUp | 提交入口存在，但需**文件上传**（picker 在 Windows 侧） | ⚠ 无法自动化，同 zip/patch 限制 |
+
+**F42（已修）**：通用表格组件的增/改/删成功提示是英文（`Create Users successfully` / `Update Settings successfully` / `Delete … successfully`）→ 改为「创建成功 / 已保存修改 / 删除成功」，浏览器复验 ✓。
+
+**F43（不成立）**：一度认为 SQL 控制台 404（路由缺失），实测为**配置禁用**（返回明确提示），且前端**确实渲染**该提示（此前读取时机过早）；仅文案英文，已中文化（含成功提示与「未知错误」）。
+
+## 八、运行态与门禁
 
 - 生产：API `floatctf/api:0.3.3` healthy；前端 `index-Bcw-Nr6T.js`；每次部署都有 `*.bak-*` 备份。
 - 门禁：全量 Rust `scripts/test-rust.sh` PASS（期间抓到 1 例我引入的回归：练习防御误伤自建练习赛 → 已修 `1c3f4bd`）；前端 **218 用例 PASS**、`tsc`、`biome lint`、`vite build` 全绿。

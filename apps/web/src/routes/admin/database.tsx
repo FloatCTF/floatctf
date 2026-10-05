@@ -39,7 +39,7 @@ function RouteComponent() {
       if (data.data) {
         sql_state.data = data.data;
         console.log(sql_state.data.rows);
-        sql_state.sql_msg = `Executed successfully, ${sql_state.data.count} rows • ${sql_state.data.elapsed_ms} ms`;
+        sql_state.sql_msg = `执行成功：${sql_state.data.count} 行 • ${sql_state.data.elapsed_ms} ms`;
         sql_state.sql_msg_variant = "success";
         sql_state.show = true;
       }
@@ -50,7 +50,7 @@ function RouteComponent() {
       sql_state.sql_msg =
         (error as AxiosError<{ message: string }>)?.response?.data?.message ||
         (error as Error).message ||
-        "Unknown error";
+        "未知错误";
       sql_state.show = true;
     },
   });

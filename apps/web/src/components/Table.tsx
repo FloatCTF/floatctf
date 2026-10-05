@@ -329,7 +329,7 @@ export const GenericTable = <T extends object>({
                 },
             );
             queryClient.invalidateQueries({ queryKey: [subject] });
-            banner.showBanner("success", `Delete ${subject} successfully`);
+            banner.showBanner("success", "删除成功");
         },
         onError: (error) => {
             banner.showErrorBanner(error);
@@ -340,7 +340,7 @@ export const GenericTable = <T extends object>({
         mutationFn: createFn,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [subject] });
-            banner.showBanner("success", `Create ${subject} successfully`);
+            banner.showBanner("success", "创建成功");
             // 成功后必须关闭表单对话框，否则用户会以为提交失败并重复提交。
             onDialogClose();
         },
@@ -353,7 +353,7 @@ export const GenericTable = <T extends object>({
         mutationFn: patchFn,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [subject] });
-            banner.showBanner("success", `Update ${subject} successfully`);
+            banner.showBanner("success", "已保存修改");
             onDialogClose();
         },
         onError: (error) => {

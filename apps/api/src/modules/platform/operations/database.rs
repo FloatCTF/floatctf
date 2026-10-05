@@ -34,7 +34,7 @@ pub async fn exec_sql(
     // Gate: require unsafe_sql_admin in the static TOML configuration.
     if !ctx.config.features.enable_unsafe_sql_admin {
         return Err(AppError::NotFound(
-            "SQL execution is disabled. Set [features].unsafe_sql_admin = true in the TOML config to enable.".into(),
+            "SQL 执行功能已禁用：需在 TOML 配置中设置 [features].unsafe_sql_admin = true 才能启用。".into(),
         ));
     }
 

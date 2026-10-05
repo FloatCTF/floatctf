@@ -83,7 +83,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "gamebox_name",
-			header: "GameBox",
+			header: "靶机",
 			field: "gamebox_name",
 			rowHeader: true,
 			renderCell: (row: AwdGameBox) => (

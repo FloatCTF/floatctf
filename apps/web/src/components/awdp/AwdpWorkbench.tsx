@@ -831,14 +831,14 @@ export function AwdpWorkbench({
 	const historyColumns = [
 		{
 			accessorKey: "sequence",
-			header: "Turn",
+			header: "回合",
 			field: "sequence",
 			rowHeader: true,
 			renderCell: (row: AwdpHistoryRow) => <span>#{row.sequence}</span>,
 		},
 		{
 			accessorKey: "starts_at",
-			header: "Starts",
+			header: "开始时间",
 			field: "starts_at",
 			renderCell: (row: AwdpHistoryRow) => (
 				<span>{fmtTime(row.starts_at)}</span>
@@ -846,7 +846,7 @@ export function AwdpWorkbench({
 		},
 		{
 			accessorKey: "cutoff_at",
-			header: "Cutoff",
+			header: "截止时间",
 			field: "cutoff_at",
 			renderCell: (row: AwdpHistoryRow) => (
 				<span>{fmtTime(row.cutoff_at)}</span>

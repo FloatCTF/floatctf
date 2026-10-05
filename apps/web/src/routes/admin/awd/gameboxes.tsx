@@ -374,7 +374,7 @@ export function ScanButton() {
 			},
 			{
 				accessorKey: "message",
-				header: "Message",
+				header: "消息",
 				field: "message",
 			},
 		],
@@ -457,14 +457,14 @@ export function CheckButton({
 		() => [
 			{
 				accessorKey: "gamebox_name",
-				header: "GameBox Name",
+				header: "靶机名称",
 				field: "gamebox_name",
 				label: "靶机名称",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "docker_image",
-				header: "Docker Image",
+				header: "Docker 镜像",
 				field: "docker_image",
 				label: "镜像可用",
 				renderCell: (row: GameBoxCheckResult) => {

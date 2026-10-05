@@ -26,7 +26,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "has_file",
-            header: "Has File",
+            header: "有附件",
             field: "has_file",
             sortBy: true,
             renderCell: (row: Weapons) => {

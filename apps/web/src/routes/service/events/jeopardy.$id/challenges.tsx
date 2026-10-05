@@ -151,7 +151,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "solved_count",
-			header: "Solved Count",
+			header: "解出数",
 			field: "solved_count",
 			sortBy: true,
 		},

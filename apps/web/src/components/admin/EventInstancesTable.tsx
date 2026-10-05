@@ -29,7 +29,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "identifier",
-			header: "Identifier",
+			header: "标识",
 			field: "identifier",
 			renderCell: (row: AdminInstanceRow) => (
 				<span className="font-mono text-xs">{row.identifier}</span>
@@ -45,7 +45,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "user_name",
-			header: "User",
+			header: "用户",
 			field: "user_id",
 			renderCell: (row: AdminInstanceRow) => {
 				const name = row.user_name ?? row.team_name ?? "";
@@ -72,7 +72,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "destroy_at",
-			header: "Destroy At",
+			header: "销毁时间",
 			field: "destroy_at",
 			renderCell: (row: AdminInstanceRow) => (
 				<span>{DatetimeToShow(row.destroy_at)}</span>

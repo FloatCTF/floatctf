@@ -26,7 +26,7 @@ function RouteComponent() {
     };
 
     const columns = [
-        { accessorKey: "id", header: "Image ID", field: "id", rowHeader: true },
+        { accessorKey: "id", header: "镜像 ID", field: "id", rowHeader: true },
         {
             accessorKey: "repo_tags",
             header: "Tags",
@@ -43,7 +43,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "created",
-            header: "Created",
+            header: "创建时间",
             field: "created",
             renderCell: (row: ImageInfo) => (
                 <span>

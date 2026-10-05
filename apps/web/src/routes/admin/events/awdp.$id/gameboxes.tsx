@@ -30,7 +30,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "GameBox Name",
+			header: "靶机名称",
 			field: "name",
 			sortBy: true,
 		},
@@ -56,7 +56,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "enabled",
-			header: "Enabled",
+			header: "启用",
 			field: "enabled",
 			renderCell: (row: AwdpAdminEventGameBoxDto) => (
 				<span>{row.enabled ? <CheckIcon /> : <></>}</span>

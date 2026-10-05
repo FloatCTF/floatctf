@@ -443,7 +443,7 @@ export function ScanButton() {
 			},
 			{
 				accessorKey: "message",
-				header: "Message",
+				header: "消息",
 				field: "message",
 			},
 		],
@@ -547,13 +547,13 @@ export function CheckButton({
 		() => [
 			{
 				accessorKey: "challenge_name",
-				header: "Challenge Name",
+				header: "题目名称",
 				field: "challenge_name",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "docker_image",
-				header: "Docker Image",
+				header: "Docker 镜像",
 				field: "docker_image",
 				renderCell: (row: ChallengeCheckResult) => {
 					// static / attachment-only 题目没有镜像：不显示 Build（永远无法构建）

@@ -57,7 +57,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "details",
-			header: "Details",
+			header: "详情",
 			field: "details",
 			renderCell: (row: EventLogs) => (
 				<span>

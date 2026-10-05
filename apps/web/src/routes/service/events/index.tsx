@@ -80,7 +80,7 @@ function RouteComponent() {
 				}
 			},
 		},
-		{ accessorKey: "event.family", header: "Family", field: "event.family" },
+		{ accessorKey: "event.family", header: "赛制", field: "event.family" },
 		{ accessorKey: "event.participant_mode", header: "参赛者", field: "event.participant_mode" },
 		{
 			accessorKey: "status",
@@ -97,7 +97,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "event.allow_join",
-			header: "Joinable",
+			header: "可加入",
 			field: "event.allow_join",
 			renderCell: (row: EventInfo) => (
 				<span>{row.event.allow_join ? <CheckIcon /> : <></>}</span>

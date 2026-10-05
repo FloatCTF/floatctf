@@ -25,7 +25,7 @@ function RouteComponent() {
     const columns = [
         {
             accessorKey: "no",
-            header: "No",
+            header: "序号",
             field: "no",
             rowHeader: true,
         },
@@ -52,12 +52,12 @@ function RouteComponent() {
         },
         {
             accessorKey: "solved_count",
-            header: "Solved Count",
+            header: "解出数",
             field: "solved_count",
         },
         {
             accessorKey: "solved_last_at",
-            header: "Solved LastAt",
+            header: "最近解出时间",
             field: "solved_last_at",
             renderCell: (row: TopUser) => {
                 return <span>{DatetimeToShow(row.solved_last_at)}</span>;

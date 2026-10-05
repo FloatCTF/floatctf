@@ -45,19 +45,19 @@ function RouteComponent() {
         },
         {
             accessorKey: "view_count",
-            header: "Views",
+            header: "浏览",
             field: "view_count",
             sortBy: true,
         },
         {
             accessorKey: "like_count",
-            header: "Likes",
+            header: "点赞",
             field: "like_count",
             sortBy: true,
         },
         {
             accessorKey: "comment_count",
-            header: "Comments",
+            header: "评论",
             field: "comment_count",
             sortBy: true,
         },

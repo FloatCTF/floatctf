@@ -80,13 +80,13 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge.id",
-			header: "Challenge ID",
+			header: "题目 ID",
 			field: "challenge.id",
 			rowHeader: true,
 		},
 		{
 			accessorKey: "challenge.name",
-			header: "Challenge Name",
+			header: "题目名称",
 			field: "challenge.name",
 			sortBy: true,
 		},

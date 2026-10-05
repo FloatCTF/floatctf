@@ -51,7 +51,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "message",
-            header: "Message",
+            header: "消息",
             field: "message",
         },
         {
@@ -71,7 +71,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "details",
-            header: "Details",
+            header: "详情",
             field: "details",
             renderCell: (row: Logs) => (
                 <span>{typeof row.details === "object" ? JSON.stringify(row.details) : row.details}</span>

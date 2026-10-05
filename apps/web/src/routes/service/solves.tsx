@@ -17,7 +17,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge_name",
-			header: "Challenge",
+			header: "题目",
 			field: "challenge_name",
 			rowHeader: true,
 			renderCell: (row: SolveResult) => (
@@ -31,7 +31,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "nickname",
-			header: "User",
+			header: "用户",
 			field: "nickname",
 			renderCell: (row: SolveResult) => (
 				<div className="flex items-center gap-2">

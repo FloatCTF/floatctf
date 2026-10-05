@@ -33,7 +33,7 @@ function RouteComponent() {
 		{ accessorKey: "ports", header: "Ports", field: "ports" },
 		{
 			accessorKey: "created",
-			header: "Created",
+			header: "创建时间",
 			field: "created",
 			renderCell: (row: FloatDockerContainer) => (
 				<span>{dayjs(row.created * 1000).format("YYYY-MM-DD HH:mm")}</span>

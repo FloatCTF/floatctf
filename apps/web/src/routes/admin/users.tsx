@@ -79,7 +79,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Password",
+			header: "密码",
 			field: "password",
 			label: "密码（至少 8 位）",
 			required: true,

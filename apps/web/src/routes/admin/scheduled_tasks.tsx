@@ -62,19 +62,19 @@ function RouteComponent() {
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{
 			accessorKey: "task_name",
-			header: "Task Name",
+			header: "任务名称",
 			field: "task_name",
 			label: "任务名称",
 		},
 		{
 			accessorKey: "task_key",
-			header: "Task Key",
+			header: "任务标识",
 			field: "task_key",
 			label: "任务键",
 		},
 		{
 			accessorKey: "trigger_type",
-			header: "Trigger Type",
+			header: "触发类型",
 			field: "trigger_type",
 			label: "触发方式",
 		},
@@ -89,13 +89,13 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "cron_expr",
-			header: "Cron Expr",
+			header: "Cron 表达式",
 			field: "cron_expr",
 			label: "Cron 表达式",
 		},
 		{
 			accessorKey: "execute_at",
-			header: "Execute At",
+			header: "执行时间",
 			field: "execute_at",
 			label: "执行时间",
 			renderCell: (row: ScheduledTasks) => (
@@ -104,7 +104,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "enabled",
-			header: "Enabled",
+			header: "启用",
 			field: "enabled",
 			label: "启用",
 			renderCell: (row: ScheduledTasks) =>
@@ -112,7 +112,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "protected",
-			header: "Protected",
+			header: "受保护",
 			field: "protected",
 			label: "受保护",
 			renderCell: (row: ScheduledTasks) =>
@@ -120,7 +120,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "last_run_at",
-			header: "Last Run At",
+			header: "上次执行时间",
 			field: "last_run_at",
 			label: "上次执行时间",
 			renderCell: (row: ScheduledTasks) => (

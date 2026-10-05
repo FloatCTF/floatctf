@@ -109,7 +109,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "event_title",
-			header: "Event",
+			header: "赛事",
 			field: "event_title",
 			renderCell: (row: InstanceRow) => {
 				return <span>{row.event_title ?? row.event_id}</span>;
@@ -117,12 +117,12 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "identifier",
-			header: "Identifier",
+			header: "标识",
 			field: "identifier",
 		},
 		{
 			accessorKey: "user_name",
-			header: "User",
+			header: "用户",
 			field: "user_name",
 			renderCell: (row: InstanceRow) => {
 				return <span>{row.user_name ?? row.user_id}</span>;
@@ -130,7 +130,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "destroy_at",
-			header: "Destroy At",
+			header: "销毁时间",
 			field: "destroy_at",
 			renderCell: (row: Instances) => {
 				return <span>{DatetimeToShow(row.destroy_at)}</span>;

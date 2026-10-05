@@ -115,7 +115,7 @@ function RouteComponent() {
 				return <span>{row.id}</span>;
 			},
 		},
-		{ accessorKey: "family", header: "Family", field: "family", sortBy: true },
+		{ accessorKey: "family", header: "赛制", field: "family", sortBy: true },
 		{
 			accessorKey: "participant_mode",
 			header: "参赛者",
@@ -145,7 +145,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "allow_join",
-			header: "Joinable",
+			header: "可加入",
 			field: "allow_join",
 			renderCell: (row: Events) => {
 				return <span>{row.allow_join ? <CheckIcon /> : <></>}</span>;
@@ -222,7 +222,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Family",
+			header: "赛制",
 			field: "family",
 			label: "赛制",
 			// 身份在创建后不可变——仅在新增时展示。
@@ -287,7 +287,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Joinable",
+			header: "可加入",
 			field: "allow_join",
 			label: "允许加入",
 			render: (

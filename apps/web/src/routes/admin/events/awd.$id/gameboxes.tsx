@@ -36,7 +36,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "gamebox_name",
-			header: "GameBox",
+			header: "靶机",
 			field: "gamebox_name",
 			sortBy: true,
 		},
@@ -65,12 +65,12 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "first_bonus",
-			header: "First Blood",
+			header: "首杀",
 			field: "first_bonus",
 		},
 		{
 			accessorKey: "enabled",
-			header: "Enabled",
+			header: "启用",
 			field: "enabled",
 			renderCell: (row: EventGameBoxDto) => (
 				<span>{row.enabled ? <CheckIcon /> : <></>}</span>

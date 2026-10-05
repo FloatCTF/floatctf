@@ -29,7 +29,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "has_file",
-            header: "Has File",
+            header: "有附件",
             field: "has_file",
             label: "含附件",
             sortBy: true,
@@ -116,7 +116,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "Has File",
+            header: "有附件",
             field: "has_file",
             label: "含附件",
             render: (

@@ -90,7 +90,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "team.members",
-            header: "Members",
+            header: "成员",
             field: "team.members",
             renderCell: (row: TeamResult) => {
                 return (

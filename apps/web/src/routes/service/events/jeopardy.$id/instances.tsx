@@ -49,7 +49,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge_name",
-			header: "Challenge",
+			header: "题目",
 			field: "challenge_name",
 			rowHeader: true,
 		},
@@ -65,12 +65,12 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "user_nickname",
-			header: "User",
+			header: "用户",
 			field: "user_nickname",
 		},
 		{
 			accessorKey: "instance.destroy_at",
-			header: "Destroy At",
+			header: "销毁时间",
 			field: "destroy_at",
 			renderCell: (row: EventInstanceResult) => {
 				return <span>{DatetimeToShow(row.instance.destroy_at)}</span>;

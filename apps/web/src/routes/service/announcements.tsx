@@ -18,7 +18,7 @@ function RouteComponent() {
     const columns = [
         {
             accessorKey: "publisher",
-            header: "Publisher",
+            header: "发布者",
             field: "publisher",
         },
         {

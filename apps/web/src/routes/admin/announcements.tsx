@@ -46,7 +46,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "publisher",
-            header: "Publisher",
+            header: "发布者",
             field: "publisher",
         },
         {

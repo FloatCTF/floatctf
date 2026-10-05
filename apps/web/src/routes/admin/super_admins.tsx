@@ -94,7 +94,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "password",
-            header: "Password",
+            header: "密码",
             field: "password",
             label: "密码",
             renderCell: () => "****",

@@ -46,20 +46,20 @@ function RouteComponent() {
 	const roundColumns = [
 		{
 			accessorKey: "sequence",
-			header: "Turn",
+			header: "回合",
 			field: "sequence",
 			rowHeader: true,
 			renderCell: (row: AwdpRoundDto) => <span>#{row.sequence}</span>,
 		},
 		{
 			accessorKey: "starts_at",
-			header: "Starts",
+			header: "开始时间",
 			field: "starts_at",
 			renderCell: (row: AwdpRoundDto) => <span>{fmt(row.starts_at)}</span>,
 		},
 		{
 			accessorKey: "cutoff_at",
-			header: "Cutoff",
+			header: "截止时间",
 			field: "cutoff_at",
 			renderCell: (row: AwdpRoundDto) => <span>{fmt(row.cutoff_at)}</span>,
 		},
@@ -78,7 +78,7 @@ function RouteComponent() {
 	const evalColumns = [
 		{
 			accessorKey: "round_sequence",
-			header: "Turn",
+			header: "回合",
 			field: "round_sequence",
 			rowHeader: true,
 			renderCell: (row: AwdpEvaluationDto) => (

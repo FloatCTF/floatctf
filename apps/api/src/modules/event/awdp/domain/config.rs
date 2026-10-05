@@ -114,13 +114,13 @@ impl AwdpConfig {
         }
         if self.break_score < 0 || self.fix_round_score < 0 {
             return Err(AwdpError::Validation(
-                "break_score and fix_round_score must be >= 0".into(),
+                "break_score 与 fix_round_score 必须大于等于 0".into(),
             ));
         }
         // V1 强制：fix 时长必须被 interval 整除（无 partial round）。
         if self.fix_duration_secs % self.fix_round_interval_secs != 0 {
             return Err(AwdpError::Validation(format!(
-                "fix_duration_secs ({}) must be divisible by fix_round_interval_secs ({})",
+                "fix 时长（{}）必须能被回合间隔（{}）整除",
                 self.fix_duration_secs, self.fix_round_interval_secs
             )));
         }
@@ -135,10 +135,16 @@ impl AwdpConfig {
     /// Break 满分推导：全部防守成功总分（fix_round_score × total_rounds）× 0.6
     /// （整数运算：先乘分子再除分母；默认 150×6×3/5 = 540）。
     pub fn derived_break_score(&self) -> i64 {
-        self.fix_round_score * self.total_rounds() as i64 * BREAK_SCORE_RATIO_NUM
-            / BREAK_SCORE_RATIO_DEN
+        self.fix_round_score
+            .saturating_mul(self.total_rounds() as i64)
+            .saturating_mul(BREAK_SCORE_RATIO_NUM)
+            .saturating_div(BREAK_SCORE_RATIO_DEN)
     }
 }
+
+/// 配置 PATCH（乐观锁：expected_updated_at 必填）。
+/// 分数上限（与 AWD `initial_score` 一致），防止派生分数溢出 i64。
+pub const MAX_SCORE: i64 = 1_000_000_000;
 
 /// 配置 PATCH（乐观锁：expected_updated_at 必填）。
 #[derive(Debug, Clone, Default)]
@@ -170,7 +176,7 @@ impl AwdpConfigPatch {
         ] {
             if let Some(v) = v {
                 if v <= 0 {
-                    return Err(AwdpError::Validation(format!("{name} must be > 0")));
+                    return Err(AwdpError::Validation(format!("{name} 必须大于 0")));
                 }
             }
         }
@@ -180,7 +186,14 @@ impl AwdpConfigPatch {
         ] {
             if let Some(v) = v {
                 if v < 0 {
-                    return Err(AwdpError::Validation(format!("{name} must be >= 0")));
+                    return Err(AwdpError::Validation(format!("{name} 必须大于等于 0")));
+                }
+                // 上限与 AWD `initial_score` 一致（1e9）：派生 break_score =
+                // fix_round_score * 回合数 * 比例，无上限会在启动物化时溢出 i64。
+                if v > MAX_SCORE {
+                    return Err(AwdpError::Validation(format!(
+                        "{name} 不能超过 {MAX_SCORE}"
+                    )));
                 }
             }
         }
@@ -203,6 +216,36 @@ impl AwdpConfigPatch {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn score_bounds_and_saturating_derivation() {
+        // 边界：0 与上限接受，-1 与上限+1 拒绝
+        let ok = AwdpConfigPatch {
+            fix_round_score: Some(MAX_SCORE),
+            ..Default::default()
+        };
+        assert!(ok.validate().is_ok());
+        let neg = AwdpConfigPatch {
+            fix_round_score: Some(-1),
+            ..Default::default()
+        };
+        assert!(neg.validate().is_err());
+        let over = AwdpConfigPatch {
+            fix_round_score: Some(MAX_SCORE + 1),
+            ..Default::default()
+        };
+        assert!(
+            over.validate().is_err(),
+            "超过上限必须拒绝（防派生分数溢出）"
+        );
+
+        // 派生使用饱和运算：极端值不再回绕为负数
+        let cfg = AwdpConfig {
+            fix_round_score: i64::MAX,
+            ..Default::default()
+        };
+        assert!(cfg.derived_break_score() >= 0, "饱和运算不应产生负分");
+    }
+
     use super::*;
 
     #[test]
@@ -227,7 +270,7 @@ mod tests {
             ..Default::default()
         };
         let err = c.validate().unwrap_err();
-        assert!(err.to_string().contains("divisible"));
+        assert!(err.to_string().contains("整除"), "错误文案应为中文：{err}");
     }
 
     #[test]

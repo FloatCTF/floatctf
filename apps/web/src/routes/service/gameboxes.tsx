@@ -27,7 +27,7 @@ function RouteComponent() {
 				navigate({ to: "/service/awdp/runs/$runId", params: { runId } });
 			}
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const columns = [

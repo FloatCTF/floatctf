@@ -5,7 +5,7 @@ import { useReactive, useTitle } from "ahooks";
 import { useEffect, useRef } from "react";
 
 import { adminApi } from "@/api";
-import { useMsgInlineBanner } from "@/components";
+import { formatApiError, useMsgInlineBanner } from "@/components";
 import { AdminRouteGuardWithRedirect } from "@/routes/admin/route";
 import { useAuthStore } from "@/stores/AuthStore";
 
@@ -45,7 +45,10 @@ function RouteComponent() {
     },
     onError: (error) => {
       console.log(error);
-      banner.showBanner("critical", error.message);
+      banner.showBanner(
+        "critical",
+        formatApiError(error, { 401: "用户名或密码错误" }),
+      );
 
       form.buttonDisabled = false;
       form.buttonMessage = "Sign in";
@@ -84,6 +87,7 @@ function RouteComponent() {
             className="w-full"
             ref={usernameRef}
             name="username"
+						autoComplete="username"
             value={form.username}
             onChange={(e) => {
               form.username = e.target.value;
@@ -96,6 +100,7 @@ function RouteComponent() {
           <TextInput
             className="w-full"
             type="password"
+						autoComplete="current-password"
             name="password"
             value={form.password}
             onChange={(e) => {

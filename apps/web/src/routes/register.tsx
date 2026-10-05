@@ -101,6 +101,7 @@ function Register() {
 						className="w-full"
 						ref={usernameRef}
 						name="username"
+						autoComplete="username"
 						value={form.username}
 						placeholder="学号"
 						onChange={(e) => {
@@ -140,6 +141,7 @@ function Register() {
 					<TextInput
 						className="w-full"
 						type="password"
+						autoComplete="new-password"
 						name="password"
 						value={form.password}
 						onChange={(e) => {
@@ -153,6 +155,7 @@ function Register() {
 					<TextInput
 						className="w-full"
 						type="password"
+						autoComplete="new-password"
 						name="confirmPassword"
 						value={form.confirmPassword}
 						onChange={(e) => {

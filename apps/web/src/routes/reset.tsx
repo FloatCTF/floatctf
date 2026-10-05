@@ -70,6 +70,7 @@ function RouteComponent() {
 						className="w-full"
 						ref={usernameRef}
 						name="username"
+						autoComplete="username"
 						placeholder="学号"
 						value={form.username}
 						onChange={(e) => {

@@ -48,7 +48,7 @@ function RouteComponent() {
 	const hide = useMutation({
 		mutationFn: (gameboxId: string) => adminApi.awd.hideGamebox(gameboxId),
 		onSuccess: onDone,
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	// 编辑表单：身份 + 可编辑运行参数（digest/镜像 pin/build 状态/judge/health 由导入决定，不在此列）

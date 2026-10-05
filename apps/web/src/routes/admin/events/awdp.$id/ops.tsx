@@ -45,7 +45,7 @@ function RouteComponent() {
 			banner.showBanner("success", "Started → Break");
 			invalidate();
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const breakToFix = useMutation({
 		mutationFn: () => awdpAdminApi.breakToFix(id),
@@ -53,7 +53,7 @@ function RouteComponent() {
 			banner.showBanner("success", "Break → Fix (all instances reset)");
 			invalidate();
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const finish = useMutation({
 		mutationFn: () => awdpAdminApi.finish(id),
@@ -61,7 +61,7 @@ function RouteComponent() {
 			banner.showBanner("success", "Finished");
 			invalidate();
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const pending = start.isPending || breakToFix.isPending || finish.isPending;

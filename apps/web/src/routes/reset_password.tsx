@@ -1,5 +1,5 @@
 import { serviceApi } from "@/api";
-import { useMsgInlineBanner } from "@/components";
+import { formatApiError, useMsgInlineBanner } from "@/components";
 import { Avatar, Button, FormControl, Heading, TextInput } from "@primer/react";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
@@ -46,7 +46,7 @@ function RouteComponent() {
 			}, 1000);
 		},
 		onError: (error) => {
-			banner.showBanner("critical", error.message);
+			banner.showBanner("critical", formatApiError(error));
 			form.buttonDisabled = false;
 			form.buttonMessage = "Confirm";
 		},
@@ -82,6 +82,7 @@ function RouteComponent() {
 					<TextInput
 						className="w-full"
 						type="password"
+						autoComplete="new-password"
 						name="password"
 						placeholder="password"
 						value={form.password}
@@ -96,6 +97,7 @@ function RouteComponent() {
 					<TextInput
 						className="w-full"
 						type="password"
+						autoComplete="new-password"
 						name="confirmed_password"
 						placeholder="password"
 						value={form.confirmed_password}

@@ -1,7 +1,8 @@
 import { Banner } from "@primer/react/experimental";
 import { useReactive } from "ahooks";
-import type { AxiosError } from "axios";
 import { useCallback, useEffect, useRef } from "react";
+
+import { formatApiError } from "./apiErrorMessage";
 
 export type BannerVariant =
 	| "critical"
@@ -45,12 +46,12 @@ export const useMsgBanner = (options: UseMsgBannerOptions = {}) => {
 		}, duration);
 	};
 
-	const showErrorBanner = (error: unknown) => {
-		const msg =
-			(error as AxiosError<{ message: string }>)?.response?.data?.message ||
-			(error as Error).message ||
-			"Unknown error";
-		showBanner("critical", msg);
+	/** `overrides` 可按状态码覆盖文案（例如登录页把 401 解释为账号密码错误）。 */
+	const showErrorBanner = (
+		error: unknown,
+		overrides?: Record<number, string>,
+	) => {
+		showBanner("critical", formatApiError(error, overrides));
 	};
 
 	const hideBanner = () => {
@@ -60,10 +61,17 @@ export const useMsgBanner = (options: UseMsgBannerOptions = {}) => {
 	useEffect(() => {
 		return () => clearTimer();
 	}, [clearTimer]);
+	const bannerTitle =
+		mutationBanner.variant === "success"
+			? "操作成功"
+			: mutationBanner.variant === "critical"
+				? "操作失败"
+				: "提示";
+
 	const BannerComponent = ({ className }: { className?: string }) =>
 		mutationBanner.isShown ? (
 			<Banner
-				title="title"
+				title={bannerTitle}
 				hideTitle
 				description={mutationBanner.description}
 				variant={mutationBanner.variant}

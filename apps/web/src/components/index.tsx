@@ -1,3 +1,4 @@
+export * from "@/components/apiErrorMessage";
 export * from "@/components/ActionSelect";
 export * from "@/components/EventStatusBadge";
 export * from "@/components/Header";

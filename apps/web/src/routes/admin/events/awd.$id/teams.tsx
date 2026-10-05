@@ -49,7 +49,7 @@ function RouteComponent() {
             banner.showBanner("success", "Team banned");
             onDone();
         },
-        onError: banner.showErrorBanner,
+        onError: (e) => banner.showErrorBanner(e),
     });
 
     const unbanMutation = useMutation({
@@ -59,7 +59,7 @@ function RouteComponent() {
             banner.showBanner("success", "Team unbanned");
             onDone();
         },
-        onError: banner.showErrorBanner,
+        onError: (e) => banner.showErrorBanner(e),
     });
 
     const columns = [

@@ -1,6 +1,7 @@
 import { InlineMessage } from "@primer/react/experimental";
 import { useReactive } from "ahooks";
-import type { AxiosError } from "axios";
+
+import { formatApiError } from "./apiErrorMessage";
 
 export type MessageVariant = "critical" | "success" | "unavailable" | "warning";
 
@@ -20,12 +21,12 @@ export const useMsgInlineBanner = (options: UseMsgInlineBannerOptions = {}) => {
     mutationBanner.variant = variant;
     mutationBanner.message = message;
   };
-  const showErrorBanner = (error: unknown) => {
-    const msg =
-      (error as AxiosError<{ message: string }>)?.response?.data?.message ||
-      (error as Error).message ||
-      "Unknown error";
-    showBanner("critical", msg);
+  /** `overrides` 可按状态码覆盖文案（例如登录页把 401 解释为账号密码错误）。 */
+  const showErrorBanner = (
+    error: unknown,
+    overrides?: Record<number, string>,
+  ) => {
+    showBanner("critical", formatApiError(error, overrides));
   };
 
   const hideBanner = () => {

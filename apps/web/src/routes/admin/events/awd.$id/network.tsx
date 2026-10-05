@@ -181,7 +181,7 @@ function RouteComponent() {
 	const allocateAuto = useMutation({
 		mutationFn: () => adminApi.awd.allocateEventNetwork(id, {}),
 		onSuccess: onAllocated("已按自动方式分配赛事网络。"),
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const allocateManual = useMutation({
 		mutationFn: () =>
@@ -194,12 +194,12 @@ function RouteComponent() {
 					: undefined,
 			}),
 		onSuccess: onAllocated("已按手动指定的网段分配赛事网络。"),
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 	const reallocate = useMutation({
 		mutationFn: () => adminApi.awd.reallocateEventNetwork(id),
 		onSuccess: onAllocated("已重新分配赛事网络。"),
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const pending = allocateAuto.isPending || allocateManual.isPending;

@@ -48,7 +48,7 @@ function App() {
 			navigate({ to: "/service" });
 		},
 		onError: (error) => {
-			banner.showErrorBanner(error);
+			banner.showErrorBanner(error, { 401: "用户名或密码错误" });
 			form.buttonDisabled = false;
 			form.buttonMessage = "Sign in";
 			authStore.removeToken();
@@ -81,6 +81,7 @@ function App() {
 						className="w-full"
 						ref={usernameRef}
 						name="username"
+						autoComplete="username"
 						placeholder="学号"
 						value={form.username}
 						onChange={(e) => {
@@ -94,6 +95,7 @@ function App() {
 					<TextInput
 						className="w-full"
 						type="password"
+						autoComplete="current-password"
 						name="password"
 						value={form.password}
 						onChange={(e) => {

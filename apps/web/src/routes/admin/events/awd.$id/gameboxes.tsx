@@ -30,7 +30,7 @@ function RouteComponent() {
 		mutationFn: (vars: { egId: string; enabled: boolean }) =>
 			adminApi.awd.updateEventGamebox(id, vars.egId, { enabled: vars.enabled }),
 		onSuccess: onDone,
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const columns = [

@@ -364,7 +364,7 @@ function RouteComponent() {
 			initialized.current = false;
 			qc.invalidateQueries({ queryKey: [SETTINGS_KEY] });
 		},
-		onError: banner.showErrorBanner,
+		onError: (e) => banner.showErrorBanner(e),
 	});
 
 	const allocationQueryFn = async (

@@ -92,7 +92,7 @@ impl EventStatus {
             .filter(events::Column::Hidden.eq(false))
             .one(db)
             .await?
-            .ok_or(AppError::NotFound("event not found".to_string()))?;
+            .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
         use crate::modules::event::common::domain::time_state::{
             EventTimeStatus, event_time_status_of,
@@ -191,7 +191,7 @@ pub async fn get_event_info(
         .filter(events::Column::Hidden.eq(false))
         .one(db)
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     let joined = event_users::Entity::find_by_id((event_id, user_id))
         .one(db)
@@ -245,11 +245,11 @@ pub async fn list_event_challenges(
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     match EventStatus::check_web(db, &event.id).await? {
         EventStatus::NotStarted => {
-            return Err(AppError::BadRequest("Event is not start".to_string()));
+            return Err(AppError::BadRequest("赛事尚未开始".to_string()));
         }
         EventStatus::Ongoing | EventStatus::Ended => {}
     }
@@ -260,7 +260,7 @@ pub async fn list_event_challenges(
         .is_some();
 
     if !joined {
-        return Err(AppError::BadRequest("not joined".to_string()));
+        return Err(AppError::BadRequest("你尚未加入本赛事".to_string()));
     }
 
     let c_ec = event
@@ -318,7 +318,7 @@ pub async fn list_event_instances(
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     let event_ctx = EventContextBuilder::new()
         .db(db)
@@ -354,7 +354,7 @@ pub async fn get_challenge_instance(
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     let event_ctx = EventContextBuilder::new()
         .db(db)
@@ -394,7 +394,7 @@ pub async fn create_team(
                     .lock(LockType::Update)
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
                 require_team_mode(&event)?;
                 require_roster_mutable(&event)?;
 
@@ -404,7 +404,7 @@ pub async fn create_team(
                     .one(tx)
                     .await?;
                 if membership.is_some() {
-                    return Err(AppError::BadRequest("already joined team".to_string()));
+                    return Err(AppError::BadRequest("你已加入队伍".to_string()));
                 }
 
                 let team = match (event_teams::ActiveModel {
@@ -474,7 +474,7 @@ pub async fn quit_team(
                     .lock(LockType::Update)
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
                 require_team_mode(&event)?;
                 require_roster_mutable(&event)?;
 
@@ -482,13 +482,13 @@ pub async fn quit_team(
                     event_team_members::Entity::find_by_id((event_id, team_id, user_id))
                         .one(tx)
                         .await?
-                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+                        .ok_or(AppError::NotFound("你不属于该队伍".to_string()))?;
 
                 let team = event_teams::Entity::find_by_id(team_id)
                     .filter(event_teams::Column::EventId.eq(event_id))
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("team not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该队伍".to_string()))?;
 
                 if team_member.role == EventTeamMemberRole::Captain {
                     let member_ids: Vec<Uuid> = event_team_members::Entity::find()
@@ -537,7 +537,7 @@ pub async fn join_team(
                     .lock(LockType::Update)
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
                 require_team_mode(&event)?;
                 require_roster_mutable(&event)?;
 
@@ -547,14 +547,14 @@ pub async fn join_team(
                     .one(tx)
                     .await?;
                 if existing_membership.is_some() {
-                    return Err(AppError::BadRequest("already joined team".to_string()));
+                    return Err(AppError::BadRequest("你已加入队伍".to_string()));
                 }
 
                 let event_team = event_teams::Entity::find_by_id(team_id)
                     .filter(event_teams::Column::EventId.eq(event_id))
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("team not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该队伍".to_string()))?;
 
                 // Create/reuse enrollment first. The event_users PK serializes concurrent
                 // first joins; the DB membership unique constraint is the final race guard.
@@ -602,7 +602,7 @@ pub async fn leave_team(
                     .lock(LockType::Update)
                     .one(tx)
                     .await?
-                    .ok_or(AppError::NotFound("event not found".to_string()))?;
+                    .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
                 require_team_mode(&event)?;
                 require_roster_mutable(&event)?;
 
@@ -610,10 +610,12 @@ pub async fn leave_team(
                     event_team_members::Entity::find_by_id((event_id, team_id, user_id))
                         .one(tx)
                         .await?
-                        .ok_or(AppError::NotFound("You are not of the team".to_string()))?;
+                        .ok_or(AppError::NotFound("你不属于该队伍".to_string()))?;
 
                 if team_member.role == EventTeamMemberRole::Captain {
-                    return Err(AppError::BadRequest("Captain can't leave team".to_string()));
+                    return Err(AppError::BadRequest(
+                        "队长不能退出队伍，请先解散队伍".to_string(),
+                    ));
                 }
 
                 let team_exists = event_teams::Entity::find_by_id(team_id)
@@ -622,7 +624,7 @@ pub async fn leave_team(
                     .await?
                     .is_some();
                 if !team_exists {
-                    return Err(AppError::NotFound("team not found".to_string()));
+                    return Err(AppError::NotFound("未找到该队伍".to_string()));
                 }
 
                 team_member.delete(tx).await?;
@@ -649,7 +651,7 @@ pub async fn join_event(
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     require_competition(&event)?;
 
@@ -658,28 +660,52 @@ pub async fn join_event(
     // makes the subsequent team operation collide on the event_users PK.
     if event.participant_mode != ParticipantMode::Individual {
         return Err(AppError::BadRequest(
-            "team events must be joined by creating or joining a team".to_string(),
+            "团队赛请通过创建或加入队伍参赛".to_string(),
         ));
     }
 
     if !event.allow_join {
-        return Err(AppError::BadRequest("event not allow join".to_string()));
+        return Err(AppError::BadRequest("该赛事未开放加入".to_string()));
     }
 
     match EventStatus::check_web(db, &event.id).await? {
         EventStatus::Ongoing | EventStatus::Ended => {
-            return Err(AppError::BadRequest("Event has not yet begun".to_string()));
+            // 文案修正：原实现把「已开赛」写成 "Event has not yet begun"，语义颠倒。
+            return Err(AppError::BadRequest("赛事已开始，无法加入".to_string()));
         }
         EventStatus::NotStarted => {}
     }
 
-    let eu = event_users::ActiveModel {
+    // 重复加入（双击 / 重试 / 并发）必须幂等：唯一约束冲突不能冒泡成 500。
+    if let Some(existing) = event_users::Entity::find()
+        .filter(event_users::Column::EventId.eq(event_id))
+        .filter(event_users::Column::UserId.eq(user_id))
+        .one(db.get_ref())
+        .await?
+    {
+        return Ok((event, existing));
+    }
+
+    let eu = match (event_users::ActiveModel {
         event_id: Set(event_id),
         user_id: Set(user_id),
         ..Default::default()
-    }
+    })
     .insert(db.get_ref())
-    .await?;
+    .await
+    {
+        Ok(row) => row,
+        Err(error) if crate::api::is_unique_violation(&error.to_string()) => {
+            // 并发下另一请求已插入：读回该行，按幂等成功返回。
+            event_users::Entity::find()
+                .filter(event_users::Column::EventId.eq(event_id))
+                .filter(event_users::Column::UserId.eq(user_id))
+                .one(db.get_ref())
+                .await?
+                .ok_or_else(|| AppError::Conflict("你已加入该赛事".to_string()))?
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     Ok((event, eu))
 }
@@ -693,7 +719,7 @@ pub async fn leave_event(
         .filter(events::Column::Hidden.eq(false))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
     require_competition(&event)?;
     if event.participant_mode != ParticipantMode::Individual {
         return Err(AppError::BadRequest(
@@ -701,12 +727,12 @@ pub async fn leave_event(
         ));
     }
     if !event.allow_join {
-        return Err(AppError::BadRequest("event not allow leave".to_string()));
+        return Err(AppError::BadRequest("该赛事未开放退出".to_string()));
     }
 
     match EventStatus::check_web(db, &event.id).await? {
         EventStatus::Ongoing | EventStatus::Ended => {
-            return Err(AppError::BadRequest("Event has not yet begun".to_string()));
+            return Err(AppError::BadRequest("赛事已开始，无法退出".to_string()));
         }
         EventStatus::NotStarted => {}
     }
@@ -726,7 +752,7 @@ pub async fn get_scoreboard(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<Sco
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     jeopardy_scoreboard::get_scoreboard(&db, &event)
         .await
@@ -737,7 +763,7 @@ pub async fn get_trend(db: WebDb, event_id: Uuid) -> anyhow::Result<Vec<TrendIte
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事".to_string()))?;
 
     jeopardy_trend::get_trend(&db, &event)
         .await

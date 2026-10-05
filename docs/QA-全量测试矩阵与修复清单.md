@@ -93,6 +93,8 @@
 | **F16** | AWD 配置页/运维页/玩家端全英文 | 可用性 | 全面中文化 | `1e7b6b0` |
 | **F28** | 题目 `build_status=failed` 后 **Scan 不重导入、Check 只校验不回写**，管理员只能删库重扫 | 可维护性 | Check 在镜像可 inspect 时把状态修回 `ready` 并 pin image_id、清空 build_error | `6fe9526` |
 | **F36** | 除用户/赛事外，其余管理端对话框字段标签仍是原始键名（`name`/`content`/`task_key`…） | 可用性 | 10 个页面共 73 处补中文标签 | `6fe9526` |
+| **F38** | AWDP 配置页/运维页文案英文（`Fix Duration`/`Turn Interval`/`Save AWDP Configuration`/`AWDP configuration saved`/`Flag rejected`…） | 可用性 | **待修**（未提交）|
+| **F40** | 竞赛模式下补丁 `applied` 后后续回合仍判 `no_patch`，修复方拿不到 fix 分数 | 计分语义 | **待确认**（见第六章证据）|
 | **F37** | 定时任务可注册**未知 task_key**、`cron` 不填表达式、`once` 不填执行时间（永远不会执行） | 可维护性 | 任务键必须命中 `TaskKey` 注册表；触发方式白名单 + 必需字段 + Cron 可解析校验（创建与更新共用） | `afa0ce3` |
 
 ---
@@ -123,7 +125,26 @@
 | Challenges Check | 手工置 `failed` → 浏览器点 Check → `ready` + image_id pin | ✓（F28 修复后）|
 | 对话框标签 | weapons/scheduled_tasks/challenge_sets 等抽查均为中文 | ✓（F36 修复后）|
 
-## 六、运行态与门禁
+## 六、AWDP 竞赛全生命周期（第 4 轮补充）
+
+| 步骤 | 操作 | 结果 |
+|---|---|---|
+| 建赛 | 浏览器新建 `AWDP 竞赛压测`（family=awdp / team / 允许加入） | ✓ |
+| 配置 | `/admin/events/awdp/$id/configure`：Fix 600s、Turn Interval **60s**、Break 90、Fix/Turn 150 | ✓ 落库一致 |
+| 挂靶机 | `Attach GameBoxes` → test-g | ✓ |
+| 组队 | API 建 AWDP-A（qa01+qa02）、AWDP-B（qa03+qa04） | ✓ 各 2 人 |
+| 开始 Break | 运维页 `Start (→ Break)` | ✓「操作成功 Started → Break」，两队实例自动创建并运行 |
+| 真实 Break | 本队容器内取 `judge-server/flag` → 页面提交 | 错误 flag 拒绝；正确 `Flag accepted, +score`；Unbroken → **Broken** |
+| 计分/积分榜 | `awdp_score_events: break +90`；玩家积分榜 **1 A AWDP-A ME 90 0 90**，AWDP-B 0 | ✓ |
+| 切 Fix | 运维页 `Break → Fix` | ✓「操作成功 …(all instances reset)」，实例重置为新 flag |
+| Fix 回合 | 每 60s 生成回合（sequence 1..8+），官方评测按轮执行 | ✓ 语义 `no_patch`（未提交补丁）正确 |
+| 真实修复 | 容器内改写 `index.php` 阻断 SSRF | ✓ 攻击面 `?url=http://judge-server/flag` → **400 blocked**；健康检查路径 `?url=http://127.0.0.1` 仍 **200** |
+| 补丁提交 | 构造 `patch.tar.gz`（根 `patch.sh`）→ 玩家接口上传 | ✓ `{"status":"applied"}`，`awdp_patch_submissions` 记录 applied/exit=0 |
+| 结束 | 运维页 `Finish (→ Ended)` | ✓ 中文确认框「确认结束赛事？…剩余评估仍会结算」，phase=**ended** |
+
+**F40（待确认）**：补丁状态为 `applied`（04:44:27），但随后 **round 4/5/6 的官方评测仍为 `no_patch`**，未产生 `fix` 计分事件。与「PATCHED → 从当前轮起全部剩余回合 +fix_round_score」的代码注释语义不符，需要确认：竞赛模式下补丁是否仅对提交当轮有效（若是，选手每轮都需重新提交，与文档描述不一致）。
+
+## 七、运行态与门禁
 
 - 生产：API `floatctf/api:0.3.3` healthy；前端 `index-Bcw-Nr6T.js`；每次部署都有 `*.bak-*` 备份。
 - 门禁：全量 Rust `scripts/test-rust.sh` PASS（期间抓到 1 例我引入的回归：练习防御误伤自建练习赛 → 已修 `1c3f4bd`）；前端 **218 用例 PASS**、`tsc`、`biome lint`、`vite build` 全绿。

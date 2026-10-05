@@ -236,6 +236,14 @@
 - **分页控件**：单页时控件整块隐藏 ✓；多页时第 1 页「上一页」为 `aria-disabled=true`（Primer 语义禁用）但**仍回调 pageIndex=0** → 已在 F49 前端夹取兜底 ✓。
 - **容量边界现状**：`awd_event_networks` 已分配 **2 / 16**，距上限尚远；要打到 16 的边界需再建 14 个 AWD 事件网络（会创建 docker 网络），成本较高，留待专门排期。
 
+### F52 赛事文本长度上限（本轮修复）
+
+边界实测：`events.title/description/rules/flag_prefix` 列均为 `text` 且后端仅校验标题非空 → **5000 字符标题可入库** ✗（会撑坏列表/详情布局）。
+
+修复：`validate_event_text`（标题 ≤200、描述 ≤10000、规则 ≤50000、flag 前缀 ≤32，按 **Unicode 字符数**计），create 与 patch 双路径生效；前端事件表单对应输入加 `maxLength`。
+
+验证（生产，10/10 符合预期）：标题 200 接受 / 201 拒绝（ASCII 与**中文**均如此）、描述 10000/10001、规则 50000/50001、前缀 32/33 ✓；临时赛事已用 `DELETE /admin/events` + `{id_list}` 正规清理 ✓。既有线上数据（标题 16 / 描述 32 / 规则 659 / 前缀 4）不受影响 ✓。单测覆盖 200/201 字符与中文边界 ✓。
+
 ### 尚未处理的边界（建议）
 
 1. **英文错误文案面**：权限/状态守卫返回英文，例如未认证 401「Invalid or missing token…」、非法 UUID 404「UUID parsing failed: …」、AWD 启动「Cannot start event in Configuring status.」、暂停「Can only pause a running event」；删除不存在事件返回 **空消息 404**。建议按模块批量中文化。

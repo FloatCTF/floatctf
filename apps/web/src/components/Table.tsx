@@ -606,7 +606,9 @@ export const GenericTable = <T extends object>({
                         totalCount={total}
                         defaultPageIndex={page - 1}
                         onChange={({ pageIndex }) => {
-                            setPage(pageIndex + 1);
+                            // 边界：第 1 页点「上一页」时 Primer 仍可能回调 pageIndex=0，
+                            // 若不夹取会把查询页码变成 0 → 列表整页变空。
+                            setPage(Math.max(1, pageIndex + 1));
                         }}
                     />
                 )}

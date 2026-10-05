@@ -100,9 +100,13 @@ where
     E: EntityTrait,
     E::Model: Send + Sync,
 {
-    if limit == 0 || page == 0 {
-        return Ok((vec![], 0)); // 不分页或参数无效，直接返回空
+    if limit == 0 {
+        return Ok((vec![], 0)); // limit=0：明确要求 0 条，返回空
     }
+
+    // page=0 按第 1 页处理（与「超出末页夹到末页」保持一致）。此前 page=0 返回空集，
+    // 而前端分页控件在第 1 页点「上一页」会得到 pageIndex 0 → 列表整页变空（边界缺陷）。
+    let page = page.max(1);
 
     let total_items = stmt.clone().count(db).await? as usize;
 

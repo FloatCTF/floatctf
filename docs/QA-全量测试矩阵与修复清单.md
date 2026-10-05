@@ -216,6 +216,14 @@
 - **AWDP 配置校验文案中文化引发的测试断言修复**：`awdp_domain` 4 例因断言英文子串（`"> 0"`、`"at least"`、`">= 0"`）失败 → 我把断言改为匹配中文；同时补译 `break_duration_secs must be at least {}s …`、`expected_updated_at is required for config update`。修复后 `awdp_domain` **6/6 通过** ✓。
 - 已用脚本全量核对测试中的英文断言是否仍存在于源码（7 处疑点经人工核对均为测试本地字符串或 PG 约束消息，无需修改）✓。
 
+### F49 分页端点边界（本轮修复）
+
+浏览器实测：在第 1 页点「上一页」→ 查询页码变成 0 → **列表整页变空**（Primer 控件 `aria-disabled=true` 仍会回调 `pageIndex=0`）。后端 `paginate_query` 对 `page==0` 直接返回空集，却对 `page>总页数` 夹到末页 → 语义不一致。
+
+修复：后端把 `page==0` 按第 1 页处理（`limit==0` 仍返回空）；前端 `setPage(Math.max(1, pageIndex + 1))` 兜底。
+
+验证（生产）：`page=0/1/2/99999` → 10/10/2/2 条（0 与 1 一致、超页夹末页）✓；浏览器复验第 1 页点「上一页」后仍为 **10 行**（此前变空）✓。
+
 ### 尚未处理的边界（建议）
 
 1. **英文错误文案面**：权限/状态守卫返回英文，例如未认证 401「Invalid or missing token…」、非法 UUID 404「UUID parsing failed: …」、AWD 启动「Cannot start event in Configuring status.」、暂停「Can only pause a running event」；删除不存在事件返回 **空消息 404**。建议按模块批量中文化。

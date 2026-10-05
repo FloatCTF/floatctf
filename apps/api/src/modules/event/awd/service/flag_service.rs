@@ -182,9 +182,7 @@ pub async fn validate_submission(
 
     // 5. Reject self-attack
     if victim_team_id == attacker_team_id {
-        return Err(AwdError::Forbidden(
-            "不能提交本队自己的 flag".into(),
-        ));
+        return Err(AwdError::Forbidden("不能提交本队自己的 flag".into()));
     }
 
     // 6. Check attacker not banned

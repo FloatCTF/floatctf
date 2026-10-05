@@ -57,9 +57,7 @@ pub async fn process_submission(
                 .map_err(|e| AwdError::Database(e.to_string()))?;
 
                 if already_submitted {
-                    return Err(AwdError::Conflict(
-                        "本轮已提交过该目标的 flag".into(),
-                    ));
+                    return Err(AwdError::Conflict("本轮已提交过该目标的 flag".into()));
                 }
 
                 // 2. Insert submission (unique constraint protects against races)

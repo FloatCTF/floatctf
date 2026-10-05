@@ -14,7 +14,7 @@ use crate::modules::event::jeopardy::domain::solve::JeopardySubmitRequest;
 pub async fn submit_flag(ctx: &EventContext, sfr: SubmitFlagRequest) -> Result<()> {
     JeopardyPolicy::require_jeopardy_family(&ctx.event)?;
     let policy = JeopardyPolicy::from_event(&ctx.event).map_err(|e| anyhow!(e))?;
-    let instance_id = sfr.instance_id.ok_or_else(|| anyhow!("no instance_id"))?;
+    let instance_id = sfr.instance_id.ok_or_else(|| anyhow!("缺少实例 ID"))?;
 
     if !policy.contributes_to_official_score() {
         // 练习：得分恒为 0；允许复练（不插入第二行 solve）。

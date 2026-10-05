@@ -172,7 +172,7 @@ impl EventContext {
 
     pub fn should_ongoing(&self) -> Result<()> {
         match self.time_status() {
-            EventTimeStatus::NotStarted => Err(anyhow!("Event is not started")),
+            EventTimeStatus::NotStarted => Err(anyhow!("赛事尚未开始")),
             EventTimeStatus::Ongoing => Ok(()),
             EventTimeStatus::Ended => Err(anyhow!("Event is ended")),
         }
@@ -180,7 +180,7 @@ impl EventContext {
 
     pub fn should_ongoing_or_ended(&self) -> Result<()> {
         match self.time_status() {
-            EventTimeStatus::NotStarted => Err(anyhow!("Event is not started")),
+            EventTimeStatus::NotStarted => Err(anyhow!("赛事尚未开始")),
             EventTimeStatus::Ongoing | EventTimeStatus::Ended => Ok(()),
         }
     }

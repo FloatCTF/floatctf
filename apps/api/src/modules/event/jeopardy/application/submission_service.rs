@@ -99,7 +99,7 @@ impl JeopardySubmissionService {
             .filter(event_instances::Column::RuntimeState.eq("running"))
             .one(&txn)
             .await?
-            .ok_or_else(|| anyhow!("no instance"))?
+            .ok_or_else(|| anyhow!("实例不存在或已停止"))?
             .0;
 
         // Team instances are launched by one member but any teammate may submit.
@@ -110,10 +110,10 @@ impl JeopardySubmissionService {
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&txn)
             .await?
-            .ok_or_else(|| anyhow!("no challenge"))?;
+            .ok_or_else(|| anyhow!("题目不存在"))?;
 
         if req.flag != instance.flag {
-            return Err(anyhow!("wrong flag"));
+            return Err(anyhow!("flag 错误"));
         }
 
         let team_id = match req.subject {
@@ -121,7 +121,7 @@ impl JeopardySubmissionService {
             SolveSubject::Team => Some(
                 repo::find_team_id_for_user(&txn, req.event_id, req.user_id)
                     .await?
-                    .ok_or_else(|| anyhow!("you are not in any team"))?,
+                    .ok_or_else(|| anyhow!("你不属于任何队伍"))?,
             ),
         };
 
@@ -145,7 +145,7 @@ impl JeopardySubmissionService {
 
         let base_points = repo::find_event_challenge_points(&txn, req.event_id, challenge.id)
             .await?
-            .ok_or_else(|| anyhow!("no event_challenge"))?;
+            .ok_or_else(|| anyhow!("该题目未加入本赛事"))?;
 
         let solved_count = repo::solved_count(&txn, req.event_id, challenge.id).await?;
         let current_points = dynamic_score(base_points, solved_count, decay, min_percent);
@@ -483,19 +483,29 @@ pub async fn submit_practice(
         .filter(event_instances::Column::RuntimeState.eq("running"))
         .one(db)
         .await?
-        .ok_or_else(|| anyhow!("no instance"))?
+        .ok_or_else(|| anyhow!("实例不存在或已停止"))?
         .0;
 
     let challenge_id = instance.challenge_id;
     let event_id = instance.event_id;
 
+    // 防御：练习路径只能处理系统练习赛事的实例。若实例属于竞赛赛事，
+    // 说明调用方漏传 event_id，必须拒绝而不是写 0 分 solve。
+    let practice_event =
+        crate::modules::event::common::domain::practice_event::require_practice_jeopardy_event(db)
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+    if practice_event.id != event_id {
+        return Err(anyhow!("该实例属于竞赛赛事，提交时必须携带 event_id"));
+    }
+
     let challenge = challenges::Entity::find_by_id(challenge_id)
         .one(db)
         .await?
-        .ok_or_else(|| anyhow!("no challenge"))?;
+        .ok_or_else(|| anyhow!("题目不存在"))?;
 
     if flag != instance.flag {
-        return Err(anyhow!("flag is not correct"));
+        return Err(anyhow!("flag 错误"));
     }
 
     let already = jeopardy_challenge_solves::Entity::find()

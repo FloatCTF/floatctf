@@ -1,7 +1,10 @@
 use crate::api::prelude::*;
 
 use crate::{
-    entity::{event_team_members, event_teams, event_users, event_writeup, events},
+    entity::{
+        event_challenge_instance, event_team_members, event_teams, event_users, event_writeup,
+        events,
+    },
     modules::event::{
         common::domain::practice_event::require_practice_jeopardy_event,
         jeopardy::application::{
@@ -34,12 +37,25 @@ pub async fn submit_flag(
     let mut sfr = sfr.into_inner();
     sfr.flag = sfr.flag.trim().to_string();
 
-    // 练习提交可省略 event_id；显式解析系统练习赛事（Context 不再自动回落）。
-    let event = match sfr.event_id {
+    // 练习提交可省略 event_id；但**不能**因此把竞赛实例当练习处理——那会把竞赛解题
+    // 写成 0 分，并因 already_solved 永久占用该题（历史缺陷：0 分无法补救）。
+    // 省略 event_id 时以实例归属为准解析赛事。
+    let requested_event_id = match sfr.event_id {
+        Some(event_id) => Some(event_id),
+        None => match sfr.instance_id {
+            Some(instance_id) => event_challenge_instance::Entity::find_by_id(instance_id)
+                .one(ctx.db.get_ref())
+                .await?
+                .map(|row| row.event_id),
+            None => None,
+        },
+    };
+
+    let event = match requested_event_id {
         Some(event_id) => events::Entity::find_by_id(event_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound("no event".into()))?,
+            .ok_or(AppError::NotFound("未找到该赛事".into()))?,
         None => require_practice_jeopardy_event(ctx.db.get_ref())
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?,
@@ -63,7 +79,7 @@ pub async fn submit_flag(
         },
     )
     .await
-    .map_err(|e| AppError::BadRequest(format!("submit flag error: {}", e)))?;
+    .map_err(|e| AppError::BadRequest(format!("提交失败：{}", e)))?;
 
     if let Some(_event_id) = sfr.event_id {
         ctx.log

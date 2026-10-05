@@ -470,25 +470,38 @@ pub async fn deploy_judge(
         network_mode: None,
         healthcheck: None,
     };
-    let handle = match runtime.create_and_start(spec).await {
+    let handle = match runtime.create_and_start(spec.clone()).await {
         Ok(handle) => handle,
         Err(e) if container_conflict(&e) => {
-            // 并发部署：另一侧刚创建成功 → 重查后幂等视为成功。
+            // 并发部署竞态：另一侧可能刚创建同名容器，此时 Docker 名称索引与托管标签会短暂不可见，
+            // 单次重查会误判为「不可用/非托管」而放弃（历史事故：AWDP 练习环境停机数小时）。
+            // 这里退避重试重查；仍拿不到 running 容器则清理同名容器后重建一次。
             info!("[Judge] judge container name conflict during concurrent deploy — re-inspect");
-            match runtime.inspect_container(&container_name).await {
-                Ok(state) if state.running => {
+            match wait_for_running_container(&runtime, &container_name).await {
+                Ok(()) => {
                     info!("[Judge] concurrent deploy won — judge running");
                     return Ok(());
                 }
-                Ok(_) => {
-                    return Err(AwdpError::Docker(format!(
-                        "concurrent judge deploy left non-running container: {e}"
-                    )));
-                }
                 Err(inspect_err) => {
-                    return Err(AwdpError::Docker(format!(
-                        "judge deploy name conflict and re-inspect failed: {e} / {inspect_err}"
-                    )));
+                    warn!(
+                        container = %container_name,
+                        "[Judge] conflict re-inspect failed: {} — force-removing conflicting container and retrying once",
+                        inspect_err
+                    );
+                    if let Err(remove_err) = runtime
+                        .stop_and_remove(&container_name, fcmc::IMMEDIATE_STOP_TIMEOUT)
+                        .await
+                    {
+                        return Err(AwdpError::Docker(format!(
+                            "judge deploy name conflict: conflicting container {container_name} is not removable automatically ({remove_err}); \
+                             remove it on the host and retry (docker rm -f {container_name}) — original: {e}"
+                        )));
+                    }
+                    runtime.create_and_start(spec).await.map_err(|retry_err| {
+                        AwdpError::Docker(format!(
+                            "judge deploy failed after clearing conflicting container: {retry_err} — original: {e}"
+                        ))
+                    })?
                 }
             }
         }
@@ -562,6 +575,30 @@ pub async fn ensure_practice_environment(
     let event_id = crate::core::system_ids::EVENT_PRACTICE_AWDP;
     ensure_event_network(db, docker, config, event_id).await?;
     deploy_judge(db, docker, config, jwt_secret, event_id).await
+}
+
+/// 并发部署竞态下等待同名容器进入 running。
+///
+/// Docker 名称索引在容器刚创建后的极短窗口内可能查不到（helper 会把这类瞬时 404
+/// 归一为 `Docker object is unavailable or unmanaged`），因此必须退避重试而不是
+/// 一次失败就放弃。返回 `Err(last)` 表示窗口内始终未观察到 running 容器。
+async fn wait_for_running_container(
+    runtime: &DockerContainerRuntime,
+    container_name: &str,
+) -> Result<(), String> {
+    const ATTEMPTS: u32 = 5;
+    let mut last = "container never became visible".to_string();
+    for attempt in 1..=ATTEMPTS {
+        match runtime.inspect_container(container_name).await {
+            Ok(state) if state.running => return Ok(()),
+            Ok(_) => last = "container exists but is not running".to_string(),
+            Err(error) => last = error.to_string(),
+        }
+        if attempt < ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_millis(150 * u64::from(attempt))).await;
+        }
+    }
+    Err(last)
 }
 
 fn container_conflict(e: &anyhow::Error) -> bool {

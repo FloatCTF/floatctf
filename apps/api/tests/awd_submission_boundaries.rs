@@ -459,10 +459,7 @@ async fn stale_flag_from_previous_round_rejected() {
         .await
         .expect_err("stale flag must be rejected after rotation");
     assert!(matches!(err, AwdError::NotFound(_)), "got {err:?}");
-    assert!(
-        err.to_string().contains("flag 无效或已过期"),
-        "got {err}"
-    );
+    assert!(err.to_string().contains("flag 无效或已过期"), "got {err}");
 
     // 第 2 轮签发的 flag 仍然可用，确认拒绝原因只与轮次相关。
     let fresh = issue_flag(&fixture, rounds[1], fixture.instance_b_id).await;

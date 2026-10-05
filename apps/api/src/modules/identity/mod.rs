@@ -161,7 +161,9 @@ mod tests {
         assert!(crate::api::is_unique_violation(
             "error returned from database: duplicate key value violates unique constraint \"users_username_key\""
         ));
-        assert!(crate::api::is_unique_violation("unique constraint violated"));
+        assert!(crate::api::is_unique_violation(
+            "unique constraint violated"
+        ));
         assert!(crate::api::is_unique_violation("SQLSTATE 23505"));
         assert!(!crate::api::is_unique_violation("connection refused"));
     }

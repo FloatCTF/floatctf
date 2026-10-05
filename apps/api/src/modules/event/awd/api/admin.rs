@@ -522,7 +522,7 @@ pub async fn run_precheck(
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
-) -> UniResult<Uuid> {
+) -> UniResult<serde_json::Value> {
     let event_id = path.into_inner();
     let run_id = crate::modules::event::awd::service::precheck_service::run_precheck(
         ctx.db.get_ref(),
@@ -535,7 +535,45 @@ pub async fn run_precheck(
     )
     .await
     .map_err(AppError::from)?;
-    UniResponse::ok(run_id.into()).into()
+
+    // F57：预检失败必须给出**具体原因**。各检查项的明细本来就落库在 precheck run 的
+    // *_check 列（`{"errors":[…],"notes":[…]}`），此前接口只回 run_id，管理员无从下手
+    // （实测：隐藏赛事导致无法建队 → 0 队伍 → VerificationFailed，却看不到原因）。
+    let run = crate::entity::awd_precheck_runs::Entity::find_by_id(run_id)
+        .one(ctx.db.get_ref())
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("未找到该预检记录".into()))?;
+
+    let json_of = |v: &Option<serde_json::Value>| v.clone().unwrap_or(serde_json::Value::Null);
+    let checks = serde_json::json!({
+        "config": json_of(&run.config_check),
+        "container": json_of(&run.container_check),
+        "wireguard": json_of(&run.wireguard_check),
+        "network": json_of(&run.network_check),
+        "flag": json_of(&run.flag_check),
+        "judge": json_of(&run.judge_check),
+    });
+    let mut failed_checks: Vec<String> = Vec::new();
+    if let Some(map) = checks.as_object() {
+        for (name, value) in map {
+            let has_error = value
+                .get("errors")
+                .and_then(|e| e.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if has_error {
+                failed_checks.push(name.clone());
+            }
+        }
+    }
+    Ok(UniResponse::ok(Some(serde_json::json!({
+        "run_id": run_id,
+        "status": format!("{:?}", run.status).to_lowercase(),
+        "error_msg": run.error_msg,
+        "failed_checks": failed_checks,
+        "checks": checks,
+    }))))
 }
 
 // ── Reset (admin) ──

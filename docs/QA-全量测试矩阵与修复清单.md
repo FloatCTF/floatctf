@@ -224,6 +224,18 @@
 
 验证（生产）：`page=0/1/2/99999` → 10/10/2/2 条（0 与 1 一致、超页夹末页）✓；浏览器复验第 1 页点「上一页」后仍为 **10 行**（此前变空）✓。
 
+### 错误响应一致性（本轮修复）
+
+- **F50 未匹配路由空体 404**：`DELETE /api/admin/events/{不存在的 uuid}` 等未匹配路由返回 Actix 默认**空体** 404 → 新增 `default_service` 返回 `{"code":404,"message":"接口不存在"}` ✓
+- **F51 未认证 401 为纯文本英文**：「Invalid or missing token, or contact the admin」→ 改用 `AppError::Unauthorized`，返回中文 JSON 信封「登录状态已失效，请重新登录」✓（顺带记录：选手 token 访问管理接口现返回 401，从鉴权语义看更接近 403，属可讨论项）
+- 说明：删除事件接口是 `DELETE /api/admin/events` + JSON body（`{id_list}`），我先前用路径参数导致 404 属用法错误，非缺陷 ✓
+
+### 浏览器禁用态与容量边界（本轮观察）
+
+- **归档事件**：`/admin/events/awd/{id}` 详情页对 `archived` 事件**不提供**生命周期控件（无 Start/Pause/Finish 按钮）✓，与 API 侧拒绝（「Cannot start event in Configuring status」）一致 ✓。
+- **分页控件**：单页时控件整块隐藏 ✓；多页时第 1 页「上一页」为 `aria-disabled=true`（Primer 语义禁用）但**仍回调 pageIndex=0** → 已在 F49 前端夹取兜底 ✓。
+- **容量边界现状**：`awd_event_networks` 已分配 **2 / 16**，距上限尚远；要打到 16 的边界需再建 14 个 AWD 事件网络（会创建 docker 网络），成本较高，留待专门排期。
+
 ### 尚未处理的边界（建议）
 
 1. **英文错误文案面**：权限/状态守卫返回英文，例如未认证 401「Invalid or missing token…」、非法 UUID 404「UUID parsing failed: …」、AWD 启动「Cannot start event in Configuring status.」、暂停「Can only pause a running event」；删除不存在事件返回 **空消息 404**。建议按模块批量中文化。

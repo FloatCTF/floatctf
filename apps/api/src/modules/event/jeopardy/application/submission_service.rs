@@ -6,11 +6,13 @@
 use anyhow::{Result, anyhow};
 use bollard::Docker;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait};
+
+use crate::entity::sea_orm_active_enums::EventPurpose;
 use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, event_challenge_instance, event_instances, users},
+    entity::{challenges, event_challenge_instance, event_instances, events, users},
     infrastructure::settings::get_setting,
     modules::event::jeopardy::{
         application::instance_service::InstanceService,
@@ -489,13 +491,13 @@ pub async fn submit_practice(
     let challenge_id = instance.challenge_id;
     let event_id = instance.event_id;
 
-    // 防御：练习路径只能处理系统练习赛事的实例。若实例属于竞赛赛事，
-    // 说明调用方漏传 event_id，必须拒绝而不是写 0 分 solve。
-    let practice_event =
-        crate::modules::event::common::domain::practice_event::require_practice_jeopardy_event(db)
-            .await
-            .map_err(|e| anyhow!("{e}"))?;
-    if practice_event.id != event_id {
+    // 防御：练习（0 分）路径只能处理 purpose=practice 的赛事实例。若实例属于竞赛
+    // 赛事，说明调用方漏传 event_id，必须拒绝而不是把竞赛解题写成 0 分。
+    let solve_event = events::Entity::find_by_id(event_id)
+        .one(db)
+        .await?
+        .ok_or_else(|| anyhow!("未找到该赛事"))?;
+    if solve_event.purpose != EventPurpose::Practice {
         return Err(anyhow!("该实例属于竞赛赛事，提交时必须携带 event_id"));
     }
 

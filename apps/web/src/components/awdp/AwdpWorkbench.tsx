@@ -774,16 +774,30 @@ export function AwdpWorkbench({
 										{check.exploit_ok != null && (
 											<>
 												<span className="mx-2">·</span>
-												<span
-													className={
-														check.exploit_ok
-															? "text-red-600"
-															: "text-green-600"
-													}
-												>
-													修复成功：
-													{check.exploit_ok ? "False" : "True"}
-												</span>
+												{/*
+													只有判题真正跑出结果时才能下结论：服务不可达 / 脚本无输出时
+													exploit_ok 为 false，若直接映射成「修复成功：True」会误导
+													选手以为自己已修复（历史上正是如此显示）。
+												*/}
+												{check.healthcheck_ok === false ||
+												check.status === "service_down" ? (
+													<span className="text-[var(--fgColor-muted)]">
+														修复结果：无法判定（服务不可达）
+													</span>
+												) : (
+													<span
+														className={
+															check.exploit_ok
+																? "text-red-600"
+																: "text-green-600"
+														}
+													>
+														修复结果：
+														{check.exploit_ok
+															? "未修复（漏洞仍可利用）"
+															: "已修复"}
+													</span>
+												)}
 											</>
 										)}
 										<span className="ml-2 text-xs opacity-60">（不计分）</span>

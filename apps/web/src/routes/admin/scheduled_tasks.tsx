@@ -64,21 +64,25 @@ function RouteComponent() {
 			accessorKey: "task_name",
 			header: "Task Name",
 			field: "task_name",
+			label: "任务名称",
 		},
 		{
 			accessorKey: "task_key",
 			header: "Task Key",
 			field: "task_key",
+			label: "任务键",
 		},
 		{
 			accessorKey: "trigger_type",
 			header: "Trigger Type",
 			field: "trigger_type",
+			label: "触发方式",
 		},
 		{
 			accessorKey: "status",
 			header: "Status",
 			field: "status",
+			label: "状态",
 			renderCell: (row: ScheduledTasks) => (
 				<Label variant={statusToVariant(row.status)}>{row.status}</Label>
 			),
@@ -87,11 +91,13 @@ function RouteComponent() {
 			accessorKey: "cron_expr",
 			header: "Cron Expr",
 			field: "cron_expr",
+			label: "Cron 表达式",
 		},
 		{
 			accessorKey: "execute_at",
 			header: "Execute At",
 			field: "execute_at",
+			label: "执行时间",
 			renderCell: (row: ScheduledTasks) => (
 				<span>{DatetimeToShow(row.execute_at)}</span>
 			),
@@ -100,6 +106,7 @@ function RouteComponent() {
 			accessorKey: "enabled",
 			header: "Enabled",
 			field: "enabled",
+			label: "启用",
 			renderCell: (row: ScheduledTasks) =>
 				row.enabled ? <CheckIcon /> : <XIcon />,
 		},
@@ -107,6 +114,7 @@ function RouteComponent() {
 			accessorKey: "protected",
 			header: "Protected",
 			field: "protected",
+			label: "受保护",
 			renderCell: (row: ScheduledTasks) =>
 				row.protected ? <CheckIcon /> : <XIcon />,
 		},
@@ -114,6 +122,7 @@ function RouteComponent() {
 			accessorKey: "last_run_at",
 			header: "Last Run At",
 			field: "last_run_at",
+			label: "上次执行时间",
 			renderCell: (row: ScheduledTasks) => (
 				<span>{DatetimeToShow(row.last_run_at)}</span>
 			),
@@ -144,6 +153,7 @@ function RouteComponent() {
 		{
 			header: "task_name",
 			field: "task_name",
+			label: "任务名称",
 			render: (
 				<TextInput
 					value={mutationTask.task_name ?? ""}
@@ -156,6 +166,7 @@ function RouteComponent() {
 		{
 			header: "task_key",
 			field: "task_key",
+			label: "任务键",
 			render: (
 				<TextInput
 					value={mutationTask.task_key ?? ""}
@@ -168,6 +179,7 @@ function RouteComponent() {
 		{
 			header: "trigger_type",
 			field: "trigger_type",
+			label: "触发方式",
 			render: (
 				<Select
 					value={mutationTask.trigger_type ?? "once"}
@@ -184,6 +196,7 @@ function RouteComponent() {
 		{
 			header: "cron_expr",
 			field: "cron_expr",
+			label: "Cron 表达式",
 			render: (
 				<TextInput
 					value={mutationTask.cron_expr ?? ""}
@@ -196,6 +209,7 @@ function RouteComponent() {
 		{
 			header: "execute_at",
 			field: "execute_at",
+			label: "执行时间",
 			render: (
 				<input
 					type="datetime-local"
@@ -219,6 +233,7 @@ function RouteComponent() {
 		{
 			header: "expires_at",
 			field: "expires_at",
+			label: "过期时间",
 			render: (
 				<input
 					type="datetime-local"
@@ -242,6 +257,7 @@ function RouteComponent() {
 		{
 			header: "description",
 			field: "description",
+			label: "描述",
 			render: (
 				<TextInput
 					value={mutationTask.description ?? ""}
@@ -254,6 +270,7 @@ function RouteComponent() {
 		{
 			header: "enabled",
 			field: "enabled",
+			label: "启用",
 			render: (
 				<Stack direction="horizontal" align="center">
 					<ToggleSwitch
@@ -269,6 +286,7 @@ function RouteComponent() {
 		{
 			header: "protected",
 			field: "protected",
+			label: "受保护",
 			render: (
 				<Stack direction="horizontal" align="center">
 					<ToggleSwitch

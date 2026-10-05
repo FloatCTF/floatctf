@@ -22,12 +22,14 @@ function RouteComponent() {
             accessorKey: "title",
             header: "Title",
             field: "title",
+            label: "标题",
             sortBy: true,
         },
         {
             accessorKey: "content",
             header: "Content",
             field: "content",
+            label: "内容",
             renderCell: (row: Announcements) => {
                 return (
                     <div
@@ -74,6 +76,7 @@ function RouteComponent() {
         {
             header: "title",
             field: "title",
+            label: "标题",
             render: (
                 <TextInput
                     value={mutationAnnouncement.title}
@@ -86,6 +89,7 @@ function RouteComponent() {
         {
             header: "content",
             field: "content",
+            label: "内容",
             render: (
                 <Textarea
                     value={mutationAnnouncement.content}

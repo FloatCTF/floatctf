@@ -37,6 +37,7 @@ function RouteComponent() {
         {
             header: "title",
             field: "title",
+            label: "标题",
             render: (
                 <TextInput
                     value={mutationEventAnnouncement.title}
@@ -49,6 +50,7 @@ function RouteComponent() {
         {
             header: "content",
             field: "content",
+            label: "内容",
             render: (
                 <Textarea
                     value={mutationEventAnnouncement.content}

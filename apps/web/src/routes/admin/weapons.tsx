@@ -24,12 +24,14 @@ function RouteComponent() {
             accessorKey: "category",
             header: "Category",
             field: "category",
+            label: "分类",
             sortBy: true,
         },
         {
             accessorKey: "has_file",
             header: "Has File",
             field: "has_file",
+            label: "含附件",
             sortBy: true,
             renderCell: (row: Weapons) => {
                 return <span>{row.has_file ? <CheckIcon /> : <></>}</span>;
@@ -39,6 +41,7 @@ function RouteComponent() {
             accessorKey: "file_url",
             header: "File URL",
             field: "file_url",
+            label: "文件地址",
             sortBy: true,
             renderCell: (row: Weapons) => {
                 return (
@@ -76,6 +79,7 @@ function RouteComponent() {
         {
             header: "Name",
             field: "name",
+            label: "名称",
             render: (
                 <TextInput
                     value={mutationWeapon.name}
@@ -88,6 +92,7 @@ function RouteComponent() {
         {
             header: "Category",
             field: "category",
+            label: "分类",
             render: (
                 <TextInput
                     value={mutationWeapon.category}
@@ -100,6 +105,7 @@ function RouteComponent() {
         {
             header: "Description",
             field: "description",
+            label: "描述",
             render: (
                 <TextInput
                     value={mutationWeapon.description}
@@ -112,6 +118,7 @@ function RouteComponent() {
         {
             header: "Has File",
             field: "has_file",
+            label: "含附件",
             render: (
                 <Stack direction="horizontal" align="center">
                     <ToggleSwitch
@@ -127,6 +134,7 @@ function RouteComponent() {
         {
             header: "File URL",
             field: "file_url",
+            label: "文件地址",
             render: (
                 <TextInput
                     value={mutationWeapon.file_url}

@@ -34,6 +34,7 @@ function RouteComponent() {
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
+			label: "名称",
 			renderCell: (row: ChallengeSets) => {
 				return (
 					<AppLink to="/admin/challenge_sets/$id" params={{ id: row.id }}>
@@ -47,6 +48,7 @@ function RouteComponent() {
 			accessorKey: "description",
 			header: "Description",
 			field: "description",
+			label: "描述",
 			sortBy: true,
 			renderCell: (row: ChallengeSets) => {
 				return <Truncate title={row.description ?? ""} />;
@@ -70,6 +72,7 @@ function RouteComponent() {
 		{
 			header: "name",
 			field: "name",
+			label: "名称",
 			render: (
 				<TextInput
 					value={mutationChallengeSet.name}
@@ -82,6 +85,7 @@ function RouteComponent() {
 		{
 			header: "description",
 			field: "description",
+			label: "描述",
 			render: (
 				<TextInput
 					value={mutationChallengeSet.description}

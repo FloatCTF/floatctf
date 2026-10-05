@@ -82,18 +82,21 @@ function RouteComponent() {
             accessorKey: "username",
             header: "Username",
             field: "username",
+            label: "用户名",
             sortBy: true,
         },
         {
             accessorKey: "email",
             header: "Email",
             field: "email",
+            label: "邮箱",
             sortBy: true,
         },
         {
             accessorKey: "password",
             header: "Password",
             field: "password",
+            label: "密码",
             renderCell: () => "****",
         },
     ];
@@ -118,6 +121,7 @@ function RouteComponent() {
         {
             header: "username",
             field: "username",
+            label: "用户名",
             render: (
                 <TextInput
                     value={mutationData.username}
@@ -131,6 +135,7 @@ function RouteComponent() {
         {
             header: "password",
             field: "password",
+            label: "密码",
             render: (
                 <TextInput
                     type="password"
@@ -145,6 +150,7 @@ function RouteComponent() {
         {
             header: "email",
             field: "email",
+            label: "邮箱",
             render: (
                 <TextInput
                     value={mutationData.email}

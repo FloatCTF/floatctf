@@ -7,8 +7,8 @@ use crate::entity::{challenges, prelude::Challenges};
 use crate::modules::challenge::build::import_service::ChallengeScanItem;
 use crate::modules::challenge::catalog::ChallengesDto;
 use actix_multipart::form::{MultipartForm, tempfile::TempFile};
-use fcmc::{DockerContainerRuntime, ImageRuntime};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use fcmc::{DockerContainerRuntime, ImageRuntime, content_image_ref};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
 #[derive(Debug, MultipartForm)]
 struct UploadForm {
@@ -135,17 +135,51 @@ pub async fn check_challenges(
         };
         let docker_ok = if static_content {
             true
-        } else if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {
-            // 镜像检查：当前版本 image pin（RepoDigest/image_id）必须本地可 inspect
-            match effective_image_ref(
+        } else {
+            // 期望镜像（规范 tag）：只要镜像已在本地就绪，Check 就应把 build_status
+            // 修回 ready——否则管理员只能「删除题目 + 重新 Scan」，实测中正是如此。
+            let expected_ref = content_image_ref(
+                fcmc::ArtifactKind::Challenge,
+                &ctx.config.registry.image_prefix,
+                &challenge.safe_name,
+                challenge.version.as_deref().unwrap_or_default(),
+            );
+            let pinned = effective_image_ref(
                 challenge.image_repo_digest.as_deref(),
                 challenge.image_id.as_deref(),
-            ) {
-                Ok(pin) => ImageRuntime::inspect_image(&runtime, &pin).await.is_ok(),
-                Err(_) => false,
+            )
+            .ok();
+            let mut inspected: Option<String> = None;
+            for candidate in [Some(expected_ref.clone()), pinned].into_iter().flatten() {
+                if let Ok(info) = ImageRuntime::inspect_image(&runtime, &candidate).await {
+                    inspected = Some(info.image_id);
+                    break;
+                }
             }
-        } else {
-            false
+            match inspected {
+                Some(image_id) => {
+                    if challenge.build_status.as_deref() != Some(import_service::BUILD_STATUS_READY)
+                    {
+                        let mut am: challenges::ActiveModel = challenge.clone().into();
+                        am.build_status = Set(Some(import_service::BUILD_STATUS_READY.to_string()));
+                        am.build_error = Set(None);
+                        am.image_ref = Set(Some(expected_ref));
+                        if !image_id.is_empty() {
+                            am.image_id = Set(Some(image_id));
+                        }
+                        am.updated_at = Set(chrono::Utc::now().into());
+                        if let Err(e) = am.update(ctx.db.get_ref()).await {
+                            tracing::warn!(
+                                challenge = %challenge.safe_name,
+                                error = %e,
+                                "Check 修复题目构建状态失败"
+                            );
+                        }
+                    }
+                    true
+                }
+                None => false,
+            }
         };
 
         results.push(ChallengeCheckResult {

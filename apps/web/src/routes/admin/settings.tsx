@@ -24,12 +24,14 @@ function RouteComponent() {
       accessorKey: "key",
       header: "Key",
       field: "key",
+      label: "配置键",
       sortBy: true,
     },
     {
       accessorKey: "value",
       header: "Value",
       field: "value",
+      label: "配置值",
       renderCell: (s: SettingsDto) => <MyTruncate value={s.value} />,
     },
 
@@ -37,6 +39,7 @@ function RouteComponent() {
       accessorKey: "resolved_value",
       header: "Resolved",
       field: "resolved_value",
+      label: "解析值",
       renderCell: (s: SettingsDto) => <MyTruncate value={s.resolved_value} />,
     },
 
@@ -44,12 +47,14 @@ function RouteComponent() {
       accessorKey: "description",
       header: "Description",
       field: "description",
+      label: "描述",
       sortBy: true,
     },
     {
       accessorKey: "type",
       header: "Type",
       field: "type",
+      label: "类型",
       sortBy: true,
     },
     {
@@ -73,6 +78,7 @@ function RouteComponent() {
     {
       header: "key",
       field: "key",
+      label: "配置键",
       render: (
         <TextInput
           value={mutationSetting.key}
@@ -85,6 +91,7 @@ function RouteComponent() {
     {
       header: "value",
       field: "value",
+      label: "配置值",
       render: (
         <TextInput
           value={mutationSetting.value}
@@ -97,6 +104,7 @@ function RouteComponent() {
     {
       header: "description",
       field: "description",
+      label: "描述",
       render: (
         <TextInput
           value={mutationSetting.description}
@@ -109,6 +117,7 @@ function RouteComponent() {
     {
       header: "type",
       field: "type",
+      label: "类型",
       render: (
         <Select
           value={mutationSetting.type}
@@ -127,6 +136,7 @@ function RouteComponent() {
     {
       header: "protected",
       field: "protected",
+      label: "受保护",
       render: (
         <Stack direction="horizontal" align="center">
           <ToggleSwitch

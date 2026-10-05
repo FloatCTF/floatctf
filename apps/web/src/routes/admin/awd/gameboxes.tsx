@@ -74,6 +74,7 @@ function RouteComponent() {
 		{
 			header: "name",
 			field: "name",
+			label: "名称",
 			render: (
 				<TextInput
 					value={mutationData.name ?? ""}
@@ -86,6 +87,7 @@ function RouteComponent() {
 		{
 			header: "category",
 			field: "category",
+			label: "分类",
 			render: (
 				<TextInput
 					value={mutationData.category ?? ""}
@@ -98,6 +100,7 @@ function RouteComponent() {
 		{
 			header: "description",
 			field: "description",
+			label: "描述",
 			render: (
 				<TextInput
 					value={mutationData.description ?? ""}
@@ -125,6 +128,7 @@ function RouteComponent() {
 		{
 			header: "username",
 			field: "username",
+			label: "用户名",
 			render: (
 				<TextInput
 					value={mutationData.username ?? ""}
@@ -138,6 +142,7 @@ function RouteComponent() {
 		{
 			header: "recommended_cpu_millis",
 			field: "cpu_millis",
+			label: "CPU(m)",
 			render: (
 				<TextInput
 					value={mutationData.cpu_millis ?? ""}
@@ -151,6 +156,7 @@ function RouteComponent() {
 		{
 			header: "recommended_memory_bytes",
 			field: "memory_bytes",
+			label: "内存(字节)",
 			render: (
 				<TextInput
 					value={mutationData.memory_bytes ?? ""}
@@ -164,6 +170,7 @@ function RouteComponent() {
 		{
 			header: "recommended_pids_limit",
 			field: "pids_limit",
+			label: "PIDs 上限",
 			render: (
 				<TextInput
 					value={mutationData.pids_limit ?? ""}
@@ -181,6 +188,7 @@ function RouteComponent() {
 			accessorKey: "name",
 			header: "Name",
 			field: "name",
+			label: "名称",
 			rowHeader: true,
 			sortBy: true,
 		},
@@ -188,11 +196,13 @@ function RouteComponent() {
 			accessorKey: "safe_name",
 			header: "Safe Name",
 			field: "safe_name",
+			label: "标识",
 		},
 		{
 			accessorKey: "version",
 			header: "Version",
 			field: "version",
+			label: "版本",
 			renderCell: (row: GameBoxLibraryDto) => <span>{row.version ?? "-"}</span>,
 		},
 		{
@@ -328,22 +338,26 @@ export function ScanButton() {
 				accessorKey: "safe_name",
 				header: "Safe Name",
 				field: "safe_name",
+				label: "标识",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "name",
 				header: "Name",
 				field: "name",
+				label: "名称",
 			},
 			{
 				accessorKey: "version",
 				header: "Version",
 				field: "version",
+				label: "版本",
 			},
 			{
 				accessorKey: "status",
 				header: "Status",
 				field: "status",
+				label: "状态",
 				renderCell: (row: GameBoxScanItem) => (
 					<span
 						className={
@@ -445,12 +459,14 @@ export function CheckButton({
 				accessorKey: "gamebox_name",
 				header: "GameBox Name",
 				field: "gamebox_name",
+				label: "靶机名称",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "docker_image",
 				header: "Docker Image",
 				field: "docker_image",
+				label: "镜像可用",
 				renderCell: (row: GameBoxCheckResult) => {
 					return (
 						<span>
@@ -477,6 +493,7 @@ export function CheckButton({
 				accessorKey: "package_dir",
 				header: "Package Dir",
 				field: "package_dir",
+				label: "包目录",
 				renderCell: (row: GameBoxCheckResult) => {
 					return <span>{row.package_dir ? <CheckIcon /> : <></>}</span>;
 				},

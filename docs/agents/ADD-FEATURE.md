@@ -10,13 +10,13 @@
 
 ## 步骤 0：理解需求
 
-- 列出功能涉及的**输入/输出**（请求、响应、副作用），明确属于哪个模块（identity/challenge/community/platform/weapon/event）。
+- 列出功能涉及的**输入/输出**（请求、响应、副作用），明确属于哪个模块（identity/challenge/community/gamebox/platform/weapon/event）。
 - 明确是**玩家侧**（`/api/...`）还是**管理侧**（`/api/admin/...`）路由。
 - 明确数据归属：**需要持久化 → 先做步骤 2（DB）**；进程级静态参数 → 步骤 3（TOML）；管理员可编辑 → settings 表。
 
 ## 步骤 1：定位模块
 
-按 §2 的模块表找到归属。参考现有最相似的 handler/service 作为模板（例如新赛事功能参考 `modules/event/common/`，新 AWD 功能参考 `modules/event/awd_team/`）。
+按 §2 的模块表找到归属。参考现有最相似的 handler/service 作为模板（例如新赛事功能参考 `modules/event/common/`，新 AWD 功能参考 `modules/event/awd/`，补丁类语义参考 `modules/event/awdp/`）。
 
 ## 步骤 2：数据模型（如需要）
 
@@ -38,8 +38,8 @@
 | 管理员可改 | settings 表（seed_default_settings 播种） | `get_setting(&db, key)` |
 
 新增静态配置步骤：
-1. 在 `config.rs` 找到对应 Toml struct（如 `ChallengeToml`），加字段：`#[serde(default = "default_fn")] xxx: T`（注意 `Default` impl 同步）
-2. `AppConfig::from_file` 映射到 `ChallengeConfig` 等
+1. 在 `config.rs` 找到对应 Toml struct（如 `AwdToml` / `AwdpToml` / `FeaturesToml`），加字段：`#[serde(default = "default_fn")] xxx: T`（注意 `Default` impl 同步）
+2. `AppConfig::from_file` 映射到对应 Config（如 `AwdStaticConfig` / `AwdpStaticConfig` / `RegistryConfig`）
 3. 非敏感则加入 `log_source_summary()`；敏感用 `Secret` 包装（**严禁**日志打印明文）
 4. development.toml 填入示例值 + 中文注释
 
@@ -68,8 +68,10 @@
 ### 需要 ReqCtx 配置时
 
 ```rust
-// 从 ReqCtx 拿配置
-let max = ctx.config.challenge.instance_max_per_user.parse::<u64>().unwrap_or(2);
+// 从 ReqCtx 拿进程级静态配置
+let cfg = &ctx.config.awdp;                     // 或 ctx.config.awd / ctx.config.registry
+// 管理员可改的运行时项走 settings 表，不要在 AppConfig 里找
+let decay = get_setting(ctx.db.get_ref(), "EVENT_SCORE_DECAY").await?;
 ```
 
 ### 需要事件广播时

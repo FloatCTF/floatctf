@@ -120,7 +120,7 @@ impl EventMode {
         }
     }
 
-    /// AWD Plus（攻防+）战队竞赛模式。骨架期仅开放身份组合，引擎未实现。
+    /// AWD Plus（攻防+）战队竞赛模式。
     pub fn awdp_team_competition() -> Self {
         Self {
             family: EventFamily::Awdp,
@@ -129,7 +129,7 @@ impl EventMode {
         }
     }
 
-    /// AWD Plus（攻防+）个人竞赛模式。骨架期仅开放身份组合，引擎未实现。
+    /// AWD Plus（攻防+）个人竞赛模式。
     pub fn awdp_individual_competition() -> Self {
         Self {
             family: EventFamily::Awdp,
@@ -138,7 +138,7 @@ impl EventMode {
         }
     }
 
-    /// AWD Plus（攻防+）个人练习模式。骨架期仅开放身份组合，引擎未实现。
+    /// AWD Plus（攻防+）个人练习模式。
     pub fn awdp_practice() -> Self {
         Self {
             family: EventFamily::Awdp,

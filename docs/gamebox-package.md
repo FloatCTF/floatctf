@@ -114,7 +114,7 @@ multipart 字段：`package_zip`
 
 ## Runtime pin
 
-`AwdEventGameBox` 钉住 `gamebox_revision_id`。  
+`awd_event_gameboxes`（实体 `entity::awd_event_gameboxes::Model`）钉住 `gamebox_revision_id`。  
 Deploy / Reset / Recovery 使用：
 
 1. `image_repo_digest`（`repo@sha256:…`，push 模式）

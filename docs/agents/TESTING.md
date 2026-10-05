@@ -45,9 +45,10 @@ curl -X POST http://localhost:9090/api/users \
 - `core/security/jwt.rs` — JWT 往返（显式注入测试 Secret，不读环境变量）
 - `core/secret.rs` — Secret 包装（隐藏值、as_bytes）
 - `infrastructure/realtime/publisher.rs` — `RecordingEventPublisher` 记录事件（零依赖异步测试）
-- `modules/event/awd_team/domain/*` — flag/score/network 纯逻辑
+- `modules/event/awd/domain/*` — flag/score/network/timing 纯逻辑
 - `modules/event/jeopardy/domain/scoring.rs` — 积分公式
-- `modules/event/awd_team/crypto.rs`、`system/firewall.rs` 等 — 加密/防火墙规则
+- `modules/event/awdp/domain/*` — 阶段/配置/评测分数纯逻辑
+- `modules/event/awd/crypto.rs`、`modules/event/awd/infrastructure/firewall/*`、`modules/event/awd/domain/firewall_state.rs` 等 — 加密/防火墙规则
 
 ## 写测试的硬性规则
 

@@ -15,7 +15,7 @@ floatctf/
 │   │       ├── bootstrap/       # 启动装配：mod(run)、state(AppState)、routes、scheduler
 │   │       ├── core/            # 跨模块核心：config(AppConfig)、secret、security(jwt)
 │   │       ├── entity/          # SeaORM 实体（脚本生成，勿手改）
-│   │       ├── infrastructure/  # 适配器：database、docker、storage、logging、realtime、audit、settings、helper
+│   │       ├── infrastructure/  # 适配器：database、docker、redis、storage、logging、realtime、audit、settings、package、ratelimit、script_runner、helper
 │   │       ├── modules/         # 业务模块（见 §2）
 │   │       ├── scheduler/       # 后台任务引擎（engine + handlers + task_key）
 │   │       └── sql/             # SQL 迁移（migrations/ + merged.sql + migrate.sh）
@@ -24,6 +24,7 @@ floatctf/
 │   ├── fcmc/                    # 容器管理 / 出题工具 CLI
 │   ├── awd-flagserver/          # AWD FlagServer 独立服务
 │   ├── awd-judgeserver/         # AWD JudgeServer 独立服务
+│   ├── awdp-judgeserver/        # AWDP（攻防+补丁）JudgeServer 独立服务
 │   ├── helper-protocol/       # API ↔ helper 结构化 Host RPC 协议
 │   └── floatctf-helper/       # Docker + CAP_NET_ADMIN 宿主控制面守护进程
 ├── infra/
@@ -38,21 +39,24 @@ floatctf/
 
 | 模块 | 职责 | 关键子目录 |
 |------|------|-----------|
-| `identity` | 登录注册、JWT、管理员 | `authentication/` |
-| `challenge` | 题目 CRUD、构建、题单、Writeup | `catalog/`、`build/`、`set/`、`writeup/`、`metadata/` |
-| `community` | 讨论区、评论 | `discussion/`、`comment/` |
-| `platform` | 系统运营 | `announcements/`、`files/`、`operations/`(system/database/terminal)、`settings/` |
-| `weapon` | 工具库（武器） | `dto/` |
-| `event` | 赛事（两大模式 + 公共） | 见下 |
+| `identity` | 登录注册、JWT、用户、管理员与授权 | `authentication/`、`user/`、`administrator/`、`authorization/` |
+| `challenge` | 题目 CRUD、构建、题单、Writeup | `catalog/`、`build/`、`set/`、`writeup/` |
+| `community` | 讨论区、评论、点赞 | `discussion/`、`comment/`、`like/` |
+| `gamebox` | GameBox 包导入、镜像构建、库存、健康检查 | `import.rs`、`library.rs`、`package.rs`、`healthcheck.rs` |
+| `platform` | 系统运营 | `announcements/`、`files/`、`settings/`、`operations/`（`dashboard`/`database`/`docker`/`logs`/`runtime_instances`/`scheduled_tasks`/`system`/`terminal`） |
+| `weapon` | 工具库（武器） | `api.rs`、`application.rs`、`dto.rs` |
+| `event` | 赛事（三引擎 + 公共） | 见下 |
 
-`event` 是最大模块：
+`event` 是最大模块，按赛制拆成**三个互相独立的引擎**（`common` + `jeopardy` + `awd` + `awdp`）：
 
-- `event/common/` — 赛事公共：events/teams/users/challenges/writeup 的 API 与应用层
-- `event/jeopardy/` — 解题赛模式：
-  - `api/`（handlers）、`application/`（use cases + context）、`domain/`（策略/积分/排行榜）、`infrastructure/`（容器运行时）、`modes/`（practice / single / team 三种模式策略）
-- `event/awd_team/` — AWD 攻防赛模式：
-  - `api/`（player/admin/internal 路由）、`domain/`（flag/score/network 纯逻辑）、`service/`（deploy/reset/wireguard/judge）、`infrastructure/`（wireguard 密钥/持久化）、`repo/`、`scheduler/`、`system/`（防火墙）、`crypto.rs`（加密，进程级 OnceLock 注入）
-- `event/registry.rs` — `EventModuleRegistry`：按模式分发 launch/submit/get_instances/destroy
+- `event/common/` — 赛事公共：events/teams/users/challenges/writeup 的 API 与应用层，以及三维模式值对象 `modules/event/common/domain/event_mode.rs`（`EventFamily × EventPurpose × ParticipantMode`，只允许 7 种组合）
+- `event/jeopardy/` — 解题赛引擎：
+  - `api/`（handlers）、`application/`（use cases + `context.rs`）、`domain/`（`policy.rs` 承载 practice / 个人竞赛 / 战队竞赛三种模式策略，`scoring.rs` 积分衰减、`scoreboard.rs`、`solve.rs`、`instance.rs`、`trend.rs`）、`infrastructure/`（容器运行时）
+- `event/awd/` — AWD 攻防赛引擎：
+  - `api/`（`player.rs` / `admin.rs` / `internal.rs`）、`domain/`（`flag.rs`、`score.rs`、`network.rs`、`timing.rs`、`firewall_state.rs`、`round_ext.rs`、`execution.rs` 等纯逻辑）、`service/`（deploy / reset / wireguard / judge / firewall / archive）、`infrastructure/`（`firewall/`、wireguard 密钥与持久化）、`repo/`、`scheduler/`、`system/`（helper 侧命令执行：`command.rs` / `conntrack.rs` / `wireguard.rs`）、`websocket.rs`、`crypto.rs`（加密，进程级 OnceLock 注入）
+- `event/awdp/` — AWD Plus 引擎（补丁/fix 语义）：`domain/`（`config.rs`、`phase.rs`、`judge.rs`、`score.rs`、`timing.rs`、`flag.rs`）、`service/`（break/fix 补丁与评测）、`repo/`、`scheduler.rs`、`realtime.rs`
+
+> 历史遗留命名：旧版文档写的 `event/awd_team/` 已重命名为 `event/awd/`；`event/registry.rs` / `EventModuleRegistry` 这层"按模式分发"已删除，改为路由层分发（见 §4）。
 
 ### 模块内分层约定
 
@@ -76,28 +80,30 @@ api/            HTTP handlers + DTO（薄，只做参数解析与错误映射）
 
 ```rust
 pub struct AppConfig {
-    pub server: ServerConfig,      // listen_ip/port、work_dir、log_dir
-    pub database: DatabaseConfig,  // url（Secret 包装）
+    pub server: ServerConfig,        // listen_ip/port、work_dir
+    pub database: DatabaseConfig,    // url（Secret 包装）
     pub docker: DockerConfig,
-    pub storage: StorageConfig,    // RustFS endpoint/keys（Secret）
-    pub auth: AuthConfig,          // jwt_secret（Secret，≥16 字符）
+    pub storage: StorageConfig,      // RustFS endpoint/keys（Secret）
+    pub auth: AuthConfig,            // jwt_secret（Secret，≥16 字符）
     pub cors: CorsConfig,
-    pub paths: PathConfig,         // changelog_path、challenges_dir
-    pub awd: AwdStaticConfig,      // network_runtime、flagserver_image、judgeserver_image
-    pub features: FeatureFlags,    // web_terminal、unsafe_sql_admin
-    pub redis: RedisConfig,         // url（必需，Secret）
-    pub realtime: RealtimeConfig,  // channel
-    pub logging: LoggingConfig,    // filter
-    pub challenge: ChallengeConfig,// 计分衰减、实例限制等
-    pub timezone: String,          // IANA 时区，空=系统时区
+    pub paths: PathConfig,           // changelog_path、challenges_dir
+    pub awd: AwdStaticConfig,        // network_runtime、flagserver/judgeserver_image
+    pub awdp: AwdpStaticConfig,      // practice_judgeserver_image、network_pool、event_netmask
+    pub registry: RegistryConfig,    // image_prefix、push、server_address
+    pub features: FeatureFlags,      // web_terminal、unsafe_sql_admin
+    pub redis: RedisConfig,          // url（必需，Secret）
+    pub realtime: RealtimeConfig,    // channel
+    pub logging: LoggingConfig,      // filter、timezone（IANA，空=系统时区）
+    pub main_url: String,            // [application] main_url，作为 MAIN_URL 设置的 seed
 }
 ```
 
 - 新增配置项流程：`ApplicationToml` 等 struct 加字段 → `AppConfig::from_file` 映射 → 开发者在 development.toml 填值。真正必需的基础设施配置（如 `[redis].url`）不要加 `#[serde(default)]`；可选行为/有安全默认值的字段才使用 default。
 - 敏感字段用 `core::secret::Secret` 包装（Debug 脱敏，提供 `as_bytes()`）。
+- 历史字段已移除：`AppConfig.challenge`（`ChallengeConfig`）与 `AppConfig.timezone` 都不存在了 —— 计分衰减等改为 **settings 表**动态项（`EVENT_SCORE_DECAY` / `EVENT_SCORE_MIN_PERCENT`），时区移到 `[logging].timezone`。
 
 ### AppState（bootstrap/state.rs）
-`web::Data<AppState>` 是全局共享状态：`config: Arc<AppConfig>`、`db`、`docker`、`storage`、`log`、`audit`、realtime hub、事件注册表。
+`web::Data<AppState>` 是全局共享状态：`config: Arc<AppConfig>`、`db`、`docker`、`storage`、`redis`、`log`、`audit`、`publisher: Arc<dyn EventPublisher>`（本地 hub + Redis 扇出）、`scheduler: Arc<TaskScheduler>`、`terminal_tickets: Arc<TerminalTicketStore>`。
 
 ### ReqCtx（api/extractor/request_context.rs）
 Handler 的参数注入器（实现 `FromRequest`），每个请求自动构造：
@@ -171,23 +177,25 @@ Jeopardy 请求级上下文（`db`、`docker`、`event`、`user`、`team`、`con
 ## 4. 请求数据流（以提交 flag 为例）
 
 ```
-POST /api/events/{id}/challenges/{cid}/submit
-  → handler（jeopardy/api/submit.rs）参数: UserJwtGuard + ReqCtx
-  → EventContextBuilder::new().db(...).docker(...).config(ctx.config.clone()).build()
-  → EventModuleRegistry::submit_flag(&event_ctx, req)     // 按模式分发
-  → JeopardySingleServices::submit_flag(ctx, instance_id, flag)
-  → core::jeopardy_submit(...) → submission_service（积分规则）
-  → SeaORM entity（event_challenge_solves / event_instances）
-  → 通过 RealtimeEventPublisher 广播 score.changed
+POST /api/submit/flag                     # bootstrap/routes.rs 里 scope("/submit") 挂载
+  → jeopardy::api::submit::submit_flag    # 参数: UserJwtGuard + ReqCtx
+       省略 event_id 时以实例归属反查赛事（否则竞赛实例会被当练习记 0 分）
+  → EventContextBuilder::new().db(..).docker(..).event(..).user(..).config(..).build()
+  → jeopardy::application::submit::submit_flag(&ctx, req)
+  → domain/scoring.rs 计算动态分（EVENT_SCORE_DECAY / EVENT_SCORE_MIN_PERCENT 来自 settings 表）
+  → SeaORM entity（event_challenge_solves / event_challenge_instance）
+  → AppState.publisher（Arc<dyn EventPublisher>）广播 score.changed
   → UniResponse::ok(...) 统一响应包装
 ```
+
+> **按模式分发不在业务层**：`bootstrap/routes.rs`（约 100 行，全项目唯一路由聚合点）分别挂载 `jeopardy` / `awd` / `awdp` 各自的 `api::*_routes`；引擎内部再用 `if event.family != EventFamily::Xxx` 之类的守卫拒绝跨赛制调用。旧文档里的 `EventModuleRegistry` / `JeopardySingleServices` 已不存在。
 
 统一响应：所有 handler 返回 `UniResult<T>`（`{code, message, data}` 包装），错误用 `AppError`（thiserror）映射 HTTP 状态码。
 
 ## 5. 配置体系（三层）
 
 1. **静态 TOML**（`apps/api/config/development.toml`）— 进程级、启动时固定。读法：`ctx.config`。
-2. **动态 DB 设置表**（`settings` 表，infrastructure/settings.rs）— 管理员可在管理端编辑。`seed_default_settings` 启动时从 AppConfig.challenge 播种（ON CONFLICT DO NOTHING，**不会覆盖已有值**），运行时用 `get_setting(&db, key)` 读取，无此键报错 "Setting not found:<key>"。
+2. **动态 DB 设置表**（`settings` 表，infrastructure/settings.rs）— 管理员可在管理端编辑。`seed_default_settings` 启动时播种一组**内置默认值**（`INSTANCE_DESTROY_DELAY`、`EVENT_SCORE_DECAY`、`EVENT_SCORE_MIN_PERCENT`、`HTTP_PREFIX`、`NODE_IP`、`FLAG_PREFIX` 等，其中 `WORK_DIR`/`MAIN_URL` 取自 `config.server.work_dir` / `config.main_url`），`ON CONFLICT DO NOTHING`，**不会覆盖已有值**；运行时用 `get_setting(&db, key)` 读取，无此键报错 "Setting not found:<key>"。
 3. **基础设施**（`infra/compose/compose.dev.yml` / `compose.prod.yml`）— 端口、卷、容器网络和部署载体。生产 Compose 的 `VERSION/FLOATCTF_HOME/FLOATCTF_UID/FLOATCTF_GID` 属于部署元数据，不是应用业务配置；API 仍只读 TOML。
 
 判断用哪层：**进程级静态不变 → TOML；管理员可改 → settings 表**。不要在 TOML 里放可运营修改项，也不要在 settings 里放进程级安全配置（如 secret）。
@@ -197,6 +205,7 @@ POST /api/events/{id}/challenges/{cid}/submit
 - `engine.rs` — 轮询 `scheduled_tasks` 表的任务执行引擎（锁、重试、心跳）
 - `handlers/` — 具体任务处理器（如 AWD 轮次推进）
 - `task_key.rs` — 任务键常量
+- `wake.rs` — Redis pub/sub 即时唤醒（`floatctf:scheduler:wake`，5s DB 轮询为兜底）
 - 新定时任务：加 task_key → 在 handlers 实现 → 在 bootstrap/scheduler.rs 注册
 
 ## 7. Realtime / Redis（infrastructure/）

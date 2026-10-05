@@ -53,7 +53,8 @@
 
 ## 5. 开发环境与仓库约定（容易踩坑的事实）
 
-- `mise run dev:api` **不是 watch 进程**：改后端代码后必须手动重启（kill 9090 端口进程 → `cd apps/api && setsid nohup cargo run > /tmp/dev-api.log 2>&1 & disown`），否则旧进程继续提供旧行为，导致验证失效/误判 bug。
-- `merged.sql` 是**生成产物，不追踪 git**（由 `mise run db:migration:merge` 重新生成；fresh clone 需先运行 merge 再 infra:up）。**禁止手改 merged.sql**。
+- `mise run dev:api` **是 watchexec 监听进程**（见 `mise.toml`）：改 `apps/api`、`crates/fcmc`、`crates/helper-protocol` 下的 `.rs`/`.toml` 会自动重编译并重启，不需要手动重启。注意它只监听这三个路径，改仓库根或 `scripts/` 不会触发。
+- 若曾用历史回退方式手工起过 API（`cargo run`），之后再跑 `mise run dev` 会争抢 9090：先用 `ss -ltnp | grep 9090` 确认只有一个实例，否则旧进程继续提供旧行为、导致验证失效/误判 bug。
+- `merged.sql` 是**生成产物，不追踪 git**（由 `mise run db:migration:merge` 重新生成），仅供 release / fresh-production bootstrap 使用；**日常开发不依赖它**（`mise run dev` 会直接对 fresh DB 从 migration #1 应用）。**禁止手改 merged.sql**。
 - `chore/` 目录（plans/ 等）被 gitignore，其中的文档是本地工作笔记，不会进入提交。
 - **Migrations 绝对禁区**（见 AGENTS.md 铁律 2 与 DATABASE.md）：`apps/api/src/sql/migrations/` 下**已有文件无论如何都不可直接修改/删除/重命名/重写**（含 baseline `initial-schema` / `initial-data`）。改 Schema **只能** `db:migration:new` 追加新迁移；禁止手改生成实体；禁止操作 `schema_migrations` 表。

@@ -279,6 +279,34 @@ pub async fn run() -> Result<(), BootstrapError> {
             .wrap(cors)
             // multipart 体积超限默认映射 400 "Payload error"；按 HTTP 语义应为 413
             // Payload Too Large（客户端可据此提示用户压缩文件，而非报"请求无效"）。
+            // 提取器错误统一走平台 JSON 信封 + 中文文案：
+            // Actix 默认返回纯文本英文（如「Query deserialize error: invalid digit found in
+            // string」「Json deserialize error: …」「Content type error」），既违反中文界面约定，
+            // 也让前端无法按统一结构解析。此处按参数类型给出可读提示，原始错误保留在日志链中。
+            .app_data(
+                web::QueryConfig::default().error_handler(|err, _req| {
+                    extractor_error("请求参数格式错误", err.to_string())
+                }),
+            )
+            .app_data(
+                web::JsonConfig::default()
+                    .limit(2 * 1024 * 1024)
+                    .error_handler(|err, _req| {
+                        use actix_web::error::JsonPayloadError;
+                        let msg = match &err {
+                            JsonPayloadError::ContentType => "请求体类型必须为 application/json",
+                            JsonPayloadError::Overflow { .. } => "请求体过大",
+                            JsonPayloadError::Deserialize(_) => "请求体格式错误",
+                            _ => "请求体无效",
+                        };
+                        extractor_error(msg, err.to_string())
+                    }),
+            )
+            .app_data(
+                web::PathConfig::default().error_handler(|err, _req| {
+                    extractor_error("路径参数格式错误", err.to_string())
+                }),
+            )
             .app_data(web::Data::new(
                 MultipartFormConfig::default().error_handler(|err, _req| {
                     let overflow = matches!(
@@ -348,4 +376,17 @@ fn build_cors(allowed_origins: &[String]) -> Cors {
         cors = cors.allowed_origin(origin.as_str());
     }
     cors
+}
+
+/// 把 Actix 提取器错误转换成平台统一的 JSON 错误响应。
+///
+/// 参数：中文用户提示 + 原始错误文本（进日志，避免泄漏给前端）。
+fn extractor_error(message: &'static str, detail: String) -> actix_web::Error {
+    use actix_web::ResponseError;
+    tracing::debug!(detail = %detail, "extractor rejected request");
+    actix_web::error::InternalError::from_response(
+        detail,
+        crate::api::AppError::BadRequest(message.to_string()).error_response(),
+    )
+    .into()
 }

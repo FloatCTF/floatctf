@@ -190,19 +190,19 @@ impl NetworkPool {
     pub fn new(pool: Ipv4Cidr, event_prefix: u8, team_prefix: u8) -> Result<Self, AwdError> {
         if event_prefix < pool.prefix_len {
             return Err(AwdError::Validation(format!(
-                "event prefix /{} must not be shorter than pool prefix /{}",
+                "赛事前缀 /{} 不能比地址池前缀 /{} 更短",
                 event_prefix, pool.prefix_len
             )));
         }
         if team_prefix < event_prefix {
             return Err(AwdError::Validation(format!(
-                "team prefix /{} must not be shorter than event prefix /{}",
+                "队伍前缀 /{} 不能比赛事前缀 /{} 更短",
                 team_prefix, event_prefix
             )));
         }
         if team_prefix > 32 {
             return Err(AwdError::Validation(format!(
-                "team prefix /{} out of range",
+                "队伍前缀 /{} 超出范围（最大 32）",
                 team_prefix
             )));
         }
@@ -252,7 +252,7 @@ impl WireGuardPortRange {
         // u16 天然上限 65535，无需再校验 max；min<1 排除端口 0。
         if min < 1 || min > max {
             return Err(AwdError::Validation(format!(
-                "invalid WG port range {}-{}",
+                "WireGuard 端口范围无效：{}-{}",
                 min, max
             )));
         }

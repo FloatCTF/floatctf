@@ -192,6 +192,26 @@ fn fallback_message(message: &str, fallback: &str) -> String {
     }
 }
 
+/// 把唯一约束冲突映射成精确的中文冲突提示。
+///
+/// `users` 同时有 `users_username_key` 与 `users_nickname_key` 两个唯一约束，
+/// 一律提示「用户名已被占用」会误导（实测：仅昵称重复也会报用户名）。
+pub fn unique_violation_message(message: &str) -> AppError {
+    let lower = message.to_ascii_lowercase();
+    let msg = if lower.contains("users_nickname_key") || lower.contains("nickname") {
+        "昵称已被占用"
+    } else if lower.contains("users_username_key") || lower.contains("username") {
+        "用户名已被占用"
+    } else if lower.contains("email") {
+        "邮箱已被注册"
+    } else if lower.contains("team") {
+        "队伍名称已被占用"
+    } else {
+        "该名称已被占用"
+    };
+    AppError::Conflict(msg.into())
+}
+
 /// 判断数据库错误是否为唯一约束冲突（SeaORM 不暴露 PG 错误码，只能按消息匹配）。
 ///
 /// 唯一约束冲突属于业务冲突，必须映射成 4xx 中文提示；直接冒泡会变成 500

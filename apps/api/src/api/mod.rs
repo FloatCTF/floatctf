@@ -6,7 +6,7 @@ pub mod sea_orm_utils;
 pub mod util;
 
 mod response;
-pub use app_error::{AppError, UniResult, is_unique_violation};
+pub use app_error::{AppError, UniResult, is_unique_violation, unique_violation_message};
 pub use extractor::{SuperAdminJwtGuard, UserJwtGuard};
 pub use response::{QueryParams, UniResponse};
 pub use sea_orm_utils::{FilterMapping, apply_filters, build_filter_condition};

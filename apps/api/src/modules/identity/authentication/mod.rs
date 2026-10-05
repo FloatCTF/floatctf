@@ -110,7 +110,7 @@ pub async fn create_user(ctx: ReqCtx, cur: Json<CreateUserRequest>) -> UniResult
     let user = match new_user.insert(ctx.db.get_ref()).await {
         Ok(user) => user,
         Err(error) if crate::api::is_unique_violation(&error.to_string()) => {
-            return Err(AppError::Conflict("用户名已被占用".into()));
+            return Err(crate::api::unique_violation_message(&error.to_string()));
         }
         Err(error) => return Err(error.into()),
     };

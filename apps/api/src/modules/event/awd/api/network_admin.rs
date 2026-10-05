@@ -93,6 +93,19 @@ pub async fn update_platform_network(
     body: web::Json<PlatformNetworkSettingsUpdateRequest>,
 ) -> UniResult<serde_json::Value> {
     let b = body.into_inner();
+
+    // 边界校验（F47）：公共端点必须是 IP 或含点的域名，可带 1..=65535 端口；
+    // 空串/null 表示清空。此前任意字符串（实测 "not-a-url"）都会被写入并下发。
+    if let Some(Some(raw)) = &b.wireguard_public_endpoint {
+        let endpoint = raw.trim();
+        if !endpoint.is_empty() && !is_valid_public_endpoint(endpoint) {
+            return Err(AppError::BadRequest(
+                "WireGuard 公共端点格式无效：应为「IP 或域名[:端口]」，例如 vpn.example.com:51820"
+                    .into(),
+            ));
+        }
+    }
+
     let patch = NetworkSettingsPatch {
         gamebox_pool: b.gamebox_pool,
         gamebox_event_prefix: b.gamebox_event_prefix,
@@ -140,4 +153,76 @@ pub async fn get_platform_network_allocations(
         .await
         .map_err(AppError::from)?;
     Ok(UniResponse::ok(Some(allocations)).into())
+}
+
+/// 校验 WireGuard 公共端点：`IP[:port]` 或 `域名[:port]`（域名必须含点，避免
+/// 把任意单词当主机名）；端口范围 1..=65535。
+fn is_valid_public_endpoint(value: &str) -> bool {
+    use std::net::IpAddr;
+    if value.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    let (host, port) = match value.rsplit_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (value, None),
+    };
+    if host.parse::<IpAddr>().is_ok() {
+        // IPv4:port 形式
+    } else {
+        let label_ok = !host.is_empty()
+            && host.len() <= 253
+            && host.split('.').count() >= 2
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            });
+        if !label_ok {
+            return false;
+        }
+    }
+    match port {
+        Some(p) => p
+            .parse::<u32>()
+            .map(|n| (1..=65535).contains(&n))
+            .unwrap_or(false),
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::is_valid_public_endpoint;
+
+    #[test]
+    fn public_endpoint_boundaries() {
+        // 合法：IP、IP:端口、含点域名、域名:端口边界端口
+        for ok in [
+            "1.2.3.4",
+            "1.2.3.4:1",
+            "1.2.3.4:65535",
+            "vpn.example.com",
+            "vpn.example.com:51820",
+            "sub.vpn.example.com:51820",
+            "2001:db8::1",
+        ] {
+            assert!(is_valid_public_endpoint(ok), "应接受: {ok}");
+        }
+        // 非法：空、无点单词、端口 0/65536、非数字端口、空标签、超长标签
+        for bad in [
+            "",
+            "not-a-url",
+            "1.2.3.4:0",
+            "1.2.3.4:65536",
+            "1.2.3.4:abc",
+            "1.2.3.4:",
+            "vpn..example.com",
+            ".example.com",
+            "example.com.",
+        ] {
+            assert!(!is_valid_public_endpoint(bad), "应拒绝: {bad}");
+        }
+        let long_label = "a".repeat(64);
+        assert!(!is_valid_public_endpoint(&format!("{long_label}.com")));
+    }
 }

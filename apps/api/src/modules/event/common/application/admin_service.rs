@@ -138,6 +138,36 @@ pub struct ReportUser {
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
 
+/// 赛事文本字段上限（F52 边界）：列均为 `text`，无上限时超长文本会撑坏列表与详情页。
+///
+/// 上限取得足够宽松，避免影响既有数据（上线时实测最大：标题 16 / 描述 32 /
+/// 规则 659 / 前缀 4 个字符）；按**字符数**（Unicode 标量）计，与用户名规则一致。
+const MAX_TITLE_CHARS: usize = 200;
+const MAX_DESCRIPTION_CHARS: usize = 10_000;
+const MAX_RULES_CHARS: usize = 50_000;
+const MAX_FLAG_PREFIX_CHARS: usize = 32;
+
+fn validate_event_text(
+    title: Option<&str>,
+    description: Option<&str>,
+    rules: Option<&str>,
+    flag_prefix: Option<&str>,
+) -> Result<(), AppError> {
+    for (name, value, max) in [
+        ("赛事标题", title, MAX_TITLE_CHARS),
+        ("赛事描述", description, MAX_DESCRIPTION_CHARS),
+        ("赛事规则", rules, MAX_RULES_CHARS),
+        ("flag 前缀", flag_prefix, MAX_FLAG_PREFIX_CHARS),
+    ] {
+        if let Some(value) = value
+            && value.chars().count() > max
+        {
+            return Err(AppError::Validation(format!("{name}最长 {max} 个字符")));
+        }
+    }
+    Ok(())
+}
+
 pub async fn create_event(
     db: &DatabaseConnection,
     req: CreateEventRequest,
@@ -167,6 +197,12 @@ pub async fn create_event(
     if req.start_time >= req.end_time {
         return Err(AppError::Validation("赛事开始时间必须早于结束时间".into()));
     }
+    validate_event_text(
+        Some(&title),
+        req.description.as_deref(),
+        Some(req.rules.as_str()),
+        req.flag_prefix.as_deref(),
+    )?;
     let new_event = events::ActiveModel {
         // 练习模式（purpose='practice'）即虚拟赛事，由 events_virtual_by_purpose_check 约束。
         is_virtual: Set(purpose == EventPurpose::Practice),
@@ -218,9 +254,11 @@ where
         if title.is_empty() {
             return Err(AppError::Validation("赛事标题不能为空".into()));
         }
+        validate_event_text(Some(&title), None, None, None)?;
         m_event.title = Set(title);
     }
     if let Some(d) = req.description {
+        validate_event_text(None, Some(&d), None, None)?;
         m_event.description = Set(d.into());
     }
     if let Some(s) = req.start_time {
@@ -236,9 +274,11 @@ where
         m_event.allow_join = Set(a);
     }
     if let Some(r) = req.rules {
+        validate_event_text(None, None, Some(&r), None)?;
         m_event.rules = Set(r.into());
     }
     if let Some(f) = req.flag_prefix {
+        validate_event_text(None, None, None, Some(&f))?;
         m_event.flag_prefix = Set(f.into());
     }
 
@@ -832,4 +872,30 @@ pub async fn export_writeup_report(
         .map_err(|e| AppError::BadRequest(format!("Failed to upload report to S3: {}", e)))?;
 
     Ok((event, s3_key))
+}
+
+#[cfg(test)]
+mod text_boundary_tests {
+    use super::{MAX_TITLE_CHARS, validate_event_text};
+
+    #[test]
+    fn event_text_length_boundaries() {
+        let ok = "a".repeat(MAX_TITLE_CHARS);
+        assert!(
+            validate_event_text(Some(&ok), None, None, None).is_ok(),
+            "正好上限应通过"
+        );
+        let over = "a".repeat(MAX_TITLE_CHARS + 1);
+        assert!(
+            validate_event_text(Some(&over), None, None, None).is_err(),
+            "超过上限应拒绝"
+        );
+        // 按字符数计：200 个中文字符应通过，201 个应拒绝（不是按字节）
+        let zh_ok = "边".repeat(MAX_TITLE_CHARS);
+        assert!(validate_event_text(Some(&zh_ok), None, None, None).is_ok());
+        let zh_over = "边".repeat(MAX_TITLE_CHARS + 1);
+        assert!(validate_event_text(Some(&zh_over), None, None, None).is_err());
+        // 未提供字段不做校验
+        assert!(validate_event_text(None, None, None, None).is_ok());
+    }
 }

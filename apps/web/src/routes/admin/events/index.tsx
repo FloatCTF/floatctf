@@ -185,6 +185,7 @@ function RouteComponent() {
 			render: (
 				<TextInput
 					required
+					maxLength={200}
 					value={mutationEvent.title}
 					onChange={(e) => {
 						mutationEvent.title = e.target.value;
@@ -198,6 +199,7 @@ function RouteComponent() {
 			label: "赛事简介",
 			render: (
 				<Textarea
+					maxLength={10000}
 					value={mutationEvent.description}
 					onChange={(e) => {
 						mutationEvent.description = e.target.value;
@@ -211,6 +213,7 @@ function RouteComponent() {
 			label: "Flag 前缀",
 			render: (
 				<TextInput
+					maxLength={32}
 					value={mutationEvent.flag_prefix}
 					onChange={(e) => {
 						mutationEvent.flag_prefix = e.target.value;
@@ -305,6 +308,7 @@ function RouteComponent() {
 			label: "赛事规则",
 			render: (
 				<Textarea
+					maxLength={50000}
 					value={mutationEvent.rules}
 					onChange={(e) => {
 						mutationEvent.rules = e.target.value;

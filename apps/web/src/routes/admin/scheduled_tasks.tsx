@@ -80,7 +80,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 			label: "状态",
 			renderCell: (row: ScheduledTasks) => (
@@ -129,7 +129,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			renderCell: (row: ScheduledTasks) => (
 				<span>{DatetimeToShow(row.updated_at)}</span>
@@ -401,7 +401,7 @@ function RouteComponent() {
 					}}
 					title="Run Task"
 					confirmButtonContent="Run"
-					cancelButtonContent="Cancel"
+					cancelButtonContent="取消"
 				>
 					Are you sure you want to run task "{runTargetTask.task_name}" now?
 				</ConfirmationDialog>

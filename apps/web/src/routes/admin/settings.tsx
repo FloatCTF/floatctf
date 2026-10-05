@@ -45,21 +45,21 @@ function RouteComponent() {
 
     {
       accessorKey: "description",
-      header: "Description",
+      header: "描述",
       field: "description",
       label: "描述",
       sortBy: true,
     },
     {
       accessorKey: "type",
-      header: "Type",
+      header: "类型",
       field: "type",
       label: "类型",
       sortBy: true,
     },
     {
       accessorKey: "updated_at",
-      header: "Updated At",
+      header: "更新时间",
       field: "updated_at",
       sortBy: true,
       renderCell: (row: SettingsDto) => {

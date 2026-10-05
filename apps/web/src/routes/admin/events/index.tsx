@@ -118,14 +118,14 @@ function RouteComponent() {
 		{ accessorKey: "family", header: "Family", field: "family", sortBy: true },
 		{
 			accessorKey: "participant_mode",
-			header: "Participant",
+			header: "参赛者",
 			field: "participant_mode",
 			sortBy: true,
 		},
-		{ accessorKey: "title", header: "Title", field: "title" },
+		{ accessorKey: "title", header: "标题", field: "title" },
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 			renderCell: (row: Events) => {
 				return (
@@ -136,7 +136,7 @@ function RouteComponent() {
 
 		{
 			accessorKey: "hidden",
-			header: "Hidden",
+			header: "隐藏",
 			field: "hidden",
 			renderCell: (row: Events) => {
 				return <span>{row.hidden ? <CheckIcon /> : <></>}</span>;
@@ -154,7 +154,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "start_time",
-			header: "Start Time",
+			header: "开始时间",
 			field: "start_time",
 			sortBy: true,
 			renderCell: (row: Events) => {
@@ -163,7 +163,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "end_time",
-			header: "End Time",
+			header: "结束时间",
 			field: "end_time",
 			sortBy: true,
 			renderCell: (row: Events) => {
@@ -178,7 +178,7 @@ function RouteComponent() {
 	});
 	const mutationColumns = [
 		{
-			header: "Title",
+			header: "标题",
 			field: "title",
 			label: "赛事标题",
 			required: true,
@@ -194,7 +194,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Description",
+			header: "描述",
 			field: "description",
 			label: "赛事简介",
 			render: (
@@ -245,7 +245,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Participant",
+			header: "参赛者",
 			field: "participant_mode",
 			label: "参赛模式",
 			createOnly: true,
@@ -271,7 +271,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Hidden",
+			header: "隐藏",
 			field: "hidden",
 			label: "隐藏赛事",
 			render: (
@@ -317,7 +317,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Start Time",
+			header: "开始时间",
 			field: "start_time",
 			label: "开始时间",
 
@@ -338,7 +338,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "End Time",
+			header: "结束时间",
 			field: "end_time",
 			label: "结束时间",
 			render: (

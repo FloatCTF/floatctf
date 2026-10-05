@@ -104,7 +104,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "event_challenge.hidden",
-			header: "Hidden",
+			header: "隐藏",
 			field: "event_challenge.hidden",
 
 			renderCell: (row: EventChallengeResult) => {
@@ -263,7 +263,7 @@ function SetPointsDialog({
 						disabled={!valid || setPointsMutation.isPending}
 						onClick={() => setPointsMutation.mutate(parsed)}
 					>
-						{setPointsMutation.isPending ? "Saving…" : "Save"}
+						{setPointsMutation.isPending ? "Saving…" : "保存"}
 					</Button>
 				</div>
 			</div>
@@ -320,17 +320,17 @@ function AddChallengeButton({
 	);
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
+		{ accessorKey: "name", header: "名称", field: "name", sortBy: true },
 		{
 			accessorKey: "category",
-			header: "Category",
+			header: "分类",
 			field: "category",
 			sortBy: true,
 		},
 
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;

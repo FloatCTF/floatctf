@@ -26,16 +26,16 @@ function RouteComponent() {
 
     const columns = [
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-        { accessorKey: "name", header: "Name", field: "name", sortBy: true },
+        { accessorKey: "name", header: "名称", field: "name", sortBy: true },
         {
             accessorKey: "category",
-            header: "Category",
+            header: "分类",
             field: "category",
             sortBy: true,
         },
         {
             accessorKey: "hidden",
-            header: "Hidden",
+            header: "隐藏",
             field: "hidden",
             renderCell: (row: ChallengesListItem) => {
                 return <span>{row.hidden ? "✓" : <></>}</span>;
@@ -44,7 +44,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "updated_at",
-            header: "Updated At",
+            header: "更新时间",
             field: "updated_at",
             renderCell: (row: ChallengesListItem) => {
                 return <span>{DatetimeToShow(row.updated_at)}</span>;
@@ -130,16 +130,16 @@ function AddChallengeButton({
 
     const columns = [
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-        { accessorKey: "name", header: "Name", field: "name", sortBy: true },
+        { accessorKey: "name", header: "名称", field: "name", sortBy: true },
         {
             accessorKey: "category",
-            header: "Category",
+            header: "分类",
             field: "category",
             sortBy: true,
         },
         {
             accessorKey: "hidden",
-            header: "Hidden",
+            header: "隐藏",
             field: "hidden",
             renderCell: (row: ChallengesListItem) => {
                 return <span>{row.hidden ? "✓" : <></>}</span>;

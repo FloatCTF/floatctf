@@ -74,7 +74,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			rowHeader: true,
 			renderCell: (row: ChallengesListItem) => {
@@ -123,7 +123,7 @@ function RouteComponent() {
 		{
 			accessorKey: "updated_at",
 			field: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;
 			},

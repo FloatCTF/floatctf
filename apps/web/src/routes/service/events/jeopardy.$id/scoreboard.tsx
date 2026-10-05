@@ -68,12 +68,12 @@ export function ScoreBoard({
     const baseColumns = [
         {
             accessorKey: "no",
-            header: "Rank",
+            header: "排名",
             field: "no",
         },
         {
             accessorKey: "name",
-            header: "Name",
+            header: "名称",
             field: "name",
             rowHeader: true,
             renderCell: (row: ScoreboardItem) => (
@@ -102,7 +102,7 @@ export function ScoreBoard({
         },
         {
             accessorKey: "solved_count",
-            header: "Solved",
+            header: "已解出",
             field: "solved_count",
         },
     ];

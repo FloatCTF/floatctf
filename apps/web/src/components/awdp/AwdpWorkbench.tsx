@@ -854,7 +854,7 @@ export function AwdpWorkbench({
 		},
 		{
 			accessorKey: "label",
-			header: "Result",
+			header: "结果",
 			field: "label",
 		},
 		{

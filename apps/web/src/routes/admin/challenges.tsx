@@ -31,21 +31,21 @@ function RouteComponent() {
 	const banner = useMsgBanner({});
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
+		{ accessorKey: "name", header: "名称", field: "name", sortBy: true },
 		{
 			accessorKey: "safe_name",
-			header: "Safe Name",
+			header: "安全名",
 			field: "safe_name",
 		},
 		{
 			accessorKey: "category",
-			header: "Category",
+			header: "分类",
 			field: "category",
 			sortBy: true,
 		},
 		{
 			accessorKey: "version",
-			header: "Version",
+			header: "版本",
 			field: "version",
 			renderCell: (row: ChallengesListItem) => {
 				return (
@@ -62,7 +62,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "image_ref",
-			header: "Image",
+			header: "镜像",
 			field: "image_ref",
 			renderCell: (row: ChallengesListItem) => {
 				return (
@@ -75,7 +75,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "hidden",
-			header: "Hidden",
+			header: "隐藏",
 			field: "hidden",
 
 			renderCell: (row: ChallengesListItem) => {
@@ -409,23 +409,23 @@ export function ScanButton() {
 		() => [
 			{
 				accessorKey: "safe_name",
-				header: "Safe Name",
+				header: "安全名",
 				field: "safe_name",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "name",
-				header: "Name",
+				header: "名称",
 				field: "name",
 			},
 			{
 				accessorKey: "version",
-				header: "Version",
+				header: "版本",
 				field: "version",
 			},
 			{
 				accessorKey: "status",
-				header: "Status",
+				header: "状态",
 				field: "status",
 				renderCell: (row: ChallengeScanItem) => (
 					<span
@@ -477,7 +477,7 @@ export function ScanButton() {
 				</Dialog>
 			)}
 			<Button onClick={handleScan} disabled={loading}>
-				{loading ? "Scanning..." : "Scan"}
+				{loading ? "Scanning..." : "扫描"}
 			</Button>
 		</>
 	);

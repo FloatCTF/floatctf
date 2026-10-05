@@ -19,10 +19,10 @@ function RouteComponent() {
     const subject = "Weapons";
     const columns = [
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-        { accessorKey: "name", header: "Name", field: "name", sortBy: true },
+        { accessorKey: "name", header: "名称", field: "name", sortBy: true },
         {
             accessorKey: "category",
-            header: "Category",
+            header: "分类",
             field: "category",
             label: "分类",
             sortBy: true,
@@ -39,7 +39,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "file_url",
-            header: "File URL",
+            header: "文件地址",
             field: "file_url",
             label: "文件地址",
             sortBy: true,
@@ -58,7 +58,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "updated_at",
-            header: "Updated At",
+            header: "更新时间",
             field: "updated_at",
             sortBy: true,
             renderCell: (row: Weapons) => {
@@ -77,7 +77,7 @@ function RouteComponent() {
 
     const mutationColumns = [
         {
-            header: "Name",
+            header: "名称",
             field: "name",
             label: "名称",
             render: (
@@ -90,7 +90,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "Category",
+            header: "分类",
             field: "category",
             label: "分类",
             render: (
@@ -103,7 +103,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "Description",
+            header: "描述",
             field: "description",
             label: "描述",
             render: (
@@ -132,7 +132,7 @@ function RouteComponent() {
             ),
         },
         {
-            header: "File URL",
+            header: "文件地址",
             field: "file_url",
             label: "文件地址",
             render: (

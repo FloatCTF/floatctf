@@ -17,17 +17,17 @@ function RouteComponent() {
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{
 			accessorKey: "username",
-			header: "Username",
+			header: "用户名",
 			field: "username",
 			sortBy: true,
 		},
 		{
 			accessorKey: "nickname",
-			header: "Nickname",
+			header: "昵称",
 			field: "nickname",
 			sortBy: true,
 		},
-		{ accessorKey: "email", header: "Email", field: "email", sortBy: true },
+		{ accessorKey: "email", header: "邮箱", field: "email", sortBy: true },
 	];
 
 	const mutationUser = useReactive<Partial<Users>>({
@@ -39,7 +39,7 @@ function RouteComponent() {
 
 	const mutationColumns = [
 		{
-			header: "Username",
+			header: "用户名",
 			field: "username",
 			label: "用户名",
 			required: true,
@@ -53,7 +53,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Email",
+			header: "邮箱",
 			field: "email",
 			label: "邮箱",
 			render: (
@@ -66,7 +66,7 @@ function RouteComponent() {
 			),
 		},
 		{
-			header: "Nickname",
+			header: "昵称",
 			field: "nickname",
 			label: "昵称",
 			render: (

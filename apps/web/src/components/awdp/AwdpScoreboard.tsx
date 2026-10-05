@@ -50,10 +50,10 @@ function ParticipantCell({ row }: { row: AwdpScoreboardRow }) {
 
 function SummaryTable({ rows }: { rows: AwdpScoreboardRow[] }) {
 	const columns = [
-		{ accessorKey: "rank", header: "Rank", field: "rank" },
+		{ accessorKey: "rank", header: "排名", field: "rank" },
 		{
 			accessorKey: "subject_name",
-			header: "Participant",
+			header: "参赛者",
 			field: "subject_name",
 			rowHeader: true,
 			renderCell: (row: AwdpScoreboardRow) => <ParticipantCell row={row} />,
@@ -76,7 +76,7 @@ function SummaryTable({ rows }: { rows: AwdpScoreboardRow[] }) {
 		},
 		{
 			accessorKey: "total_score",
-			header: "Total",
+			header: "合计",
 			field: "total_score",
 			renderCell: (row: AwdpScoreboardRow) => (
 				<strong className="tabular-nums">{row.total_score}</strong>

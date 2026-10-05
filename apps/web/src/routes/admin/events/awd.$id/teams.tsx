@@ -65,13 +65,13 @@ function RouteComponent() {
     const columns = [
         {
             accessorKey: "team.id",
-            header: "Team ID",
+            header: "队伍 ID",
             field: "team.id",
             rowHeader: true,
         },
         {
             accessorKey: "team.name",
-            header: "Team Name",
+            header: "队伍名称",
             field: "team.name",
             sortBy: true,
         },
@@ -119,7 +119,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "team.created_at",
-            header: "Created At",
+            header: "创建时间",
             field: "team.created_at",
             renderCell: (row: TeamResult) => {
                 return <span>{DatetimeToShow(row.team.created_at)}</span>;

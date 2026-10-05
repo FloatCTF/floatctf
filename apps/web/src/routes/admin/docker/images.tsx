@@ -37,7 +37,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "size",
-            header: "Size",
+            header: "大小",
             field: "size",
             renderCell: (row: ImageInfo) => <span>{formatSize(row.size)}</span>,
         },

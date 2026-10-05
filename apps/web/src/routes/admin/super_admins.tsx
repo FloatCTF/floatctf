@@ -80,14 +80,14 @@ function RouteComponent() {
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
         {
             accessorKey: "username",
-            header: "Username",
+            header: "用户名",
             field: "username",
             label: "用户名",
             sortBy: true,
         },
         {
             accessorKey: "email",
-            header: "Email",
+            header: "邮箱",
             field: "email",
             label: "邮箱",
             sortBy: true,

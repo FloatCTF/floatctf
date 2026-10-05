@@ -55,7 +55,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "instance.status",
-			header: "Status",
+			header: "状态",
 			field: "instance.status",
 		},
 		{
@@ -78,7 +78,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "action",
-			header: "Action",
+			header: "操作",
 			field: "action",
 			renderCell: (row: EventInstanceResult) => {
 				return (

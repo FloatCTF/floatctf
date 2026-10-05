@@ -34,17 +34,17 @@ function RouteComponent() {
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{
 			accessorKey: "user_id",
-			header: "User ID",
+			header: "用户 ID",
 			field: "user_id",
 		},
 		{
 			accessorKey: "team_id",
-			header: "Team ID",
+			header: "队伍 ID",
 			field: "team_id",
 		},
 		{
 			accessorKey: "level",
-			header: "Level",
+			header: "难度",
 			field: "level",
 			renderCell: (row: EventLogs) => (
 				<Label variant={levelToVariant(row.level)}>{row.level}</Label>
@@ -52,7 +52,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "action",
-			header: "Action",
+			header: "操作",
 			field: "action",
 		},
 		{
@@ -74,7 +74,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "created_at",
-			header: "Created At",
+			header: "创建时间",
 			field: "created_at",
 			renderCell: (row: EventLogs) => (
 				<span>{DatetimeToShow(row.created_at)}</span>

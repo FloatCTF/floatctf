@@ -12,16 +12,16 @@ export const Route = createFileRoute("/service/weapons")({
 function RouteComponent() {
     const subject = "Weapons";
     const columns = [
-        { accessorKey: "name", header: "Name", field: "name", rowHeader: true, sortBy: true },
+        { accessorKey: "name", header: "名称", field: "name", rowHeader: true, sortBy: true },
         {
             accessorKey: "category",
-            header: "Category",
+            header: "分类",
             field: "category",
             sortBy: true,
         },
         {
             accessorKey: "description",
-            header: "Description",
+            header: "描述",
             field: "description",
         },
         {
@@ -35,7 +35,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "file_url",
-            header: "File URL",
+            header: "文件地址",
             field: "file_url",
             sortBy: true,
             renderCell: (row: Weapons) => {
@@ -56,7 +56,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "updated_at",
-            header: "Updated At",
+            header: "更新时间",
             field: "updated_at",
             sortBy: true,
             renderCell: (row: Weapons) => {

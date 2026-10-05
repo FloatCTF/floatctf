@@ -31,13 +31,13 @@ function RouteComponent() {
         },
         {
             accessorKey: "title",
-            header: "Title",
+            header: "标题",
             field: "title",
             sortBy: true,
         },
         {
             accessorKey: "author_nickname",
-            header: "Author",
+            header: "作者",
             field: "author_id",
             renderCell: (row: DiscussionRow) => {
                 return <span>{row.author_nickname ?? row.author_id}</span>;
@@ -63,7 +63,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "created_at",
-            header: "Created At",
+            header: "创建时间",
             field: "created_at",
             sortBy: true,
             renderCell: (row: Discussions) => {
@@ -72,7 +72,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "updated_at",
-            header: "Updated At",
+            header: "更新时间",
             field: "updated_at",
             sortBy: true,
             renderCell: (row: Discussions) => {

@@ -65,7 +65,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 		},
 	];
@@ -95,7 +95,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "status",
-			header: "Result",
+			header: "结果",
 			field: "status",
 			renderCell: (row: AwdpEvaluationDto) => (
 				<span>{EVAL_STATUS_LABEL[row.status] ?? row.status}</span>

@@ -147,12 +147,12 @@ function ScoreboardTop10({
 	const columns = [
 		{
 			accessorKey: "rank",
-			header: "Rank",
+			header: "排名",
 			field: "rank",
 		},
 		{
 			accessorKey: "subject_name",
-			header: "Participant",
+			header: "参赛者",
 			field: "subject_name",
 			rowHeader: true,
 			renderCell: (row: AwdpDataPresent["scoreboard_top10"][number]) => (
@@ -185,7 +185,7 @@ function ScoreboardTop10({
 		},
 		{
 			accessorKey: "total_score",
-			header: "Total",
+			header: "合计",
 			field: "total_score",
 			renderCell: (row: AwdpDataPresent["scoreboard_top10"][number]) => (
 				<strong className="tabular-nums">{row.total_score}</strong>

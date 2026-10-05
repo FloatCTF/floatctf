@@ -36,12 +36,12 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "safe_name",
-			header: "Safe Name",
+			header: "安全名",
 			field: "safe_name",
 		},
 		{
 			accessorKey: "category",
-			header: "Category",
+			header: "分类",
 			field: "category",
 		},
 		{
@@ -149,18 +149,18 @@ function AddGameBoxButton({
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			sortBy: true,
 		},
 		{
 			accessorKey: "safe_name",
-			header: "Safe Name",
+			header: "安全名",
 			field: "safe_name",
 		},
 		{
 			accessorKey: "category",
-			header: "Category",
+			header: "分类",
 			field: "category",
 		},
 	];

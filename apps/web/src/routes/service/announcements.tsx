@@ -23,13 +23,13 @@ function RouteComponent() {
         },
         {
             accessorKey: "title",
-            header: "Title",
+            header: "标题",
             field: "title",
             sortBy: true,
         },
         {
             accessorKey: "content",
-            header: "Content",
+            header: "内容",
             field: "content",
             renderCell: (row: Announcements) => {
                 return (
@@ -48,7 +48,7 @@ function RouteComponent() {
 
         {
             accessorKey: "created_at",
-            header: "Created At",
+            header: "创建时间",
             field: "created_at",
             sortBy: true,
             renderCell: (row: Announcements) => {
@@ -57,7 +57,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "updated_at",
-            header: "Updated At",
+            header: "更新时间",
             field: "updated_at",
             sortBy: true,
             renderCell: (row: Announcements) => {

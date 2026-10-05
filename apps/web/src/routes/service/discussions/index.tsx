@@ -21,7 +21,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "title",
-			header: "Title",
+			header: "标题",
 			field: "title",
 			sortBy: true,
 			renderCell: (row: DiscussionWithAuthor) => (
@@ -36,7 +36,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "author_nickname",
-			header: "Author",
+			header: "作者",
 			field: "author_nickname",
 			renderCell: (row: DiscussionWithAuthor) => (
 				<div className="flex items-center gap-2">
@@ -92,7 +92,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "created_at",
-			header: "Created At",
+			header: "创建时间",
 			field: "created_at",
 			sortBy: true,
 			renderCell: (row: DiscussionWithAuthor) => (

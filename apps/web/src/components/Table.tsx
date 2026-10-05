@@ -231,7 +231,7 @@ export const GenericTable = <T extends object>({
         const actionsColumn: Column<T> = {
             accessorKey: "actions",
             id: "actions",
-            header: "Actions",
+            header: "操作",
             renderCell: (row: T) => (
                 <ActionMenu>
                     <ActionMenu.Anchor>
@@ -647,9 +647,9 @@ export const BulkDeleteButton = ({
                         }
                         setOpen(false);
                     }}
-                    title="Delete Challenges"
-                    confirmButtonContent="Delete"
-                    cancelButtonContent="Cancel"
+                    title="删除题目"
+                    confirmButtonContent="删除"
+                    cancelButtonContent="取消"
                     confirmButtonType="danger"
                 >
                     Are you sure you want to delete {selectedRowIds.length} item

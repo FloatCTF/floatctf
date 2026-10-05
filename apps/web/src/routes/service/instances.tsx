@@ -65,7 +65,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge_title",
-			header: "Content",
+			header: "内容",
 			field: "challenge_title",
 			rowHeader: true,
 			renderCell: (row: InstanceRow) => {
@@ -94,7 +94,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "instance_type",
-			header: "Type",
+			header: "类型",
 			field: "instance_type",
 			renderCell: (row: InstanceRow) => (
 				<Label variant={row.run_id ? "success" : "accent"}>
@@ -104,7 +104,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 		},
 		{
@@ -138,7 +138,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "action",
-			header: "Action",
+			header: "操作",
 			field: "action",
 			renderCell: (row: Instances) => {
 				if (row.challenge_id) {

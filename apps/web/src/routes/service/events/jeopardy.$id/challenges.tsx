@@ -91,7 +91,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "challenge.name",
-			header: "Name",
+			header: "名称",
 			field: "challenge.name",
 			rowHeader: true,
 			renderCell: (row: EventChallengeResult) => {
@@ -113,7 +113,7 @@ function RouteComponent() {
 
 		{
 			accessorKey: "current_points",
-			header: "Points",
+			header: "分值",
 			field: "current_points",
 			renderCell: (row: EventChallengeResult) => {
 				return (
@@ -157,7 +157,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "solved",
-			header: "Solved",
+			header: "已解出",
 			field: "solved",
 			renderCell: (row: EventChallengeResult) => {
 				if (row.solved) {

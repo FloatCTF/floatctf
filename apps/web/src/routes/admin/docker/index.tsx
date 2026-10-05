@@ -27,9 +27,9 @@ function RouteComponent() {
 				<span title={row.id}>{row.id.slice(0, 12)}</span>
 			),
 		},
-		{ accessorKey: "name", header: "Name", field: "name" },
-		{ accessorKey: "image", header: "Image", field: "image" },
-		{ accessorKey: "status", header: "Status", field: "status" },
+		{ accessorKey: "name", header: "名称", field: "name" },
+		{ accessorKey: "image", header: "镜像", field: "image" },
+		{ accessorKey: "status", header: "状态", field: "status" },
 		{ accessorKey: "ports", header: "Ports", field: "ports" },
 		{
 			accessorKey: "created",

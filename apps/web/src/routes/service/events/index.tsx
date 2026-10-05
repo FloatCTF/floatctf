@@ -43,7 +43,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "event.title",
-			header: "Title",
+			header: "标题",
 			field: "event.title",
 			rowHeader: true,
 			renderCell: (row: EventInfo) => {
@@ -81,10 +81,10 @@ function RouteComponent() {
 			},
 		},
 		{ accessorKey: "event.family", header: "Family", field: "event.family" },
-		{ accessorKey: "event.participant_mode", header: "Participant", field: "event.participant_mode" },
+		{ accessorKey: "event.participant_mode", header: "参赛者", field: "event.participant_mode" },
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 			renderCell: (row: EventInfo) => {
 				return (
@@ -114,7 +114,7 @@ function RouteComponent() {
 
 		{
 			accessorKey: "event.start_time",
-			header: "Start Time",
+			header: "开始时间",
 			field: "start_time",
 			renderCell: (row: EventInfo) => (
 				<span>{DatetimeToShow(row.event.start_time)}</span>
@@ -122,7 +122,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "event.end_time",
-			header: "End Time",
+			header: "结束时间",
 			field: "end_time",
 			renderCell: (row: EventInfo) => (
 				<span>{DatetimeToShow(row.event.end_time)}</span>

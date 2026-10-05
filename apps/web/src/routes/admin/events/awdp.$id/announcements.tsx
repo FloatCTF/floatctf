@@ -18,11 +18,11 @@ function RouteComponent() {
 	const subject = `announcement: ${id}`;
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{ accessorKey: "title", header: "Title", field: "title" },
-		{ accessorKey: "content", header: "Content", field: "content" },
+		{ accessorKey: "title", header: "标题", field: "title" },
+		{ accessorKey: "content", header: "内容", field: "content" },
 		{
 			accessorKey: "created_at",
-			header: "Created At",
+			header: "创建时间",
 			field: "created_at",
 			renderCell: (row: EventAnnouncements) => {
 				return <span>{DatetimeToShow(row.created_at)}</span>;

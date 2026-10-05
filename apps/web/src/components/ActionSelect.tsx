@@ -12,7 +12,7 @@ interface ActionSelectProps<T> {
   event_id: string;
   label: string; // 作为 queryKey 前缀
   maxHeight?: number;
-  buttonText: string; // 按钮文字 ("Add" / "Open")
+  buttonText: string; // 按钮文字 ("新增" / "Open")
   queryKey?: string; // 可选的 queryKey
 
   // biome-ignore lint/suspicious/noExplicitAny: <explanation>

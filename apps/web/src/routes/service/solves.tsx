@@ -51,7 +51,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			renderCell: (row: SolveResult) => (
 				<span>{DatetimeToShow(row.updated_at)}</span>

@@ -20,7 +20,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "content_name",
-			header: "Content",
+			header: "内容",
 			field: "content_name",
 			rowHeader: true,
 			sortBy: true,
@@ -32,7 +32,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "nickname",
-			header: "Author",
+			header: "作者",
 			field: "nickname",
 			sortBy: true,
 			renderCell: (row: UnifiedWriteupResult) => (
@@ -53,7 +53,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "writeup_type",
-			header: "Type",
+			header: "类型",
 			field: "writeup_type",
 			renderCell: (row: UnifiedWriteupResult) => (
 				<Label variant={row.writeup_type === "gamebox" ? "success" : "accent"}>
@@ -63,7 +63,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "email",
-			header: "Email",
+			header: "邮箱",
 			field: "email",
 			renderCell: (row: UnifiedWriteupResult) => (
 				<a href={`mailto:${row.email}`}>{row.email}</a>
@@ -71,7 +71,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			sortBy: true,
 			renderCell: (row: UnifiedWriteupResult) => (

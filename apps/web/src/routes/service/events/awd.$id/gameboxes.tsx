@@ -98,7 +98,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 			renderCell: (row: AwdGameBox) => (
 				<Label variant={statusVariant(row.status)}>{row.status}</Label>
@@ -111,7 +111,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "action",
-			header: "Action",
+			header: "操作",
 			field: "action",
 			renderCell: (row: AwdGameBox) => (
 				<Button

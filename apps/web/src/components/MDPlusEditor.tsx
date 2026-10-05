@@ -94,8 +94,8 @@ export const MDPlusEditor = ({
 }: MDPlusEditorProps) => {
     const editorRef = useRef<HTMLTextAreaElement | null>(null);
     const save: ICommand = {
-        name: "Save",
-        keyCommand: "Save",
+        name: "保存",
+        keyCommand: "保存",
         buttonProps: { "aria-label": "Save doc" },
         icon: <UploadIcon />,
         execute: () => {

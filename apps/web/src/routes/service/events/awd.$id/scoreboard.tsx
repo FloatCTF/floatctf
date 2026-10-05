@@ -57,12 +57,12 @@ function ScoreBoard({
 	const columns = [
 		{
 			accessorKey: "rank",
-			header: "Rank",
+			header: "排名",
 			field: "rank",
 		},
 		{
 			accessorKey: "team_name",
-			header: "Team",
+			header: "队伍",
 			field: "team_name",
 			rowHeader: true,
 			renderCell: (row: AwdScoreRow) => {
@@ -100,7 +100,7 @@ function ScoreBoard({
 		},
 		{
 			accessorKey: "total_score",
-			header: "Total",
+			header: "合计",
 			field: "total_score",
 			renderCell: (row: AwdScoreRow) => <strong>{row.total_score}</strong>,
 		},

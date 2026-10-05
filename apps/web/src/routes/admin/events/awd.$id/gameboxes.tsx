@@ -42,7 +42,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "gamebox_version",
-			header: "Version",
+			header: "版本",
 			field: "gamebox_version",
 			renderCell: (row: EventGameBoxDto) => (
 				<span>{row.gamebox_version ?? "-"}</span>
@@ -169,11 +169,11 @@ function AddGameBoxButton({
 
 	const columns = [
 		{ accessorKey: "id", header: "ID", field: "id", rowHeader: true },
-		{ accessorKey: "name", header: "Name", field: "name", sortBy: true },
-		{ accessorKey: "safe_name", header: "Safe Name", field: "safe_name" },
+		{ accessorKey: "name", header: "名称", field: "name", sortBy: true },
+		{ accessorKey: "safe_name", header: "安全名", field: "safe_name" },
 		{
 			accessorKey: "image_ref",
-			header: "Image",
+			header: "镜像",
 			field: "image_ref",
 			renderCell: (row: GameBoxLibraryDto) => (
 				<span>{row.image_ref ?? "-"}</span>

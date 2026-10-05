@@ -39,7 +39,7 @@ function RouteComponent() {
             field: "id",
             rowHeader: true,
         },
-        { accessorKey: "name", header: "Name", field: "name" },
+        { accessorKey: "name", header: "名称", field: "name" },
         { accessorKey: "driver", header: "Driver", field: "driver" },
         { accessorKey: "scope", header: "Scope", field: "scope" },
         { accessorKey: "subnet", header: "Subnet", field: "subnet" },

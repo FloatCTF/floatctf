@@ -31,7 +31,7 @@ function RouteComponent() {
         },
         {
             accessorKey: "nickname",
-            header: "Nickname",
+            header: "昵称",
             field: "nickname",
             rowHeader: true,
             renderCell: (row: TopUser) => (

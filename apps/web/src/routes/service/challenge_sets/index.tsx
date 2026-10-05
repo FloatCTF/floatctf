@@ -15,7 +15,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			rowHeader: true,
 			renderCell: (row: ChallengeSets) => {
@@ -29,13 +29,13 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "description",
-			header: "Description",
+			header: "描述",
 			field: "description",
 			sortBy: true,
 		},
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			sortBy: true,
 			renderCell: (row: ChallengeSets) => {

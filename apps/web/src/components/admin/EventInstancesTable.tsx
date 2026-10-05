@@ -13,7 +13,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 	const columns = [
 		{
 			accessorKey: "instance_type",
-			header: "Type",
+			header: "类型",
 			field: "instance_type",
 			rowHeader: true,
 			renderCell: (row: AdminInstanceRow) => (
@@ -24,7 +24,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "status",
-			header: "Status",
+			header: "状态",
 			field: "status",
 		},
 		{
@@ -37,7 +37,7 @@ export function EventInstancesTable({ eventId }: { eventId: string }) {
 		},
 		{
 			accessorKey: "content_title",
-			header: "Content",
+			header: "内容",
 			field: "content_title",
 			renderCell: (row: AdminInstanceRow) => (
 				<span>{row.content_title ?? row.challenge_id ?? row.gamebox_id ?? "-"}</span>

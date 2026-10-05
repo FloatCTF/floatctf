@@ -186,7 +186,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			label: "名称",
 			rowHeader: true,
@@ -194,20 +194,20 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "safe_name",
-			header: "Safe Name",
+			header: "安全名",
 			field: "safe_name",
 			label: "标识",
 		},
 		{
 			accessorKey: "version",
-			header: "Version",
+			header: "版本",
 			field: "version",
 			label: "版本",
 			renderCell: (row: GameBoxLibraryDto) => <span>{row.version ?? "-"}</span>,
 		},
 		{
 			accessorKey: "image_ref",
-			header: "Image",
+			header: "镜像",
 			field: "image_ref",
 			renderCell: (row: GameBoxLibraryDto) => (
 				<span>
@@ -218,7 +218,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "hidden",
-			header: "Hidden",
+			header: "隐藏",
 			field: "hidden",
 			renderCell: (row: GameBoxLibraryDto) => (
 				<span>{row.hidden ? <CheckIcon size={16} /> : <></>}</span>
@@ -336,26 +336,26 @@ export function ScanButton() {
 		() => [
 			{
 				accessorKey: "safe_name",
-				header: "Safe Name",
+				header: "安全名",
 				field: "safe_name",
 				label: "标识",
 				rowHeader: true,
 			},
 			{
 				accessorKey: "name",
-				header: "Name",
+				header: "名称",
 				field: "name",
 				label: "名称",
 			},
 			{
 				accessorKey: "version",
-				header: "Version",
+				header: "版本",
 				field: "version",
 				label: "版本",
 			},
 			{
 				accessorKey: "status",
-				header: "Status",
+				header: "状态",
 				field: "status",
 				label: "状态",
 				renderCell: (row: GameBoxScanItem) => (
@@ -406,7 +406,7 @@ export function ScanButton() {
 				</Dialog>
 			)}
 			<Button onClick={handleScan} disabled={loading}>
-				{loading ? "Scanning..." : "Scan"}
+				{loading ? "Scanning..." : "扫描"}
 			</Button>
 		</>
 	);

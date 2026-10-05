@@ -49,23 +49,23 @@ function RouteComponent() {
         },
         {
             accessorKey: "user.username",
-            header: "Username",
+            header: "用户名",
             field: "user.username",
         },
         {
             accessorKey: "user.nickname",
-            header: "Nickname",
+            header: "昵称",
             field: "user.nickname",
         },
         {
             accessorKey: "event_user.points",
-            header: "Points",
+            header: "分值",
             field: "event_user.points",
             sortBy: true,
         },
         {
             accessorKey: "event_user.banned",
-            header: "Banned",
+            header: "已封禁",
             field: "event_user.banned",
             renderCell: (row: EventUserResult) => {
                 return (
@@ -160,13 +160,13 @@ function AddUserButton({
         { accessorKey: "id", header: "ID", field: "id", rowHeader: true },
         {
             accessorKey: "username",
-            header: "Username",
+            header: "用户名",
             field: "username",
             sortBy: true,
         },
         {
             accessorKey: "nickname",
-            header: "Nickname",
+            header: "昵称",
             field: "nickname",
             sortBy: true,
         },

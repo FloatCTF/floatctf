@@ -32,7 +32,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			label: "名称",
 			renderCell: (row: ChallengeSets) => {
@@ -46,7 +46,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "description",
-			header: "Description",
+			header: "描述",
 			field: "description",
 			label: "描述",
 			sortBy: true,
@@ -56,7 +56,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "created_at",
-			header: "Created At",
+			header: "创建时间",
 			field: "created_at",
 			sortBy: true,
 			renderCell: (row: ChallengeSets) => {

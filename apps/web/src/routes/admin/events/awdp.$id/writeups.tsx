@@ -19,18 +19,18 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "user_id",
-			header: "User ID",
+			header: "用户 ID",
 			field: "user_id",
 			rowHeader: true,
 		},
 		{
 			accessorKey: "team_id",
-			header: "Team ID",
+			header: "队伍 ID",
 			field: "team_id",
 		},
 		{
 			accessorKey: "file_url",
-			header: "File URL",
+			header: "文件地址",
 			field: "file_url",
 			renderCell: (row: EventWriteup) => {
 				return (
@@ -45,7 +45,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "created_at",
-			header: "Created At",
+			header: "创建时间",
 			field: "created_at",
 			renderCell: (row: EventWriteup) => {
 				return <span>{DatetimeToShow(row.created_at)}</span>;

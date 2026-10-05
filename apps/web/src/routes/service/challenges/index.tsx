@@ -19,7 +19,7 @@ function RouteComponent() {
 	const columns = [
 		{
 			accessorKey: "name",
-			header: "Name",
+			header: "名称",
 			field: "name",
 			rowHeader: true,
 			renderCell: (row: ChallengesListItem) => {
@@ -33,12 +33,12 @@ function RouteComponent() {
 
 		{
 			accessorKey: "category",
-			header: "Category",
+			header: "分类",
 			field: "category",
 		},
 		{
 			accessorKey: "solved",
-			header: "Solved",
+			header: "已解出",
 			field: "solved",
 			renderCell: (row: ChallengesListItem) => {
 				return row.solved ? (
@@ -48,7 +48,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "author",
-			header: "Author",
+			header: "作者",
 			field: "author",
 			renderCell: (row: ChallengesListItem) => {
 				return <span>{row.author || "—"}</span>;
@@ -56,7 +56,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "version",
-			header: "Version",
+			header: "版本",
 			field: "version",
 			renderCell: (row: ChallengesListItem) => {
 				return <span>{row.version ?? "—"}</span>;
@@ -64,7 +64,7 @@ function RouteComponent() {
 		},
 		{
 			accessorKey: "updated_at",
-			header: "Updated At",
+			header: "更新时间",
 			field: "updated_at",
 			renderCell: (row: ChallengesListItem) => {
 				return <span>{DatetimeToShow(row.updated_at)}</span>;

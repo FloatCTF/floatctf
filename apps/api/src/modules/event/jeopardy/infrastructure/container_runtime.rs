@@ -34,6 +34,13 @@ pub trait InstanceRuntime: Send + Sync {
     async fn launch(&self, spec: &ChallengeRuntimeSpec, identifier: &str) -> anyhow::Result<u16>;
     async fn stop_and_remove(&self, identifier: &str) -> anyhow::Result<()>;
 
+    /// 列出平台实例容器（`JS-`/`JT-` 前缀），供孤儿回收使用（F58）。
+    ///
+    /// 默认空实现：仅真实 Docker 运行时需要；测试/内存实现不受影响。
+    async fn list_instance_containers(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     /// 容器是否仍存在（F54 存活性对账用）。
     ///
     /// 默认返回 true（不参与对账），便于 mock/测试实现无需关心；Docker 实现会区分
@@ -113,6 +120,23 @@ impl InstanceRuntime for DockerInstanceRuntime {
         self.runtime
             .stop_and_remove(identifier, IMMEDIATE_STOP_TIMEOUT)
             .await
+    }
+
+    async fn list_instance_containers(&self) -> anyhow::Result<Vec<String>> {
+        // 与 container_exists 同一数据源（列表接口在平台内被稳定使用）。
+        // 仅返回平台自身的实例命名前缀，避免误伤其他容器。
+        let all = self
+            .runtime
+            .list_containers(fcmc::ContainerFilter {
+                all: true,
+                ..Default::default()
+            })
+            .await?;
+        Ok(all
+            .into_iter()
+            .map(|c| c.container_name.trim_start_matches('/').to_string())
+            .filter(|name| name.starts_with("JS-") || name.starts_with("JT-"))
+            .collect())
     }
 
     async fn container_exists(&self, identifier: &str) -> anyhow::Result<bool> {

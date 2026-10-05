@@ -40,6 +40,12 @@ impl TaskHandler for CleanRunningInstancesHandler {
             Ok(_) => {}
             Err(error) => tracing::warn!(error = %error, "[Liveness] 对账失败，继续执行 TTL 清理"),
         }
+        // F58：回收「赛事已被删除但容器仍在」的孤儿实例容器。
+        match service.reap_orphan_containers().await {
+            Ok(n) if n > 0 => tracing::info!(reaped = n, "[Orphan] 孤儿实例容器已回收"),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(error = %error, "[Orphan] 回收失败，继续执行 TTL 清理"),
+        }
         let report = service.cleanup_running().await?;
 
         for instance_id in report.completed {

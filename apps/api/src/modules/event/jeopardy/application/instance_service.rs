@@ -267,6 +267,48 @@ impl InstanceService {
     ///
     /// 仅处理 `updated_at` 早于 `min_age_secs` 的记录（避免与刚启动的实例竞态），
     /// 且只在运行时**确定**容器不存在时收敛；docker 抖动等错误只记日志、不动状态。
+    /// F58：回收「赛事已删除但容器仍在」的孤儿实例容器。
+    ///
+    /// 删除赛事此前只拆除 AWD 运行时（`gamebox_repo::find_instances_by_event`），
+    /// Jeopardy 的 `JS-`/`JT-` 实例容器会残留 —— 实测删除 3 个赛事后仍有 6 个容器
+    /// 在运行。容器名内嵌赛事 id 前 8 位，故按前缀核对 `events`：赛事不存在即回收。
+    /// 赛事 id 是 uuid v4，不会被复用，因此无需时间窗保护。
+    pub async fn reap_orphan_containers(&self) -> anyhow::Result<usize> {
+        let containers = self.runtime.list_instance_containers().await?;
+        let mut reaped = 0usize;
+        for name in containers {
+            let mut parts = name.trim_start_matches('/').split('-');
+            match parts.next() {
+                Some("JS") | Some("JT") => {}
+                _ => continue,
+            }
+            let Some(event_prefix) = parts.next() else {
+                continue;
+            };
+            if event_prefix.len() < 8 {
+                continue;
+            }
+            match repo::event_exists_by_prefix(&self.db, &event_prefix[..8]).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(container = %name, error = %error, "[Orphan] 赛事存在性查询失败，跳过");
+                    continue;
+                }
+            }
+            match self.runtime.stop_and_remove(&name).await {
+                Ok(()) => {
+                    reaped += 1;
+                    tracing::info!(container = %name, "[Orphan] 已回收孤儿实例容器");
+                }
+                Err(error) => {
+                    tracing::warn!(container = %name, error = %error, "[Orphan] 回收失败，下次重试");
+                }
+            }
+        }
+        Ok(reaped)
+    }
+
     pub async fn reconcile_missing_containers(&self, min_age_secs: i64) -> anyhow::Result<usize> {
         let candidates = repo::list_running_older_than(&self.db, min_age_secs).await?;
         tracing::info!(

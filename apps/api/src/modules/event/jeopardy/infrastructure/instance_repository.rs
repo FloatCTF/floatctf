@@ -4,8 +4,8 @@
 //! 运行时身份（容器名/状态/过期）在 `instances`；查询一律 join。
 
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
-    QuerySelect,
+    ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait,
+    QueryFilter, QuerySelect,
 };
 use uuid::Uuid;
 
@@ -134,6 +134,19 @@ pub async fn delete_completed_by_container_name(
         .exec(db)
         .await?;
     Ok(result.rows_affected)
+}
+
+/// 赛事是否仍存在（按 id 前 8 位十六进制前缀查询）。孤儿回收用（F58）。
+pub async fn event_exists_by_prefix(
+    db: &DatabaseConnection,
+    prefix: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    let stmt = sea_orm::Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "SELECT 1 FROM events WHERE id::text LIKE $1 LIMIT 1",
+        [format!("{prefix}%").into()],
+    );
+    Ok(db.query_one(stmt).await?.is_some())
 }
 
 /// 流转 instances.runtime_state（expected → next），乐观并发保护。

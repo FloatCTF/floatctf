@@ -431,9 +431,18 @@
 | 5 | 动态 flag 题型缺失 | 用仓库自带 `examples/test-c`（`[flag] type="dynamic"`）部署为 `dynflagdemo`：以 uid 65532 写入生产题目目录（无需 sudo）→ 手动构建镜像 → `challenges/import` 上传 zip（**版本门禁**要求升版本 1.0.0→1.0.1）→ `build_status=ready` ✓。验证：实例容器 `/flag` 为**每实例唯一 UUID**（同赛事不同用户 `flag{d5942da1…}` vs `flag{ab40cfe4…}`）✓，`FLAG` 注入+`unset` 契约生效 ✓；提交走同一 `POST /submit/flag`（该写路径此前已多轮实测）✓ |
 | 6 | 删除/归档路径不顺滑 | 归档 handler 在赛事未结束时**先自动走一次结束流程**；仍不可归档则返回含当前状态的中文提示 ✓（实测 `VerificationFailed` 赛事归档返回「赛事当前状态为 VerificationFailed，需先结束（finish）后才能归档；若仅想删除测试赛事，直接调用删除接口即可」✓）|
 
-### F58（本轮新发现，待修）：删除赛事不销毁实例容器
+### F58（已修 + 已验证）：删除赛事不销毁实例容器
 
-现场取证：动态 flag 实例容器命名为 **`JS-<赛事8>-<用户8>-<题目8>`**，**删除赛事后容器仍在运行** ✗。我用三个已删除赛事（`eeb3e7ae`/`531941b8`/`a6d3c984`）留下 **6 个 `JS-*` 容器**仍在 `docker ps` 中 ✓（`/flag` 仍可读）——即 **`DELETE /admin/events` 未级联清理实例容器** ✗，与 AWD 侧「删除后容器/网络随之回收 ✓」不一致。已按护栏删除 6 个孤儿容器（仅删赛事已不存在者，保留 0）✓；根因与修复待下轮（参考 F54 的对账思路）。
+现场取证：动态 flag 实例容器命名为 **`JS-<赛事8>-<用户8>-<题目8>`**，**删除赛事后容器仍在运行** ✗。我用三个已删除赛事（`eeb3e7ae`/`531941b8`/`a6d3c984`）留下 **6 个 `JS-*` 容器**仍在 `docker ps` 中 ✓（`/flag` 仍可读）——即 **`DELETE /admin/events` 未级联清理实例容器** ✗，与 AWD 侧「删除后容器/网络随之回收 ✓」不一致。已按护栏删除 6 个孤儿容器（仅删赛事已不存在者，保留 0）✓。
+
+**根因**：删除赛事只 snapshot/teardown **AWD** 运行时（`gamebox_repo::find_instances_by_event` → `snapshot_event_runtime`），**Jeopardy 的 `event_instances` 容器从未被处理** ✗。
+
+**修复**（参照 F54 的对账思路，做成周期性安全网，同时覆盖"删除中途崩溃"）：
+1. `InstanceRuntime` 新增 `list_instance_containers()`（默认空实现，仅 Docker 实现真正列举，按平台自身 `JS-`/`JT-` 前缀过滤，避免误伤其他容器）；
+2. 新增 `InstanceService::reap_orphan_containers()`：容器名内嵌赛事 id 前 8 位 → 按前缀核对 `events` 表 → **赛事已不存在即回收容器**（赛事 id 是 uuid v4 不会被复用，故无需时间窗保护）；
+3. 接入 `CleanRunningInstancesHandler`（`system.practice.clean`，cron `*/30 * * * * *`），与 F54 的存活性对账相邻执行。
+
+**验证（生产）**：建赛 → 加入 → 开赛 → 启动实例（容器 `JS-9569a53d-32d415c9-bcdfd266` 确认存在 True）→ **删除赛事** → 容器在 **~20 秒内被回收** ✓，日志留痕「[Orphan] 已回收孤儿实例容器 container=JS-9569a53d-… / reaped=1」✓。全量回归 PASS ✓。
 
 ### 覆盖度说明（诚实标注）
 

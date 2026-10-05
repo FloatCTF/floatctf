@@ -896,7 +896,13 @@ async fn duplicate_attack_no_double_score() {
     )
     .await;
 
-    assert!(result.is_err(), "duplicate should be rejected");
+    // 重复提交必须是业务冲突：SeaORM 事务默认把闭包错误拍平成 DbErr，
+    // 一旦回退成 Database(500) 用户只会看到「服务器内部错误」。
+    match result {
+        Err(floatctf::modules::event::awd::AwdError::Conflict(_)) => {}
+        Err(other) => panic!("duplicate submission must be Conflict, got {other:?}"),
+        Ok(_) => panic!("duplicate submission must be rejected with a business conflict"),
+    }
 
     // Still exactly one Attack and one VictimLoss
     assert_eq!(

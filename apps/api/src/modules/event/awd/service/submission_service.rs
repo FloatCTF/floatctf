@@ -40,8 +40,10 @@ pub async fn process_submission(
     event_gamebox_id: Uuid,
     publisher: &dyn crate::infrastructure::realtime::EventPublisher,
 ) -> AwdResult<SubmissionResult> {
+    // 用带类型的 TransactionError 承载 AwdError：SeaORM 的 `transaction` 默认把闭包错误
+    // 拍平成 DbErr，业务冲突（如重复提交同一 flag）会被当成 500 数据库错误返回。
     let result = db
-        .transaction(|tx| {
+        .transaction::<_, _, AwdError>(|tx| {
             Box::pin(async move {
                 // 1. Check if this team already submitted for this instance this round
                 let already_submitted = flag_repo::has_submission(
@@ -56,7 +58,7 @@ pub async fn process_submission(
 
                 if already_submitted {
                     return Err(AwdError::Conflict(
-                        "Already submitted this flag for this target this round".into(),
+                        "本轮已提交过该目标的 flag".into(),
                     ));
                 }
 
@@ -75,7 +77,7 @@ pub async fn process_submission(
                 .map_err(|e| {
                     let msg = e.to_string();
                     if msg.contains("duplicate") || msg.contains("unique") {
-                        AwdError::Conflict("Already submitted (concurrent request)".into())
+                        AwdError::Conflict("该 flag 已提交（并发请求）".into())
                     } else {
                         AwdError::Database(msg)
                     }
@@ -106,7 +108,7 @@ pub async fn process_submission(
                 .map_err(|e| {
                     let msg = e.to_string();
                     if msg.contains("duplicate") || msg.contains("unique") {
-                        AwdError::Conflict("Attack already scored".into())
+                        AwdError::Conflict("该攻击已计分，请勿重复提交".into())
                     } else {
                         AwdError::Database(msg)
                     }
@@ -173,7 +175,13 @@ pub async fn process_submission(
             })
         })
         .await
-        .map_err(|e| AwdError::Database(format!("Transaction failed: {}", e)))?;
+        .map_err(|error| match error {
+            // 事务内的业务错误（重复提交、自攻击等）原样上抛，交由 API 层映射成 4xx。
+            sea_orm::TransactionError::Transaction(business) => business,
+            sea_orm::TransactionError::Connection(db_error) => {
+                AwdError::Database(format!("Transaction failed: {db_error}"))
+            }
+        })?;
 
     // P3-7：DB commit 后发布 score.changed（best-effort，不回滚业务）
     let _ = publisher

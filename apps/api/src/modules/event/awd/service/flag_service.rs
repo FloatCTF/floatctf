@@ -170,7 +170,7 @@ pub async fn validate_submission(
     let issue = flag_repo::find_issue_by_hash(db, event_id, round.id, &flag_hash_str)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("Invalid or expired flag".into()))?;
+        .ok_or_else(|| AwdError::NotFound("flag 无效或已过期".into()))?;
 
     // 4. Get GameBox instance to find victim team（pair：扩展 + 归一化根）
     let (instance, _root) = gamebox_repo::find_instance_by_id(db, issue.gamebox_instance_id)
@@ -183,7 +183,7 @@ pub async fn validate_submission(
     // 5. Reject self-attack
     if victim_team_id == attacker_team_id {
         return Err(AwdError::Forbidden(
-            "Cannot submit your own team's flag".into(),
+            "不能提交本队自己的 flag".into(),
         ));
     }
 

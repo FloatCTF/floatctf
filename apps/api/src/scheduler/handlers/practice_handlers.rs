@@ -30,7 +30,7 @@ impl TaskHandler for CleanRunningInstancesHandler {
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         info!("{} CleanRunningInstancesHandler", self.task_key());
 
-        info!("{} task is running : {:?}", self.task_key(), &task);
+        info!(task_key = %self.task_key(), "scheduler task is running");
 
         let service =
             InstanceService::with_docker(self.db.get_ref().clone(), self.docker.get_ref().clone());

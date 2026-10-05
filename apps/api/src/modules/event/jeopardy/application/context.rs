@@ -166,7 +166,7 @@ impl EventContext {
         match self.time_status() {
             EventTimeStatus::NotStarted => Ok(()),
             EventTimeStatus::Ongoing => Err(anyhow!("Event is ongoing")),
-            EventTimeStatus::Ended => Err(anyhow!("Event is ended")),
+            EventTimeStatus::Ended => Err(anyhow!("赛事已结束，无法提交 flag")),
         }
     }
 
@@ -174,7 +174,7 @@ impl EventContext {
         match self.time_status() {
             EventTimeStatus::NotStarted => Err(anyhow!("赛事尚未开始")),
             EventTimeStatus::Ongoing => Ok(()),
-            EventTimeStatus::Ended => Err(anyhow!("Event is ended")),
+            EventTimeStatus::Ended => Err(anyhow!("赛事已结束，无法提交 flag")),
         }
     }
 

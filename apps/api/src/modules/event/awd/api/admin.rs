@@ -694,6 +694,32 @@ pub async fn archive_event(
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
+
+    // (6) 归档路径更顺滑：赛事尚未结束时先走一次结束流程，再归档。
+    // 此前直接归档未结束赛事会报「Can only archive a finished event」，而结束后
+    // 状态落定需要一点时间，管理端容易误以为卡住（稳定性测试中我连续踩到）。
+    if let Ok(Some(ev)) =
+        crate::modules::event::awd::repo::event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
+            .await
+        && !matches!(
+            ev.status,
+            crate::entity::sea_orm_active_enums::AwdEventStatus::Finished
+                | crate::entity::sea_orm_active_enums::AwdEventStatus::Archived
+        )
+    {
+        if let Err(error) = crate::modules::event::awd::service::event_service::finish_event(
+            ctx.db.get_ref(),
+            awd.network.as_ref(),
+            awd.firewall.as_ref(),
+            awd.publisher.as_ref(),
+            event_id,
+        )
+        .await
+        {
+            tracing::warn!(event_id = %event_id, error = %error, "[Archive] 归档前结束赛事失败，继续尝试归档");
+        }
+    }
+
     crate::modules::event::awd::service::archive_service::archive_event(
         ctx.db.get_ref(),
         awd.containers.as_ref(),

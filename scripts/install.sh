@@ -457,7 +457,8 @@ services:
         restart: unless-stopped
         ports:
             - "127.0.0.1:${REDIS_PORT:-6380}:6379"
-        command: ["redis-server", "--appendonly", "yes"]
+        # 稳定性：内存上限 + allkeys-lru（Redis 仅承载可重建数据）
+        command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
         volumes:
             - floatctf-redis-data:/data
         healthcheck:
@@ -503,6 +504,11 @@ services:
         security_opt:
             - no-new-privileges:true
         read_only: true
+        # 稳定性：抬高文件描述符上限（此前 soft 1024）
+        ulimits:
+            nofile:
+                soft: 65536
+                hard: 65536
         tmpfs:
             - /tmp:rw,noexec,nosuid,nodev,size=64m
         environment:

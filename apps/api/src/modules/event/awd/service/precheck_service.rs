@@ -157,7 +157,7 @@ pub async fn run_precheck(
     if teams.is_empty() {
         errors.push((
             "teams".to_string(),
-            "No teams registered for this event".into(),
+            "本赛事尚无参赛队伍（请先让选手建队/加入后再预检）".into(),
         ));
     }
 

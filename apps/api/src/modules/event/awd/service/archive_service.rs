@@ -48,9 +48,10 @@ pub async fn archive_event(
         return Ok(());
     }
     if awd_event.status != AwdEventStatus::Finished {
-        return Err(AwdError::InvalidState(
-            "Can only archive a finished event".into(),
-        ));
+        return Err(AwdError::InvalidState(format!(
+            "赛事当前状态为 {:?}，需先结束（finish）后才能归档；若仅想删除测试赛事，直接调用删除接口即可",
+            awd_event.status
+        )));
     }
 
     // 1. Stop and remove every event-owned container before removing its Docker network.

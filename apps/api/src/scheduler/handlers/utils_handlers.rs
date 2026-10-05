@@ -25,7 +25,7 @@ impl TaskHandler for CleanUnusedRustFSFilesHandler {
     async fn run(&self, task: scheduled_tasks::Model) -> anyhow::Result<()> {
         info!("{} CleanRunningInstancesHandler", self.task_key());
         // check images mainly
-        info!("{} task is running : {:?}", self.task_key(), &task);
+        info!(task_key = %self.task_key(), "scheduler task is running");
         Ok(())
     }
 }

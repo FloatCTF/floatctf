@@ -420,6 +420,21 @@
 
 现网 12 道题 **全部为 `static`** ✗（无动态 flag 样本）。但**动态 flag 写路径已由 AWD 覆盖** ✓：AWD 的 flag 由 FlagServer **按回合动态下发**（第 13 轮实测 `:8080/flag` 端点），并在 10 并发提交下验证了「只计分一次」✓。若需 Jeopardy 专属的动态 flag 覆盖，需先建一道 `flag_type=dynamic` 的题目（待办）。
 
+### 遗留项处理批次（第 18 轮，6 项全做）
+
+| # | 项 | 处置与验证 |
+|---|---|---|
+| 1 | Redis 无内存上限 | 生产 compose 与安装模板均加 `--maxmemory 1gb --maxmemory-policy allkeys-lru`（Redis 仅承载限流计数/终端票据/广播/调度唤醒等**可重建**数据）；实测 `maxmemory=1073741824`、`policy=allkeys-lru`、使用 1.09M ✓ |
+| 2 | API nofile soft limit 1024 | compose 加 `ulimits.nofile soft/hard=65536`；实测容器内 `ulimit -n = 65536`、healthy、功能正常 ✓ |
+| 3 | 英文错误文案 | `Event is ended` → 「赛事已结束，无法提交 flag」；`No teams registered for this event` → 「本赛事尚无参赛队伍（请先让选手建队/加入后再预检）」；归档错误 → 含当前状态的中文提示 ✓（实测响应已中文化 ✓）|
+| 4 | 清理任务日志噪音 | `info!("{} task is running : {:?}", …, &task)` → `info!(task_key=…, "scheduler task is running")`；实测日志只剩新格式、不再打印整条 Model ✓ |
+| 5 | 动态 flag 题型缺失 | 用仓库自带 `examples/test-c`（`[flag] type="dynamic"`）部署为 `dynflagdemo`：以 uid 65532 写入生产题目目录（无需 sudo）→ 手动构建镜像 → `challenges/import` 上传 zip（**版本门禁**要求升版本 1.0.0→1.0.1）→ `build_status=ready` ✓。验证：实例容器 `/flag` 为**每实例唯一 UUID**（同赛事不同用户 `flag{d5942da1…}` vs `flag{ab40cfe4…}`）✓，`FLAG` 注入+`unset` 契约生效 ✓；提交走同一 `POST /submit/flag`（该写路径此前已多轮实测）✓ |
+| 6 | 删除/归档路径不顺滑 | 归档 handler 在赛事未结束时**先自动走一次结束流程**；仍不可归档则返回含当前状态的中文提示 ✓（实测 `VerificationFailed` 赛事归档返回「赛事当前状态为 VerificationFailed，需先结束（finish）后才能归档；若仅想删除测试赛事，直接调用删除接口即可」✓）|
+
+### F58（本轮新发现，待修）：删除赛事不销毁实例容器
+
+现场取证：动态 flag 实例容器命名为 **`JS-<赛事8>-<用户8>-<题目8>`**，**删除赛事后容器仍在运行** ✗。我用三个已删除赛事（`eeb3e7ae`/`531941b8`/`a6d3c984`）留下 **6 个 `JS-*` 容器**仍在 `docker ps` 中 ✓（`/flag` 仍可读）——即 **`DELETE /admin/events` 未级联清理实例容器** ✗，与 AWD 侧「删除后容器/网络随之回收 ✓」不一致。已按护栏删除 6 个孤儿容器（仅删赛事已不存在者，保留 0）✓；根因与修复待下轮（参考 F54 的对账思路）。
+
 ### 覆盖度说明（诚实标注）
 
 **已补上（第 10 轮）**：用真实 flag 压到了「提交正确 → 写 solve」路径，6,320 次并发提交零失败、DB 无重复计分 ✓。已补：③ 突增尖峰 ✓（第 11 轮）、④ 轮询路径已修正并重测真实读路径 ✓（第 11/12 轮，多进程 702 RPS 零 5xx）、FD 泄漏 ✓（第 12 轮）。已补：② **AWD 多回合在负载下的回合切换与结算** ✓（第 13 轮，见上）。已补：③ **AWD 攻击/计分写在负载下** ✓（第 13 轮，见上）。仍待补：① 动态 flag：Jeopardy 侧无样本（已由 AWD 动态 flag 覆盖 ✓）；④ 同时开赛 ✓；⑤ F57 ✓；⑥ **结算边界并发 ✓**（第 17 轮）；⑦ 遗留：`Event is ended` 等少量英文文案、Redis 未设 maxmemory、API nofile soft limit 1024、清理任务 INFO 打印整条 Model。

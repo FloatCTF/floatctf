@@ -369,6 +369,19 @@
 
 首次建赛事时我设了 `hidden=true` ✗ → 玩家建队接口返回 404「未找到该赛事」✗ → **0 支队伍** → `precheck` 后状态变为 **`VerificationFailed`**，但**验证失败的具体原因没有返回**（仅提示"需先完成验证"）✗ —— 管理员只能靠推断。建议：`precheck` 失败时返回具体校验项与原因（如「赛事不可见，玩家无法建队」「参赛队伍数为 0」）。
 
+### 下一步执行手册：AWD 攻击/计分写在负载下（第 14 轮已备好路径）
+
+已确认的接口与前置条件（下轮照此执行即可）：
+
+1. **建赛**：`POST /admin/events`，`family=awd`、`participant_mode=team`、**`hidden=false`**（否则玩家看不到赛事、建队返回 404「未找到该赛事」→ 0 队伍 → `VerificationFailed`，见 F57），窗口 = **回合数 × 回合时长**（如 2×60s=120s → 硬化=0，`start` 后立即进入 `attack`）。
+2. **配置/网络/靶机**：`POST /admin/events/awd`（`round_count`/`round_duration_secs` 等）→ `PUT /admin/events/{id}/awd/network {"allocation_mode":"automatic"}` → `POST /admin/events/{id}/awd/gameboxes {"gamebox_id":…}`（可用 `test-g`，含判题与 exploit 脚本）。
+3. **两队**：qa01/qa02 各 `POST /events/{id}/team {"name":…}`（**必须在 deploy 之前**，验证会检查参赛队伍）。
+4. **部署与开赛**：`POST /admin/events/{id}/awd/deploy` → `POST …/awd/precheck` → `POST …/awd/start`（成功时 `status=running, phase=attack`）。
+5. **取 flag**：平台由 `awd/service/flag_service::issue_flag` 按回合下发；实测可从队伍容器直接读取（上一会话的做法），或走管理端/FlagServer。
+6. **跨队提交（待补测的写路径）**：`POST /api/events/{event_id}/awd/submissions`（选手 JWT；body 目标字段需确认，参照 `awd/api/player.rs::submit_flag`）。
+7. **幂等核验**：同一有效 flag **并发提交 N 次** → 分数（按攻击者/目标/回合）只应增加一次；同时核对 `awd_submissions` 无重复计分行、`events` 无 5xx。
+8. **清理**：`POST …/awd/finish` →（等状态落定）`POST …/awd/archive` → `DELETE /admin/events {"id_list":[…]}`；实测容器与网络**随之全部回收** ✓。
+
 ### 覆盖度说明（诚实标注）
 
 **已补上（第 10 轮）**：用真实 flag 压到了「提交正确 → 写 solve」路径，6,320 次并发提交零失败、DB 无重复计分 ✓。已补：③ 突增尖峰 ✓（第 11 轮）、④ 轮询路径已修正并重测真实读路径 ✓（第 11/12 轮，多进程 702 RPS 零 5xx）、FD 泄漏 ✓（第 12 轮）。已补：② **AWD 多回合在负载下的回合切换与结算** ✓（第 13 轮，见上）。仍待补：① 动态 flag 写路径；③ **AWD 攻击/计分写在负载下**（第 13 轮负载为只读 ✗，未压到跨队提交与计分）；④ 同时开赛 / 结算瞬间并发；⑤ F57 的修复。

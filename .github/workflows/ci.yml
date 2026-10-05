@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [awd, main, master]
   pull_request:
-    branches: [master, main]
+    branches: [awd, main, master]
   workflow_dispatch:
 
 permissions:
@@ -13,10 +13,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# 三层分层（chore/plans/awd/05-phase5-hardening.md §5.11）：
+# 三层分层（CI-fast / CI-docker / CI-host-network，见下）：
 #   CI-fast（PR 必跑）        —— 单测 + mock + 架构/安全 grep
 #   CI-docker（PR 或 on-demand）—— Docker E2E（Flag/Judge smoke + 场景 A/B/C/G/H）
-#   CI-host-network（nightly/manual）—— root + nftables/WG 系统级场景 D/E/F/I
+#   CI-host-network（手动触发）—— root + nftables/WG 系统级场景 D/E/F/I
 jobs:
   fast-rust:
     name: CI-fast · Rust unit + security grep
@@ -27,14 +27,34 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all
+      # 注意：`cargo fmt --all` 是「写入模式」，即使有格式违规也退出 0（只是静默改写文件），
+      # 因此它不是门禁；必须用 `-- --check` 才会在违规时非零退出。
+      - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo test --workspace --lib
       - name: Security architecture grep (P5-12)
         run: |
-          if grep -rn 'vec!\[0u8; 32\]' apps/api/src/bootstrap; then echo "FAIL: zero-key fallback"; exit 1; fi
-          if grep -rn 'nft flush ruleset' apps/api/src; then echo "FAIL: nft flush ruleset forbidden"; exit 1; fi
-          if grep -rn 'sh -c' apps/api/src/modules/event/awd_team; then echo "FAIL: shell concat forbidden"; exit 1; fi
+          # 两个坑，都曾让守卫失真：
+          #  1) grep 对不存在的路径返回 2，直接放进 `if` 会「静默放行」→ 先断言路径存在；
+          #  2) 注释里「提到」禁止项也会命中 → 只检查非注释行，并限定 *.rs
+          #     （apps/api/src/sql/ 下是冻结的 migrations，不该被这些守卫约束）。
+          for p in apps/api/src/bootstrap apps/api/src apps/api/src/modules/event/awd apps/api/src/modules/event/awdp; do
+            [ -d "$p" ] || { echo "FAIL: $p missing (path drifted; guard would silently pass)"; exit 1; }
+          done
+          # 过滤掉 Rust 注释行：`//`、`/*`、块注释续行 `* `、结束行 `*/`。
+          # 注意用 `\*[[:space:]]` 而非裸 `\*`，否则会误滤以解引用开头的真实代码行（`*ptr = ..`）。
+          code_only() { grep -vE ':[0-9]+:[[:space:]]*(//|/\*|\*[[:space:]]|\*/)'; }
+          if grep -rn --include='*.rs' 'vec!\[0u8; 32\]' apps/api/src/bootstrap | code_only; then
+            echo "FAIL: zero-key fallback"; exit 1
+          fi
+          if grep -rn --include='*.rs' 'nft flush ruleset' apps/api/src | code_only; then
+            echo "FAIL: nft flush ruleset forbidden"; exit 1
+          fi
+          for d in apps/api/src/modules/event/awd apps/api/src/modules/event/awdp; do
+            if grep -rn --include='*.rs' 'sh -c' "$d" | code_only; then
+              echo "FAIL: shell concat forbidden in $d"; exit 1
+            fi
+          done
           echo "security greps OK"
 
   fast-web:

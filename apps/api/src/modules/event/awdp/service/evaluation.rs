@@ -3,14 +3,14 @@
 use std::time::Duration;
 
 use bollard::Docker;
-use fcmc::{ContainerRuntime, DockerContainerRuntime};
+use fcmc::{ContainerRuntime, DockerContainerRuntime, ExecOptions};
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::infrastructure::script_runner::{parse_batch_results, run_script};
+use crate::infrastructure::script_runner::{ScriptOutcome, parse_batch_results, run_script};
 use crate::modules::event::awdp::{
     AwdpError, AwdpResult,
-    domain::fix_idempotency_key,
+    domain::{fix_idempotency_key, judge::event_judge_container_name},
     repo::{
         evaluation_repo, event_gamebox_repo, instance_repo, patch_repo, round_repo, run_repo,
         score_repo,
@@ -66,6 +66,186 @@ pub async fn manual_check_enqueue(
     }
     let evaluation = evaluation_repo::create_manual(db, run_id, instance_id).await?;
     Ok(evaluation)
+}
+
+/// 在赛事数据面（JudgeServer 容器）内执行 python 脚本。
+///
+/// 生产部署中 API 只接控制网（`fctf-platform-control`），**无法直连赛事数据网**，
+/// 因此 manual Test Check 的 health/judge/exploit 不能在本进程执行；改为把脚本经
+/// helper 的 `docker exec` 送进数据网内的 JudgeServer 容器（stdin 传脚本），
+/// 与 official 评测保持同一数据面视角。
+/// 优先在数据面执行；容器缺失/不可用时回落到进程内执行（dev 与集成测试场景）。
+/// 数据面执行开关（动态设置 `AWDP_DATA_PLANE_EXEC`）。
+///
+/// 生产部署中 API 只在控制网，无法直连赛事数据网 → 必须开启，让 health/judge/
+/// exploit 在赛事数据面的 JudgeServer 容器内执行；默认关闭保持既有进程内行为
+/// （dev/测试环境 API 在宿主网络，进程内执行即可）。
+async fn data_plane_exec_enabled(db: &DatabaseConnection) -> bool {
+    crate::infrastructure::settings::get_setting(db, "AWDP_DATA_PLANE_EXEC")
+        .await
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "true" || v == "1"
+        })
+        .unwrap_or(false)
+}
+
+/// 按开关选择执行位置：开启时优先数据面，容器不可用则回落进程内。
+async fn run_script_preferring_data_plane(
+    runtime: &DockerContainerRuntime,
+    event_id: Uuid,
+    prefer_data_plane: bool,
+    script: &str,
+    args: &[String],
+    timeout: Duration,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) -> Result<ScriptOutcome, String> {
+    if prefer_data_plane {
+        match exec_in_data_plane(runtime, event_id, script, args, timeout).await {
+            Ok(outcome) => return Ok(outcome),
+            Err(e) => {
+                tracing::debug!(error = %e, "data-plane exec unavailable, falling back to in-process runner");
+            }
+        }
+    }
+    run_script(
+        script,
+        "python3",
+        args,
+        &[],
+        timeout,
+        stdout_limit,
+        stderr_limit,
+    )
+    .await
+}
+
+async fn exec_in_data_plane(
+    runtime: &DockerContainerRuntime,
+    event_id: Uuid,
+    script: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Result<ScriptOutcome, String> {
+    let container = event_judge_container_name(event_id);
+    let mut cmd = vec!["python3".to_string(), "-".to_string()];
+    cmd.extend(args.iter().cloned());
+    let outcome = runtime
+        .exec(
+            &container,
+            ExecOptions {
+                cmd,
+                env: Vec::new(),
+                workdir: None,
+                timeout,
+                stdin: Some(script.as_bytes().to_vec()),
+                stdout_limit: 64 * 1024,
+                stderr_limit: 16 * 1024,
+            },
+        )
+        .await
+        .map_err(|e| format!("data-plane exec({container}): {e}"))?;
+    Ok(ScriptOutcome {
+        exit_code: outcome.exit_code.map(|c| c as i32),
+        stdout: outcome.stdout,
+        stderr: outcome.stderr,
+        duration_ms: outcome.duration_ms,
+        timed_out: outcome.timed_out,
+    })
+}
+
+/// 数据面 healthcheck 探针：在 JudgeServer 容器内探测目标 GameBox 的 http/tcp 端口。
+///
+/// 返回 `(ok, detail)`；`detail` 汇总各检查项结果，便于 Test Check 展示。
+async fn probe_health_in_data_plane(
+    runtime: &DockerContainerRuntime,
+    event_id: Uuid,
+    checks: &[crate::modules::gamebox::healthcheck::AppHealthcheck],
+    target_ip: &str,
+) -> Result<(bool, String), String> {
+    use crate::modules::gamebox::healthcheck::AppHealthcheck;
+    if checks.is_empty() {
+        return Ok((true, "no healthchecks".to_string()));
+    }
+    let spec: Vec<serde_json::Value> = checks
+        .iter()
+        .map(|hc| match hc {
+            AppHealthcheck::Http {
+                port,
+                path,
+                expected_status,
+            } => serde_json::json!({
+                "kind": "http", "port": port, "path": path, "expected_status": expected_status
+            }),
+            AppHealthcheck::Tcp { port } => serde_json::json!({"kind": "tcp", "port": port}),
+        })
+        .collect();
+    let script = r#"
+import json, socket, sys, time, urllib.request
+ip = sys.argv[1]
+spec = json.loads(sys.argv[2])
+out = []
+for c in spec:
+    ok = False
+    detail = ""
+    for _ in range(3):
+        try:
+            if c.get("kind") == "http":
+                url = "http://%s:%s%s" % (ip, c["port"], c.get("path", "/"))
+                try:
+                    code = urllib.request.urlopen(url, timeout=5).status
+                except urllib.error.HTTPError as e:
+                    code = e.code
+                ok = (code == c.get("expected_status", 200))
+                detail = "%s -> %s" % (url, code)
+                if ok:
+                    break
+            else:
+                sock = socket.create_connection((ip, c["port"]), timeout=5)
+                sock.close()
+                ok = True
+                detail = "tcp %s:%s -> open" % (ip, c["port"])
+                break
+        except Exception as exc:
+            detail = "%s %s:%s -> %s: %s" % (c.get("kind"), ip, c.get("port"), type(exc).__name__, exc)
+        time.sleep(2)
+    out.append({"ok": ok, "detail": detail})
+print(json.dumps(out))
+"#;
+    let outcome = exec_in_data_plane(
+        runtime,
+        event_id,
+        script,
+        &[
+            target_ip.to_string(),
+            serde_json::to_string(&spec).unwrap_or_default(),
+        ],
+        Duration::from_secs(40),
+    )
+    .await?;
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(outcome.stdout.trim()).map_err(|e| {
+            format!(
+                "healthcheck probe stdout not JSON: {e}; stderr={}",
+                outcome.stderr.trim()
+            )
+        })?;
+    let mut details = Vec::new();
+    let mut ok = true;
+    for row in &rows {
+        let item_ok = row.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let detail = row
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if !item_ok {
+            ok = false;
+        }
+        details.push(detail);
+    }
+    Ok((ok, details.join("; ")))
 }
 
 /// 同步执行 manual Test Check（不排队）：HTTP 请求内直接执行 healthcheck + judge +
@@ -206,10 +386,14 @@ async fn manual_leased_locked(
             .clone()
             .unwrap_or_else(|| serde_json::json!([])),
     )?;
+    // 打容器内网 IP + container_port（不依赖 public NAT）。
+    // 先在进程内探测（dev/测试：API 在宿主网络可达数据网）；生产 API 在控制网，
+    // 本地必然传输失败 → 回退到数据面（JudgeServer 容器）内探测。
+    let runtime = DockerContainerRuntime::new(docker.clone());
+    let prefer_data_plane = data_plane_exec_enabled(db).await;
     let mut health_detail = Vec::new();
     let mut health_ok = true;
     for hc in &healthchecks {
-        // 打容器内网 IP + container_port（不依赖 public NAT）。
         let internal = match hc {
             crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
                 port,
@@ -238,15 +422,31 @@ async fn manual_leased_locked(
             health_ok = false;
         }
     }
+    // 本地不可达（跨网络隔离）→ 用数据面视角重探，避免误判 SERVICE_DOWN。
+    if !health_ok && prefer_data_plane {
+        match probe_health_in_data_plane(&runtime, ext.event_id, &healthchecks, &container_ip).await
+        {
+            Ok((data_plane_ok, line)) => {
+                if data_plane_ok {
+                    health_ok = true;
+                    health_detail.push(format!("(data-plane) {line}"));
+                } else {
+                    health_detail.push(format!("(data-plane) {line}"));
+                }
+            }
+            Err(e) => health_detail.push(format!("data-plane probe unavailable: {e}")),
+        }
+    }
 
     // 2. Judge（check.py，批量契约单目标）。
     let (judge_ok, judge_detail) = match gamebox.judge_script_content.clone() {
         Some(script) => {
-            let outcome = run_script(
+            let outcome = run_script_preferring_data_plane(
+                &runtime,
+                ext.event_id,
+                prefer_data_plane,
                 &script,
-                "python3",
                 &[container_ip.clone()],
-                &[],
                 Duration::from_secs(30),
                 16 * 1024,
                 16 * 1024,
@@ -282,11 +482,12 @@ async fn manual_leased_locked(
     //    与 official 同款批量契约单目标。success = 仍可利用（Vulnerable）。
     let (exploit_ok, exploit_detail) = match gamebox.awdp_exploit_script_content.clone() {
         Some(script) => {
-            let outcome = run_script(
+            let outcome = run_script_preferring_data_plane(
+                &runtime,
+                ext.event_id,
+                prefer_data_plane,
                 &script,
-                "python3",
                 &[container_ip.clone()],
-                &[],
                 Duration::from_secs(60),
                 32 * 1024,
                 32 * 1024,
@@ -370,7 +571,9 @@ pub async fn worker_round(
     // 直接执行），worker 不得领取 manual——否则与同步路径双写同一行会触发
     // awdp_evaluations_lease_consistency_check 违例（终态 + lease_token_hash 并存）。
     // JudgeServer 与进程内 worker 经 lease 互斥竞争。
-    // 进程内 worker 在宿主网络，可达所有赛事网络 → 不按 event 过滤（None）。
+    // 注意：生产部署中进程内 worker 位于 API 容器（只接控制网），**不可直连赛事
+    // 数据网**；因此 health/judge/exploit 一律经 exec_in_data_plane 送进该赛事的
+    // JudgeServer 容器执行（见该函数注释），与 JudgeServer 自身执行保持同视角。
     let claimed = evaluation_repo::claim_jobs(
         db,
         worker_id,
@@ -487,6 +690,9 @@ async fn run_checks(
 
     // 容器可能已停 → 评估前 inspect（评估官方语义：对当前 instance 状态判）。
     let (instance, _ext) = instance_repo::find_by_instance_id(db, instance_id).await?;
+    // 生产部署里 API 只在控制网：脚本必须在赛事数据面的 JudgeServer 容器内执行。
+    let eval_event_id = run_repo::require_by_id(db, round.run_id).await?.event_id;
+    let prefer_data_plane = data_plane_exec_enabled(db).await;
     let runtime = DockerContainerRuntime::new(docker.clone());
     let container_ip = if instance.runtime_state == "running" {
         let state = runtime
@@ -555,11 +761,12 @@ async fn run_checks(
     let judge_content = gamebox.judge_script_content.clone();
     let (judge_ok, judge_detail) = match (judge_content, &container_ip) {
         (Some(script), Some(ip)) => {
-            let outcome = run_script(
+            let outcome = run_script_preferring_data_plane(
+                &runtime,
+                eval_event_id,
+                prefer_data_plane,
                 &script,
-                "python3",
                 &[ip.clone()],
-                &[],
                 Duration::from_secs(30),
                 16 * 1024,
                 16 * 1024,
@@ -601,11 +808,12 @@ async fn run_checks(
     let exploit_content = gamebox.awdp_exploit_script_content.clone();
     let (exploit_ok, exploit_detail) = match (exploit_content, &container_ip) {
         (Some(script), Some(ip)) => {
-            let outcome = run_script(
+            let outcome = run_script_preferring_data_plane(
+                &runtime,
+                eval_event_id,
+                prefer_data_plane,
                 &script,
-                "python3",
                 &[ip.clone()],
-                &[],
                 Duration::from_secs(60),
                 32 * 1024,
                 32 * 1024,

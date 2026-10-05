@@ -11,6 +11,19 @@ const PHASE_LABEL: Record<string, string> = {
 };
 
 /** AWD 赛事状态标签。 */
+/** 赛事尚未进入可竞技阶段的状态：此时 phase 无意义（库里默认是 hardening）。 */
+const PRESTART_STATUSES = [
+	"draft",
+	"configuring",
+	"deploying",
+	"deployed",
+	"prechecking",
+	"verified",
+	"start_blocked",
+	"deploy_failed",
+	"verification_failed",
+];
+
 const STATUS_LABEL: Record<string, string> = {
 	draft: "Draft",
 	configuring: "Configuring",
@@ -61,28 +74,31 @@ function useNow() {
 }
 
 /**
- * AWD 赛事进度条组件。
+ * 进度条文案与百分比（纯函数）。
  *
- * 放置于标题与 UnderlineNav 之间（对齐 Jeopardy RemainingTimer / AWDP AwdpEventProgress 位置）。
- * 接受 admin 或 player 状态，按 phase 显示进度文字与 ProgressBar。
+ * 状态优先级：未开赛 → 已结束/已归档 → 终局结算 → 网络异常 → 暂停 → 硬化 → 攻击。
+ * 未开赛状态必须先于 `phase` 判断：`phase` 在库里有默认值 `hardening`，
+ * 若先看 phase，草稿/配置中的赛事会错误显示成「Hardening」。
  */
-export function AwdEventProgress({
+export function progressDisplay({
 	status,
 	phase,
 	currentRound,
 	roundCount,
-	roundDurationSecs,
-	startedAt,
 	finalSettlement,
-}: AwdProgressState) {
-	const now = useNow();
-	const started = startedAt ? Date.parse(startedAt) : null;
-
-	// ── 进度条百分比（简化：基于 phase 与 round） ──
+}: Pick<
+	AwdProgressState,
+	"status" | "phase" | "currentRound" | "roundCount" | "finalSettlement"
+>): { label: string; progressPct: number } {
 	let progressPct = 100;
 	let label = "";
 
-	if (status === "finished" || status === "archived") {
+	// 未开赛状态必须先判断：`phase` 在库里有默认值 hardening，
+	// 若先看 phase，草稿/配置中的赛事会显示成「Hardening」。
+	if (PRESTART_STATUSES.includes(status)) {
+		label = STATUS_LABEL[status] ?? status;
+		progressPct = 100;
+	} else if (status === "finished" || status === "archived") {
 		label = STATUS_LABEL[status] ?? status;
 		progressPct = 0;
 	} else if (finalSettlement) {
@@ -103,23 +119,39 @@ export function AwdEventProgress({
 		const elapsed = rn > 0 ? ((rn - 1) / total) * 100 : 0;
 		label = `Attack — Round ${rn} / ${total}`;
 		progressPct = 100 - elapsed;
-	} else if (
-		status === "draft" ||
-		status === "configuring" ||
-		status === "deploying" ||
-		status === "deployed" ||
-		status === "prechecking" ||
-		status === "verified" ||
-		status === "start_blocked" ||
-		status === "deploy_failed" ||
-		status === "verification_failed"
-	) {
-		label = STATUS_LABEL[status] ?? status;
-		progressPct = 100;
 	} else {
 		label = STATUS_LABEL[status] ?? status;
 		progressPct = 100;
 	}
+
+	return { label, progressPct };
+}
+
+/**
+ * AWD 赛事进度条组件。
+ *
+ * 放置于标题与 UnderlineNav 之间（对齐 Jeopardy RemainingTimer / AWDP AwdpEventProgress 位置）。
+ * 接受 admin 或 player 状态，按 phase 显示进度文字与 ProgressBar。
+ */
+export function AwdEventProgress({
+	status,
+	phase,
+	currentRound,
+	roundCount,
+	roundDurationSecs,
+	startedAt,
+	finalSettlement,
+}: AwdProgressState) {
+	const now = useNow();
+	const started = startedAt ? Date.parse(startedAt) : null;
+
+	const { label, progressPct } = progressDisplay({
+		status,
+		phase,
+		currentRound,
+		roundCount,
+		finalSettlement,
+	});
 
 	return (
 		<div className="mt-2">

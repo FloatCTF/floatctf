@@ -334,3 +334,60 @@ describe("network_error vs pause", () => {
 		expect(visibleActions("paused", false)).toContain("resume");
 	});
 });
+// ────────────────────────────────────────────────────────────────────────────
+// F12 回归：未开赛状态不得显示成 Hardening
+// （phase 在库里有默认值 hardening，状态优先级必须先于 phase 判断）
+// ────────────────────────────────────────────────────────────────────────────
+import { progressDisplay } from "@/components/awd/AwdEventProgress";
+
+describe("progressDisplay 状态优先级", () => {
+	const base = {
+		status: "configuring",
+		phase: "hardening",
+		currentRound: null,
+		roundCount: 1,
+		finalSettlement: false,
+	};
+
+	it("配置中（phase 默认 hardening）不显示 Hardening", () => {
+		const { label } = progressDisplay(base);
+		expect(label).not.toBe("Hardening");
+	});
+
+	it("运行中的硬化期显示 Hardening", () => {
+		expect(
+			progressDisplay({ ...base, status: "running", phase: "hardening" }).label,
+		).toBe("Hardening");
+	});
+
+	it("攻击期显示回合进度", () => {
+		expect(
+			progressDisplay({
+				...base,
+				status: "running",
+				phase: "attack",
+				currentRound: 1,
+				roundCount: 2,
+			}).label,
+		).toBe("Attack — Round 1 / 2");
+	});
+
+	it("暂停优先于硬化/攻击", () => {
+		expect(
+			progressDisplay({
+				...base,
+				status: "running",
+				phase: "pause",
+			}).label,
+		).toContain("Paused");
+	});
+
+	it("已归档不显示阶段名", () => {
+		const { label, progressPct } = progressDisplay({
+			...base,
+			status: "archived",
+		});
+		expect(label).not.toBe("Hardening");
+		expect(progressPct).toBe(0);
+	});
+});

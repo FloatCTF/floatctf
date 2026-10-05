@@ -41,6 +41,8 @@ function RouteComponent() {
 		{
 			header: "Username",
 			field: "username",
+			label: "用户名",
+			required: true,
 			render: (
 				<TextInput
 					value={mutationUser.username}
@@ -53,6 +55,7 @@ function RouteComponent() {
 		{
 			header: "Email",
 			field: "email",
+			label: "邮箱",
 			render: (
 				<TextInput
 					value={mutationUser.email}
@@ -65,6 +68,7 @@ function RouteComponent() {
 		{
 			header: "Nickname",
 			field: "nickname",
+			label: "昵称",
 			render: (
 				<TextInput
 					value={mutationUser.nickname}
@@ -77,6 +81,8 @@ function RouteComponent() {
 		{
 			header: "Password",
 			field: "password",
+			label: "密码（至少 8 位）",
+			required: true,
 			render: (
 				<TextInput
 					value={mutationUser.password}

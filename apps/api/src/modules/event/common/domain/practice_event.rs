@@ -29,7 +29,7 @@ pub async fn require_practice_jeopardy_event<C: ConnectionTrait>(
 ) -> Result<events::Model, sea_orm::DbErr> {
     find_practice_jeopardy_event(db)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("practice:jeopardy event not found".into()))
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("未找到练习用 Jeopardy 赛事".into()))
 }
 
 /// 幂等确保 `practice:jeopardy` 系统赛事存在。

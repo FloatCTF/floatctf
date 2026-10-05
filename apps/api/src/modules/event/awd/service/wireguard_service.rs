@@ -200,7 +200,7 @@ async fn find_peer(
     wireguard_repo::find_peer_by_id(db, event_id, peer_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound(format!("WireGuard peer {} not found", peer_id)))
+        .ok_or_else(|| AwdError::NotFound(format!("未找到 WireGuard 对端 {}", peer_id)))
 }
 
 /// 查 AWD event（wireguard_interface_name / key_version 等）。

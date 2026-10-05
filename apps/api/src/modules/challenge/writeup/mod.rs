@@ -132,7 +132,7 @@ pub async fn get_challenge_writeups(
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!(
-                "User {} not found",
+                "User {} 不存在",
                 writeup.user_id
             )))?;
 
@@ -141,7 +141,7 @@ pub async fn get_challenge_writeups(
             avatar: user.avatar.clone(),
             email: user.email,
             challenge: challenge.ok_or(AppError::NotFound(format!(
-                "Challenge {} not found",
+                "Challenge {} 不存在",
                 writeup.challenge_id
             )))?,
             writeup,
@@ -173,14 +173,14 @@ pub async fn get_writeup(
         .await?
     {
         let challenge = challenge.ok_or(AppError::NotFound(format!(
-            "Challenge of writeup {} not found",
+            "Challenge of writeup {} 不存在",
             writeup_id
         )))?;
         let user = users::Entity::find_by_id(writeup.user_id)
             .one(db)
             .await?
             .ok_or(AppError::NotFound(format!(
-                "User {} not found",
+                "User {} 不存在",
                 writeup.user_id
             )))?;
         return Ok(UniResponse::ok(Some(UnifiedWriteupDetail {
@@ -209,7 +209,7 @@ pub async fn get_writeup(
             return Err(AppError::Forbidden("该训练 writeup 不属于你".into()).into());
         }
         let run = run.ok_or(AppError::NotFound(format!(
-            "Run of writeup {} not found",
+            "Run of writeup {} 不存在",
             writeup_id
         )))?;
         let gb_id = run
@@ -218,7 +218,7 @@ pub async fn get_writeup(
         let gb = gameboxes::Entity::find_by_id(gb_id)
             .one(db)
             .await?
-            .ok_or(AppError::NotFound(format!("GameBox {} not found", gb_id)))?;
+            .ok_or(AppError::NotFound(format!("靶机 {} 不存在", gb_id)))?;
         return Ok(UniResponse::ok(Some(UnifiedWriteupDetail {
             writeup_type: "gamebox".into(),
             id: wp.run_id,
@@ -235,7 +235,7 @@ pub async fn get_writeup(
         .into());
     }
 
-    Err(AppError::NotFound(format!("Writeup {} not found", writeup_id)).into())
+    Err(AppError::NotFound(format!("Writeup {} 不存在", writeup_id)).into())
 }
 
 /// GET /api/writeups
@@ -281,14 +281,14 @@ pub async fn get_writeups(
             .one(db)
             .await?
             .ok_or(AppError::NotFound(format!(
-                "Challenge {} not found",
+                "Challenge {} 不存在",
                 writeup.challenge_id
             )))?;
         let user = users::Entity::find_by_id(writeup.user_id)
             .one(db)
             .await?
             .ok_or(AppError::NotFound(format!(
-                "User {} not found",
+                "User {} 不存在",
                 writeup.user_id
             )))?;
         results.push(UnifiedWriteupResult {

@@ -42,10 +42,7 @@ pub async fn patch(
     let mut weapon = weapons::Entity::find_by_id(weapon_id)
         .one(db)
         .await?
-        .ok_or(AppError::NotFound(format!(
-            "Weapon {} not exist",
-            weapon_id
-        )))?
+        .ok_or(AppError::NotFound(format!("Weapon {} 不存在", weapon_id)))?
         .into_active_model();
 
     if let Some(name) = req.name {
@@ -105,10 +102,7 @@ pub async fn upload_file(
     let mut weapon = weapons::Entity::find_by_id(weapon_id)
         .one(db)
         .await?
-        .ok_or(AppError::NotFound(format!(
-            "Weapon {} not exist",
-            weapon_id
-        )))?
+        .ok_or(AppError::NotFound(format!("Weapon {} 不存在", weapon_id)))?
         .into_active_model();
     weapon.has_file = Set(true);
     weapon.file_url = Set(s3_key);

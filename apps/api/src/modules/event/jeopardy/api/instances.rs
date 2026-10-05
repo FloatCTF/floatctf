@@ -347,7 +347,7 @@ pub async fn get_instance(
     let event = events::Entity::find_by_id(seed.event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event for instance not found".into()))?;
+        .ok_or(AppError::NotFound("未找到该实例所属赛事".into()))?;
     let event_ctx = EventContextBuilder::new()
         .db(ctx.db.clone())
         .docker(ctx.docker.clone())
@@ -429,7 +429,7 @@ pub async fn launch_instance(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound("未找到该实例".into()))?;
-    let runtime = runtime.ok_or(AppError::NotFound("instance runtime not found".into()))?;
+    let runtime = runtime.ok_or(AppError::NotFound("未找到该实例的运行态".into()))?;
 
     UniResponse::ok(Some(InstancesDto::from_pair(&instance, &runtime))).into()
 }
@@ -454,7 +454,7 @@ pub async fn destroy_instance(
     let event = events::Entity::find_by_id(instance.event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event for instance not found".into()))?;
+        .ok_or(AppError::NotFound("未找到该实例所属赛事".into()))?;
 
     let event_ctx = EventContextBuilder::new()
         .db(ctx.db.clone())

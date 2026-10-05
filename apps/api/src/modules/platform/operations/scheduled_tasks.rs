@@ -167,7 +167,7 @@ pub async fn patch_scheduled_task(
     let task = scheduled_tasks::Entity::find_by_id(task_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", task_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", task_id)))?;
 
     let mut m_task = task.into_active_model();
 
@@ -353,7 +353,7 @@ pub async fn get_scheduled_task(
     let model = scheduled_tasks::Entity::find_by_id(task_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", task_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", task_id)))?;
 
     UniResponse::ok(Some(model.into())).into()
 }
@@ -371,7 +371,7 @@ pub async fn run_scheduled_task(
     let task = scheduled_tasks::Entity::find_by_id(task_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", task_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", task_id)))?;
 
     let mut m_task = task.into_active_model();
     m_task.status = Set("pending".to_string());

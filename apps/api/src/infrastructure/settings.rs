@@ -273,7 +273,7 @@ pub async fn get_setting(db: &DbConn, key: &str) -> Result<String, anyhow::Error
     let raw = map
         .get(key)
         .cloned()
-        .ok_or(anyhow::anyhow!("Setting not found:{}", key))?;
+        .ok_or(anyhow::anyhow!("Setting 不存在:{}", key))?;
     Ok(resolve_value_with_map(&raw, &map))
 }
 

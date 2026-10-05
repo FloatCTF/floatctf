@@ -215,10 +215,7 @@ pub async fn get_teams(
                     .filter(event_users::Column::UserId.eq(user.id))
                     .one(ctx.db.get_ref())
                     .await?
-                    .ok_or(AppError::NotFound(format!(
-                        "EventUser {} not exist",
-                        user.id
-                    )))?;
+                    .ok_or(AppError::NotFound(format!("参赛用户 {} 不存在", user.id)))?;
 
                 team_members.push(TeamMemberResult {
                     username: user.username,

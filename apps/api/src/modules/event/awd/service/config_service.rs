@@ -207,7 +207,7 @@ where
         .one(&txn)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("parent event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到父赛事".into()))?;
     let current = awd_events::Entity::find()
         .filter(awd_events::Column::EventId.eq(event_id))
         .lock(LockType::Update)

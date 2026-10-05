@@ -23,19 +23,19 @@ impl FromRequest for ReqCtx {
     fn from_request(req: &HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let config = req
             .app_data::<actix_web::web::Data<crate::bootstrap::AppState>>()
-            .expect("AppState not found")
+            .expect("AppState 不存在")
             .config
             .clone();
-        let db = req.app_data::<WebDb>().expect("WebDb not found").clone();
+        let db = req.app_data::<WebDb>().expect("WebDb 不存在").clone();
         let docker = req
             .app_data::<WebDocker>()
-            .expect("WebDocker not found")
+            .expect("WebDocker 不存在")
             .clone();
         let rustfs = req
             .app_data::<WebRustfs>()
-            .expect("WebRustfs not found")
+            .expect("WebRustfs 不存在")
             .clone();
-        let log = req.app_data::<WebLog>().expect("WebLog not found").clone();
+        let log = req.app_data::<WebLog>().expect("WebLog 不存在").clone();
         std::future::ready(Ok(Self {
             config,
             db,

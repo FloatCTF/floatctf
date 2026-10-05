@@ -49,10 +49,7 @@ pub async fn delete_comment(
     let comment = discussion_comments::Entity::find_by_id(comment_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(
-            "Comment {} not exist",
-            comment_id
-        )))?;
+        .ok_or(AppError::NotFound(format!("Comment {} 不存在", comment_id)))?;
 
     if comment.discussion_id != discussion_id {
         return AppError::BadRequest("Comment does not belong to this discussion".to_string())

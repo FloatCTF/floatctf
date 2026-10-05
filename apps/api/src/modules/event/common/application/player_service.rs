@@ -740,7 +740,7 @@ pub async fn leave_event(
     let event_user = event_users::Entity::find_by_id((event_id, user_id))
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound("event user not found".to_string()))?;
+        .ok_or(AppError::NotFound("未找到该赛事参赛用户".to_string()))?;
 
     let rows = event_user.delete(db.get_ref()).await?.rows_affected;
     Ok((event, rows))
@@ -810,7 +810,7 @@ pub async fn own_writeup_file_url(
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!("event {} not found", event_id)))?;
+        .ok_or(AppError::NotFound(format!("未找到赛事 {}", event_id)))?;
 
     jeopardy_writeup::own_writeup_file_url(db, &event, user)
         .await

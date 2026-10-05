@@ -346,7 +346,7 @@ pub async fn scan_challenges_dir(
         .map_err(|e| AppError::Internal(format!("get setting CHALLENGES_DIR: {e}")))?;
     let root = resolve_dir_path(&dir_str);
     if !root.is_dir() {
-        info!(dir = %root.display(), "CHALLENGES_DIR not found, scan returns empty");
+        info!(dir = %root.display(), "CHALLENGES_DIR 不存在, scan returns empty");
         return Ok(Vec::new());
     }
 

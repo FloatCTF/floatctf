@@ -337,7 +337,7 @@ mod tests {
                 Some("-C") => Ok(CommandOutput {
                     exit_code: 1,
                     stdout: String::new(),
-                    stderr: "Bad rule (does not exist)".into(),
+                    stderr: "规则无效（不存在）".into(),
                 }),
                 Some("-I" | "-D") => Ok(CommandOutput {
                     exit_code: 0,

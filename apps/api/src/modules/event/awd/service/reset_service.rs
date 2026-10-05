@@ -144,7 +144,7 @@ pub async fn execute_reset(
     let (instance, root) = gamebox_repo::find_instance_by_id(db, ctx.instance_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该靶机实例".into()))?;
     let team_id = match &ctx.actor {
         // Player：必须 ownership（用 guard 解析出的 membership team 比对）。
         // 权威 team 以实例根（event_instances.owner_team_id）为准。
@@ -332,7 +332,7 @@ async fn do_docker_reset(
         .one(db)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("team network not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到队伍网络".into()))?;
     let password =
         gamebox_service::decrypt_team_ssh_password(&crypto, ctx.event_id, &team_net).await?;
 

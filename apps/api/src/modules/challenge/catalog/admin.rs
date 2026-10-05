@@ -125,7 +125,7 @@ pub async fn patch_challenge(
     let challenge = Challenges::find_by_id(challenge_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", challenge_id)))?;
 
     let mut m_challenge = challenge.into_active_model();
 
@@ -284,7 +284,7 @@ pub async fn get_challenge(
     let model = Challenges::find_by_id(*id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", id)))?;
 
     let dto = ChallengesDto::from(&model).with_static_flag_value(model.static_flag_value.clone());
     UniResponse::ok(Some(dto)).into()
@@ -309,7 +309,7 @@ pub async fn delete_challenge(
         let challenge = Challenges::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("{} 不存在", challenge_id)))?;
 
         let del_challenge_path =
             crate::infrastructure::settings::resolve_dir_path(&challenges_path)

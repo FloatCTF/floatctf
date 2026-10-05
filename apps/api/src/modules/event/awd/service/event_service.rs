@@ -80,7 +80,7 @@ pub async fn start_event(
     let generic_event = event_repo::find_generic_event_by_id(db, event_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("Generic event not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该通用赛事".into()))?;
 
     let timing = compute_timing(
         generic_event.start_time,

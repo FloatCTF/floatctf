@@ -124,7 +124,7 @@ pub async fn create_announcement(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(
-            "SuperAdmin {} not exist",
+            "SuperAdmin {} 不存在",
             publisher_id
         )))?
         .username;
@@ -174,10 +174,7 @@ pub async fn patch_announcement(
     let announcement = announcements::Entity::find_by_id(announcement_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(
-            " {} not exist",
-            announcement_id
-        )))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", announcement_id)))?;
 
     let mut m_announcement = announcement.into_active_model();
 

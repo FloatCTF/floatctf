@@ -389,7 +389,7 @@ pub async fn scan_gameboxes_dir(
         .map_err(|e| GameboxError::Internal(format!("get setting GAMEBOXES_DIR: {e}")))?;
     let root = resolve_dir_path(&dir_str);
     if !root.is_dir() {
-        info!(dir = %root.display(), "GAMEBOXES_DIR not found, scan returns empty");
+        info!(dir = %root.display(), "GAMEBOXES_DIR 不存在, scan returns empty");
         return Ok(Vec::new());
     }
 

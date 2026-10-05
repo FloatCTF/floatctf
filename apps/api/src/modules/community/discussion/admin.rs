@@ -102,7 +102,7 @@ pub async fn get_discussion(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(
-            "Discussion {} not exist",
+            "Discussion {} 不存在",
             discussion_id
         )))?;
 

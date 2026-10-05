@@ -25,7 +25,7 @@ pub async fn require_by_id(
     find_by_id(db, id)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp event_gamebox not found".into()))
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 赛事靶机".into()))
 }
 
 pub async fn list_for_event(
@@ -173,7 +173,7 @@ pub async fn find_gamebox_identity(
     library::find_gamebox_by_id(db, gamebox_id)
         .await
         .map_err(|e: sea_orm::DbErr| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("GameBox identity not found".into()))
+        .ok_or_else(|| AwdpError::NotFound("未找到该靶机标识".into()))
 }
 
 /// 获取 event_gamebox 的 effective 资源与 healthcheck（覆盖 > GameBox 默认）。

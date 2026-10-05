@@ -178,7 +178,7 @@ pub async fn create_terminal_session(
     let ticket = ctx
         .req
         .app_data::<web::Data<crate::bootstrap::AppState>>()
-        .expect("AppState not found")
+        .expect("AppState 不存在")
         .terminal_tickets
         .issue(admin.id)
         .await
@@ -217,7 +217,7 @@ pub async fn terminal_ws(
 ) -> Result<HttpResponse, actix_web::Error> {
     let state = req
         .app_data::<actix_web::web::Data<crate::bootstrap::AppState>>()
-        .expect("AppState not found");
+        .expect("AppState 不存在");
     if !state.config.features.enable_web_terminal {
         return Err(actix_web::error::ErrorNotFound("Web terminal is disabled"));
     }
@@ -232,7 +232,7 @@ pub async fn terminal_ws(
         .await
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Invalid or expired terminal ticket"))?;
 
-    let db = req.app_data::<WebDb>().cloned().expect("WebDb not found");
+    let db = req.app_data::<WebDb>().cloned().expect("WebDb 不存在");
     let _admin = super_admin::Entity::find_by_id(admin_id)
         .one(db.get_ref())
         .await

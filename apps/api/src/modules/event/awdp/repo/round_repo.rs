@@ -110,7 +110,7 @@ pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> AwdpResult<awdp_fi
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("awdp fix round not found".into()))
+        .ok_or_else(|| AwdpError::NotFound("未找到该 AWDP 修复回合".into()))
 }
 
 pub async fn list_for_run(
@@ -211,7 +211,7 @@ async fn materialize_round_atomic_inner(
         txn.rollback()
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?;
-        return Err(AwdpError::NotFound("awdp fix round not found".into()));
+        return Err(AwdpError::NotFound("未找到该 AWDP 修复回合".into()));
     };
     if current.status != "pending" {
         // CAS：已被并发 tick / 已完成 → 幂等跳过。

@@ -122,7 +122,7 @@ pub async fn finalize_launch(
             .published_ports
             .get(container_port)
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("Host port not found for {container_port}"))
+            .ok_or_else(|| anyhow::anyhow!("未找到容器端口 {container_port} 对应的宿主端口"))
     }
     .await;
 

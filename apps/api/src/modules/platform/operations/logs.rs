@@ -81,7 +81,7 @@ pub async fn get_log(
     let model = logs::Entity::find_by_id(log_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", log_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", log_id)))?;
 
     UniResponse::ok(Some(model.into())).into()
 }

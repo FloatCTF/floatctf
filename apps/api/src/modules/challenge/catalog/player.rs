@@ -159,7 +159,7 @@ pub async fn get_challenge(
             let dto = ChallengesDto::from(&model);
             UniResponse::ok(Some(dto)).into()
         }
-        None => AppError::NotFound(format!(" {} not exist", challenge_id)).into(),
+        None => AppError::NotFound(format!("{} 不存在", challenge_id)).into(),
     }
 }
 

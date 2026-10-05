@@ -125,7 +125,7 @@ impl InstanceService {
             .await?
             .is_none()
         {
-            return Err(anyhow!("user not found: {}", user_id));
+            return Err(anyhow!("未找到用户：{}", user_id));
         }
 
         let destroy_at = Utc::now() + chrono::Duration::minutes(delay);
@@ -329,7 +329,7 @@ impl InstanceService {
             .await?
             .ok_or_else(|| {
                 anyhow!(
-                    "challenge {} not found for instance {}",
+                    "未找到实例 {} 对应的题目 {}",
                     instance.challenge_id,
                     instance.id
                 )

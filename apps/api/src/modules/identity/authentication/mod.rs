@@ -167,7 +167,7 @@ pub async fn send_reset_email(ctx: ReqCtx, rpr: Json<ResetPasswordRequest>) -> U
         _ => return AppError::BadRequest("Email or username required".into()).into(),
     };
 
-    let user = user.ok_or_else(|| AppError::BadRequest("User not found".to_string()))?;
+    let user = user.ok_or_else(|| AppError::BadRequest("User 不存在".to_string()))?;
 
     let main_url = get_setting(ctx.db.get_ref(), "MAIN_URL")
         .await
@@ -241,7 +241,7 @@ pub async fn reset_password(
     let user = Users::find_by_id(user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::BadRequest("User not found".to_string()))?;
+        .ok_or_else(|| AppError::BadRequest("User 不存在".to_string()))?;
 
     let user_id = user.id;
     let username = user.username.clone();

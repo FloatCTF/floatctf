@@ -171,7 +171,7 @@ pub async fn submit_writeup(
         let team = event_teams::Entity::find_by_id(membership.team_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or_else(|| AppError::NotFound("event team not found".into()))?;
+            .ok_or_else(|| AppError::NotFound("未找到该赛事队伍".into()))?;
         if team.event_id != event_id {
             return Err(AppError::Forbidden(
                 "Team does not belong to this event".into(),

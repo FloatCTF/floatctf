@@ -4,7 +4,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum EventError {
-    #[error("not found: {0}")]
+    #[error("未找到：{0}")]
     NotFound(String),
     #[error("forbidden: {0}")]
     Forbidden(String),

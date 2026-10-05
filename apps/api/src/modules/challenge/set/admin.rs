@@ -84,7 +84,7 @@ pub async fn patch_challenge_set(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!(
-            "challenge set {} not found",
+            "题目 set {} 不存在",
             challenge_set_id
         )))?;
     let mut m_challenge_set = challenge_set.into_active_model();

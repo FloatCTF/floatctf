@@ -192,7 +192,7 @@ pub fn discover_package(extract_root: &Path) -> Result<DiscoveredPackage, Packag
 
     match found.len() {
         0 => Err(PackageError::Validation(
-            "INVALID_PACKAGE: meta.toml not found".into(),
+            "INVALID_PACKAGE: meta.toml 不存在".into(),
         )),
         1 => {
             let root = found.remove(0);
@@ -315,7 +315,7 @@ pub fn read_package_file(
     let package_canon = fs::canonicalize(package_root)
         .map_err(|e| PackageError::Internal(format!("canonicalize package root: {e}")))?;
     let file_canon = fs::canonicalize(&path).map_err(|_| {
-        PackageError::Validation(format!("FILE_NOT_FOUND: {relative} not found in package"))
+        PackageError::Validation(format!("FILE_NOT_FOUND: {relative} 不存在 in package"))
     })?;
     if !file_canon.starts_with(&package_canon) {
         return Err(PackageError::Validation(format!(

@@ -100,7 +100,7 @@ pub async fn patch_setting(
     let setting = settings::Entity::find_by_id(setting_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", setting_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", setting_id)))?;
 
     let mut m_setting = setting.into_active_model();
 

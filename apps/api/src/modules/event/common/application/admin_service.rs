@@ -697,7 +697,7 @@ pub async fn export_writeup_report(
     let event = events::Entity::find_by_id(event_id)
         .one(db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!("Event {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("赛事 {} 不存在", event_id)))?;
 
     let event_writeups = event_writeup::Entity::find()
         .filter(event_writeup::Column::EventId.eq(event_id))
@@ -808,7 +808,7 @@ pub async fn export_writeup_report(
                                     .one(db.get_ref())
                                     .await?
                                     .ok_or(AppError::NotFound(format!(
-                                        "EventUser {} not exist",
+                                        "参赛用户 {} 不存在",
                                         user.id
                                     )))?;
 

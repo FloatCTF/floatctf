@@ -50,7 +50,7 @@ pub async fn add_challenge(
     let event = events::Entity::find_by_id(event_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!("event {} not exist", event_id)))?;
+        .ok_or(AppError::NotFound(format!("赛事 {} 不存在", event_id)))?;
 
     let mut event_challenges_list = Vec::new();
 
@@ -66,10 +66,7 @@ pub async fn add_challenge(
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(
-                "challenge {} not exist",
-                challenge_id
-            )))?;
+            .ok_or(AppError::NotFound(format!("题目 {} 不存在", challenge_id)))?;
 
         // 查询是否已存在 event_challenge
         if let Some(existing) = jeopardy_event_challenges::Entity::find()
@@ -254,7 +251,7 @@ pub async fn get_challenges(
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!(
-                "challenge {} not exist",
+                "题目 {} 不存在",
                 ec.challenge_id
             )))?;
         result.push(EventChallengeResult {

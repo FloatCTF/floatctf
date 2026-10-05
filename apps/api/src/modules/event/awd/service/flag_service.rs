@@ -176,7 +176,7 @@ pub async fn validate_submission(
     let (instance, _root) = gamebox_repo::find_instance_by_id(db, issue.gamebox_instance_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox instance not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该靶机实例".into()))?;
 
     let victim_team_id = instance.team_id;
 

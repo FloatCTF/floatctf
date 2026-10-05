@@ -190,7 +190,7 @@ pub async fn delete_gamebox_with_references_checked(
     let gb = find_gamebox_by_id(db, id)
         .await
         .map_err(|e| GameboxError::Database(e.to_string()))?
-        .ok_or_else(|| GameboxError::NotFound("GameBox not found".into()))?;
+        .ok_or_else(|| GameboxError::NotFound("靶机 不存在".into()))?;
 
     let awd_refs = awd_event_gameboxes::Entity::find()
         .filter(awd_event_gameboxes::Column::GameboxId.eq(id))
@@ -274,7 +274,7 @@ pub async fn update_gamebox_identity_checked(
     update_gamebox_identity(db, gamebox_id, patch)
         .await
         .map_err(|e| GameboxError::Database(e.to_string()))?
-        .ok_or_else(|| GameboxError::NotFound("GameBox not found".into()))
+        .ok_or_else(|| GameboxError::NotFound("靶机 不存在".into()))
 }
 
 /// safe_name 生成 + 去重（仅用于 admin 手动创建身份场景；import 不走 -2 后缀）。

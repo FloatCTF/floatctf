@@ -112,7 +112,7 @@ fn challenge_cells(
             .unwrap_or(0);
         let challenge = challenge_map
             .get(&ec.challenge_id)
-            .ok_or_else(|| anyhow!("challenge not found"))?;
+            .ok_or_else(|| anyhow!("未找到该题目"))?;
         challenges.push(ChallengeScoreboard {
             name: challenge.name.clone(),
             solved: is_solved,
@@ -149,7 +149,7 @@ async fn assemble_individual(
     for (no, event_user) in event_users.iter().enumerate() {
         let user = user_map
             .get(&event_user.user_id)
-            .ok_or_else(|| anyhow!("user not found"))?;
+            .ok_or_else(|| anyhow!("未找到该用户"))?;
 
         let challenges = challenge_cells(
             event_user.user_id,

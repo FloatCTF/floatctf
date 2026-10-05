@@ -148,7 +148,7 @@ pub async fn update_runtime_root(
     let mut am: event_instances::ActiveModel = event_instances::Entity::find_by_id(instance_id)
         .one(db)
         .await?
-        .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!("instance {instance_id} not found")))?
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!("未找到该实例（{instance_id}）")))?
         .into();
     if let Some(cid) = container_id {
         am.container_id = Set(Some(cid.to_string()));

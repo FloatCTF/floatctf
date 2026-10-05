@@ -172,7 +172,7 @@ pub async fn admin_patch_user(
     let user = users::Entity::find_by_id(user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", user_id)))?;
 
     let mut m_user = user.into_active_model();
 
@@ -299,7 +299,7 @@ pub async fn admin_get_user(
     let model = users::Entity::find_by_id(user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or(AppError::NotFound(format!(" {} not exist", user_id)))?;
+        .ok_or(AppError::NotFound(format!("{} 不存在", user_id)))?;
 
     UniResponse::ok(Some(model.into())).into()
 }

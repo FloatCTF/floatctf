@@ -30,7 +30,7 @@ pub async fn require_by_id<C: ConnectionTrait>(
     find_by_id(db, run_id)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound(format!("awdp run {run_id} not found")))
+        .ok_or_else(|| AwdpError::NotFound(format!("未找到该 AWDP 运行（{run_id}）")))
 }
 
 /// 幂等确保 AWDP 练习系统虚拟赛事 `AWDPlusPractice` 存在（练习模块单挂载点）。

@@ -61,7 +61,7 @@ pub async fn finish_apply(
             .one(db)
             .await
             .map_err(|e| AwdpError::Database(e.to_string()))?
-            .ok_or_else(|| AwdpError::NotFound("patch submission not found".into()))?
+            .ok_or_else(|| AwdpError::NotFound("未找到该补丁提交".into()))?
             .into();
     am.status = Set(if ok { "applied" } else { "failed" }.to_string());
     am.applied_at = Set(Some(now.into()));
@@ -89,7 +89,7 @@ pub async fn has_applied_patch(
         .one(db)
         .await
         .map_err(|e| AwdpError::Database(e.to_string()))?
-        .ok_or_else(|| AwdpError::NotFound("fix round not found".into()))?;
+        .ok_or_else(|| AwdpError::NotFound("未找到该修复回合".into()))?;
     let cutoff: chrono::DateTime<Utc> = round.cutoff_at.with_timezone(&Utc);
     let count = awdp_patch_submissions::Entity::find()
         .filter(awdp_patch_submissions::Column::InstanceId.eq(instance_id))

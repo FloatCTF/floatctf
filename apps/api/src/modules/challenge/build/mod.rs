@@ -232,7 +232,7 @@ pub async fn build_challenge(
         let challenge = Challenges::find_by_id(challenge_id)
             .one(ctx.db.get_ref())
             .await?
-            .ok_or(AppError::NotFound(format!(" {} not exist", challenge_id)))?;
+            .ok_or(AppError::NotFound(format!("{} 不存在", challenge_id)))?;
 
         let (is_ok, message) =
             if challenge.build_status.as_deref() == Some(import_service::BUILD_STATUS_READY) {

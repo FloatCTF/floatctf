@@ -72,7 +72,7 @@ pub async fn resolve_event_gamebox_spec(
     let gamebox = event_gamebox_repo::find_gamebox_identity(db, eg.gamebox_id)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("GameBox identity not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该靶机标识".into()))?;
 
     if gamebox.build_status.as_deref() != Some(BUILD_STATUS_READY) {
         return Err(AwdError::Validation(format!(

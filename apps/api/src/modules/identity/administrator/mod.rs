@@ -161,7 +161,7 @@ pub async fn patch_super_admin(
     let super_admin = super_admin::Entity::find_by_id(super_user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("{} not exist", super_user_id)))?;
+        .ok_or_else(|| AppError::NotFound(format!("{} 不存在", super_user_id)))?;
 
     let mut m_super_admin = super_admin.into_active_model();
 
@@ -242,7 +242,7 @@ pub async fn get_super_admin(
     let model = super_admin::Entity::find_by_id(super_user_id)
         .one(ctx.db.get_ref())
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("{} not exist", super_user_id)))?;
+        .ok_or_else(|| AppError::NotFound(format!("{} 不存在", super_user_id)))?;
 
     UniResponse::ok(Some(model.into())).into()
 }

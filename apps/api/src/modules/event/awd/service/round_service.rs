@@ -279,7 +279,7 @@ pub async fn end_round(
         .one(&txn)
         .await
         .map_err(|e| AwdError::Database(e.to_string()))?
-        .ok_or_else(|| AwdError::NotFound("Round not found".into()))?;
+        .ok_or_else(|| AwdError::NotFound("未找到该回合".into()))?;
     if round.event_id != event_id {
         txn.rollback()
             .await

@@ -12,7 +12,10 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    entity::{challenges, event_challenge_instance, event_instances, events, users},
+    entity::{
+        challenges, event_challenge_instance, event_instances, events, jeopardy_event_challenges,
+        users,
+    },
     infrastructure::settings::get_setting,
     modules::event::jeopardy::{
         application::instance_service::InstanceService,
@@ -108,6 +111,20 @@ impl JeopardySubmissionService {
         // Ownership is enforced via team membership + event join checks at the strategy layer.
 
         let challenge_id = instance.challenge_id;
+
+        // 竞赛：未发布(hidden)题目不得计分。
+        //
+        // 历史缺陷：发布状态只用于过滤选手可见的题目列表，启动与提交都不校验，于是选手
+        // 仍可解未发布题并计分；更糟的是排行榜 score 取 event_users.points（含未发布题）、
+        // solved_count 只统计已发布题，出现「400 分 / 3 题」而库内实为 4 条 solve 的矛盾。
+        let event_challenge =
+            jeopardy_event_challenges::Entity::find_by_id((req.event_id, challenge_id))
+                .one(&txn)
+                .await?
+                .ok_or_else(|| anyhow!("该题目不属于本赛事"))?;
+        if event_challenge.hidden {
+            return Err(anyhow!("该题目尚未发布，无法提交"));
+        }
 
         let challenge = challenges::Entity::find_by_id(challenge_id)
             .one(&txn)

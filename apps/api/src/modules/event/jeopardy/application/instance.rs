@@ -41,7 +41,7 @@ pub async fn launch_instance(
     let max_instances = policy.max_concurrent_instances(participant.team_member_count);
 
     if policy.requires_event_challenge() {
-        jeopardy_event_challenges::Entity::find()
+        let event_challenge = jeopardy_event_challenges::Entity::find()
             .filter(
                 jeopardy_event_challenges::Column::EventId
                     .eq(event_id)
@@ -50,6 +50,10 @@ pub async fn launch_instance(
             .one(db)
             .await?
             .ok_or_else(|| anyhow!("challenge is not in this event"))?;
+        // 未发布(hidden)题目仅后台可见，不允许选手启动实例——否则选手可解未发布题并计分。
+        if event_challenge.hidden {
+            return Err(anyhow!("该题目尚未发布，无法启动实例"));
+        }
     }
 
     let mut running_q = event_challenge_instance::Entity::find()

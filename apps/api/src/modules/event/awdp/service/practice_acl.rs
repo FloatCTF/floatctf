@@ -50,9 +50,17 @@ pub fn render_ruleset(
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("table inet {table_name} {{\n"));
-    // forward：池→池 DROP（横向隔离）；池→judge 仅 data port。
+    // forward：已建立连接的返回流量必须最先放行。
+    //
+    // judge 主动连靶机（healthcheck / judge / exploit）时，靶机回的 SYN-ACK 目的地是
+    // judge 的**临时端口**，会命中下面 `池→judge 且 dport != data port → DROP`，于是
+    // judge 侧恒为连接超时、判定恒失败（且 AWD 式「靶机→judge:80」方向不受影响，故
+    // 该缺陷不易暴露）。conntrack 豁免必须排在池→judge 限制之前。
+    //
+    // 之后才是：池→池 DROP（横向隔离）；池→judge 仅 data port。
     out.push_str("    chain forward_filter {\n");
     out.push_str("        type filter hook forward priority 1; policy accept;\n");
+    out.push_str("        ct state established,related accept\n");
     out.push_str(&format!(
         "        ip saddr {dynamic_pool} ip daddr {dynamic_pool} drop\n"
     ));
@@ -295,8 +303,24 @@ mod tests {
             "iifname \"br-abcdef123456\" ip saddr {PRACTICE_DYNAMIC_POOL} tcp dport 9090 drop"
         )));
         assert!(rs.contains("tcp dport 5432 drop"));
-        // established 豁免。
-        assert!(rs.contains("ct state established,related accept"));
+        // established 豁免：forward 与 input 两条链都要有，且 forward 链里必须排在
+        // 「池→judge 仅 data port」限制之前（否则 judge 主动连靶机的 SYN-ACK 会被丢）。
+        assert_eq!(rs.matches("ct state established,related accept").count(), 2);
+        let forward = rs
+            .split("chain input_filter")
+            .next()
+            .expect("forward 链存在");
+        let ct_pos = forward
+            .find("ct state established,related accept")
+            .expect("forward 链缺少 established 豁免");
+        let judge_drop = format!(
+            "ip saddr {PRACTICE_DYNAMIC_POOL} ip daddr 10.42.2.2 tcp dport != {PRACTICE_JUDGE_PORT} drop"
+        );
+        let drop_pos = forward.find(&judge_drop).expect("池→judge 限制存在");
+        assert!(
+            ct_pos < drop_pos,
+            "established 豁免必须排在池→judge 限制之前"
+        );
         // 不 flush 全局 ruleset。
         assert!(!rs.contains("flush ruleset"));
     }

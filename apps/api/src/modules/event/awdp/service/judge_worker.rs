@@ -262,6 +262,15 @@ pub async fn claim_jobs(
         if ev.kind == AwdpEvaluationKind::Official {
             if let Some(round_id) = ev.fix_round_id {
                 if !patch_repo::has_applied_patch(db, ev.instance_id, round_id).await? {
+                    // 练习模式：NO_PATCH 同样要扣 penalty。这里与进程内 worker
+                    // （run_official_pipeline）共用 score_fix_penalty 与同一幂等键，
+                    // 否则经 JudgeServer 领取的回合会漏扣 → 账本与 UI/练习规则不一致。
+                    if run.gamebox_id.is_some() {
+                        crate::modules::event::awdp::service::evaluation::score_fix_penalty(
+                            db, &run, round_id, &ext,
+                        )
+                        .await?;
+                    }
                     let outcome = evaluation_repo::finish_with_lease(
                         db,
                         ev.id,

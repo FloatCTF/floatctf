@@ -248,6 +248,69 @@ print(json.dumps(out))
     Ok((ok, details.join("; ")))
 }
 
+/// healthcheck 判定入口：数据面开启（生产）时**先**在 JudgeServer 容器内探测。
+///
+/// API 在生产只挂在控制网，进程内探测必然传输失败；若仍先跑进程内重试，每项
+/// healthcheck 会白等 `3×5s + 2×2s = 19s`。数据面不可用（容器缺失等）时回落进程内
+/// 探测，保持 dev/测试语义不变。
+async fn run_healthchecks(
+    runtime: &DockerContainerRuntime,
+    event_id: Uuid,
+    container_ip: &str,
+    checks: &[crate::modules::gamebox::healthcheck::AppHealthcheck],
+    prefer_data_plane: bool,
+) -> (bool, Vec<String>) {
+    if prefer_data_plane {
+        match probe_health_in_data_plane(runtime, event_id, checks, container_ip).await {
+            Ok((ok, line)) => return (ok, vec![format!("(data-plane) {line}")]),
+            Err(e) => {
+                let (ok, mut detail) = probe_health_in_process(container_ip, checks).await;
+                detail.push(format!("data-plane probe unavailable: {e}"));
+                return (ok, detail);
+            }
+        }
+    }
+    probe_health_in_process(container_ip, checks).await
+}
+
+/// 进程内 healthcheck（dev/测试：API 在宿主网络可达数据网）。
+async fn probe_health_in_process(
+    container_ip: &str,
+    checks: &[crate::modules::gamebox::healthcheck::AppHealthcheck],
+) -> (bool, Vec<String>) {
+    use crate::modules::gamebox::healthcheck::{AppHealthcheck, probe_one_with_retries};
+    let mut ok = true;
+    let mut detail = Vec::new();
+    for hc in checks {
+        let internal = match hc {
+            AppHealthcheck::Http {
+                port,
+                path,
+                expected_status,
+                ..
+            } => AppHealthcheck::Http {
+                port: *port,
+                path: path.clone(),
+                expected_status: *expected_status,
+            },
+            AppHealthcheck::Tcp { port } => AppHealthcheck::Tcp { port: *port },
+        };
+        let r = probe_one_with_retries(
+            container_ip,
+            &internal,
+            Duration::from_secs(5),
+            3,
+            Duration::from_secs(2),
+        )
+        .await;
+        detail.push(r.detail.clone());
+        if !r.ok {
+            ok = false;
+        }
+    }
+    (ok, detail)
+}
+
 /// 同步执行 manual Test Check（不排队）：HTTP 请求内直接执行 healthcheck + judge +
 /// exploit（诊断展示，不计分），写终态后返回结果。与 worker 经 instance advisory
 /// lock 串行；无 lease（同步独占）。
@@ -387,56 +450,17 @@ async fn manual_leased_locked(
             .unwrap_or_else(|| serde_json::json!([])),
     )?;
     // 打容器内网 IP + container_port（不依赖 public NAT）。
-    // 先在进程内探测（dev/测试：API 在宿主网络可达数据网）；生产 API 在控制网，
-    // 本地必然传输失败 → 回退到数据面（JudgeServer 容器）内探测。
+    // 生产（AWDP_DATA_PLANE_EXEC）优先在数据面 JudgeServer 容器内探测；dev/测试回落进程内。
     let runtime = DockerContainerRuntime::new(docker.clone());
     let prefer_data_plane = data_plane_exec_enabled(db).await;
-    let mut health_detail = Vec::new();
-    let mut health_ok = true;
-    for hc in &healthchecks {
-        let internal = match hc {
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port,
-                path,
-                expected_status,
-                ..
-            } => crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port: *port,
-                path: path.clone(),
-                expected_status: *expected_status,
-            },
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => {
-                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port: *port }
-            }
-        };
-        let result = crate::modules::gamebox::healthcheck::probe_one_with_retries(
-            &container_ip,
-            &internal,
-            Duration::from_secs(5),
-            3,
-            Duration::from_secs(2),
-        )
-        .await;
-        health_detail.push(result.detail.clone());
-        if !result.ok {
-            health_ok = false;
-        }
-    }
-    // 本地不可达（跨网络隔离）→ 用数据面视角重探，避免误判 SERVICE_DOWN。
-    if !health_ok && prefer_data_plane {
-        match probe_health_in_data_plane(&runtime, ext.event_id, &healthchecks, &container_ip).await
-        {
-            Ok((data_plane_ok, line)) => {
-                if data_plane_ok {
-                    health_ok = true;
-                    health_detail.push(format!("(data-plane) {line}"));
-                } else {
-                    health_detail.push(format!("(data-plane) {line}"));
-                }
-            }
-            Err(e) => health_detail.push(format!("data-plane probe unavailable: {e}")),
-        }
-    }
+    let (health_ok, health_detail) = run_healthchecks(
+        &runtime,
+        ext.event_id,
+        &container_ip,
+        &healthchecks,
+        prefer_data_plane,
+    )
+    .await;
 
     // 2. Judge（check.py，批量契约单目标）。
     let (judge_ok, judge_detail) = match gamebox.judge_script_content.clone() {
@@ -712,42 +736,19 @@ async fn run_checks(
             .clone()
             .unwrap_or_else(|| serde_json::json!([])),
     )?;
-    let mut health_ok = true;
-    let mut health_detail = Vec::new();
-    for hc in &healthchecks {
-        let Some(ip) = &container_ip else {
-            health_ok = false;
-            health_detail.push("容器未运行，无法 healthcheck".into());
-            continue;
-        };
-        let internal_check = match hc {
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port,
-                path,
-                expected_status,
-                ..
-            } => crate::modules::gamebox::healthcheck::AppHealthcheck::Http {
-                port: *port,
-                path: path.clone(),
-                expected_status: *expected_status,
-            },
-            crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port } => {
-                crate::modules::gamebox::healthcheck::AppHealthcheck::Tcp { port: *port }
-            }
-        };
-        let r = crate::modules::gamebox::healthcheck::probe_one_with_retries(
-            ip,
-            &internal_check,
-            Duration::from_secs(5),
-            3,
-            Duration::from_secs(2),
-        )
-        .await;
-        health_detail.push(r.detail.clone());
-        if !r.ok {
-            health_ok = false;
+    let (health_ok, health_detail) = match &container_ip {
+        Some(ip) => {
+            run_healthchecks(
+                &runtime,
+                eval_event_id,
+                ip,
+                &healthchecks,
+                prefer_data_plane,
+            )
+            .await
         }
-    }
+        None => (false, vec!["容器未运行，无法 healthcheck".to_string()]),
+    };
     if !health_ok {
         return Ok(CheckOutcome {
             status: S::ServiceDown,
@@ -866,13 +867,17 @@ struct CheckOutcome {
 /// 练习模式 check 失败扣分：NO_PATCH / SERVICE_DOWN / FUNCTIONAL_BROKEN / VULNERABLE
 /// 每轮每实例以同一幂等键 `awdp:fix:{run}:{round}:{instance}` 写一条负 delta 账本
 /// （与 PATCHED +fix_round_score 互斥；重试不会重复扣）。
-async fn score_fix_penalty(
+///
+/// 两条 official 执行路径必须共用本函数，否则会出现「有的回合扣、有的不扣」：
+/// 进程内 worker（`run_official_pipeline`）与 JudgeServer 领取（`judge_worker::claim_jobs`
+/// 的平台侧 NO_PATCH 短路）。
+pub(crate) async fn score_fix_penalty(
     db: &DatabaseConnection,
     run: &crate::entity::awdp_runs::Model,
-    round: &crate::entity::awdp_fix_rounds::Model,
+    round_id: Uuid,
     ext: &crate::entity::awdp_instances::Model,
 ) -> AwdpResult<()> {
-    let key = fix_idempotency_key(run.id, round.id, ext.instance_id);
+    let key = fix_idempotency_key(run.id, round_id, ext.instance_id);
     let _ = score_repo::create_score_event(
         db,
         run.id,
@@ -880,7 +885,7 @@ async fn score_fix_penalty(
         ext.owner_team_id,
         ext.gamebox_id,
         "fix",
-        Some(round.id),
+        Some(round_id),
         -crate::modules::event::awdp::domain::config::DEFAULT_FIX_ROUND_PENALTY,
         &key,
     )
@@ -971,7 +976,7 @@ async fn run_official_pipeline(
     match outcome.status {
         S::NoPatch => {
             if is_practice {
-                score_fix_penalty(db, run, round, &ext).await?;
+                score_fix_penalty(db, run, round.id, &ext).await?;
             }
             finish_eval(
                 db,
@@ -991,7 +996,7 @@ async fn run_official_pipeline(
         }
         S::ServiceDown => {
             if is_practice {
-                score_fix_penalty(db, run, round, &ext).await?;
+                score_fix_penalty(db, run, round.id, &ext).await?;
             }
             finish_eval(
                 db,
@@ -1011,7 +1016,7 @@ async fn run_official_pipeline(
         }
         S::FunctionalBroken => {
             if is_practice {
-                score_fix_penalty(db, run, round, &ext).await?;
+                score_fix_penalty(db, run, round.id, &ext).await?;
             }
             finish_eval(
                 db,
@@ -1031,7 +1036,7 @@ async fn run_official_pipeline(
         }
         S::Vulnerable => {
             if is_practice {
-                score_fix_penalty(db, run, round, &ext).await?;
+                score_fix_penalty(db, run, round.id, &ext).await?;
             }
             finish_eval(
                 db,

@@ -25,6 +25,11 @@ import { useAuthStore } from "@/stores/AuthStore";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+	AWD_PLAYER_QUERY_KEYS,
+	invalidateAwdQueries,
+} from "@/hooks/awdInvalidation";
+
 export type AwdStreamEvent = {
 	type: string;
 	sequence?: number;
@@ -62,11 +67,9 @@ export function useAwdEventStream(options: UseAwdEventStreamOptions) {
 	const connRef = useRef<SseConnection | null>(null);
 
 	const invalidateAwd = useCallback(() => {
-		qc.invalidateQueries({ queryKey: ["awd-scores", eventId] });
-		qc.invalidateQueries({ queryKey: ["awd-gameboxes", eventId] });
-		qc.invalidateQueries({ queryKey: ["admin-awd-scores", eventId] });
-		qc.invalidateQueries({ queryKey: ["eventInfo", eventId] });
-		qc.invalidateQueries({ queryKey: ["event", eventId] });
+		// 与选手页面手动刷新共用同一份 key 常量（见 awdInvalidation.ts）：
+		// 此前只有 5 个 key，比页面实际读取的窄，SSE 生效后这些面板反而不刷新了。
+		invalidateAwdQueries(qc, eventId, AWD_PLAYER_QUERY_KEYS);
 	}, [qc, eventId]);
 
 	const handleSseEvent = useCallback(

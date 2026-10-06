@@ -14,6 +14,10 @@ import {
 	computeEventStatus,
 	useMsgInlineBanner,
 } from "@/components";
+import {
+	AWD_PLAYER_QUERY_KEYS,
+	invalidateAwdQueries,
+} from "@/hooks/awdInvalidation";
 import { ServiceRouteGuard } from "../../route";
 
 export const Route = createFileRoute("/service/events/awd/$id/")({
@@ -80,13 +84,8 @@ function RouteComponent() {
 	const myTeam = eventData?.team_result;
 
 	const invalidate = () => {
-		queryClient.invalidateQueries({ queryKey: ["eventInfo", id] });
-		queryClient.invalidateQueries({ queryKey: ["awd-gameboxes", id] });
-		queryClient.invalidateQueries({ queryKey: ["awd-scores", id] });
-		queryClient.invalidateQueries({ queryKey: ["awd-wg", id] });
-		queryClient.invalidateQueries({ queryKey: ["awd-ssh", id] });
-		queryClient.invalidateQueries({ queryKey: ["awd-player-status", id] });
-		queryClient.invalidateQueries({ queryKey: ["announcements", id] });
+		// 与 SSE 事件流共用同一份 key 常量（awdInvalidation.ts），避免两边再次漂移。
+		invalidateAwdQueries(queryClient, id, AWD_PLAYER_QUERY_KEYS);
 	};
 
 	const createEventTeamMutation = useMutation({

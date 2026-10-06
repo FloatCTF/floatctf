@@ -10,6 +10,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/AuthStore";
 import {
+	AWD_ADMIN_QUERY_KEYS,
+	invalidateAwdQueries,
+} from "@/hooks/awdInvalidation";
+import {
 	type SseConnection,
 	type SseConnectionState,
 	type SseEvent,
@@ -51,11 +55,9 @@ export function useAdminAwdEventStream(options: UseAdminAwdEventStreamOptions) {
 	const connRef = useRef<SseConnection | null>(null);
 
 	const invalidateAwd = useCallback(() => {
-		qc.invalidateQueries({ queryKey: ["awd-scores", eventId] });
-		qc.invalidateQueries({ queryKey: ["awd-gameboxes", eventId] });
-		qc.invalidateQueries({ queryKey: ["admin-awd-scores", eventId] });
-		qc.invalidateQueries({ queryKey: ["eventInfo", eventId] });
-		qc.invalidateQueries({ queryKey: ["event", eventId] });
+		// 管理端页面读 admin-awd-status / admin-awd-prechecks，此前两者都不在失效列表里
+		// （三个管理页都在读 admin-awd-status）→ 赛事状态面板从不实时更新。
+		invalidateAwdQueries(qc, eventId, AWD_ADMIN_QUERY_KEYS);
 	}, [qc, eventId]);
 
 	const handleSseEvent = useCallback(

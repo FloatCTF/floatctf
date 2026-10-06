@@ -387,7 +387,23 @@ download_url() { # url dest
         || die "下载失败: $1（这是 fake 占位地址，替换为真实 release 地址或经 --*-url 传入）"
 }
 
+# 内置的 DEFAULT_*_URL 指向 v0.0.0-fake 占位 tag（真实 release 发布后才会替换）。
+# 不先拦一道的话，直接 `sudo bash install.sh` 会停在第 4 个 URL 的 curl 失败上，
+# 看起来像网络/防火墙问题。这里在动手前就快速失败，并列出该传哪个参数。
+ensure_real_release_urls() {
+    local placeholder="releases/download/v0.0.0-fake"
+    local missing=()
+    [[ "$API_URL" == *"$placeholder"* ]] && missing+=("--api-url（或 FLOATCTF_API_URL）")
+    [[ "$HELPER_URL" == *"$placeholder"* ]] && missing+=("--helper-url（或 FLOATCTF_HELPER_URL）")
+    [[ "$WEB_URL" == *"$placeholder"* ]] && missing+=("--web-url（或 FLOATCTF_WEB_URL）")
+    [[ "$MIGRATE_URL" == *"$placeholder"* ]] && missing+=("--migrate-url（或 FLOATCTF_MIGRATE_URL）")
+    if [ "${#missing[@]}" -gt 0 ]; then
+        die "缺少真实 release 地址：内置地址是 v0.0.0-fake 占位（仓库还没有对应发布产物）。请补：${missing[*]}"
+    fi
+}
+
 download_release() {
+    ensure_real_release_urls
     info "──── 第二阶段：下载 release 产物（4 URL）────"
     TMP_STAGE_DIR="$(mktemp -d /tmp/floatctf-install.XXXXXX)"
 
@@ -641,7 +657,6 @@ platform_internal_url = "http://10.42.8.2:${API_PORT}"
 [registry]
 image_prefix = "floatctf"
 push = false
-insecure = false
 build_timeout_secs = 900
 
 [cors]
@@ -1746,7 +1761,8 @@ main() {
 （首次启动 postgres 会自动用 merged.sql 初始化数据库）
 查看状态：
   systemctl status floatctf.target
-  journalctl -fu floatctf-infra floatctf-api
+  journalctl -fu floatctf.target floatctf-infra
+（生产 API 由 Compose 托管，没有 floatctf-api.service —— 不要照抄成 floatctf-api）
 EOF
     ok "FloatCTF 安装完成：$FLOATCTF_HOME"
 }

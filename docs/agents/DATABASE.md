@@ -183,3 +183,22 @@ cargo test -p floatctf <相关测试>   # 涉及行为的变更跑相关 DB-gate
 - 生产环境数据库密码等敏感值不写入迁移文件；迁移只含 Schema 与业务数据，不含凭据
 - **已有迁移文件内容不可修改**（已 apply 时 verify 会报 MODIFIED；未 apply 但已提交共享的同样禁止改历史）。改 Schema **只能**新增迁移
 - 迁移文件内不含事务控制（`BEGIN`/`COMMIT` 由 migrate.sh 管理；validate 会拒绝）
+
+## 同名列陷阱：`event_id` 与 `phase` 都不是"一个意思"（风险清单 #13）
+
+历史演进留下了一批**同名不同义**的列。凭列名推断外键目标会写出静默错误的 join，
+手写 SQL 前先按本表核对（或直接用实体关系 `find_also_related`，不要手写 `ON`）。
+
+| 列 | 在哪 | 实际指向 / 含义 |
+|---|---|---|
+| `event_id` | `event_instances.event_id` | FK → `events(id)` |
+| `event_id` | `event_gamebox_instances.event_id` | FK → **`awd_events(event_id)`**（不是 `events`） |
+| `event_id` | `awd_network_allocations.event_id` | 又指回 `events(id)`（AWD 收紧外键的那次迁移里被显式排除） |
+| `event_id` | `awd_events.event_id` | 自身主键，同时又是对 `events(id)` 的引用 → 同名第三层 |
+| `phase` | `awd_events.phase` | **赛事级**状态机：hardening / attack / pause |
+| `phase` | `awd_rounds.phase` | **轮次级**，复用同一枚举、默认 `attack`（看到 `phase='attack'` 无法判断是哪一级） |
+| `phase` | `awdp_runs.phase` | AWDP 训练 run：pending / break / preparing_fix / fix / ended |
+
+- 典型症状：`event_gamebox_instances.event_id` 与 `event_instances.event_id` 相等时看起来"对得上"，
+  实际一个是 `awd_events` 键、一个是 `events` 键；用错会 join 出空集而不是报错。
+- `schema_migrations` 不是领域实体（generator 已排除）；核对 FK 请读对应 migration 原文。

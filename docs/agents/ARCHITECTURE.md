@@ -200,12 +200,33 @@ POST /api/submit/flag                     # bootstrap/routes.rs 里 scope("/subm
 
 判断用哪层：**进程级静态不变 → TOML；管理员可改 → settings 表**。不要在 TOML 里放可运营修改项，也不要在 settings 里放进程级安全配置（如 secret）。
 
+### 主密钥 `auth.jwt_secret` 一值三用（风险清单 #7）
+
+同一个 `auth.jwt_secret` 被用于三件互不相干的事，**无法独立轮换**：
+
+1. JWT 签名（HS512）——`core::security::jwt`；
+2. AWD 信封加密 / flag 派生的 HKDF 根——`awd/crypto.rs::AwdCrypto`；
+3. AWDP 练习 JudgeServer 的 `INTERNAL_TOKEN` 派生——`awdp/domain/judge.rs::practice_judge_token`（info 串不同）。
+
+改它 = 全平台换钥：所有已签发 JWT 失效、所有 AWD flag 派生结果改变、判题容器令牌改变（容器需重建）。反过来，判题容器里的 `INTERNAL_TOKEN` 泄露等价于拿到 JWT 签名密钥（可伪造超管令牌）。**当成主密钥对待**，不要把派生逻辑写成"与 App secret 无关"。中长期方向：拆 `awd.root_key` / `internal_token_key`。
+
+另：`seed_default_settings` 现在也补上了此前"被读取但从未 seed"的 5 个键（`AWD_RATE_SUBMIT_PER_MIN`/`AWD_RATE_RESET_PER_HOUR`/`AWD_RATE_INTERNAL_PER_MIN`/`AWD_NETWORK_REVISION`/`AWDP_DATA_PLANE_EXEC`，风险清单 #14）。其中 **`AWDP_DATA_PLANE_EXEC` 在 production 必须是 `true`**（API 只挂控制网，进程内探测必然失败）；默认播种 false 是为了不改变既有 dev/测试语义，请在管理端设置页确认生产值。
+
 ## 6. 后台调度器（apps/api/src/scheduler/）
 
 - `engine.rs` — 轮询 `scheduled_tasks` 表的任务执行引擎（锁、重试、心跳）
 - `handlers/` — 具体任务处理器（如 AWD 轮次推进）
 - `task_key.rs` — 任务键常量
 - `wake.rs` — Redis pub/sub 即时唤醒（`floatctf:scheduler:wake`，5s DB 轮询为兜底）
+
+⚠️ 读 `scheduled_tasks` 时的两个反直觉点（风险清单 #9/#10）：
+
+- `awd.round.start` 与 `awd.archive.cleanup` **有 handler、没有生产者**：没有任何代码写出这两行
+  （轮次推进是 `round_service::end_round` 进程内直接调 `start_round`；归档没有周期清理）。
+  它们只是"可手工触发的入口"。
+- `platform.rustfs.clean`（`CleanUnusedRustFSFilesHandler`）是**未实现的空操作**：不列举也不删除
+  任何对象，只会打一条 warn。它的成功记录不代表对象存储被清理过。
+- `scheduled_tasks.enabled = false` **不生效**：引擎用内存中的 cron 状态，改库不会停任务（实测）。
 - 新定时任务：加 task_key → 在 handlers 实现 → 在 bootstrap/scheduler.rs 注册
 
 ## 7. Realtime / Redis（infrastructure/）

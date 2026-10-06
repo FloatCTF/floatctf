@@ -1,4 +1,17 @@
 //! 统一应用错误类型。
+//!
+//! ⚠️ 分层现状（风险清单 #6）：本模块在顶部 `use crate::modules::event::...` 并为
+//! `AwdError` / `GameboxError` / `AwdpError` 各实现了一个 `From`；而所有业务模块又通过
+//! `crate::api::prelude::*` 反向依赖 api 层 —— 于是 api ↔ modules 形成环。这不是编译
+//! 错误，但「api 是纯横切层」已被打破：每新增一个赛制，其错误类型都要回到这里注册，
+//! api 层因此成为所有域的耦合中心，想把某个域抽成独立 crate 会直接卡住。
+//!
+//! 目标方向（新代码请照此办理，**不要**继续往本文件加 `use crate::modules::...`）：
+//! - 域内错误在域内实现到 `AppError` 的转换（模块侧 impl `From`）；
+//! - `AppError` 只保留真正横切的变体（Validation / NotFound / Unauthorized / Conflict…）；
+//! - 新增域时优先 `AppError::from_xxx(...)` 这类显式构造。
+//!
+//! 排查建议：看到某个域错误没被映射成预期状态码时，先确认它的 `From` 实现落在哪一层。
 
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};

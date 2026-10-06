@@ -78,6 +78,41 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             SettingValueType::String,
             "SMTP服务器地址与凭证",
         ),
+        // ── 风险清单 #14：以下 5 个键一直被代码读取，却从未 seed ──────────────────
+        // 缺失时靠代码内兜底默认值生效，管理端设置页看不到它们 —— 想调限流阈值的人
+        // 找不到开关，或误以为自己写错了键名。这里按**当前代码默认值**补齐
+        // （ON CONFLICT DO NOTHING：不会覆盖运维已改过的值，如生产已把
+        // AWDP_DATA_PLANE_EXEC 置为 true）。
+        (
+            "AWD_RATE_SUBMIT_PER_MIN",
+            "30".to_string(),
+            SettingValueType::Integer,
+            "AWD 提交 flag 限流（每用户每分钟，Redis 滑动窗口；代码默认 30）",
+        ),
+        (
+            "AWD_RATE_RESET_PER_HOUR",
+            "5".to_string(),
+            SettingValueType::Integer,
+            "AWD 重置 GameBox 限流（每队伍每小时；代码默认 5）",
+        ),
+        (
+            "AWD_RATE_INTERNAL_PER_MIN",
+            "120".to_string(),
+            SettingValueType::Integer,
+            "AWD internal 端点限流（每赛事每分钟；代码默认 120）",
+        ),
+        (
+            "AWD_NETWORK_REVISION",
+            "0".to_string(),
+            SettingValueType::Integer,
+            "AWD 网络策略 revision（每次期望状态变化 +1；0 = 尚未 reconcile，由 reconcile 自动推进）",
+        ),
+        (
+            "AWDP_DATA_PLANE_EXEC",
+            "false".to_string(),
+            SettingValueType::Boolean,
+            "AWDP 判定是否在 JudgeServer 容器（数据面）内执行；生产必须置 true（API 只挂控制网，进程内探测必然失败），仅测试/mock 保持 false",
+        ),
     ];
     for (key, value, value_type, description) in defaults {
         let e = settings::Entity::insert(settings::ActiveModel {

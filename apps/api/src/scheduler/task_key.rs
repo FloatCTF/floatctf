@@ -10,8 +10,14 @@ pub enum TaskKey {
     AwdEventStart,
     AwdHardeningEnd,
     AwdJudgeBatchDeadline,
+    /// ⚠️ **无生产者**：全仓库没有任何代码写出 `awd.round.start` 行 —— 轮次推进是
+    /// `round_service::end_round` 在进程内直接调用 `start_round`，不是由调度任务驱动。
+    /// 本键 + 对应 handler 只是「可手工触发的入口」；读 `scheduled_tasks` 时不要据此
+    /// 推断轮次时序。
     AwdRoundStart,
     AwdRoundEnd,
+    /// ⚠️ **无生产者**：归档清理同样没有定时调度（没有代码写出该行），handler 仅作手工
+    /// 触发入口。别以为归档有周期性清理。
     AwdArchiveCleanup,
     AwdpTick,
     AwdpEvalWorker,

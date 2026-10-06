@@ -57,7 +57,6 @@ platform_internal_url = "http://10.42.8.2:${API_PORT}"
 [registry]
 image_prefix = "floatctf"
 push = false
-insecure = false
 build_timeout_secs = 900
 
 [cors]

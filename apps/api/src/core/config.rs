@@ -64,8 +64,6 @@ pub struct RegistryConfig {
     pub username: Option<String>,
     pub password: Option<Secret>,
     pub server_address: Option<String>,
-    /// Reserved/document; bollard may not honor yet.
-    pub insecure: bool,
     pub build_timeout_secs: u64,
 }
 
@@ -79,6 +77,19 @@ pub struct StorageConfig {
 
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
+    /// ⚠️ 平台**主密钥**：同一个值被用于三件事（风险清单 #7）——
+    ///   1. JWT 签名（HS512，`core::security::jwt::configure_jwt_secret`）；
+    ///   2. AWD 信封加密/flag 派生的 HKDF 根（`AwdCrypto::configure_secret`）；
+    ///   3. AWDP 练习 JudgeServer 的 INTERNAL_TOKEN 派生（`practice_judge_token`，info 串不同）。
+    ///
+    /// 三个用途**无法独立轮换**：改这个值会同时让所有已签发 JWT 失效、所有 AWD flag 派生
+    /// 结果改变、判题容器令牌改变；反过来说，任何一处泄露（例如判题容器里的 INTERNAL_TOKEN）
+    /// 都等价于拿到 JWT 签名密钥，可伪造任意超管令牌。
+    ///
+    /// 因此：把它当整个平台的主密钥对待 —— 不写日志、不下发给低信任容器（`Secret` 包装已
+    /// 阻止 Debug/日志泄漏；下发见 `awdp::domain::judge::practice_judge_token` 的调用点）。
+    /// 中长期方向是拆成独立的 `awd.root_key` 与 `internal_token_key`；在拆之前，请按"改一次
+    /// 等于全平台换钥"来做发布计划。
     pub jwt_secret: Secret,
 }
 
@@ -95,8 +106,6 @@ pub struct PathConfig {
 /// AWD 进程静态配置（非每场赛事密钥）。
 #[derive(Debug, Clone)]
 pub struct AwdStaticConfig {
-    /// Whether AWD crypto could be derived from the shared JWT secret material.
-    pub crypto_from_app_secret: bool,
     /// 网络 runtime 选择：`helper` = 通过固定 Unix socket 调用特权 floatctf-helper；
     /// `noop` 仅供 unit test / mock 使用（Noop 永远不允许 Verified）。
     pub network_runtime: String,
@@ -292,8 +301,6 @@ struct FeaturesToml {
 
 #[derive(Debug, Deserialize)]
 struct AwdToml {
-    #[serde(default = "default_true")]
-    crypto_from_app_secret: bool,
     /// 默认 `noop` 只用于未显式配置的测试场景；开发/生产配置显式写 `helper`。
     #[serde(default = "default_network_runtime")]
     network_runtime: String,
@@ -314,7 +321,6 @@ fn default_network_runtime() -> String {
 impl Default for AwdToml {
     fn default() -> Self {
         Self {
-            crypto_from_app_secret: true,
             network_runtime: default_network_runtime(),
             flagserver_image: default_flagserver_image(),
             judgeserver_image: default_judgeserver_image(),
@@ -413,8 +419,6 @@ struct RegistryToml {
     password: Option<String>,
     #[serde(default)]
     server_address: Option<String>,
-    #[serde(default)]
-    insecure: bool,
     #[serde(default = "default_build_timeout_secs")]
     build_timeout_secs: u64,
 }
@@ -427,7 +431,6 @@ impl Default for RegistryToml {
             username: None,
             password: None,
             server_address: None,
-            insecure: false,
             build_timeout_secs: default_build_timeout_secs(),
         }
     }
@@ -535,7 +538,6 @@ impl AppConfig {
                 work_dir: file.server.work_dir,
             },
             awd: AwdStaticConfig {
-                crypto_from_app_secret: file.awd.crypto_from_app_secret,
                 network_runtime: file.awd.network_runtime,
                 flagserver_image: warn_if_latest("awd.flagserver_image", file.awd.flagserver_image),
                 judgeserver_image: warn_if_latest(
@@ -565,7 +567,6 @@ impl AppConfig {
                 username: non_empty(file.registry.username),
                 password: non_empty(file.registry.password).map(Secret::new),
                 server_address: non_empty(file.registry.server_address),
-                insecure: file.registry.insecure,
                 build_timeout_secs: file.registry.build_timeout_secs,
             },
             features: FeatureFlags {
@@ -622,9 +623,6 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
-fn default_true() -> bool {
-    true
-}
 fn default_listen_ip() -> String {
     "127.0.0.1".to_string()
 }

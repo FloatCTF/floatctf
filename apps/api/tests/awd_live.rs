@@ -342,7 +342,6 @@ async fn real_helper_deploy_precheck_pause_resume_archive() {
     assert!(allocated.locked_at.is_none());
 
     let static_config = AwdStaticConfig {
-        crypto_from_app_secret: false,
         network_runtime: "helper".into(),
         flagserver_image,
         judgeserver_image,

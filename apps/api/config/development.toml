@@ -61,7 +61,6 @@ push = false
 # username = ""
 # password = ""
 # server_address = ""
-insecure = false
 build_timeout_secs = 600
 
 [redis]

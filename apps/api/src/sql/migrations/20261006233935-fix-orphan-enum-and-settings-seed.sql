@@ -1,0 +1,24 @@
+-- ================================================================================
+-- Migration: 20261006233935-fix-orphan-enum-and-settings-seed
+-- ================================================================================
+--
+-- 风险清单 #14（第一部分）：孤儿枚举类型 `instance_status`。
+--
+-- 该枚举由 baseline（20260810121925-initial-schema.sql）创建，唯一使用它的
+-- `instances.status` 列随 `instances` 表在「实例模型归一化」时一起被删除，但没有
+-- `DROP TYPE`。于是它作为一个没有任何列引用的类型永远留在库里，且不在生成实体中 ——
+-- 核对「数据库 Schema / 生成实体 / 业务代码三处一致」的人会浪费时间去追一个不存在的列。
+--
+-- 已核实（生产库 information_schema.columns）：
+--   select count(*) from information_schema.columns where udt_name = 'instance_status';
+--   → 0
+-- 即当前没有任何列在使用它；删除是纯噪音清理，生成实体不受影响。
+--
+-- ⚠️ 第二部分（补齐 5 个「被代码读取但从未 seed」的设置键）**不放在本迁移**，而是加进
+--    `apps/api/src/infrastructure/settings.rs::seed_default_settings`：那是这些默认值的
+--    canonical 位置，且 bootstrap 每次启动都会 upsert（ON CONFLICT DO NOTHING），对既有库
+--    与 fresh 库同时生效，避免同一份默认值两处维护。
+--
+-- 幂等：DROP TYPE IF EXISTS 可重复执行。
+
+DROP TYPE IF EXISTS public.instance_status;

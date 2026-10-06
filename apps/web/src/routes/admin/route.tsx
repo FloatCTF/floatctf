@@ -11,8 +11,20 @@ import { adminIgnoreRoutes, adminNavigation } from "@/navigation";
 import { useAuthStore } from "@/stores/AuthStore";
 
 export const Route = createFileRoute("/admin")({
+	// 统一兜底守卫：/admin 下所有子路由都要求 adminToken（此前只靠各子路由自己声明，
+	// /admin/database、/admin/version、/admin/terminal、/admin/docker 等页面没有守卫）。
+	// 注意登录页 /admin 本身在 adminIgnoreRoutes 里 → 必须跳过，否则
+	// redirect({ to: "/admin" }) 会自我循环（这正是该守卫此前被注释掉的原因）。
+	beforeLoad: async ({ location }) => {
+		if (adminIgnoreRoutes.includes(location.pathname)) {
+			return;
+		}
+		const authStore = useAuthStore.getState();
+		if (!authStore.adminToken) {
+			throw redirect({ to: "/admin" });
+		}
+	},
 	component: RouteComponent,
-	// loader: AdminRouteGuard,
 });
 
 function RouteComponent() {

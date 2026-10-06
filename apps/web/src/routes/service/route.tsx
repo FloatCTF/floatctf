@@ -10,6 +10,15 @@ import { serviceNavigation } from "@/navigation";
 import { useAuthStore } from "@/stores/AuthStore";
 
 export const Route = createFileRoute("/service")({
+	// 统一兜底守卫：/service 下所有页面都要求用户 token（未登录 → 登录页 /）。
+	// 此前只有部分子路由自带 ServiceRouteGuard，漏声明的页面会渲染出空壳 + 一串 401，
+	// 容易被误判成「功能坏了」。
+	beforeLoad: async () => {
+		const authStore = useAuthStore.getState();
+		if (!authStore.token) {
+			throw redirect({ to: "/" });
+		}
+	},
 	component: RouteComponent,
 });
 

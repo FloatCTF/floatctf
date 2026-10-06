@@ -327,6 +327,57 @@ pub fn service_routes() -> Vec<Route> {
             auth: Auth::UserRequired,
             json_body: false,
         },
+        // ── AWD 选手端（/api/events/{event_id}/awd/...）──
+        // 这 8 条此前完全不在目录里，所以 get_scores 漏守卫时契约测试抓不到。
+        // 只登记 /events 前缀：顶层 /api 的重复注册已移除（否则每条都有第二份可达路径）。
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/gameboxes"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/events/{id}/awd/gameboxes/{id}/reset"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/events/{id}/awd/submissions"),
+            auth: Auth::UserRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/ssh-config"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/scores"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/wireguard/config"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/status"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/events/{id}/awd/stream"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
     ]
 }
 

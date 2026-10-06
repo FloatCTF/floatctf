@@ -354,8 +354,13 @@ pub async fn get_ssh_config(
 }
 
 /// GET /api/events/{event_id}/awd/scores
+///
+/// 选手必须登录：本接口返回该赛事**全部队伍**的名称与分数。此前漏了守卫，未登录者
+/// 凭 event_id 即可读取记分榜（与相邻 ssh-config / wireguard / status 的写法不一致）。
+/// 契约测试：`apps/api/tests/http_auth_contract.rs` + 路由目录 `tests/common/routes.rs`。
 #[get("{event_id}/awd/scores")]
 pub async fn get_scores(
+    _user: UserJwtGuard,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<super::super::domain::TeamScore>> {

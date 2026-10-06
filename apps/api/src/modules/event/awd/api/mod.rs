@@ -64,9 +64,13 @@ pub fn admin_platform_routes(cfg: &mut web::ServiceConfig) {
         .service(gamebox_admin::delete_gamebox_library);
 }
 
-/// 在 `scope("/events")` **内部**注册 AWD 选手端路由。
+/// AWD 选手端路由（**只**在 `scope("/events")` 内部注册一次）。
 ///
 /// 最终路径：`/api/events/{event_id}/awd/...`
+/// 处理器路径片段形如 `{event_id}/awd/...`，所以**任何**外层前缀都会匹配到它们：
+/// 历史上曾在 `/api` 顶层再注册一次，于是每个处理器多出一条可达路径
+/// （`/api/{event_id}/awd/...`），攻击面与审计面翻倍。该重复注册已移除；
+/// 以后新增前缀注册前，先确认不会再造出第二份可达路径。
 /// 同样必须与 common 的 /events scope 同组挂载（bootstrap routes.rs）。
 pub fn player_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(player::get_my_gameboxes)

@@ -9,10 +9,7 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
             .configure(configure_player_routes)
-            .service(web::scope("/admin").configure(configure_admin_routes))
-            // AWD player: 实际匹配路径在 /events scope 内注册（见 configure_player_routes）；
-            // 顶层注册仅为历史兼容（无匹配路径，保留以免破坏既有顺序假设）。
-            .configure(crate::modules::event::awd::api::player_routes),
+            .service(web::scope("/admin").configure(configure_admin_routes)),
     );
 
     // ── AWD internal routes (FlagServer / JudgeServer) ──

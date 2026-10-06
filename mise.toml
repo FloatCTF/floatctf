@@ -107,12 +107,19 @@ run = [
 description = "检查 Rust 格式"
 run = "cargo fmt --all -- --check"
 
+# Web 类型检查（与 CI 的 `vite build && tsc` 对齐；biome lint 抓不到类型错误）
+[tasks."web:typecheck"]
+description = "Web TypeScript 类型检查（tsc --noEmit）"
+dir = "apps/web"
+run = "pnpm exec tsc --noEmit"
+
 # 静态检查
 [tasks.lint]
 description = "执行 Rust 和 Web 静态检查"
 run = [
     "cargo clippy --workspace --all-targets --all-features",
     "pnpm --filter @floatctf/web lint",
+    { task = "web:typecheck" },
 ]
 
 # 测试

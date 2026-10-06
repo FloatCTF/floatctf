@@ -8,7 +8,9 @@
 # Never touches unlabeled / production containers.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# 仓库根：脚本位于 apps/api/scripts/ → 向上三级。此前写成两级（得到 apps/），
+# 于是「根目录 Dockerfile」判据永远为假，smoke 静默退化。
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 
 export CARGO_TERM_COLOR=always
@@ -23,6 +25,8 @@ JUDGE_NAME="floatctf-e2e-judge-${label_uuid}"
 NET_NAME="floatctf-e2e-net-${label_uuid}"
 
 cleanup() {
+  # 临时构建目录（无论 RUN_DOCKER_TESTS 与否都清）。
+  [[ -n "${STAGE:-}" ]] && rm -rf "$STAGE"
   if [[ "${RUN_DOCKER_TESTS:-}" != "1" ]]; then
     return 0
   fi
@@ -42,13 +46,14 @@ trap cleanup EXIT
 echo "== Flag/Judge E2E harness =="
 echo "label=${LABEL}"
 
-if [[ ! -f Dockerfile.awd-flagserver || ! -f Dockerfile.awd-judgeserver ]]; then
-  echo "NOTE: Dockerfiles not present at repo root — Docker smoke disabled (cargo-check only)."
-  echo "      Re-enable by adding Dockerfile.awd-flagserver / Dockerfile.awd-judgeserver."
-  "${CARGO[@]}" check -p floatctf-awd-flagserver
-  "${CARGO[@]}" check -p floatctf-awd-judgeserver
-  echo "SKIP: Docker E2E (Dockerfiles missing; set RUN_DOCKER_TESTS=1 after adding them)."
-  exit 0
+FLAG_DOCKERFILE="infra/docker/awd-flagserver/Dockerfile"
+JUDGE_DOCKERFILE="infra/docker/awd-judgeserver/Dockerfile"
+
+# 路径漂移即 FAIL：此前判据是仓库根目录的 Dockerfile.awd-*（从不存在），于是本 smoke
+# 必然走「cargo check → SKIP → exit 0」分支，却以成功结束，制造「镜像仍可构建」的假信心。
+if [[ ! -f "$FLAG_DOCKERFILE" || ! -f "$JUDGE_DOCKERFILE" ]]; then
+  echo "FAIL: 找不到 $FLAG_DOCKERFILE / $JUDGE_DOCKERFILE（判据路径漂移，smoke 会静默退化）"
+  exit 1
 fi
 
 if [[ "${RUN_DOCKER_TESTS:-}" != "1" ]]; then
@@ -75,19 +80,44 @@ if ! docker info >/dev/null 2>&1; then
   exit 0
 fi
 
+echo "== build binaries inside bookworm (glibc baseline) =="
+# 生产 Dockerfile 里是 `COPY awd_flagserver ...`（上下文根即二进制所在目录），且二进制必须是
+# bookworm glibc 基线 —— 宿主滚动版 glibc 编出来的二进制放进 python:3.12-slim-bookworm 会
+# `GLIBC_2.3x not found`。与 scripts/build-runtime-images.sh 同法，只是只编这两个 crate。
+RUST_IMAGE="${FLOATCTF_RUNTIME_RUST_IMAGE:-rust:1.97.1-slim-bookworm}"
+STAGE="$(mktemp -d /tmp/floatctf-smoke.XXXXXX)"
+mkdir -p "$STAGE/target" "$STAGE/flag" "$STAGE/judge"
+CARGO_REGISTRY="${CARGO_HOME:-$HOME/.cargo}/registry"
+registry_args=()
+if [[ -d "$CARGO_REGISTRY" ]]; then
+  registry_args=(-v "$CARGO_REGISTRY:/usr/local/cargo/registry")
+fi
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -v "$ROOT:/src:ro" \
+  "${registry_args[@]}" \
+  -v "$STAGE/target:/target" \
+  -w /src \
+  -e CARGO_TARGET_DIR=/target \
+  "$RUST_IMAGE" \
+  cargo build --locked --release -p floatctf-awd-flagserver -p floatctf-awd-judgeserver
+
 echo "== docker build (flagserver) =="
+install -m 0755 "$STAGE/target/release/awd_flagserver" "$STAGE/flag/awd_flagserver"
+cp "$FLAG_DOCKERFILE" "$STAGE/flag/Dockerfile"
 docker build \
-  -f Dockerfile.awd-flagserver \
   -t "${FLAG_IMAGE}" \
   --label "${LABEL}" \
-  .
+  "$STAGE/flag"
 
 echo "== docker build (judgeserver) =="
+install -m 0755 "$STAGE/target/release/awd_judgeserver" "$STAGE/judge/awd_judgeserver"
+cp "$JUDGE_DOCKERFILE" "$STAGE/judge/Dockerfile"
 docker build \
-  -f Dockerfile.awd-judgeserver \
   -t "${JUDGE_IMAGE}" \
   --label "${LABEL}" \
-  .
+  "$STAGE/judge"
 
 echo "== network =="
 docker network create --label "${LABEL}" "${NET_NAME}"

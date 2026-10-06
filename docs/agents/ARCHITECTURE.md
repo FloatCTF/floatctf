@@ -84,7 +84,7 @@ pub struct AppConfig {
     pub database: DatabaseConfig,    // url（Secret 包装）
     pub docker: DockerConfig,
     pub storage: StorageConfig,      // RustFS endpoint/keys（Secret）
-    pub auth: AuthConfig,            // jwt_secret（Secret，≥16 字符）
+    pub auth: AuthConfig,            // jwt_secret（必填 ≥16）+ awd_root_key / internal_token_key（可选，缺省回落）
     pub cors: CorsConfig,
     pub paths: PathConfig,           // changelog_path、challenges_dir
     pub awd: AwdStaticConfig,        // network_runtime、flagserver/judgeserver_image
@@ -200,15 +200,24 @@ POST /api/submit/flag                     # bootstrap/routes.rs 里 scope("/subm
 
 判断用哪层：**进程级静态不变 → TOML；管理员可改 → settings 表**。不要在 TOML 里放可运营修改项，也不要在 settings 里放进程级安全配置（如 secret）。
 
-### 主密钥 `auth.jwt_secret` 一值三用（风险清单 #7）
+### 密钥拆分：`auth.jwt_secret` / `auth.awd_root_key` / `auth.internal_token_key`
 
-同一个 `auth.jwt_secret` 被用于三件互不相干的事，**无法独立轮换**：
+历史上同一个 `auth.jwt_secret` 被用于三件事（风险清单 #7），现已拆开：
 
-1. JWT 签名（HS512）——`core::security::jwt`；
-2. AWD 信封加密 / flag 派生的 HKDF 根——`awd/crypto.rs::AwdCrypto`；
-3. AWDP 练习 JudgeServer 的 `INTERNAL_TOKEN` 派生——`awdp/domain/judge.rs::practice_judge_token`（info 串不同）。
+| 键 | 用途 | 泄露后果 |
+|---|---|---|
+| `auth.jwt_secret`（必填，≥16 字符） | JWT 签名（HS512） | 可伪造任意用户/超管令牌 |
+| `auth.awd_root_key`（可选） | AWD/AWDP flag、实例密钥的 HKDF 根（`AwdCrypto`） | 可伪造 AWD/AWDP flag |
+| `auth.internal_token_key`（可选） | AWDP 判题容器 `INTERNAL_TOKEN` 的派生根（会下发进容器） | 可冒充判题容器回调平台 |
 
-改它 = 全平台换钥：所有已签发 JWT 失效、所有 AWD flag 派生结果改变、判题容器令牌改变（容器需重建）。反过来，判题容器里的 `INTERNAL_TOKEN` 泄露等价于拿到 JWT 签名密钥（可伪造超管令牌）。**当成主密钥对待**，不要把派生逻辑写成"与 App secret 无关"。中长期方向：拆 `awd.root_key` / `internal_token_key`。
+- **可选键未配置时回落 `jwt_secret`**（`AuthConfig::awd_root_key()/internal_token_key()`），bootstrap 会打一条 warn
+  提醒"仍在共用主密钥"；这样既有部署升级不会被动轮换 flag。
+- 三个键现在可以**独立轮换**：改 `jwt_secret` 只失效 JWT；改 `awd_root_key` 只改变 flag 派生
+  （进行中的 AWD 赛事会因此换 flag）；改 `internal_token_key` 只需重建判题容器（`awdp.practice.judge`
+  cron 检测 env drift 会自动重建）。
+- 全新安装由 `scripts/install.sh` 生成三个互不相同的随机值；**既有安装在 `.env` / TOML 里显式填值
+  才会启用**（不填 = 保持旧行为）。
+- 三处都走 `Secret` 包装：Debug/日志自动脱敏。不要把其中任何一个写进日志或返回给前端。
 
 另：`seed_default_settings` 现在也补上了此前"被读取但从未 seed"的 5 个键（`AWD_RATE_SUBMIT_PER_MIN`/`AWD_RATE_RESET_PER_HOUR`/`AWD_RATE_INTERNAL_PER_MIN`/`AWD_NETWORK_REVISION`/`AWDP_DATA_PLANE_EXEC`，风险清单 #14）。其中 **`AWDP_DATA_PLANE_EXEC` 在 production 必须是 `true`**（API 只挂控制网，进程内探测必然失败）；默认播种 false 是为了不改变既有 dev/测试语义，请在管理端设置页确认生产值。
 

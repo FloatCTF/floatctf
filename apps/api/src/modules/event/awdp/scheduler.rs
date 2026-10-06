@@ -42,7 +42,7 @@ impl TaskHandler for AwdpTickHandler {
         let summary = crate::modules::event::awdp::service::tick_service::tick_once(
             self.db.get_ref(),
             self.docker.get_ref(),
-            self.config.auth.jwt_secret.expose().as_bytes(),
+            self.config.auth.awd_root_key().expose().as_bytes(),
             &self.config.awdp,
         )
         .await
@@ -123,7 +123,7 @@ impl TaskHandler for AwdpPracticeJudgeHandler {
             self.db.get_ref(),
             self.docker.get_ref(),
             &self.config.awdp,
-            self.config.auth.jwt_secret.expose().as_bytes(),
+            self.config.auth.internal_token_key().expose().as_bytes(),
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;

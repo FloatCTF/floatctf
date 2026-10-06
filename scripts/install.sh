@@ -632,6 +632,13 @@ region = "cn-east-1"
 
 [auth]
 jwt_secret = "${JWT_SECRET}"
+# 与 JWT 主密钥解耦的两个派生根（可选；空值 = 回落 jwt_secret，启动时会告警）：
+#   awd_root_key       —— AWD/AWDP flag 与实例密钥的 HKDF 根
+#   internal_token_key —— AWDP 判题容器 INTERNAL_TOKEN 的派生根（会下发进容器）
+# 全新安装由 installer 生成独立随机值；**既有安装保持为空**（不改变已派生 flag），
+# 需要轮换时再显式填值。
+awd_root_key = "${AWD_ROOT_KEY}"
+internal_token_key = "${INTERNAL_TOKEN_KEY}"
 
 [redis]
 url = "redis://redis:6379/"
@@ -1472,6 +1479,10 @@ prepare_env() {
         env_set RUSTFS_ACCESS_KEY "${RUSTFS_ACCESS_KEY:-rustfsadmin}"
         env_set RUSTFS_SECRET_KEY "${RUSTFS_SECRET_KEY:-$(openssl rand -hex 24)}"
         env_set JWT_SECRET "${JWT_SECRET:-$(openssl rand -base64 32)}"
+        # 全新安装：生成与 JWT 主密钥**不同**的派生根，避免"判题容器被攻陷 = 可伪造 JWT"
+        # （风险清单 #7）。既有安装不补这两项 —— 补了等于强制轮换 AWD flag 与判题令牌。
+        env_set AWD_ROOT_KEY "${AWD_ROOT_KEY:-$(openssl rand -base64 32)}"
+        env_set INTERNAL_TOKEN_KEY "${INTERNAL_TOKEN_KEY:-$(openssl rand -base64 32)}"
         env_set API_PORT "${API_PORT:-9090}"
         env_set POSTGRES_PORT "${POSTGRES_PORT:-5433}"
         env_set REDIS_PORT "${REDIS_PORT:-6380}"

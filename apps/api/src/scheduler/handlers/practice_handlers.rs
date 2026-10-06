@@ -125,7 +125,7 @@ impl TaskHandler for CheckPracticeEventHandler {
                 self.db.get_ref(),
                 self.docker.get_ref(),
                 &self.config.awdp,
-                self.config.auth.jwt_secret.expose().as_bytes(),
+                self.config.auth.internal_token_key().expose().as_bytes(),
             )
             .await
         {

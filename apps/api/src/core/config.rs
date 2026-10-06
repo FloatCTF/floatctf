@@ -77,20 +77,35 @@ pub struct StorageConfig {
 
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
-    /// ⚠️ 平台**主密钥**：同一个值被用于三件事（风险清单 #7）——
-    ///   1. JWT 签名（HS512，`core::security::jwt::configure_jwt_secret`）；
-    ///   2. AWD 信封加密/flag 派生的 HKDF 根（`AwdCrypto::configure_secret`）；
-    ///   3. AWDP 练习 JudgeServer 的 INTERNAL_TOKEN 派生（`practice_judge_token`，info 串不同）。
+    /// JWT 签名主密钥（HS512）。≥16 字符，`Secret` 包装（Debug/日志脱敏）。
     ///
-    /// 三个用途**无法独立轮换**：改这个值会同时让所有已签发 JWT 失效、所有 AWD flag 派生
-    /// 结果改变、判题容器令牌改变；反过来说，任何一处泄露（例如判题容器里的 INTERNAL_TOKEN）
-    /// 都等价于拿到 JWT 签名密钥，可伪造任意超管令牌。
-    ///
-    /// 因此：把它当整个平台的主密钥对待 —— 不写日志、不下发给低信任容器（`Secret` 包装已
-    /// 阻止 Debug/日志泄漏；下发见 `awdp::domain::judge::practice_judge_token` 的调用点）。
-    /// 中长期方向是拆成独立的 `awd.root_key` 与 `internal_token_key`；在拆之前，请按"改一次
-    /// 等于全平台换钥"来做发布计划。
+    /// 历史上它同时被用作 AWD flag 派生根与 AWDP 判题令牌根（风险清单 #7）。现已拆分：
+    /// 见 [`AuthConfig::awd_root_key`] / [`AuthConfig::internal_token_key`] —— 两个专用键
+    /// **未配置时回落本值**（兼容既有部署），配置后即可独立轮换，互不影响 JWT。
     pub jwt_secret: Secret,
+    /// AWD/AWDP 派生根（flag、实例密钥等，`AwdCrypto` 的 HKDF 根）。缺省回落 `jwt_secret`。
+    pub awd_root_key: Option<Secret>,
+    /// AWDP 判题容器 `INTERNAL_TOKEN` 派生根。缺省回落 `jwt_secret`。
+    ///
+    /// ⚠️ 这个值会下发进判题容器；与 `jwt_secret` 分开正是为了「判题容器被攻陷 ≠ 可伪造 JWT」。
+    pub internal_token_key: Option<Secret>,
+}
+
+impl AuthConfig {
+    /// 生效的 AWD 派生根（专用键优先，缺省回落主密钥）。
+    pub fn awd_root_key(&self) -> &Secret {
+        self.awd_root_key.as_ref().unwrap_or(&self.jwt_secret)
+    }
+
+    /// 生效的判题令牌派生根（专用键优先，缺省回落主密钥）。
+    pub fn internal_token_key(&self) -> &Secret {
+        self.internal_token_key.as_ref().unwrap_or(&self.jwt_secret)
+    }
+
+    /// 两个专用键是否都已显式配置（bootstrap 用它决定是否告警"仍在回落主密钥"）。
+    pub fn uses_dedicated_keys(&self) -> bool {
+        self.awd_root_key.is_some() && self.internal_token_key.is_some()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -275,6 +290,12 @@ struct RustfsToml {
 struct AuthToml {
     #[serde(default)]
     jwt_secret: String,
+    /// 可选：AWD/AWDP 派生根（≥16 字符）。缺省回落 `jwt_secret`。
+    #[serde(default)]
+    awd_root_key: Option<String>,
+    /// 可选：AWDP 判题令牌派生根（≥16 字符）。缺省回落 `jwt_secret`。
+    #[serde(default)]
+    internal_token_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,6 +518,10 @@ impl AppConfig {
         if jwt_secret.len() < 16 {
             anyhow::bail!("auth.jwt_secret must be at least 16 characters");
         }
+        // 可选专用键：设置时必须够长（同样是密钥），缺省回落 jwt_secret。
+        let awd_root_key = optional_secret("auth.awd_root_key", file.auth.awd_root_key)?;
+        let internal_token_key =
+            optional_secret("auth.internal_token_key", file.auth.internal_token_key)?;
         let database_url = required_value("database.url", file.database.url)?;
         let endpoint_url = required_value("rustfs.endpoint_url", file.rustfs.endpoint_url)?;
         let access_key_id = required_value("rustfs.access_key_id", file.rustfs.access_key_id)?;
@@ -530,6 +555,8 @@ impl AppConfig {
             },
             auth: AuthConfig {
                 jwt_secret: Secret::new(jwt_secret),
+                awd_root_key,
+                internal_token_key,
             },
             cors: CorsConfig {
                 allowed_origins: file.cors.allowed_origins,
@@ -621,6 +648,19 @@ fn required_value(name: &str, value: String) -> anyhow::Result<String> {
 
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
+}
+
+/// 可选密钥字段：缺省/空串 → `None`（调用方回落主密钥）；一旦设置就必须满足最小长度。
+fn optional_secret(name: &str, value: Option<String>) -> anyhow::Result<Option<Secret>> {
+    match non_empty(value) {
+        None => Ok(None),
+        Some(v) => {
+            if v.len() < 16 {
+                anyhow::bail!("{name} must be at least 16 characters when set");
+            }
+            Ok(Some(Secret::new(v)))
+        }
+    }
 }
 
 fn default_listen_ip() -> String {
@@ -769,5 +809,79 @@ mod tests {
             url: Secret::new("postgres://user:pass@localhost/db"),
         };
         assert!(!format!("{c:?}").contains("pass@"));
+    }
+
+    /// 写一份最小可加载配置，`auth_extra` 追加到 `[auth]` 段（风险清单 #7 的拆分测试用）。
+    fn write_auth_config(auth_extra: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                r#"
+                [database]
+                url = "postgres://localhost/db"
+                [auth]
+                jwt_secret = "a-development-secret"
+                {auth_extra}
+                [redis]
+                url = "redis://localhost:6379/"
+                [rustfs]
+                endpoint_url = "http://localhost:9000"
+                access_key_id = "access"
+                secret_access_key = "secret"
+                region = "local"
+                "#
+            ),
+        )
+        .unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn auth_keys_fall_back_to_jwt_secret_when_unset() {
+        // 未配置专用键 → 三个用途仍共用主密钥（兼容既有部署），且能被上层识别出来告警。
+        let (_dir, path) = write_auth_config("");
+        let config = AppConfig::from_file(&path).unwrap();
+        assert!(!config.auth.uses_dedicated_keys());
+        assert_eq!(config.auth.awd_root_key().expose(), "a-development-secret");
+        assert_eq!(
+            config.auth.internal_token_key().expose(),
+            "a-development-secret"
+        );
+    }
+
+    #[test]
+    fn auth_dedicated_keys_take_precedence_over_jwt_secret() {
+        // 配置了专用键 → 各用途取各自的值，JWT 签名仍用主密钥（可独立轮换）。
+        let (_dir, path) = write_auth_config(
+            "awd_root_key = \"awd-root-key-0123456789\"\n                internal_token_key = \"internal-token-0123456789\"",
+        );
+        let config = AppConfig::from_file(&path).unwrap();
+        assert!(config.auth.uses_dedicated_keys());
+        assert_eq!(config.auth.jwt_secret.expose(), "a-development-secret");
+        assert_eq!(
+            config.auth.awd_root_key().expose(),
+            "awd-root-key-0123456789"
+        );
+        assert_eq!(
+            config.auth.internal_token_key().expose(),
+            "internal-token-0123456789"
+        );
+    }
+
+    #[test]
+    fn auth_dedicated_key_must_meet_min_length() {
+        let (_dir, path) = write_auth_config("awd_root_key = \"short\"");
+        let error = AppConfig::from_file(&path).unwrap_err().to_string();
+        assert!(error.contains("auth.awd_root_key"), "{error}");
+    }
+
+    #[test]
+    fn auth_dedicated_keys_default_to_none_in_toml_struct() {
+        // serde 缺省：老配置文件（只有 jwt_secret）解析后两个字段都是 None。
+        let parsed: AuthToml = toml::from_str("jwt_secret = \"a-development-secret\"").unwrap();
+        assert!(parsed.awd_root_key.is_none());
+        assert!(parsed.internal_token_key.is_none());
     }
 }

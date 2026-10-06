@@ -10,6 +10,10 @@ work_dir = "../../app"
 [auth]
 # Change this value in production. It must be at least 16 characters.
 jwt_secret = "floatctf-development-secret-change-me"
+# 与 JWT 主密钥解耦的派生根（可选；缺省会回落 jwt_secret 并在启动时告警）。
+# 开发库用固定值即可，方便复现；生产由 installer 生成独立随机值。
+awd_root_key = "floatctf-dev-awd-root-key-change-me"
+internal_token_key = "floatctf-dev-internal-token-key-change"
 
 [docker]
 socket_path = "/run/floatctf/helper-docker.sock"

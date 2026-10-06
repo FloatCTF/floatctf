@@ -5,9 +5,10 @@
 //! - 跨 reset 稳定（同 subject 同 gamebox 永远同 flag）；
 //! - Break 不需要 round rotating flag。
 //!
-//! 密钥派生：平台级 Secret（`auth.jwt_secret`，仅内存）经 HKDF 派生 per-run 密钥，
-//! 不新增环境变量 / 不入库（铁律 1 / 5）。flag 本体即暴露给选手，
-//! 安全性只需防伪造他人 flag；jwt_secret 泄露已等价于全平台失守。
+//! 密钥派生：平台级 Secret（`auth.awd_root_key`，仅内存；未配置时回落 `auth.jwt_secret`）
+//! 经 HKDF 派生 per-run 密钥，不新增环境变量 / 不入库（铁律 1 / 5）。flag 本体即暴露给选手，
+//! 安全性只需防伪造他人 flag；派生根泄露等价于可伪造 AWD/AWDP flag —— 这正是它与 JWT 主密钥
+//! 分开的原因：判题容器只拿得到由 `internal_token_key` 派生的令牌。
 
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};

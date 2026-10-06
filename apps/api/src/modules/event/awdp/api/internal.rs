@@ -80,7 +80,8 @@ impl FromRequest for PracticeJudgeInternalAuth {
         Box::pin(async move {
             let token = token.ok_or(PracticeJudgeAuthError::MissingToken)?;
             let config = config.ok_or(PracticeJudgeAuthError::ConfigMissing)?;
-            let expected = practice_judge_token(config.auth.jwt_secret.expose().as_bytes());
+            let expected =
+                practice_judge_token(config.auth.internal_token_key().expose().as_bytes());
             if constant_time_eq(token.as_bytes(), expected.as_bytes()) {
                 Ok(Self { _private: () })
             } else {
@@ -194,7 +195,7 @@ pub async fn resolve_break_flag(
     let flag = break_service::resolve_break_flag(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         req.event_id,
         req.source_ip.trim(),
     )

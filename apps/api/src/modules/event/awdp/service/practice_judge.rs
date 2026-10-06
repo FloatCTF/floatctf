@@ -368,7 +368,7 @@ pub async fn deploy_judge(
     db: &sea_orm::DatabaseConnection,
     docker: &Docker,
     config: &AwdpStaticConfig,
-    jwt_secret: &[u8],
+    internal_token_key: &[u8],
     event_id: Uuid,
 ) -> AwdpResult<()> {
     if config.platform_internal_url.trim().is_empty() {
@@ -415,7 +415,14 @@ pub async fn deploy_judge(
     match runtime.inspect_container(&container_name).await {
         Ok(state)
             if state.running
-                && running_judge_env_matches(docker, config, event_id, &container_name).await =>
+                && running_judge_env_matches(
+                    docker,
+                    config,
+                    event_id,
+                    &container_name,
+                    internal_token_key,
+                )
+                .await =>
         {
             info!(container = %container_name, "[Judge] judge container already running with matching env — skip");
             return Ok(());
@@ -429,7 +436,7 @@ pub async fn deploy_judge(
         Err(_) => {} // 不存在
     }
 
-    let token = practice_judge_token(jwt_secret);
+    let token = practice_judge_token(internal_token_key);
     let spec = ContainerSpec {
         name: container_name.clone(),
         image: config.practice_judgeserver_image.clone(),
@@ -570,11 +577,11 @@ pub async fn ensure_practice_environment(
     db: &sea_orm::DatabaseConnection,
     docker: &Docker,
     config: &AwdpStaticConfig,
-    jwt_secret: &[u8],
+    internal_token_key: &[u8],
 ) -> AwdpResult<()> {
     let event_id = crate::core::system_ids::EVENT_PRACTICE_AWDP;
     ensure_event_network(db, docker, config, event_id).await?;
-    deploy_judge(db, docker, config, jwt_secret, event_id).await
+    deploy_judge(db, docker, config, internal_token_key, event_id).await
 }
 
 /// 并发部署竞态下等待同名容器进入 running。
@@ -616,14 +623,20 @@ fn container_conflict(e: &anyhow::Error) -> bool {
     false
 }
 
-/// 已运行的 judge 容器是否与期望一致（镜像 + PLATFORM_INTERNAL_URL / EVENT_ID / WORKER_ID）。
+/// 已运行的 judge 容器是否与期望一致
+/// （镜像 + PLATFORM_INTERNAL_URL / EVENT_ID / WORKER_ID / **INTERNAL_TOKEN**）。
 /// 不一致说明容器由旧配置/旧镜像/测试环境部署（如 host.docker.internal 残留、镜像改名），
 /// 必须重建，否则真实实例的 /flag、claim、result 全链路都会 502。
+///
+/// ⚠️ INTERNAL_TOKEN 必须参与比对：它由 `auth.internal_token_key` 派生（风险清单 #7 的密钥拆分），
+/// 只比 URL/EVENT_ID 的话，换键后旧容器会一直被"matching env — skip"留着，
+/// 而它手上的旧令牌会被平台 401 拒绝 —— 判题链路静默全挂。
 async fn running_judge_env_matches(
     docker: &bollard::Docker,
     config: &AwdpStaticConfig,
     event_id: Uuid,
     container_name: &str,
+    internal_token_key: &[u8],
 ) -> bool {
     let Ok(info) = docker
         .inspect_container(
@@ -642,6 +655,7 @@ async fn running_judge_env_matches(
     let get = |k: &str| envs.iter().find_map(|e| e.strip_prefix(k)).map(str::trim);
     let want_event = event_id.to_string();
     let want_worker = event_judge_worker_id(event_id);
+    let want_token = practice_judge_token(internal_token_key);
     // 镜像 tag 比对：镜像改名/升级后旧镜像容器视为漂移，重建（配合 ensure 周期任务自愈）。
     let image_matches = info
         .config
@@ -652,7 +666,9 @@ async fn running_judge_env_matches(
         get("PLATFORM_INTERNAL_URL=") == Some(config.platform_internal_url.trim());
     let event_matches = get("EVENT_ID=") == Some(want_event.as_str());
     let worker_matches = get("WORKER_ID=") == Some(want_worker.as_str());
-    let matches = image_matches && platform_matches && event_matches && worker_matches;
+    let token_matches = get("INTERNAL_TOKEN=") == Some(want_token.as_str());
+    let matches =
+        image_matches && platform_matches && event_matches && worker_matches && token_matches;
     if !matches {
         warn!(
             container = %container_name,
@@ -660,6 +676,7 @@ async fn running_judge_env_matches(
             platform_matches,
             event_matches,
             worker_matches,
+            token_matches,
             "AWDP judge env/image drift detected"
         );
     }

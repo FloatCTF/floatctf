@@ -237,7 +237,7 @@ pub async fn start_my_instance(
     let view = runtime::start_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         &ctx.config.awdp,
         run.id,
         eg.gamebox_id,
@@ -316,7 +316,7 @@ pub async fn submit_break_flag(
     let eg = event_gamebox_repo::require_by_id(ctx.db.get_ref(), eg_id).await?;
     let result = break_service::submit_flag(
         ctx.db.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         run.id,
         eg.gamebox_id,
         &body.flag,
@@ -365,7 +365,7 @@ pub async fn reset_my_instance(
     let view = runtime::reset_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         view.instance_id,
         subject,
         &flag_prefix_async(&ctx).await,

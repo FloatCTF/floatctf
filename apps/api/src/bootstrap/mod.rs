@@ -10,7 +10,7 @@ use actix_cors::Cors;
 use actix_multipart::form::MultipartFormConfig;
 use actix_web::{App, HttpServer, middleware::Logger, web};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_actix_web::TracingLogger;
 
 use crate::{
@@ -86,7 +86,15 @@ pub async fn run() -> Result<(), BootstrapError> {
 
     // Secrets are loaded once from TOML for the process lifetime.
     jwt::configure_jwt_secret(config.auth.jwt_secret.clone());
-    AwdCrypto::configure_secret(config.auth.jwt_secret.clone());
+    // AWD/AWDP 派生根与 JWT 主密钥已解耦（风险清单 #7）：专用键配置了就各用各的，
+    // 未配置时回落主密钥（兼容既有部署）并显式告警，避免"看起来已经拆了"的错觉。
+    AwdCrypto::configure_secret(config.auth.awd_root_key().clone());
+    if !config.auth.uses_dedicated_keys() {
+        warn!(
+            "auth.awd_root_key / auth.internal_token_key 未配置：AWD flag 派生与 AWDP 判题令牌仍与 \
+             JWT 主密钥共用（无法独立轮换）。见 docs/agents/ARCHITECTURE.md「主密钥」一节。"
+        );
+    }
 
     // Infrastructure
     let db: WebDb = match database::connect(&config.database).await {
@@ -173,7 +181,7 @@ pub async fn run() -> Result<(), BootstrapError> {
 
     // AWD crypto（fail-fast，Phase 0 P0-2）
     let awd_crypto = Arc::new(
-        AwdCrypto::from_secret_bytes(config.auth.jwt_secret.as_bytes())
+        AwdCrypto::from_secret_bytes(config.auth.awd_root_key().as_bytes())
             .map_err(|e| BootstrapError::Crypto(e.to_string()))?,
     );
 

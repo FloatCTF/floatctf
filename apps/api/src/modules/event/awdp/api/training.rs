@@ -249,7 +249,7 @@ pub async fn start_training(
     let run = practice_service::start_training(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         user.id,
         gamebox_id,
         &flag_prefix(&ctx).await,
@@ -327,7 +327,7 @@ pub async fn reset_run(
     crate::modules::event::awdp::service::event_service::reset_all_run_instances(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         run.id,
     )
     .await?;
@@ -375,7 +375,7 @@ pub async fn start_run(
     runtime::start_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         &ctx.config.awdp,
         run.id,
         gamebox_id,
@@ -480,7 +480,7 @@ pub async fn set_phase(
                 crate::modules::event::awdp::service::event_service::transition_break_to_fix(
                     ctx.db.get_ref(),
                     ctx.docker.get_ref(),
-                    ctx.config.auth.jwt_secret.expose().as_bytes(),
+                    ctx.config.auth.awd_root_key().expose().as_bytes(),
                     run.id,
                 )
                 .await
@@ -545,7 +545,7 @@ pub async fn train_again(
     let run = practice_service::train_again(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         user.id,
         old_run_id,
         &flag_prefix(&ctx).await,
@@ -578,7 +578,7 @@ pub async fn submit_break_flag(
     let run = require_owned_run(ctx.db.get_ref(), run_id, user.id).await?;
     let result = break_service::submit_flag(
         ctx.db.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         run.id,
         gamebox_id,
         &body.flag,
@@ -853,7 +853,7 @@ pub async fn start_my_instance(
     let view = runtime::start_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         &ctx.config.awdp,
         run.id,
         gamebox_id,
@@ -943,7 +943,7 @@ pub async fn reset_my_instance(
     let view = runtime::reset_instance(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         view.instance_id,
         Subject::user(user.id),
         &flag_prefix(&ctx).await,

@@ -130,7 +130,7 @@ pub async fn start_awdp_event(
             crate::modules::event::awdp::service::event_service::start_all_event_instances(
                 ctx.db.get_ref(),
                 ctx.docker.get_ref(),
-                ctx.config.auth.jwt_secret.expose().as_bytes(),
+                ctx.config.auth.awd_root_key().expose().as_bytes(),
                 &ctx.config.awdp,
                 run.id,
             )
@@ -156,7 +156,7 @@ pub async fn break_to_fix(
     crate::modules::event::awdp::service::event_service::transition_break_to_fix(
         ctx.db.get_ref(),
         ctx.docker.get_ref(),
-        ctx.config.auth.jwt_secret.expose().as_bytes(),
+        ctx.config.auth.awd_root_key().expose().as_bytes(),
         run.id,
     )
     .await?;
@@ -272,7 +272,7 @@ pub async fn attach_gamebox(
                 crate::modules::event::awdp::service::event_service::start_gamebox_for_active_run(
                     ctx.db.get_ref(),
                     ctx.docker.get_ref(),
-                    ctx.config.auth.jwt_secret.expose().as_bytes(),
+                    ctx.config.auth.awd_root_key().expose().as_bytes(),
                     &ctx.config.awdp,
                     run.id,
                     eg.gamebox_id,

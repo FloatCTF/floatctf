@@ -158,7 +158,17 @@ async fn assemble_individual(
             &user_solved,
             &solve_order,
         )?;
-        let solved_count = challenges.iter().filter(|c| c.solved).count() as u64;
+        // 已解出数必须与 score 同口径：都按该选手在**本赛事全部 solve**统计。
+        //
+        // 历史缺陷：此处原为 `challenges.iter().filter(|c| c.solved).count()`，而
+        // challenge_cells 的输入来自 load_event_challenges(仅 hidden=false)，于是
+        // 「已解出」少算了被下架（或解题时尚未发布）的题目，与 score（event_users.points
+        // 计数器）及 trend（Σ obtained_points+bonus_points，均含全部 solve）口径不一致，
+        // 会出现「分数 400 / 已解出 3」而库内实为 4 条 solve 的自相矛盾。
+        let solved_count = user_solved
+            .iter()
+            .filter(|(owner, _)| *owner == event_user.user_id)
+            .count() as u64;
         scoreboard.push(ScoreboardItem {
             id: user.id,
             no: no as u64 + 1,
@@ -195,7 +205,11 @@ async fn assemble_team(
             &team_solved,
             &solve_order,
         )?;
-        let solved_count = challenges.iter().filter(|c| c.solved).count() as u64;
+        // 同 assemble_individual：按战队在本赛事的全部 solve 统计，与 score 口径一致。
+        let solved_count = team_solved
+            .iter()
+            .filter(|(owner, _)| *owner == event_team.id)
+            .count() as u64;
         scoreboard.push(ScoreboardItem {
             id: event_team.id,
             no: no as u64 + 1,

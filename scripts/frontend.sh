@@ -478,6 +478,10 @@ def atomic_write(path: str, data) -> None:
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
+        # registry.json 属于**公开**前端静态树（Caddy 以 no-store 提供，字段已按
+        # 白名单 sanitize）。mkstemp 默认 0600，会把 install.sh 明确设置的 0644
+        # 契约在每次运维 install/remove/set-current 后退回私有模式 → 显式对齐。
+        os.chmod(tmp, 0o644)
         os.replace(tmp, target)
     except BaseException:
         try:

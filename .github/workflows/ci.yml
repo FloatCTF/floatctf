@@ -94,6 +94,15 @@ jobs:
       # 前端管理器契约 / 安全负向测试（manifest 校验、注册表数据边界、制品树安全、
       # 版本不可变、显式指针、构建身份非 root）。不依赖 docker。
       - run: ./scripts/test-frontend-manager.sh
+      # 发布工作流静态/行为契约：tag 才允许发布、dispatch 默认不发布、制品清单与
+      # SHA256SUMS 覆盖、ops-tools 成员白名单与确定性、rc.yml 非发布语义。
+      - run: ./scripts/test-release-workflow.sh
+      # 安装器 / 升级器契约：新 flag、ops-tools 装配、apply_migrations 的 fresh 跳过、
+      # 卸载活跃运行时守卫，以及**内嵌 uninstall.sh 的 bash -n**（此前无任何语法门禁）。
+      - run: ./scripts/test-installer-contract.sh
+      # SDK 分发包：打包 → 校验 → 外部全新工程消费（npm 安装 + tsc + node 运行）。
+      # registry 不可达时自动 SKIP 联网部分并仍校验 tarball。
+      - run: ./scripts/test-sdk-dist.sh
 
   docker-e2e:
     name: CI-docker · AWD infra smoke (on-demand)

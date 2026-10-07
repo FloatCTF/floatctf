@@ -29,10 +29,14 @@ DEFAULT_FRONTEND_ID="default"
 FRONTEND_RUNTIME_CONTRACT="1"
 API_CONTRACT="1"
 REGISTRY_SCHEMA_VERSION="1"
-# 源码构建的 Node 基线（生产/开发统一；可用 --node-image 覆盖）。
-DEFAULT_NODE_IMAGE="node:24-bookworm"
+# 源码构建的 Node 基线：与平台自身的开发基线（mise.toml 的 node = 26.5.1）同大版本，
+# 避免"平台能构建、外部前端构建不了"这类隐性差异。可用 --node-image 覆盖。
+DEFAULT_NODE_IMAGE="node:26-bookworm"
 # 源码构建超时（秒）。
 BUILD_TIMEOUT_SECS="${FRONTEND_BUILD_TIMEOUT_SECS:-1800}"
+# pnpm 基线：与平台自身使用的版本一致（root package.json 的 packageManager）。
+# 源码若声明了自己的 `packageManager`，以它为准（见 package_manager_version）。
+DEFAULT_PNPM_VERSION="11.20.0"
 
 C_INFO=""; C_OK=""; C_WARN=""; C_ERR=""; C_END=""
 if [ -t 1 ]; then
@@ -97,7 +101,7 @@ install 的 <source> 可以是:
 
 install 选项:
   --ref <git-ref>        Git 安装时检出的分支/标签/提交（默认远端默认分支）
-  --node-image <image>   源码构建使用的 Node 镜像（默认 node:24-bookworm）
+  --node-image <image>   源码构建使用的 Node 镜像（默认 node:26-bookworm）
   --no-build             只接受源码目录里已构建好的 dist/（不做容器构建）
   --make-current         安装成功后把该 ID 的当前版本指针指向新版本
   --platform             内部开关：允许安装受保护的 default 前端（仅 install.sh 使用）
@@ -553,6 +557,44 @@ extract_archive() { # <archive> <destdir>
         || die "解包失败: $archive"
 }
 
+# package_manager_version <srcdir> <pm> —— 优先用源码声明的 `packageManager`（如
+# `pnpm@11.20.0`），否则用平台基线。**不接受任意 shell 命令**：只解析 `name@version`。
+package_manager_version() {
+    local srcdir="$1" pm="$2"
+    local declared=""
+    declared="$(python3 - "$srcdir/package.json" "$pm" <<'PYINNER'
+import json
+import re
+import sys
+from pathlib import Path
+
+path, pm = sys.argv[1], sys.argv[2]
+try:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+raw = data.get("packageManager")
+if not isinstance(raw, str) or "@" not in raw:
+    raise SystemExit(0)
+name, _, version = raw.partition("@")
+if name.strip() != pm:
+    raise SystemExit(0)
+version = version.strip()
+# 只允许 semver 形状，杜绝把任意字符串塞进安装命令
+if not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?", version):
+    raise SystemExit(0)
+print(version)
+PYINNER
+)"
+    if [ -n "$declared" ]; then
+        printf '%s' "$declared"
+    elif [ "$pm" = "pnpm" ]; then
+        printf '%s' "$DEFAULT_PNPM_VERSION"
+    else
+        printf '%s' "latest"
+    fi
+}
+
 # ── 源码构建（隔离容器）───────────────────────────────────────────────────────
 
 # detect_package_manager <dir> —— 按 lockfile 判定，规则见 docs/frontend/DEVELOPING.md。
@@ -577,13 +619,20 @@ build_source_frontend() {
     pm="$(detect_package_manager "$srcdir")"
     info "源码构建：包管理器=$pm，Node 镜像=$node_image（隔离容器）"
 
+    # Node 26 镜像已不再内置 corepack，因此用镜像自带的 npm 把包管理器装到
+    # **可写前缀** /tmp/npm-global（容器以调用者身份运行，/usr/local 不可写），
+    # 再前置到 PATH。版本优先取源码 `packageManager`，否则用平台基线。
+    local pm_version
+    pm_version="$(package_manager_version "$srcdir" "$pm")"
     local install_cmd
     case "$pm" in
         pnpm)
-            install_cmd='corepack enable >/dev/null 2>&1 || true; pnpm install --frozen-lockfile'
+            info "pnpm 版本: $pm_version"
+            install_cmd="npm install -g --prefix /tmp/npm-global --no-fund --no-audit pnpm@${pm_version} >/dev/null && PATH=/tmp/npm-global/bin:\$PATH pnpm install --frozen-lockfile"
             ;;
         yarn)
-            install_cmd='corepack enable >/dev/null 2>&1 || true; (yarn install --immutable || yarn install --frozen-lockfile || yarn install)'
+            info "yarn 版本: $pm_version"
+            install_cmd="npm install -g --prefix /tmp/npm-global --no-fund --no-audit yarn@${pm_version} >/dev/null && PATH=/tmp/npm-global/bin:\$PATH (yarn install --immutable || yarn install --frozen-lockfile || yarn install)"
             ;;
         npm)
             install_cmd='if [ -f package-lock.json ]; then npm ci; else npm install; fi'
@@ -600,11 +649,21 @@ build_source_frontend() {
     esac
 
     mkdir -p "$outdir"
+    # 以**调用者身份**在容器内运行（而非 root）：
+    #   - 容器内用户对 /src 有读权限（本地源码属于调用者；sudo 场景是 root，同样成立）
+    #   - 产物写回 /out 后属主就是运维本人，不需要额外 chown
+    #   - 与 cap-drop ALL 相容：没有 CAP_DAC_OVERRIDE 时，root 反而可能读不到
+    #     调用者的 0600 文件；用调用者身份则始终可读。
+    local run_uid run_gid
+    run_uid="$(id -u)"
+    run_gid="$(id -g)"
+
     timeout "$BUILD_TIMEOUT_SECS" docker run --rm \
         --network bridge \
         --cap-drop ALL \
         --security-opt no-new-privileges \
         --pids-limit 2048 \
+        --user "$run_uid:$run_gid" \
         -e "HOME=/tmp" \
         -e "NPM_CONFIG_UPDATE_NOTIFIER=false" \
         -e "CI=1" \
@@ -614,18 +673,29 @@ build_source_frontend() {
         "$node_image" \
         bash -lc "
             set -Eeuo pipefail
-            rm -rf /work && mkdir -p /work
-            cp -a /src/. /work/
-            cd /work
+            # 构建目录放在 /tmp（对容器内非 root 用户可写；容器根 / 不可写）。
+            rm -rf /tmp/work && mkdir -p /tmp/work
+            # 只复制**源码**：排除依赖与既有构建产物，保证构建从源码出发、不复用宿主产物
+            # （宿主 node_modules 可能含不同平台的原生二进制）。
+            cd /src
+            tar -cf - \
+                --exclude=./node_modules --exclude=./.pnpm-store --exclude=./.git \
+                --exclude=./dist --exclude=./build --exclude=./.cache \
+                --exclude=./.turbo --exclude=./.next --exclude=./.output \
+                . | (cd /tmp/work && tar -xf - --no-same-owner)
+            cd /tmp/work
             if [ ! -f package.json ]; then echo 'missing package.json' >&2; exit 2; fi
             node --version
             ${install_cmd}
+            # npm -g --prefix 装出来的包管理器只对本次命令生效；这里把它固定进 PATH，
+            # 后续约定的 build 脚本才找得到 pnpm/yarn。
+            export PATH="/tmp/npm-global/bin:\$PATH"
             ${run_build}
             rm -rf /out/* 2>/dev/null || true
             if [ -d dist ]; then
-                cp -a dist/. /out/
+                (cd dist && tar -cf - --no-same-owner .) | (cd /out && tar -xf - --no-same-owner)
             elif [ -d build ]; then
-                cp -a build/. /out/
+                (cd build && tar -cf - --no-same-owner .) | (cd /out && tar -xf - --no-same-owner)
             else
                 echo 'build produced neither dist/ nor build/' >&2
                 exit 3

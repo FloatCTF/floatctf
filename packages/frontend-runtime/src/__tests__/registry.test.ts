@@ -288,3 +288,70 @@ describe("resolveFrontend", () => {
 		expect(result.frontend.version).toBe("9.0.0");
 	});
 });
+
+describe("public registry schema is fail-closed", () => {
+	const reject = (mutate: (registry: Record<string, unknown>) => void) => {
+		const raw = validRegistry() as Record<string, unknown>;
+		mutate(raw);
+		const result = parseRegistry(raw);
+		expect(result.ok).toBe(false);
+		if (result.ok) return [];
+		return result.errors;
+	};
+
+	it("rejects unknown root fields", () => {
+		const errors = reject((registry) => {
+			registry.operator = "alice";
+		});
+		expect(errors.join("\n")).toContain("unknown field `operator`");
+	});
+
+	it("rejects unknown frontend entry fields", () => {
+		const errors = reject((registry) => {
+			const frontends = registry.frontends as Record<string, Record<string, unknown>>;
+			frontends.default.installedBy = "root";
+		});
+		expect(errors.join("\n")).toContain("unknown field `installedBy`");
+	});
+
+	it("rejects unknown version entry fields (including legacy `source`)", () => {
+		const errors = reject((registry) => {
+			const frontends = registry.frontends as Record<
+				string,
+				{ versions: Record<string, Record<string, unknown>> }
+			>;
+			frontends.default.versions["1.0.0"].source = "path:/home/alice/private";
+		});
+		expect(errors.join("\n")).toContain("unknown field `source`");
+	});
+
+	it("rejects credential-looking metadata anywhere in a version entry", () => {
+		for (const key of ["token", "localPath", "cloneUrl", "clone_url", "credentials"]) {
+			const errors = reject((registry) => {
+				const frontends = registry.frontends as Record<
+					string,
+					{ versions: Record<string, Record<string, unknown>> }
+				>;
+				frontends.default.versions["1.0.0"][key] = "https://user:token@example/repo.git";
+			});
+			expect(errors.join("\n")).toContain(`unknown field \`${key}\``);
+		}
+	});
+
+	it("rejects unknown compatibility fields", () => {
+		const errors = reject((registry) => {
+			const frontends = registry.frontends as Record<
+				string,
+				{ versions: Record<string, { compatibility: Record<string, unknown> }> }
+			>;
+			frontends.default.versions["1.0.0"].compatibility.buildHost = "ci-1";
+		});
+		expect(errors.join("\n")).toContain("unknown field `buildHost`");
+	});
+
+	it("still accepts a registry written by scripts/frontend.sh", () => {
+		// 与 CLI 的 sanitize_registry 输出保持一致：只有公开字段。
+		const result = parseRegistry(validRegistry());
+		expect(result.ok).toBe(true);
+	});
+});

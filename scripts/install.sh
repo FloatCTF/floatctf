@@ -1669,7 +1669,9 @@ stage_release() {
 #   - **只动 release 里带的前端**（当前仅 default）；第三方已安装前端与其版本目录、
 #     以及注册表里第三方条目的 currentVersion 指针，一律保持不变。
 #   - `default` 升级：装新版本 + 把 currentVersion 指到新版本（旧版本保留 → 可回滚）。
-#   - 同版本同内容 = 幂等重装（不重写资产）；同版本不同内容 = `--platform --reinstall` 原子替换。
+#   - **前端版本不可变**：同版本同内容 = 幂等重装（不重写资产）；同版本不同内容会被
+#     前端管理器拒绝（资产带 immutable 长缓存）。Default UI 变了就必须升它的**前端版本号**
+#     —— 平台版本与前端版本独立演进。
 #   - `FRONTEND_ACTIVE`（数据库设置）与本流程无关，升级不会改动它。
 install_platform_frontends() {
     local release_frontends="$PKG_DIR/web/frontends"
@@ -1683,21 +1685,27 @@ install_platform_frontends() {
         [ -n "$version_dir" ] || continue
         id="$(basename "$(dirname "$version_dir")")"
         version="$(basename "$version_dir")"
-        [ -f "$version_dir/frontend.json" ]             || die "release 内前端制品缺少 frontend.json: $version_dir"
+        [ -f "$version_dir/frontend.json" ] \
+            || die "release 内前端制品缺少 frontend.json: $version_dir"
 
         info "安装 release 前端: $id@$version"
         if [ "$id" = "default" ]; then
             # default 始终随平台发布：受保护、可放在 release 之外被移除，并移动 current 指针。
-            "$FLOATCTF_HOME/frontend.sh" install "$version_dir"                 --platform --reinstall --make-current                 || die "安装平台前端失败: $id@$version"
+            "$FLOATCTF_HOME/frontend.sh" install "$version_dir" \
+                --platform --make-current \
+                || die "安装平台前端失败: $id@$version"
         else
             # 其他由平台发布的前端：安装但不擅自改变其 current 指针。
-            "$FLOATCTF_HOME/frontend.sh" install "$version_dir" --platform --reinstall                 || die "安装平台前端失败: $id@$version"
+            "$FLOATCTF_HOME/frontend.sh" install "$version_dir" \
+                --platform \
+                || die "安装平台前端失败: $id@$version"
         fi
         installed=$((installed + 1))
     done < <(find "$release_frontends" -mindepth 2 -maxdepth 2 -type d | sort)
 
     [ "$installed" -gt 0 ] || die "release 的 frontends/ 目录里没有任何前端制品"
-    [ -f "$FLOATCTF_HOME/frontends/registry.json" ]         || die "前端注册表未生成: $FLOATCTF_HOME/frontends/registry.json"
+    [ -f "$FLOATCTF_HOME/frontends/registry.json" ] \
+        || die "前端注册表未生成: $FLOATCTF_HOME/frontends/registry.json"
 
     # 前端目录与注册表归 root（前端资产由 frontend.sh 设为全局只读，API 用户不可写）。
     # 以 root 运行时 chown 必然成功；非 root 场景（测试/自建根目录）只告警不中断。

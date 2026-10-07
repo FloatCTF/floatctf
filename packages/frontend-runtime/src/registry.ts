@@ -56,6 +56,46 @@ export type RegistryParseResult =
 	| { ok: true; registry: FloatCTFRegistry }
 	| { ok: false; errors: string[] };
 
+/**
+ * 公开注册表的**允许字段**（严格白名单）。
+ *
+ * `$FLOATCTF_HOME/frontends/` 由 Caddy 以只读方式**公开**提供
+ * （`/__floatctf/frontends/registry.json`，无鉴权），因此这里必须 fail-closed：
+ * 任何非公开字段（历史遗留的 `source`、本地路径、Git URL、凭据、临时目录……）
+ * 都必须让注册表**校验失败**，而不是被静默忽略后继续提供出去。
+ */
+const REGISTRY_ROOT_KEYS = new Set(["schemaVersion", "updatedAt", "frontends"]);
+const REGISTRY_FRONTEND_KEYS = new Set([
+	"id",
+	"currentVersion",
+	"protected",
+	"versions",
+]);
+const REGISTRY_VERSION_KEYS = new Set([
+	"version",
+	"name",
+	"description",
+	"author",
+	"compatibility",
+	"entry",
+	"styles",
+	"installedAt",
+]);
+const REGISTRY_COMPATIBILITY_KEYS = new Set(["frontendRuntime", "apiContract", "sdk"]);
+
+function collectUnknownKeys(
+	label: string,
+	value: Record<string, unknown>,
+	allowed: Set<string>,
+	errors: string[],
+): void {
+	for (const key of Object.keys(value)) {
+		if (!allowed.has(key)) {
+			errors.push(`${label}: unknown field \`${key}\``);
+		}
+	}
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -76,6 +116,12 @@ function parseVersionEntry(
 		push(`registry: frontends.${id}.versions.${version} must be an object`);
 		return null;
 	}
+	collectUnknownKeys(
+		`registry: frontends.${id}.versions.${version}`,
+		raw,
+		REGISTRY_VERSION_KEYS,
+		errors,
+	);
 	if (raw.version !== version) {
 		push(
 			`registry: frontends.${id}.versions.${version}.version=${JSON.stringify(raw.version)} does not match its key`,
@@ -117,6 +163,12 @@ function parseVersionEntry(
 			`registry: frontends.${id}.versions.${version}.compatibility must be an object`,
 		);
 	} else {
+		collectUnknownKeys(
+			`registry: frontends.${id}.versions.${version}.compatibility`,
+			raw.compatibility,
+			REGISTRY_COMPATIBILITY_KEYS,
+			errors,
+		);
 		const { frontendRuntime, apiContract, sdk } = raw.compatibility;
 		if (typeof frontendRuntime !== "string" || typeof apiContract !== "string") {
 			push(
@@ -177,6 +229,8 @@ export function parseRegistry(
 
 	const errors: string[] = [];
 
+	collectUnknownKeys("registry.json", raw, REGISTRY_ROOT_KEYS, errors);
+
 	if (raw.schemaVersion !== expectedSchema) {
 		errors.push(
 			`registry.json: unsupported schemaVersion ${JSON.stringify(raw.schemaVersion)} (expected ${expectedSchema})`,
@@ -206,6 +260,12 @@ export function parseRegistry(
 				`registry.json: frontends.${id}.id=${JSON.stringify(rawFrontend.id)} does not match its key`,
 			);
 		}
+		collectUnknownKeys(
+			`registry.json: frontends.${id}`,
+			rawFrontend,
+			REGISTRY_FRONTEND_KEYS,
+			errors,
+		);
 		if (!isPlainObject(rawFrontend.versions)) {
 			errors.push(`registry.json: frontends.${id}.versions must be an object`);
 			continue;

@@ -26,7 +26,15 @@
 #     已应用版本由 schema_migrations 跳过；不做任何破坏性回滚。
 #   - --skip-migrations（或 FLOATCTF_SKIP_MIGRATIONS=1）跳过迁移步骤；跳过时
 #     平台可能因缺少新表/新列而启动失败。
+#   - 管理员在 config/floatctf.toml 里自定义过的 AWD/AWDP 镜像引用会被**保留**
+#     （并告警）；只有已知 stock 形态才迁移到新的 canonical GHCR 默认值。
+#     强制回默认用 --reset-runtime-images；强制保留用 --keep-runtime-images。
 #
+# 【前置依赖（R3）】宿主必须提供 **Python 3.11+**（stdlib tomllib）：
+#   release 的 db/migrate.sh 用 `python3 -c 'import tomllib'` 解析 TOML 配置，
+#   升级路径的迁移全靠它。安装器用能力探测（不是版本字符串）在任何改动/下载
+#   之前 fail closed。缺 tomllib 请先升级 python3（不得用 pip 安装 tomllib）。
+
 # 安装后布局（$FLOATCTF_HOME，默认 /var/lib/floatctf）：
 #   compose.prod.yml  .env  config/  data/  runtime/  logs/  web/  frontends/
 #   merged.sql                 fresh-DB initdb 挂载（compose 引用）
@@ -38,10 +46,11 @@
 #   sudo ./scripts/install.sh --develop --helper-bin <target/debug/floatctf-helper>
 #   仅准备主机、系统用户/组、内核参数与 floatctf-helper，不创建 dev systemd infra。
 #
-# 环境变量（覆盖 6 个产物 URL / release 版本 / 迁移开关）：
+# 环境变量（覆盖 6 个产物 URL / release 版本 / 迁移开关 / 运行时镜像）：
 #   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
 #   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_OPS_URL /
-#   FLOATCTF_VERSION / FLOATCTF_SKIP_MIGRATIONS
+#   FLOATCTF_VERSION / FLOATCTF_SKIP_MIGRATIONS /
+#   FLOATCTF_SKIP_RUNTIME_IMAGES / FLOATCTF_RUNTIME_IMAGE_REGISTRY
 # 安装根：
 #   FLOATCTF_HOME=/opt/floatctf   （默认 /var/lib/floatctf）
 #
@@ -51,10 +60,16 @@
 #     整平台由运维 systemctl start floatctf.target 启动（首次启动 postgres
 #     自动用 merged.sql 初始化数据库）。唯一例外是 apply_migrations：升级既有
 #     数据库时临时 `up -d postgres` 应用迁移（平台其余服务仍不启动）。
-#   - AWD 服务镜像（floatctf/awd-flagserver / awd-judgeserver /
-#     floatctf/infra/awdp-judgeserver）**不随本 release 分发**：部署后会体检并
-#     告警，提示在有源码的机器上运行 scripts/build-runtime-images.sh --tag <版本>；
-#     缺镜像 = AWD/AWDP 赛事无法部署，故在安装时（而非比赛现场）就显式暴露。
+#   - AWD/AWDP 运行时镜像（${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:V、
+#     .../awd-judgeserver:V、.../awdp-judgeserver:V，V=release 版本）随 release
+#     发布到 GHCR（release.yml 的 runtime-images job）。安装/升级时 ensure_runtime_images
+#     会逐个 `docker image inspect`，缺则 `docker pull`；**拉不到就 die**（绝不继续
+#     进入一个 AWD/AWDP 注定失败、要等比赛现场才炸的部署）。
+#     离线/手工预载（escape hatch）：
+#       docker save <三个 ref> -o images.tar   # 在有镜像的机器上
+#       sudo docker load < images.tar          # 目标机，然后重新运行本安装器
+#     只跑 Jeopardy（不使用 AWD/AWDP）的宿主可显式跳过：
+#       --skip-runtime-images / FLOATCTF_SKIP_RUNTIME_IMAGES=1（降级为醒目告警）。
 #
 set -Eeuo pipefail
 
@@ -68,6 +83,14 @@ FCTF_USER="floatctf"
 FCTF_UID="65532"
 FCTF_HELPER_USER="floatctf-helper"
 HELPER_INSTALL_PATH="/usr/local/libexec/floatctf-helper"
+# canonical AWD/AWDP 运行时镜像 registry 前缀：release.yml 的 runtime-images job 把三个
+# 镜像推到这里，ensure_runtime_images 与 floatctf.toml 模板都从同一个前缀计算 ref
+# （单一事实来源，避免"模板写 A、安装器查 B"）。可用 FLOATCTF_RUNTIME_IMAGE_REGISTRY
+# 覆盖（例：指向自建 registry）；空值回落 canonical。
+RUNTIME_IMAGE_REGISTRY="${FLOATCTF_RUNTIME_IMAGE_REGISTRY:-ghcr.io/floatctf}"
+[ -n "$RUNTIME_IMAGE_REGISTRY" ] || RUNTIME_IMAGE_REGISTRY="ghcr.io/floatctf"
+RUNTIME_IMAGE_REGISTRY="${RUNTIME_IMAGE_REGISTRY%/}"
+export RUNTIME_IMAGE_REGISTRY
 
 # fake 占位地址：真实 release 地址发布后替换（或经 --*-url / 环境变量覆盖）。
 DEFAULT_API_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf"
@@ -108,6 +131,12 @@ HELPER_BIN=""
 # 升级既有安装时，迁移由 release 的 db/migrate.sh forward-only 应用；可用
 # --skip-migrations 显式跳过（见 apply_migrations 的说明与风险提示）。
 SKIP_MIGRATIONS="${FLOATCTF_SKIP_MIGRATIONS:-0}"
+# AWD/AWDP 运行时镜像默认**硬要求**（缺则 die）；--skip-runtime-images 是 operator
+# 显式退出口（只跑 Jeopardy 的宿主），降级为醒目告警。
+SKIP_RUNTIME_IMAGES="${FLOATCTF_SKIP_RUNTIME_IMAGES:-0}"
+# 升级时自定义镜像引用的处置：默认保留"非 stock"的自定义值；两者互斥。
+RESET_RUNTIME_IMAGES=0
+KEEP_RUNTIME_IMAGES=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --api-url) API_URL="${2:?--api-url 需要一个地址参数}"; API_URL_EXPLICIT=1; shift ;;
@@ -119,9 +148,14 @@ while [ $# -gt 0 ]; do
         --ops-url) OPS_URL="${2:?--ops-url 需要一个地址参数}"; OPS_URL_EXPLICIT=1; shift ;;
         --version) VERSION="${2:?--version 需要 release 版本，如 0.3.3}"; VERSION_EXPLICIT=1; shift ;;
         --skip-migrations) SKIP_MIGRATIONS=1 ;;
+        --skip-runtime-images) SKIP_RUNTIME_IMAGES=1 ;;
+        --reset-runtime-images) RESET_RUNTIME_IMAGES=1 ;;
+        --keep-runtime-images) KEEP_RUNTIME_IMAGES=1 ;;
         --develop) DEVELOP=1 ;;
         -h|--help)
-            sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
+            # 打印文件头注释块（从第 2 行到第一条非注释行之前）；不写死行号，
+            # 避免以后往头部加内容时 --help 被静默截断。
+            sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) die "未知参数: $1（--help 查看用法）" ;;
@@ -148,6 +182,9 @@ if [ -z "$VERSION" ] && [ "$DEVELOP" -eq 1 ] && [ -f apps/api/Cargo.toml ]; then
 fi
 [ -n "$VERSION" ] || die "无法确定 release 版本；请传 --version <版本> 或设置 FLOATCTF_VERSION"
 export VERSION
+# 升级保护的两种强制模式互斥（同时给出就无法判定意图 → fail closed，绝不猜）。
+[ "$RESET_RUNTIME_IMAGES" = "1" ] && [ "$KEEP_RUNTIME_IMAGES" = "1" ] \
+    && die "--reset-runtime-images 与 --keep-runtime-images 互斥，请只选一个"
 
 # ── trap：清理临时资源（init 阶段登记的网络资源 + 下载解压的临时目录）──────────
 TMP_DOCKER_NET=""
@@ -209,15 +246,35 @@ check_linux() {
     ok "Linux 环境"
 }
 
+# R3：release 的 db/migrate.sh 用 **stdlib tomllib** 解析 TOML（Python ≥3.11），
+# 升级路径的迁移全靠它。刻意做**能力探测**而不是版本字符串比较：
+#   * 版本号可能被 backport / venv / wrapper 欺骗，`import tomllib` 才是真实能力；
+#   * 绝不使用 pip（宿主包管理器之外的东西不碰，也不用 sudo pip）。
+# 该函数被 main()（任何 mutation 之前）、check_commands 与 precheck 三处调用。
+check_python_tomllib() {
+    command -v python3 >/dev/null 2>&1 \
+        || die "缺少命令: python3（需要 Python 3.11+ 的 stdlib tomllib；release 的 db/migrate.sh 用它解析 TOML。请用宿主包管理器安装 python3 后重试）"
+    if python3 -c 'import tomllib' >/dev/null 2>&1; then
+        ok "Python tomllib 可用（$(python3 -V 2>&1 | head -1)）"
+        return 0
+    fi
+    local pyver
+    pyver="$(python3 -V 2>&1 | head -1 || true)"
+    [ -n "$pyver" ] || pyver="未知"
+    die "Python 缺少 stdlib tomllib（需要 Python 3 且带标准库 tomllib，即 **Python ≥3.11**；检测到: ${pyver}）。release 的 db/migrate.sh 用它解析 TOML 配置，**升级/迁移路径**必须有它才能运行。请用宿主包管理器升级 python3 到 ≥3.11（tomllib 只随标准库提供：不要用 pip 往宿主装，也不要用 sudo pip）后重新运行本安装器。"
+}
+
 check_commands() {
     local c
     for c in ip wg nft conntrack iptables docker sysctl modprobe; do
         command -v "$c" >/dev/null 2>&1 || die "缺少命令: $c"
     done
-    # 前端管理器 frontend.sh 需要 python3（JSON 解析 + 原子注册表更新）。
+    # 前端管理器 frontend.sh 需要 python3（JSON 解析 + 原子注册表更新）；
+    # 迁移器 db/migrate.sh 额外需要 Python ≥3.11 的 stdlib tomllib（见上）。
     command -v python3 >/dev/null 2>&1 \
-        || die "缺少命令: python3（前端管理器 frontend.sh 的依赖；apt/dnf/pacman 安装 python3 后重试）"
-    ok "基础命令齐全（ip/wg/nft/conntrack/iptables/docker/sysctl/modprobe/python3）"
+        || die "缺少命令: python3（前端管理器 frontend.sh 与迁移器 db/migrate.sh 的依赖；apt/dnf/pacman 安装 python3 后重试）"
+    check_python_tomllib
+    ok "基础命令齐全（ip/wg/nft/conntrack/iptables/docker/sysctl/modprobe/python3+tomllib）"
 }
 
 check_docker() {
@@ -579,11 +636,16 @@ services:
             RUSTFS_CONSOLE_ENABLE: "true"
             RUSTFS_OBS_LOG_DIRECTORY: /logs
         healthcheck:
-            test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
-            interval: 5s
-            timeout: 3s
-            retries: 10
-            start_period: 10s
+            # 真实就绪探测：TCP 开放 ≠ S3/HTTP 层可用。此前仅 `nc -z` 导致 API 在
+            # RustFS 的 S3 层就绪前初始化 bucket → "init rustfs failed: service error"
+            # → panic → crash-loop（Phase 13 实测）。镜像内只有 BusyBox nc（无 curl），
+            # 因此用 nc 发一个真实 HTTP 请求读 /health；stdin 需保持打开否则 nc 立刻
+            # 半关连接读不到响应（`sleep 1` 即为此）。timeout 必须 > sleep+nc 超时。
+            test: ["CMD-SHELL", "{ printf 'GET /health HTTP/1.1\\r\\nHost: 127.0.0.1:9000\\r\\nConnection: close\\r\\n\\r\\n'; sleep 1; } | nc -w 3 127.0.0.1 9000 | head -1 | grep -q ' 200 '"]
+            interval: 10s
+            timeout: 10s
+            retries: 12
+            start_period: 30s
 
     api:
         image: floatctf/api:${VERSION:?VERSION 必须在 .env 设置}
@@ -730,13 +792,16 @@ channel = "floatctf:realtime"
 
 [awd]
 network_runtime = "helper"
-flagserver_image = "floatctf/awd-flagserver:${VERSION}"
-judgeserver_image = "floatctf/awd-judgeserver:${VERSION}"
+# canonical 运行时镜像 ref（= release.yml 推送到 GHCR 的同一组）：
+#   ${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION} 等；awdp 已扁平化（无 infra/ 段）。
+# 升级时管理员的自定义值会被保留（见 preserve_custom_runtime_images）。
+flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"
+judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"
 platform_internal_url = "http://10.42.8.2:${API_PORT}"
 platform_internal_network = "fctf-platform-control"
 
 [awdp]
-practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:${VERSION}"
+practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"
 practice_network_subnet = "10.42.2.0/23"
 practice_judge_ip = "10.42.2.2"
 network_pool = "10.43.0.0/16"
@@ -1688,6 +1753,9 @@ env_set() { # key value
 precheck() {
     info "──── 部署：precheck ────"
     docker info >/dev/null 2>&1 || die "docker daemon 不可用"
+    # R3 纵深防御：即使有人绕过 run_init 直接调用部署阶段，也要在改动任何文件前
+    # 确认 Python tomllib 可用（迁移器依赖它）。
+    check_python_tomllib
     local pg_port redis_port rustfs_port rustfs_console_port http_port https_port
     pg_port=$(env_get POSTGRES_PORT 5433)
     redis_port=$(env_get REDIS_PORT 6380)
@@ -1783,6 +1851,86 @@ render() { # template out
     mv "$out.tmp" "$out"
 }
 
+# ── 升级保护：管理员自定义的 AWD/AWDP 镜像引用（§2.5）────────────────────────
+# prepare_configs 每次都用模板重渲染 config/floatctf.toml；没有保护的话，管理员
+# 指向自建 registry / 私有镜像的配置会在升级时被静默冲掉（"升级后 AWD 忽然拉
+# 官方镜像"）。这里只处理 TOML 里那三个 key（数据库里没有任何镜像设置）。
+toml_get_string_key() { # <file> <section> <key>：打印该 key 的字符串值（去引号）
+    local file="$1" section="$2" key="$3"
+    [ -f "$file" ] || return 1
+    # 用字符串比较而不是正则拼 section：`[awd]` 里的方括号在 ERE 里是字符类。
+    awk -v want="[$section]" -v key="$key" '
+        /^[[:space:]]*\[/ {
+            line = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            inseg = (line == want)
+            next
+        }
+        inseg && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            line = $0
+            sub(/^[^=]*=[[:space:]]*/, "", line)
+            sub(/[[:space:]]*(#.*)?$/, "", line)
+            gsub(/^"|"$/, "", line)
+            print line
+            exit
+        }
+    ' "$file"
+}
+
+toml_set_string_key() { # <file> <section> <key> <value>
+    local file="$1" section="$2" key="$3" value="$4" tmp="$1.tmp.$$"
+    awk -v want="[$section]" -v key="$key" -v val="$value" '
+        /^[[:space:]]*\[/ {
+            line = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            inseg = (line == want)
+        }
+        !done && inseg && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            print key " = \"" val "\""
+            done = 1
+            next
+        }
+        { print }
+    ' "$file" > "$tmp" || return 1
+    mv "$tmp" "$file"
+}
+
+# 已知 stock 形态（安装器历史默认 + 现在的 canonical 默认）= 可安全迁移到 canonical；
+# 其它任何值都视为管理员自定义 → 保留 + 告警。
+is_stock_runtime_image() { # <image-ref>
+    case "$1" in
+        floatctf/awd-flagserver:*|floatctf/awd-judgeserver:*|floatctf/infra/awdp-judgeserver:*|\
+        ghcr.io/floatctf/awd-flagserver:*|ghcr.io/floatctf/awd-judgeserver:*|ghcr.io/floatctf/awdp-judgeserver:*)
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# 把既有 floatctf.toml 里**自定义**的三个镜像引用写回新渲染的文件。
+#   --reset-runtime-images → 忽略既有值（强制 canonical），被丢弃的自定义值告警
+#   --keep-runtime-images  → 无条件保留既有值（连 stock 也保留）
+#   默认                   → stock 迁移到 canonical；非 stock 保留 + warn
+preserve_custom_runtime_images() { # <旧 toml 快照> <新渲染的 toml>
+    local old="$1" new="$2" spec section key existing
+    for spec in "awd flagserver_image" "awd judgeserver_image" "awdp practice_judgeserver_image"; do
+        section="${spec%% *}"
+        key="${spec##* }"
+        existing="$(toml_get_string_key "$old" "$section" "$key" 2>/dev/null || true)"
+        [ -n "$existing" ] || continue
+        if [ "$RESET_RUNTIME_IMAGES" = "1" ]; then
+            is_stock_runtime_image "$existing" || \
+                warn "--reset-runtime-images：丢弃 [$section] $key 的自定义值 $existing（改用 canonical 默认）"
+            continue
+        fi
+        if [ "$KEEP_RUNTIME_IMAGES" = "1" ] || ! is_stock_runtime_image "$existing"; then
+            toml_set_string_key "$new" "$section" "$key" "$existing" \
+                || die "写回自定义运行时镜像引用失败: [$section] $key"
+            warn "升级保护：保留管理员自定义的运行时镜像 [$section] $key = $existing（改回 canonical 默认请加 --reset-runtime-images）"
+        fi
+    done
+}
+
 prepare_configs() {
     set -a
     # ENV_FILE is generated at runtime by this installer.
@@ -1790,9 +1938,22 @@ prepare_configs() {
     . "$ENV_FILE"
     set +a
     export FLOATCTF_HOME
+    # 升级保护：渲染前先快照既有 floatctf.toml（渲染会覆盖它）。快照含 JWT_SECRET
+    # 等敏感值 → 必须是 0600（umask 077 建文件 + 显式 chmod 双重保险），绝不能
+    # 因为 cp 默认 0644 把密钥泄露给本机其他用户。
+    local prev_toml=""
+    if [ -f "$FLOATCTF_HOME/config/floatctf.toml" ]; then
+        prev_toml="$FLOATCTF_HOME/.floatctf.toml.prev"
+        ( umask 077; cp "$FLOATCTF_HOME/config/floatctf.toml" "$prev_toml" )
+        chmod 0600 "$prev_toml"
+    fi
     # 先替换模板里的 FLOATCTF_HOME 占位符，再渲染。
     sed "s|\${FLOATCTF_HOME}|$FLOATCTF_HOME|g" "$FLOATCTF_HOME/.floatctf.toml.tmpl" > "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
     render "$FLOATCTF_HOME/.floatctf.toml.tmpl.real" "$FLOATCTF_HOME/config/floatctf.toml"
+    if [ -n "$prev_toml" ]; then
+        preserve_custom_runtime_images "$prev_toml" "$FLOATCTF_HOME/config/floatctf.toml"
+        rm -f "$prev_toml"
+    fi
     cp "$FLOATCTF_HOME/.Caddyfile.tmpl" "$FLOATCTF_HOME/config/caddy/Caddyfile"
     rm -f "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy"
@@ -2118,47 +2279,89 @@ apply_migrations() {
     ok "数据库迁移已应用（postgres 容器保持运行；平台其余服务仍未启动）"
 }
 
-# ── 部署前体检：AWD/AWDP 运行时镜像 ───────────────────────────────────────────
+# ── 部署前硬校验：AWD/AWDP 运行时镜像（B1）────────────────────────────────────
 #
-# write_config_template 会把 AWD/AWDP 指向 floatctf/{awd-flagserver,awd-judgeserver}
-# 与 floatctf/infra/awdp-judgeserver 的 :$VERSION 标签，但 release 产物里**没有**
-# 这些镜像（分发通道待定，本安装器刻意不构建/不下载）。缺镜像时 AWD/AWDP 部署会在
-# 比赛现场才失败，且错误信息很难懂 —— 因此这里在安装时就把「缺哪些 + 怎么补」
-# 明确打出来。刻意只 warn 不 die：Jeopardy 单独部署是合法用法。
+# write_config_template 把 [awd]/[awdp] 指向 $RUNTIME_IMAGE_REGISTRY 下的三个镜像
+# （tag = 平台版本 $VERSION，awdp 已扁平化）。这些镜像随 release 发布到 GHCR
+# （release.yml 的 runtime-images job）——但安装环境可能离线、registry 不可达或
+# 尚未登录。缺镜像时 AWD/AWDP 部署会在**比赛现场**才失败，且错误信息很难懂。
+# 因此这里逐个 inspect，缺则 pull；仍然缺就 **die**（绝不继续进入一个注定失败的
+# 部署）。只跑 Jeopardy 的宿主可用 --skip-runtime-images 显式降级为告警。
+runtime_image_ref() { # <flattened-name> → <registry>/<name>:<VERSION>
+    printf '%s/%s:%s' "$RUNTIME_IMAGE_REGISTRY" "$1" "$VERSION"
+}
+
 RUNTIME_IMAGES_MISSING=""
-check_runtime_images() {
-    info "──── 部署：AWD/AWDP 运行时镜像体检 ────"
+ensure_runtime_images() {
+    info "──── 部署：AWD/AWDP 运行时镜像（$RUNTIME_IMAGE_REGISTRY，tag=$VERSION）────"
     local images=(
-        "floatctf/awd-flagserver:$VERSION"
-        "floatctf/awd-judgeserver:$VERSION"
-        "floatctf/infra/awdp-judgeserver:$VERSION"
+        "$(runtime_image_ref awd-flagserver)"
+        "$(runtime_image_ref awd-judgeserver)"
+        "$(runtime_image_ref awdp-judgeserver)"
     )
-    local img missing=()
+    local img missing=() pulled=()
     for img in "${images[@]}"; do
-        docker image inspect "$img" >/dev/null 2>&1 || missing+=("$img")
+        if docker image inspect "$img" >/dev/null 2>&1; then
+            ok "镜像已就绪: $img"
+            continue
+        fi
+        info "本地无此镜像，尝试: docker pull $img"
+        if docker pull "$img" >/dev/null 2>&1 && docker image inspect "$img" >/dev/null 2>&1; then
+            pulled+=("$img")
+            continue
+        fi
+        missing+=("$img")
     done
+    [ "${#pulled[@]}" -gt 0 ] && info "已拉取: ${pulled[*]}"
+
     if [ "${#missing[@]}" -eq 0 ]; then
         RUNTIME_IMAGES_MISSING=""
         ok "AWD/AWDP 运行时镜像齐备（$VERSION）"
         return 0
     fi
     RUNTIME_IMAGES_MISSING="${missing[*]}"
-    warn "════════════════════════════════════════════════════════════════"
-    warn "缺少 AWD/AWDP 运行时镜像：**AWD/AWDP 赛事在补齐前无法部署**"
-    for img in "${missing[@]}"; do
-        warn "  缺失: $img"
-    done
-    warn "这些镜像不随本 release 分发，安装器也不会自动构建/下载它们（分发通道待定）。"
-    warn "请在**有仓库源码**的机器上构建并导入本机（需要 Rust/Docker 构建环境）："
-    warn "  sudo bash <FloatCTF 仓库>/scripts/build-runtime-images.sh --tag $VERSION"
-    warn "Jeopardy 赛制不受影响；AWD/AWDP 事件请在上面的镜像就绪后再部署。"
-    warn "════════════════════════════════════════════════════════════════"
-    return 0
+
+    local missing_list pull_cmd save_args
+    missing_list="$(printf '%s, ' "${missing[@]}")"; missing_list="${missing_list%, }"
+    pull_cmd="$(printf 'docker pull %s; ' "${missing[@]}")"; pull_cmd="${pull_cmd%; }"
+    save_args="$(printf '%s ' "${missing[@]}")"
+
+    if [ "$SKIP_RUNTIME_IMAGES" = "1" ]; then
+        warn "════════════════════════════════════════════════════════════════"
+        warn "--skip-runtime-images / FLOATCTF_SKIP_RUNTIME_IMAGES=1：**跳过**运行时镜像硬校验"
+        warn "缺少 AWD/AWDP 运行时镜像：AWD/AWDP 赛事在补齐前**无法部署**（Jeopardy 不受影响）"
+        local m
+        for m in "${missing[@]}"; do warn "  缺失: $m"; done
+        warn "补齐（需网络可达；私有 registry 还需 docker login）:"
+        warn "  $pull_cmd"
+        warn "离线/手工预载（escape hatch）——在有镜像的机器上:"
+        warn "  docker save ${save_args}-o floatctf-runtime-images.tar"
+        warn "目标机: sudo docker load < floatctf-runtime-images.tar 然后重新运行本安装器"
+        warn "════════════════════════════════════════════════════════════════"
+        return 0
+    fi
+
+    die "缺少 AWD/AWDP 运行时镜像（tag=$VERSION）：${missing_list}
+  这些镜像由 release.yml 的 runtime-images job 发布到 $RUNTIME_IMAGE_REGISTRY；
+  目标机拉不到 = AWD/AWDP 赛事部署必然失败（Jeopardy 不受影响）。
+  精确拉取命令（需网络可达；私有 registry 还需 docker login）:
+    ${pull_cmd}
+  离线/手工预载（escape hatch）:
+    # 在有镜像的机器上
+    docker save ${save_args}-o floatctf-runtime-images.tar
+    # 目标机
+    sudo docker load < floatctf-runtime-images.tar
+    然后重新运行本安装器（幂等）。
+  只部署 Jeopardy（不使用 AWD/AWDP）时可显式跳过本检查:
+    --skip-runtime-images（或 FLOATCTF_SKIP_RUNTIME_IMAGES=1）"
 }
 
 run_deploy() {
     info "──── 第三阶段：部署（写文件/镜像/网络 + 建服务，不启动容器）→ $FLOATCTF_HOME ────"
     precheck
+    # B1：运行时镜像必须在**动任何安装文件之前**就绪（缺则 die）。放最前面意味着
+    # 失败时系统里没有任何"半启动/半写入"的部署状态，重跑即可。
+    ensure_runtime_images
     prepare_env
     write_compose_prod
     write_config_template
@@ -2170,8 +2373,6 @@ run_deploy() {
     apply_migrations
     ensure_platform_control_network
     validate_compose_config
-    # 运行时镜像体检放在 compose 校验之后：前者可能要求整改，但不阻断安装。
-    check_runtime_images
     write_systemd_units
     install_systemd
     write_uninstall
@@ -2238,6 +2439,11 @@ EOF
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 main() {
+    # R3（fail closed，且在**任何 mutation 之前**）：release 的 db/migrate.sh 用
+    # stdlib tomllib 解析 TOML（Python ≥3.11）。这里先于 require_root / run_init
+    #（会装包、建目录）/ 下载 / docker build / 迁移 检查，缺则立刻 die，
+    # 宿主上不留任何半成品。
+    check_python_tomllib
     if [ "$DEVELOP" = "1" ]; then
         run_develop
         ok "开发环境初始化完成（helper 已启动；API/Web 尚未启动）"
@@ -2261,15 +2467,19 @@ main() {
   sudo $FLOATCTF_HOME/restore.sh <归档> --yes
 升级既有安装：重新运行本安装器（release 的 db/migrate.sh 会 forward-only 补齐新迁移）；
   已装好的迁移器也可手动使用：sudo $FLOATCTF_HOME/db/migrate.sh status
+AWD/AWDP 运行时镜像（$RUNTIME_IMAGE_REGISTRY，tag=$VERSION）：
+  已在部署前逐个 docker image inspect / docker pull 校验通过；
+  升级时管理员自定义的镜像引用会被保留（--reset-runtime-images 可强制回默认）。
 EOF
     if [ -n "$RUNTIME_IMAGES_MISSING" ]; then
         cat <<EOF
 
-!! 注意：AWD/AWDP 运行时镜像缺失，AWD/AWDP 赛事在补齐前**无法部署** !!
+!! 注意：已按 --skip-runtime-images / FLOATCTF_SKIP_RUNTIME_IMAGES=1 跳过镜像校验 !!
   缺失镜像: $RUNTIME_IMAGES_MISSING
-  在有仓库源码的机器上构建后导入本机：
-    sudo bash <FloatCTF 仓库>/scripts/build-runtime-images.sh --tag $VERSION
-  Jeopardy 赛制不受影响。
+  AWD/AWDP 赛事在补齐前**无法部署**（Jeopardy 不受影响）。
+  联网补齐：docker pull <上面的 ref>（每个）；私有 registry 需先 docker login。
+  离线预载：在有镜像的机器 docker save <refs> -o images.tar，目标机 sudo docker load < images.tar，
+            然后重新运行本安装器。
 EOF
     fi
     ok "FloatCTF 安装完成：$FLOATCTF_HOME"

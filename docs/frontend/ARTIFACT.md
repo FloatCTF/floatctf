@@ -96,9 +96,15 @@ v1 刻意选择语义确定、可测、不会因 range 解析器差异产生分�
 | `frontends.<id>.protected` | `true` 表示常规前端管理不得移除（`default`） |
 | `versions.<v>` | 键必须是 semver；条目内 `version` 必须与键一致；`entry`/`styles` 走同一套路径规则；`installedAt` 必填 |
 
-版本条目里允许多余字段（例如 `source`），运行时会忽略它们（工具链可自由附加元数据）；
-但**必须**满足上表的必填与格式要求。注册表整体校验失败时，bootstrap 视为"注册表不可用"
-并走回退链（最终兜底页），绝不会"跳过坏条目继续加载"。
+**未知字段一律拒绝**（root / frontend 条目 / version 条目 / `compatibility` 逐层白名单）。
+`$FLOATCTF_HOME/frontends/` 由 Caddy 公开提供，因此注册表里**绝不允许**出现安装来源、
+本地路径、Git URL、凭据、临时目录或任何运维元数据 —— 出现即校验失败。
+`parseRegistry()` 与 `frontend.sh` 的 `check-public` 都按同一份白名单判定；
+历史遗留了 `source` 的注册表会在下一次写入（install / remove / set-current）时被
+`sanitize_registry` 清除。
+
+注册表整体校验失败时，bootstrap 视为"注册表不可用"并走回退链（最终兜底页），
+绝不会"跳过坏条目继续加载"。
 
 ## 4. 文件系统布局
 
@@ -180,8 +186,13 @@ frontends/
 - 安装某版本**不会**自动改变当前指针；需要时显式 `--make-current` 或 `frontend.sh set-current`。
 - `frontend.sh remove <id> <version>` 删除的若是当前版本，会把指针**显式回退**到剩余版本
   并打印出来（绝不留下悬空指针）。
-- 同 ID 同版本、内容不同：默认拒绝（资产不可变）；`--platform --reinstall` 用于平台重部署。
-- 同 ID 同版本、内容相同：幂等跳过（重部署安全）。
+- 同 ID 同版本、内容相同：幂等成功（重部署安全；只补注册表条目，不重写资产）。
+- 同 ID 同版本、**内容不同：硬失败**，没有任何例外（`default` / `--platform` 也一样）。
+  制品 URL 带 `immutable` 长缓存，"同版本换内容"对浏览器不可见，因此唯一正确的做法是
+  **发布新的前端版本号**（平台版本与前端版本独立演进）。
+- 删除某前端的 `currentVersion` 且还有其它版本时：**拒绝**并提示先
+  `frontend.sh set-current <id> <其它版本>`（`currentVersion` 是显式指针，绝不猜替代版本）。
+- 删除该 ID 的最后一个版本（或 `remove <id>`）会移除整条记录；`default` 受保护，不可移除。
 
 ## 8. 契约版本策略
 

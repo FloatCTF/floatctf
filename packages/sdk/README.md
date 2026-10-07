@@ -28,9 +28,34 @@ const events = await client.service.events.fetch({ limit: 20 });
 const client2 = await client.admin.settings.fetch();
 ```
 
-`client.service` / `client.admin` / `client.awd` / `client.awdp` are the domain façades.
-Modules import the shared, DI-bound HTTP handles internally, so one page has one client.
-`dispose()` unbinds it.
+`client.service` / `client.admin` / `client.awd` / `client.awdp` are the domain façades,
+each bound to **that instance's own** HTTP transport.
+
+### Multi-client / instance isolation
+
+There is no module-global "current transport" and no shared client singleton. Every
+`createFloatCTFClient()` call returns a fully independent client (own base URL, own token
+sources, own error hooks); creation order does not matter and there is nothing to unbind:
+
+```ts
+const a = createFloatCTFClient({ baseUrl: "https://a.example/api", getUserToken: () => "A" });
+const b = createFloatCTFClient({ baseUrl: "https://b.example/api", getUserToken: () => "B" });
+
+await b.service.events.fetch(); // → b.example with "B"
+await a.service.events.fetch(); // → a.example with "A"  (still!)
+```
+
+`client.baseUrl` / `client.adminBaseUrl` are authoritative: `requestConfig` cannot smuggle a
+`baseURL` (it is excluded at the type level and overridden at runtime).
+
+The individual domain modules are exported as **factories**
+(`createEventServiceApi(http)`, `createAwdPlayerApi(http)`, …) for advanced composition;
+regular code should use `client.*`.
+
+Realtime: use `client.sse.connect({ url: "/events/<id>/awd/stream" })` (player base URL +
+user token) or `client.sse.connectAdmin({ ... })` (admin base URL + admin token). Relative
+URLs resolve against the owning client's base URL, and the Bearer token always travels in the
+`Authorization` header — never in the URL.
 
 ## Error model
 

@@ -62,7 +62,7 @@ Frontend implementation
 |------|------|
 | `apps/web` | **bootstrap 引导页**：解析已安装前端 → 动态加载 → 回退 → 兜底页。无 React、无 Primer、无路由（产物约 14 KB / gzip 5 KB）。 |
 | `frontends/default` | **官方前端**：迁移前后的当前完整 UI（React + TanStack Router + Primer + Tailwind）。它是**普通前端**，走与第三方完全相同的制品/运行时契约。 |
-| `packages/sdk` | `@floatctf/sdk`：传输（axios + Bearer 注入 + 错误归一化 + 401 回调）、领域 API 客户端、DTO、fetch-based SSE、生成实体（`/entity` 子路径）。 |
+| `packages/sdk` | `@floatctf/sdk`：传输（axios + Bearer 注入 + 错误归一化 + 401 回调）、领域 API 客户端、DTO、fetch-based SSE、生成实体（`/entity` 子路径）。**客户端按实例隔离**：没有模块级"当前 transport"，`createFloatCTFClient()` 返回的每个实例各自拥有 base URL / token 来源 / 领域门面。 |
 | `packages/react` | `@floatctf/react`：**可选** headless React 绑定（query 工厂、SSE hook、失效工具）。 |
 | `packages/frontend-runtime` | `@floatctf/frontend-runtime`：manifest 校验、注册表校验与解析、`mount(context)` 契约、bootstrap 加载器与兜底 UI。 |
 | `scripts/frontend.sh` | 前端管理器（安装 / 列举 / 检查 / 移除 / 切换当前版本）。生产安装到 `$FLOATCTF_HOME/frontend.sh`。 |
@@ -101,7 +101,21 @@ export function mount(context: FloatCTFMountContext): void | (() => void) {
 **不得**出现在 context 里：Router、React Query、Primer、当前页面/路由概念、任何状态库。
 前端要读 URL 就自己读 `window.location`（路由是它自己的事）。
 
-### 4.3 加载流程
+### 4.3 实时（SSE）与 base URL
+
+`@floatctf/react` 的四个实时 hook **不接受** URL 参数，而是从传入的 `client` 派生：
+
+| hook | 传输 | 最终 URL |
+|------|------|----------|
+| `useAwdEventStream` | `client.sse.connect` | `${client.baseUrl}/events/<id>/awd/stream` |
+| `useAdminAwdEventStream` | `client.sse.connectAdmin` | `${client.adminBaseUrl}/events/<id>/awd/stream` |
+| `useAwdpEventStream` | `client.sse.connect` | `${client.baseUrl}/events/<id>/awdp/stream` |
+| `useAwdpRunStream` | `client.sse.connect` | `${client.baseUrl}/service/awdp/runs/<id>/stream` |
+
+因此 REST 与 SSE 永远走**同一个**已配置地址（跨源/自建 base URL 的外部前端不会出现
+"REST 正确、实时通道打错源"）。Bearer 仍走 `Authorization` 头，管理端用 admin token。
+
+### 4.4 加载流程
 
 ```
 Browser
@@ -138,7 +152,8 @@ Frontend（default 或第三方，任意框架）
   - **升级** = 安装新版本 + 移动指针。
   - **回滚** = 指针移回旧版本（旧版本目录仍在）。
   - **资产不可变**：同 ID 同版本已存在且内容不同 → 拒绝覆盖；`default` 由平台发布，
-    重部署用内部 `--platform --reinstall` 原子替换。
+    重部署也只能安装**新的前端版本**（`--platform` 允许操作 `default`，但不允许改写
+    已存在的版本目录）。
 - `FRONTEND_ACTIVE`（数据库动态设置）只存**前端 ID**；"用哪个版本"由注册表指针决定。
   两层职责不重叠。
 
@@ -174,6 +189,9 @@ Frontend（default 或第三方，任意框架）
 | 风险 | 处理 |
 |------|------|
 | 制品解包路径穿越 / 绝对路径 | 解包**前**逐条校验 tar 成员，拒绝 `..`、`/` 开头、反斜杠与特殊文件类型 |
+| 目录形态制品夹带符号链接/特殊文件 | **任何来源**（归档 / 源码构建 / 预构建目录 / 安装暂存树）在安装前都跑 `validate_artifact_tree`（`lstat` 语义）：拒绝符号链接、硬链接、FIFO、socket、设备文件；`frontend.json` / `entry` / `styles` 必须是普通文件 |
+| 公开注册表泄露运维元数据 | 注册表是**公开静态树**的一部分：`registry.json` 只允许白名单字段（无 `source`/路径/Git URL/凭据），CLI 每次写盘都 sanitize 并自检（`check-public`），运行时解析器对未知字段 fail-closed |
+| 源码构建以 root 运行 | 构建容器**绝不**使用 UID 0：sudo 场景用 `SUDO_UID/SUDO_GID`，普通用户用其自身，root 直调时用专用非特权身份（默认 `65534:65534`）；`docker run` 前断言 `uid != 0` |
 | tar 符号链接逃逸 | 拒绝符号链接与硬链接成员 |
 | 恶意前端 ID | ID 必须匹配 `[a-z0-9][a-z0-9._-]*`（≤64），后端与 CLI 都校验 |
 | 覆盖 default 前端 | `default` 受保护：常规 `remove`/`install` 拒绝；仅 install.sh 的 `--platform` 可动 |
@@ -195,6 +213,26 @@ Frontend（default 或第三方，任意框架）
 - 契约不兼容的候选在下拉里禁用并说明原因（而不是让管理员选出一个必然回退的前端）。
 
 ## 9. 生命周期
+
+### 5.1 `$FLOATCTF_HOME/frontends` 是**公开**静态树
+
+Caddy 以只读方式把它挂在 `/srv/frontends` 下并**无鉴权**提供
+（`/__floatctf/frontends/...`）。因此：
+
+- **任何私密信息都不得写入该目录**（安装来源、本地路径、Git URL、凭据、运维用户名、
+  构建工作目录、临时路径、内部部署元数据……）；
+- 需要溯源信息时，把它放在**这个树之外**（例如数据库 / 运维记录），不要放在这里；
+- 注册表的字段白名单是**公开契约**的一部分，见 [ARTIFACT.md](./ARTIFACT.md)。
+
+### 5.2 版本不可变
+
+前端资产 URL 带 `Cache-Control: immutable` 长缓存，因此 **前端 ID + 版本 = 一组不可变字节**：
+
+- 同 ID + 同版本 + 同内容 → 幂等成功；
+- 同 ID + 同版本 + **不同内容 → 硬失败**（包括 `default` 与平台重部署路径）；
+- Default UI 变了就必须**升它的前端版本号**（平台版本与前端版本独立演进）。
+
+### 5.3 生命周期
 
 | 动作 | 谁来执行 | 说明 |
 |------|----------|------|

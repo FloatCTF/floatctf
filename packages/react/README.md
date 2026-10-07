@@ -19,7 +19,12 @@ const client = createFloatCTFClient({
 });
 
 export const {
-  // realtime: fetch-based SSE + polling fallback + React Query invalidation
+  // realtime: fetch-based SSE + polling fallback + React Query invalidation.
+  // SSE URLs are derived from the client you passed in:
+  //   useAwdEventStream / useAwdpEventStream / useAwdpRunStream → client.baseUrl
+  //   useAdminAwdEventStream                                    → client.adminBaseUrl
+  // so REST and realtime always hit the same configured origin (works with an
+  // absolute cross-origin baseUrl such as "http://127.0.0.1:17780/api").
   useAwdEventStream,
   useAdminAwdEventStream,
   useAwdpEventStream,

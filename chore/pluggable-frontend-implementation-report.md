@@ -13,8 +13,12 @@
 | 分支 | `ui`（本地 UI 开发分支，未 push） |
 | base main commit | `5f3b1537c892fb17f69d3c82789e34261994c62a`（`git merge-base HEAD main` = `HEAD` 的起点） |
 | 起始 HEAD | `5f3b153`（与 `main` 同一提交 → 干净地从当前 main 历史开出） |
-| 实现 HEAD | 见 §21（共 6 个本地提交：4 个功能 + 2 个修复 + 1 个文档；`bfd5677` 为最终提交） |
-| 工作树 | 干净（除用户既有的 `chore/` 删除与未跟踪的 `.agents/`、`PROJECT-ANALYSIS.html` —— 会话开始时即如此，未触碰） |
+| Phase 12 实现提交 | 7 个（Phase 12.1 之前，见 §21）；当时已被推送到 `origin/ui`，远端 head = `70069e1d6765c8310680e2972d145c631c362b92` |
+| Phase 12.1 closure 提交 | 见 §21 与下面的「Phase 12.1 Closure」；**全部只在本地**（未 push） |
+| 工作树 | 除用户既有的 `chore/` 删除与未跟踪的 `.agents/`、`PROJECT-ANALYSIS.html` 外干净（会话开始时即如此，未触碰） |
+
+> 本报告**不记录包含它自己的那次提交的哈希**（自引用必然过期）。最终 HEAD 以
+> `git log` / agent 的最终答复为准；"是否已推送"以 `git log origin/ui..HEAD` 为准。
 | 变更规模 | 387 files changed, +7725 / −1516（相对 `main`，含最终文档提交前） |
 | 文件迁移 | 275 renames / 10 deletions / 80 additions |
 
@@ -621,18 +625,276 @@ apps/web/src/lib/sse/index.ts                          → packages/sdk/src/sse/
 
 ## 21. Commits
 
+### Phase 12（可插拔前端平台初版，已推送到 `origin/ui`）
+
 | # | commit | 内容 |
 |---|---|---|
 | 1 | `240567a` | `refactor(frontend)`: 抽出 `@floatctf/{sdk,react,frontend-runtime}`，当前 UI 迁入 `frontends/default`；`apps/web` 变 bootstrap；新增架构门禁与契约常量 |
 | 2 | `b0b52b1` | `feat(api)`: 未认证 `GET /api/frontend` + `FRONTEND_ACTIVE` 动态设置（protected、写入校验） |
 | 3 | `afd82df` | `feat(deploy)`: `scripts/frontend.sh` + 注册表 + Caddy/install.sh/clean.sh/CI/release 全面接入 |
 | 4 | `97249a9` | `feat(admin)`: 设置页「已安装前端」选择器（只选择，不安装） |
-| 5 | （本报告） | `docs(frontend)`: 三份前端文档 + README/AGENTS/INSTALL/agents 文档同步 + 实现报告 |
-| 5b | `ee1ca31` | `fix(frontend)`: 产物 `process` 依赖修复 + 迁移后门禁对齐（biome 配置、14 处 lint、源码边界测试、类型生成目录与幂等、mise 任务顺序） |
-| 5c | `552ae2f` | `fix(deploy)`: 隔离容器构建加固（调用者身份 / cap-drop ALL / npm 前缀装包管理器 / Node 基线对齐） |
-| 6 | `bfd5677` | `docs(frontend)`: 三份前端文档 + README/INSTALL/AGENTS/agents 同步 + 本报告 |
+| 5 | `ee1ca31` | `fix(frontend)`: 产物 `process` 依赖修复 + 迁移后门禁对齐 |
+| 6 | `552ae2f` | `fix(deploy)`: 隔离容器构建加固（调用者身份 / cap-drop ALL / npm 前缀装包管理器 / Node 基线对齐） |
+| 7 | `bfd5677` | `docs(frontend)`: 三份前端文档 + README/INSTALL/AGENTS/agents 同步 + 本报告（本次 closure 已重写其内容与元数据） |
 
-全部为**本地提交，未 push**。
+远端 `origin/ui` 的 head 停在 `70069e1d6765c8310680e2972d145c631c362b92`
+（该提交在上表第 7 项之后又 amend 过一次文档内容，推送出去的是 `70069e1`）。
+
+### Phase 12.1（closure，**只在本地**）
+
+见下面的「Phase 12.1 Closure」小节：SDK 实例隔离、React SSE base URL、公开注册表数据边界、
+制品树安全、非 root 构建、源码 manifest 契约、校验器同源、契约版本分离、版本不可变、
+显式指针语义、外部仓库再验证、安全负向测试。
+
+---
+
+## Phase 12.1 Closure
+
+Phase 12 把前端平台搭起来了，但闭包审计发现 5 个 P0 与 5 个 P1 级问题（外加报告元数据过期）。
+下面是逐项结论与证据。**全部为本地提交，未 push。**
+
+### SDK instance isolation
+
+**问题（P0-A）**：`@floatctf/sdk` 用模块级 `binding = { service, admin }` +
+`bindHttpClients()` 实现传输，因此 `createFloatCTFClient()` 创建的多个实例会互相覆盖：
+后创建的客户端会把先前客户端的请求劫持到自己的 base URL / token。作为公开 SDK 不可接受。
+
+**修复**：
+
+- 35 个领域模块全部改成工厂 `createXxxApi(http: FloatCTFHttpClient)`，只依赖注入的 handle；
+- `transport.ts` 去掉模块级 binding，改为 `createFloatCTFTransport(scope, options, baseUrl)`
+  返回独立的 axios 实例 + handle；
+- `client.ts` 用自己的两个 handle 组装 `service` / `admin` / `awd` / `awdp` / `sse`；
+- 公共面移除 `service_api` / `admin_api` / `bindHttpClients` / `resetHttpClientsForTests` /
+  `httpClients`；`dispose()` 一并删除（不再拥有全局资源，保留只会是误导性的生命周期 API）；
+- `requestConfig` 在**类型上**排除 `baseURL`（`Omit<..., "baseURL">`），运行时也把权威
+  base URL 放在 `requestConfig` **之后**，保证 `client.baseUrl` 与实际请求地址永远一致；
+- Default Frontend 的 `@/api` 门面改为从本前端那一个实例取所有域对象，页面只改 import 来源。
+
+**证据**：`packages/sdk/src/__tests__/client.test.ts`（8 个用例：A/B 两种创建顺序、
+B 存在后再用 A、并行请求、user/admin 分离、AWD 门面归属、SSE URL 归属、
+"没有任何全局重置 helper"）+ `transport.test.ts`（requestConfig.baseURL 权威性）。
+实测：SDK 测试 51 → **62**。
+
+### React SSE base URL
+
+**问题（P0-B）**：四个 SSE hook 硬编码 `/api/...`（管理端写死 `/api/admin/...`），
+而 `createFloatCTFReact({ client })` 已经拿到了客户端。外部 React 前端用非默认 base URL
+（例如 `http://127.0.0.1:17780/api`）时，REST 走配置地址、**实时通道却打前端自己的源**。
+
+**修复**：四个 hook 改为 `client.sse.connect()` / `client.sse.connectAdmin()`，
+只传**相对路径**，由客户端自己的 `baseUrl` / `adminBaseUrl` 解析；管理端仍用 admin token。
+
+**证据**：`packages/react/src/__tests__/sse-base-url.test.tsx` **不 mock connectSse**，
+只 mock 全局 `fetch`，断言真实请求的绝对 URL 与 `Authorization` 头：
+
+| hook | 断言到的 URL |
+|---|---|
+| `useAwdEventStream` | `http://127.0.0.1:17780/api/events/<id>/awd/stream` |
+| `useAdminAwdEventStream` | `http://127.0.0.1:17780/api/admin/events/<id>/awd/stream`（admin token） |
+| `useAwdpEventStream` | `http://127.0.0.1:17780/api/events/<id>/awdp/stream` |
+| `useAwdpRunStream` | `http://127.0.0.1:17780/api/service/awdp/runs/<id>/stream` |
+
+外加"另一个源（`https://ctf.example/api`）也不会退化成 `/api`"的用例。
+原有断线回退/重连语义用例全部保留并通过。React 测试 10 → **15**。
+
+### Public registry data boundary
+
+**问题（P0-C）**：`registry.json` 由 Caddy **无鉴权**公开提供，但它持久化了
+`source: "path:/home/alice/private-frontend"` 或 `git:https://user:token@host/repo.git`
+这类安装来源（可能含凭据）。公开静态树里不能有任何私密元数据。
+
+**修复**：
+
+- 注册表**只写白名单字段**（root: `schemaVersion`/`updatedAt`/`frontends`；
+  frontend: `id`/`currentVersion`/`protected`/`versions`；
+  version: `version`/`name`/`description`/`author`/`compatibility`/`entry`/`styles`/`installedAt`；
+  compatibility: `frontendRuntime`/`apiContract`/`sdk`）；
+- 删掉 `source_label_for()` 与所有 `source` 参数；每次写盘都跑 `sanitize_registry`
+  （历史遗留的 `source` 会在下一次 install/remove/set-current 时被清除）；
+- 写入后立即 `check-public` 自检，出现非公开字段即失败；
+- **运行时** `parseRegistry()` 改为 fail-closed：root / frontend / version / compatibility
+  逐层白名单，出现 `source`、`token`、`localPath`、`cloneUrl` 等未知字段**直接校验失败**；
+- 打印来源时对 URL userinfo 打码（`redact_source`）。
+
+**证据**：`scripts/test-frontend-manager.sh` 断言 **raw 文件**（不是解析后）不含
+`"source"`、本地/临时路径、Git clone URL；并模拟"历史遗留 source"验证重写后被清除。
+`packages/frontend-runtime` 新增 6 个用例：未知 root/frontend/version/compatibility 字段、
+`token`/`localPath`/`cloneUrl`/`credentials` 全部被拒（66 → **72**）。
+
+### Artifact tree validation
+
+**问题（P0-D）**：只有归档解包做了成员校验；**源码构建产物**与**预构建目录**可以绕过它，
+`[ -f "$dir/$entry" ]` 还会跟随符号链接，`cp -a` 也会保留链接。
+
+**修复**：新增 `validate_artifact_tree`（python3 + `lstat` 语义），在**四个位置**统一执行：
+归档解包后、源码构建后、预构建目录输入、安装暂存树 rename 前。
+拒绝符号链接、硬链接、FIFO、socket、块/字符设备；`frontend.json` / `entry` / `styles`
+必须是**普通文件**（非符号链接）。
+
+**证据**：负向矩阵全部拒绝且不留残留：`frontend.json` 符号链接、`entry → /etc/passwd`、
+相对符号链接逃逸、style 符号链接、FIFO、归档 `../` 穿越、归档绝对路径成员、
+归档符号链接、归档硬链接（每条都断言了**拒绝理由**，且被拒后无任何已安装资产）。
+
+### Non-root source builds
+
+**问题（P0-E）**：文档里的生产命令是 `sudo frontend.sh install ...`，而脚本用
+`id -u` / `id -g` 作为容器 `--user`，于是**构建容器实际以 UID 0 运行**，与"隔离/非 root"
+的说法矛盾。
+
+**修复**：`resolve_build_identity()` —— sudo 场景用 `SUDO_UID`/`SUDO_GID`（非 0 校验），
+普通用户用其自身，root 直接调用且无非 root 调用者时使用专用非特权身份
+（默认 `65534:65534`，可用 `FCTF_BUILD_UID/GID` 覆盖）；`docker run` 前**断言 uid != 0**。
+源码与输出目录先暂存并 `chown` 给该身份（绝不为构建去放宽用户原仓库权限）。
+
+**证据**：`_resolve-build-identity` 矩阵 —— `1000:1000`、`0/1234/5678 → 1234:5678`、
+`0 → 65534:65534`、`0/0/0 → 65534:65534`；普通用户直调 `1000:1000`；
+`SUDO_UID=4242 SUDO_GID=4242 → 4242:4242`。外部仓库真实构建日志显示
+`源码构建完成（隔离容器，构建身份 1000:1000）`。
+
+### Source manifest / build contract
+
+**问题（P1-A）**：文档承诺 `floatctf.frontend.json` 的
+`build.{packageManager,script,outputDir}`，但脚本只按 lockfile 判定包管理器、永远跑 `build`、
+只会在 `dist`/`build` 之间猜。
+
+**修复**：实现文档化契约 —— 严格解析源码 manifest（只额外允许 `build`，且只允许那三个键；
+`packageManager ∈ {auto,pnpm,npm,yarn}`；`script` 必须是**脚本名**
+（`[A-Za-z0-9:_-]+`，绝不接受 shell 片段）；`outputDir` 是安全相对目录）。
+容器内用**静态命令 + 环境变量**执行（`pnpm run "$FCTF_BUILD_SCRIPT"`），只复制
+`"$FCTF_OUTPUT_DIR"`，不再猜 dist/build。
+
+**证据**：CLI 用例覆盖非法 packageManager / shell 注入 / outputDir 穿越 / 未知 build 键；
+外部仓库 E2E 用 `build.script = "build:floatctf"` + `build.outputDir = "out-ui"` 真实构建成功。
+
+### Manifest validator parity
+
+**问题（P1-B）**：`frontend.sh` 的校验只提取了部分字段，比
+`@floatctf/frontend-runtime` 的 `parseFrontendManifest` 宽松得多 —— 于是存在
+"CLI 说能装、浏览器说不能加载"的分叉风险。
+
+**修复**：把规则搬进 registry helper 的 `parse_manifest`，**逐条对齐**权威实现
+（允许字段集合、`schemaVersion`、ID 格式与长度、semver、name/description/author 长度、
+compatibility 键与整数 major、`sdk` 类型与长度、styles 类型与上限、entry/styles 路径规则）。
+`frontend.sh verify` 走这条严格路径。
+
+**证据**：新增 `cli-manifest-parity.test.ts`：**37 个用例**，同一组 fixture 同时跑
+权威解析器与 CLI，断言制品模式接受/拒绝完全一致；并断言源码模式接受时，
+CLI 生成的制品 manifest 一定被权威解析器接受且不含 `build`。
+
+### Contract version separation
+
+**问题（P1-C）**：`frontend.sh` 用 `REGISTRY_SCHEMA_VERSION` 校验 `frontend.json` 的
+`schemaVersion`。两者今天恰好都是 1，掩盖了"两个独立契约被耦合"这个事实。
+
+**修复**：新增独立的 `MANIFEST_SCHEMA_VERSION="1"`，只用于 `frontend.json`；
+`REGISTRY_SCHEMA_VERSION` 只用于 `registry.json`；两者通过环境变量注入 python 侧，
+不再各存一份常量。架构门禁新增检查：两个常量必须分别存在。
+
+**证据**：CLI 用例用 `schemaVersion: 2` 的 manifest 验证拒绝路径；
+`check-architecture.sh` 断言两个常量同时存在。
+
+### Immutable frontend versions
+
+**问题（P1-D）**：`--platform --reinstall` 允许"同 ID + 同版本 + 不同内容"替换资产，
+而制品 URL 带 `Cache-Control: immutable` 长缓存 —— 浏览器不会看到新内容。
+
+**修复**：**移除** `--reinstall`、`INSTALL_REINSTALL` 与同版本原子替换分支。
+规则对所有前端（含 `default`）一致：
+
+- 同 ID + 同版本 + 同内容 → 幂等成功（只补注册表条目，不重写资产）；
+- 同 ID + 同版本 + **不同内容 → 硬失败**，提示"发布新的前端版本号"。
+
+`scripts/install.sh` 不再传 `--reinstall`；架构门禁断言该选项与状态变量都不存在。
+
+**证据**：CLI 用例 —— 幂等重装成功、第三方变更被拒、`--platform` 变更被拒、
+`default` 变更被拒、`--reinstall` 选项本身已不存在（未知选项）。
+
+### Explicit currentVersion removal semantics
+
+**问题（P1-E）**：删除当前版本时，旧实现用临时的版本排序器"猜"一个新的 currentVersion，
+既违背"显式指针"架构，又会在混合预发布版本时因 `int`/`str` 比较抛 `TypeError`。
+
+**修复**：删除某版本且它**不是** currentVersion → 允许；若是 currentVersion 且仍有其它版本
+→ **拒绝**并提示先 `frontend.sh set-current <id> <其它版本>`；若是最后一个版本 /
+`remove <id>` → 移除整条记录。绝不替用户猜。
+
+**证据**：CLI 用例覆盖 `1.0.0` / `1.0.0-alpha` / `1.0.0-1` / `1.0.0-beta.1` 混排：
+列表正常、删除 current 被拒、拒绝后资产未被删、set-current 后可删、可删非当前版本。
+
+### External repository revalidation
+
+用**新的**临时外部仓库链路（`/tmp/fcft-external-frontend`，仓库之外）验证修正后的契约：
+
+| 检查 | 结果 |
+|---|---|
+| 独立仓库 + 无主仓库路径引用 | ✅ 0 处 |
+| 只依赖 packed `@floatctf/sdk` / `@floatctf/frontend-runtime` | ✅（重新打包了改过的两个包；tarball 内 `src/` 0 项） |
+| 非 React（自己的路由 `/workspace`、自己的登录 UX、自己的会话存储） | ✅ |
+| **自定义 `build.script = build:floatctf`** | ✅ 容器内真实执行 |
+| **自定义 `build.outputDir = out-ui`** | ✅ 只复制该目录 |
+| 构建输出**不含** `frontend.json` | ✅ 由管理器从源码 manifest 生成 |
+| 生成的制品 manifest 不含 `build`，且通过权威解析器 | ✅ |
+| raw registry 不含来源路径 / Git URL | ✅ 0 处 |
+| 安装成功 + 注册表更新 | ✅ `workspace@0.3.0`（构建身份 `1000:1000`） |
+| 真实 bootstrap 在浏览器里加载它 | ✅ 页面显示 `workspace@0.3.0` 自有界面（footer：`外部前端 · workspace@0.3.0 · api 1 · runtime 1`） |
+
+浏览器验证使用真实 `apps/web` 产物 + 真实注册表 + 真实制品；唯一替身是
+`/api/frontend` 的静态桩（该端点已在 Phase 12 用真实 API 验证过）。
+
+### Security negative tests
+
+统一由 `scripts/test-frontend-manager.sh`（**72 项，全绿**）与包内单测覆盖：
+
+| 类别 | 用例 |
+|---|---|
+| 归档 | `../` 穿越、绝对路径成员、符号链接、硬链接（各自断言拒绝理由） |
+| 预构建目录 | `frontend.json` 符号链接、entry 符号链接、相对符号链接逃逸、style 符号链接、FIFO |
+| 源码 manifest | 非法 packageManager、`script` shell 注入、`outputDir` 穿越、未知 build 键、非对象 build |
+| 注册表 | 未知 root/frontend/version/compatibility 字段、`source`、凭据类元数据 |
+| 不可变 | 同版本同内容幂等、同版本不同内容拒绝（第三方 / `--platform` / `default`） |
+| 指针 | 删除 currentVersion 被拒 + 无不一致状态 + set-current 后可删 |
+| 构建身份 | 普通用户 / sudo / root 直调三种入口都非 0 |
+| SDK | 两客户端 / 两源 / 两 token 上下文互不干扰 |
+
+### Regression validation
+
+**单元/组件层**：SDK 工厂化重构后页面只改 import 来源、调用点零改动；
+frontends/default 173 个用例全绿（含 AWD/AWDP 工作台、导航、事件网络页等）；
+SSE 断线回退/重连/认证失败停止重连语义用例全部保留通过。Rust 侧无行为改动，全量测试通过。
+
+**真实浏览器（隔离验证栈：真实 API + 隔离数据库 + 真实内嵌 Caddyfile + 真实制品）**：
+
+| 流程 | 结果 |
+|---|---|
+| 落地/登录页 | ✅ `Sign in to FloatCTF` 正常渲染 |
+| 选手登录（`1000000`/`testuser`） | ✅ 进入 Top 页，导航完整（说明 AuthStore → SDK token 注入链路正常） |
+| 赛事列表 | ✅ 真实表格 + 分栏 + 分页 |
+| 深路由整页刷新 | ✅ bootstrap → 默认前端接管当前路径 |
+| **AWD 选手页 + 实时通道** | ✅ 页面渲染真实积分表；网络层 `GET /api/events/<id>/awd/stream` → **200**（走新的 `client.sse.connect` 路径） |
+| 管理端（`sysadmin`） | ✅ 设置页渲染，前端选择器显示 `default / 平台内置 / 契约兼容 / 版本 1.0.2`（真实读注册表） |
+| 控制台 | ✅ 无应用级报错（仅浏览器扩展噪声；另有未注册练习赛的 403/404，属预期鉴权结果） |
+
+**验证中撞到并确认的一个真实运维事实**：同一 `default@1.0.0` 被重新构建后，
+浏览器仍按 `immutable` 缓存使用旧 chunk，导致新版前端加载失败（兜底页如实报出
+`default: process is not defined`）。这正是 P1-D 要解决的问题 —— 修好之后
+**同版本不同内容会被管理器直接拒绝**，验证改走"新版本号"（1.0.1 → 1.0.2）后一切正常。
+生产语义因此是自洽的：**内容变了就必须升前端版本号**。
+
+### Final gate results
+
+见 §23 的最终证据表（本节只列 closure 新增项）：
+
+| 新增门禁 | 结果 |
+|---|---|
+| `scripts/test-frontend-manager.sh` | ✅ 72/72 |
+| `cli-manifest-parity.test.ts` | ✅ 37 用例（CLI ↔ 权威解析器一致） |
+| `client.test.ts`（多客户端隔离） | ✅ 8 用例 |
+| `sse-base-url.test.tsx` | ✅ 5 用例 |
+| `registry.test.ts` 严格白名单 | ✅ +6 用例 |
+| `scripts/check-architecture.sh` | ✅ 12 项（新增 SDK 全局绑定 / React 硬编码 URL / 公开注册表 schema 与 --reinstall / 公开子路径 4 类检查） |
+| `mise run test` | ✅ 已把前端管理器测试纳入（`scripts/test-frontend-manager.sh`） |
+| CI | ✅ `fast-web` 新增 `./scripts/test-frontend-manager.sh` |
 
 ---
 
@@ -641,19 +903,18 @@ apps/web/src/lib/sse/index.ts                          → packages/sdk/src/sse/
 1. **默认前端 JS 体积**：共享 chunk 4.32 MB（gzip **1.08 MB**）。迁移本身让 gzip 从 1.23 MB
    降到 1.08 MB（`NODE_ENV` 替换带来的 DCE），但**首屏仍然偏大**（mermaid/katex/xterm 等在
    静态图内）。这是既有问题（HANDOFF 早已记载），未在本任务范围内做 code-split 优化。
-2. **同一版本替换资产对浏览器不可见**：版本化资产是 `immutable` 长缓存，`--reinstall`
-   同版本换内容时浏览器可能仍用旧缓存（本次验证就撞到过，靠升版本号解决）。
-   生产语义正确（升级 = 新版本号），但运维需知道"同版本替换不等于用户能看到"。
+2. **升级必须升前端版本号**：资产带 `immutable` 长缓存，同版本换内容既被管理器拒绝、
+   对浏览器也不可见（Phase 12.1 已移除 `--reinstall` 例外）。发布工程必须记得
+   在 Default UI 变化时升 `frontends/default` 的版本号 —— 这是流程约束，不是代码缺陷。
 3. **`frontend.sh` 依赖宿主 `python3`**：用于 JSON 解析与原子注册表更新。
    生产安装器已把它列入前置依赖与 Arch 包列表；极简主机需自行安装。
 4. **外部前端构建需要网络**：容器内通过 npm 安装 pnpm 并下载依赖；离线宿主需自备镜像/代理。
    构建容器默认镜像 `node:26-bookworm`（首次会拉取）。
-5. **单客户端约束**：SDK 的 API 模块通过"当前绑定的 HTTP handle"工作，一个页面只支持一个
-   绑定客户端（bootstrap 每次只挂载一个前端，因此符合现实）。同时创建两个不同认证上下文的
-   客户端不受支持（已在 `client.ts` 明确记录）。同浏览器标签内热切换前端也**不**支持
-   （设计上要求刷新页面）。
-6. **`registry.json` 版本条目允许附加字段**：工具链可写 `source` 等元数据，运行时会忽略；
-   这意味着"注册表条目的额外字段"不是契约的一部分（有意为之，已在 ARTIFACT.md 说明）。
+5. **同标签内热切换前端仍不支持**：bootstrap 在页面加载时解析一次并 `mount`；切换
+   `FRONTEND_ACTIVE` 后需要刷新页面（管理端会明确提示）。这是刻意的简单化，不是缺陷。
+   （Phase 12.1 已修掉"客户端实例互相劫持"这个真正的隔离问题：现在多客户端完全独立。）
+6. **公开注册表是严格契约**：任何非白名单字段都会让注册表校验失败（浏览器走回退链）。
+   工具链不要再往 `$FLOATCTF_HOME/frontends` 里写元数据；需要溯源时放在该树之外。
 7. **前端签名/来源校验未实现**：制品没有签名链，信任完全建立在"运维安装 + 同源提供"
    之上（与信任模型一致，但值得未来考虑）。
 8. **浏览器验证使用隔离库与本地 Caddy**：未在生产 Compose / 真实域名 + HTTPS 下跑一遍
@@ -672,13 +933,13 @@ apps/web/src/lib/sse/index.ts                          → packages/sdk/src/sse/
 | `bash -n` × 6 个脚本（frontend/install/clean/package-web-dist/verify-release-frontend/check-architecture） | ✅ 全部通过 |
 | `mise run check` | ✅ **exit 0**（cargo fmt + clippy --workspace --all-targets --all-features + 5 包 biome lint + web:typecheck + web:architecture + Rust 全量测试 + web 测试） |
 | `mise run build` | ✅ **exit 0**（`cargo build --workspace --release` + packages + bootstrap + Default Frontend 制品；`target/release/floatctf` 47.5 MB） |
-| Web 测试 | ✅ 25 个文件 / **300** 个用例全绿（frontend-runtime 66、sdk 51、react 10、frontends/default 173） |
+| Web 测试（Phase 12.1 后） | ✅ **359** 个用例全绿（frontend-runtime 109、sdk 62、react 15、frontends/default 173）+ 前端管理器 **72** 项 |
 | Rust 测试 | ✅ 61 个 suite 全绿（含源码边界测试 `push_flow_removed_from_source`） |
 | `mise run db:gen:ts` | ✅ 幂等（生成结果与提交内容字节一致） |
-| `scripts/check-architecture.sh` | ✅ OK（7 条边界 + 契约版本一致性） |
+| `scripts/check-architecture.sh` | ✅ OK（12 项：7 条原边界 + SDK 无全局绑定 + React 不硬编码站点路径 + 注册表/schema/--reinstall + 公开子路径） |
 | `scripts/verify-release-frontend.sh` | ✅ OK（真实校验器验证发布制品） |
 | `git diff --check` | ✅ 无空白/冲突标记问题 |
-| 未 push | ✅ `git log main..HEAD` 的 6 个提交全部只在本地 |
+| 未 push | ✅ Phase 12.1 的 4 个提交只在本地（`git rev-list --count origin/ui..HEAD` = 4） |
 
 **PASS**
 

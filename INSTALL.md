@@ -243,7 +243,7 @@ frontends/
 ```
 
 安装器把 `bootstrap/` 铺到 `$FLOATCTF_HOME/web`，把 `frontends/` 交给前端管理器安装
-（`$FLOATCTF_HOME/frontend.sh install … --platform --reinstall --make-current`）：
+（`$FLOATCTF_HOME/frontend.sh install … --platform --make-current`）：
 **升级只更新 release 里的前端，第三方已安装的前端、其版本与注册表指针一律保留**，
 `FRONTEND_ACTIVE` 设置也不会被改动。详见
 [docs/frontend/ARCHITECTURE.md](docs/frontend/ARCHITECTURE.md)。

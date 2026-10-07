@@ -208,10 +208,31 @@ CLI **不会**替你改 `FRONTEND_ACTIVE`。
 **破窗恢复**：任何页面加 `?frontend=default` 即用内置前端打开，
 只影响当前这次加载、不修改设置、不需要登录。
 
-源码安装会在**隔离容器**里跑依赖安装与 `build` 脚本（`cap-drop ALL`、
-`no-new-privileges`、只读源码挂载、无 Docker socket），但请注意：
-**隔离降低的是宿主风险，不会让浏览器 JS 变得可信**（见
+源码安装会在**隔离容器**里跑依赖安装与 `build` 脚本：
+
+- `cap-drop ALL`、`no-new-privileges`、`--pids-limit`、只读源码挂载、无 Docker socket；
+- **构建身份永不为 UID 0**：`sudo` 调用用 `SUDO_UID/SUDO_GID`；普通用户用其自身；
+  root 直调时用专用非特权身份（默认 `65534:65534`）。源码与输出目录会被暂存并
+  `chown` 给该身份，因此**不会**为了构建去改你原仓库的权限；
+- 制品目录会逐个文件用 `lstat` 校验（拒绝符号链接/硬链接/FIFO/socket/设备文件），
+  `frontend.json` / `entry` / `styles` 必须是普通文件 —— 归档、源码构建、预构建目录
+  走**同一套**边界。
+
+但请注意：**隔离降低的是宿主风险，不会让浏览器 JS 变得可信**（见
 [ARCHITECTURE.md §7](./ARCHITECTURE.md)）。
+
+`build` 段的三个字段是**真实生效**的契约（不是文档摆设）：
+
+```jsonc
+"build": { "packageManager": "auto", "script": "build:floatctf", "outputDir": "out-ui" }
+```
+
+- `packageManager`: `auto` 按 lockfile 判定，也可显式 `pnpm|npm|yarn`；
+- `script`: package.json 里的**脚本名**（形如 `[A-Za-z0-9:_-]+`，绝不接受 shell 片段）；
+- `outputDir`: 安全相对目录；构建容器只复制这个目录。
+
+若构建没有产出 `frontend.json`，管理器会从源码 manifest **生成**一个只含运行时字段的
+制品 manifest（剥掉 `build`），并按制品契约复核后才安装。
 
 ## 5. 常见问题
 
@@ -221,7 +242,8 @@ CLI **不会**替你改 `FRONTEND_ACTIVE`。
 | 改了制品但刷新没变化 | 版本化资产是 `immutable` 长缓存：**发布新版本号**（同版本替换只用于平台重部署，浏览器仍可能拿旧缓存） |
 | 管理端选择器里看不到我的前端 | 注册表里没有它：确认 `frontend.sh install` 成功、`frontend.sh list` 能看到 |
 | 选择器里我的前端被禁用 | 契约不兼容（`compatibility.frontendRuntime` / `apiContract` 与平台不一致） |
-| `frontend.sh install` 报 "已存在同 ID 同版本但内容不同" | 资产不可变：发新版本号；平台重部署用 `--platform --reinstall` |
+| `frontend.sh install` 报 "已存在同 ID 同版本但内容不同" | 资产不可变（immutable 长缓存）：**发新版本号**；没有 `--reinstall` 这类例外 |
+| `frontend.sh remove <id> <version>` 报 "该版本是 currentVersion" | 显式指针：先 `frontend.sh set-current <id> <其它版本>` 再删除 |
 | 跨源请求被浏览器拦 | 把 dev server 的源加入后端 TOML 的 `[cors].allowed_origins` |
 
 ## 6. 生产形态验证（不启动整套生产）

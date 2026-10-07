@@ -8,6 +8,11 @@
 
 ## 1. Verdict
 
+> **更新（Phase 13.1 收口）**：本节的判定是 Phase 13 当时的**原始**结论，予以保留。
+> Phase 13.1 已关闭全部代码侧工作（B1 运行时镜像分发 / R2 RustFS 就绪 / R3 tomllib 前置 / 文档），
+> 且产品负责人**豁免** B4。B2（独占宿主 AWD/AWDP E2E）与 B3（特权安装/升级/卸载/purge）
+> **仍需独占宿主**，本环境不可执行。最终状态见文末 **## Phase 13.1 — GA Closure**。
+
 **BLOCKED — 存在三类环境/前置阻塞，非代码正确性阻塞**
 
 1. **特权闸门无法在本机执行**：agent 沙箱带 `NoNewPrivs=1`，`sudo` 直接拒绝（`The "no new privileges" flag is set`），`unshare -r` 亦被拒绝（`cannot open /proc/self/uid_map: Permission denied`）→ 无法获得 root，因此 **G1 全新安装（`install.sh` 的宿主初始化阶段）/G8 安全卸载→重装/G10 purge→全新安装/G9 正常用户 sudo 路径** 无法端到端执行。已用「真实安装器产物 + 隔离 FATCTF_HOME + 真实 Compose 栈」把可执行部分真实跑通并取证。
@@ -579,3 +584,173 @@ Jeopardy 的完整生命周期需要「启动实例」——即通过 helper 创
 **已确证的部分**（可直接支撑 GA 决策）：可部署形态真实跑通（隔离 RC 栈、5 服务 healthy、真实 TLS 链、前端平台路由全绿）；备份/恢复真实破坏演练 15/15；SDK 外部消费 51/51；发布工作流安全语义 8/8 + 静态 84/84；安装器契约 50/50；前端管理器 72/72；发现并修复 2 个「一装就崩」的 GA 阻塞缺陷（F1/F2）与 5 个中低缺陷（F3–F8）。
 
 **下一步（唯一让判定转绿的路径）**：在一台**独占**的可弃置 Linux 宿主上，以普通用户 + sudo 执行 §25 清单，重点闭环 B1（运行镜像分发渠道）、B2（AWD/AWDP 三套 E2E）、B3（安装/升级/卸载/purge 端到端）与 B4（真实域名 HTTPS）。
+
+
+---
+
+## Phase 13.1 — GA Closure
+
+> 目标：关闭 GA 前全部代码侧工作。**未执行**任何发布动作（无 push / 无 tag / 无 GitHub Release / 无 npm publish / **无 GHCR 镜像推送** / 未合并分支）。
+> 原 Phase 13 判定保留为 `BLOCKED`；本节的最终状态以其为准。
+
+### B1 Runtime Image Distribution
+
+**最终规范引用（GHCR 为规范在线通道）**
+
+| 用途 | ref |
+|---|---|
+| AWD FlagServer | `ghcr.io/floatctf/awd-flagserver:<V>` |
+| AWD JudgeServer | `ghcr.io/floatctf/awd-judgeserver:<V>` |
+| AWDP JudgeServer | `ghcr.io/floatctf/awdp-judgeserver:<V>`（**已扁平化**；旧名 `floatctf/infra/awdp-judgeserver` 不再作为默认） |
+
+`<V>` = 平台版本（tag 去前导 `v`，GA 为 `1.0.0`）。本地/开发构建不带 registry 时仍是历史本地名（`floatctf/awd-flagserver:<tag>` 等），据此保持既有本地 E2E 脚本可用。
+
+**工作流行为（`.github/workflows/release.yml`）**：新增 tag 守卫的 `runtime-images` job（`needs.build.outputs.publish == 'true' && github.ref_type == 'tag' && startsWith(github.ref_name,'v')`，并在 job 内再次断言 tag 守卫），`permissions: contents: read + packages: write`（全仓唯一 `packages: write` 与唯一 `docker login`），用 `secrets.GITHUB_TOKEN` 登录 `ghcr.io`，调用 `scripts/build-runtime-images.sh --registry ghcr.io/floatctf --tag "$VERSION" --label ... --push`。
+- **不可能**在 `pull_request` / 分支 push / `workflow_dispatch`（`publish=false`）/ RC 工作流上推送；分支/非 tag ref 的 `publish=true` **fail closed**。
+- OCI 标签由 workflow 上下文注入（**非硬编码**）：`org.opencontainers.image.source=https://github.com/FloatCTF/floatctf`、`.version=<V>`、`.revision=${{ github.sha }}`、`.created=<UTC 构建时刻>`；标签内不含任何密钥。
+- `rc.yml` 只**构建并检查**运行时镜像（同样调用该脚本，不带 `--registry`/`--push`），静态断言确认其无 login / 无 push / 无 `packages: write` / 无 gh-release。
+
+**安装器行为（`scripts/install.sh`）**：原 warn-only 的 `check_runtime_images` 被 `ensure_runtime_images` 取代，在 `run_deploy` 中于 `prepare_env` **之前**执行 → 逐个 `docker image inspect`，缺失则 `docker pull` 精确 `<V>` ref，仍缺失即 **`die`**（不再"先装好、等比赛时才炸"）。失败信息列出缺失 ref、精确 `docker pull` 命令、以及 `docker save`/`docker load` 离线逃生口。
+`--skip-runtime-images`（`FLOATCTF_SKIP_RUNTIME_IMAGES=1`）是唯一显式降级开关（降为醒目 WARN 并在收尾再次提示），供只跑 Jeopardy 的宿主机使用。默认硬失败。
+Registry 前缀为单一事实来源常量 `RUNTIME_IMAGE_REGISTRY`（默认 `ghcr.io/floatctf`，可 env 覆盖）。
+
+**配置默认值与升级语义（§2.5）**：镜像 ref 只来自 TOML（`[awd] flagserver_image`/`judgeserver_image`、`[awdp] practice_judgeserver_image`），Rust 侧默认值同步改为规范 GHCR ref（`apps/api/src/core/config.rs`，含新单测 `runtime_image_defaults_match_canonical_ghcr_refs`）。**无需数据库迁移**（不是动态设置）。升级时 `prepare_configs` 新增 `preserve_custom_runtime_images`：
+- 已存在值是**已知 stock 模式**（历史 `floatctf/awd-*: *`、`floatctf/infra/awdp-judgeserver:*`、三个规范 GHCR ref）→ 迁移到新规范默认；
+- 其它值视为**管理员自定义** → 原样保留 + `warn`；
+- `--reset-runtime-images` 强制规范值、`--keep-runtime-images` 强制保留；两者同时给出 **fail closed**。
+
+**本地镜像 smoke（未推送）**：`FLOATCTF_BUILD_*` 注入后 `scripts/build-runtime-images.sh --tag 1.0.0` exit 0；三个镜像均通过脚本内 `ldd` 检查，容器可启动并绑定 HTTP 监听（`/` 返回 404 证明进程健康），`Config.Env` 无密钥。见下方「Final Artifacts → 本地运行时镜像」。
+
+**测试**：新增 `scripts/test-runtime-images.sh` → **76/76**（含 stub-docker 行为验证：默认**不** push；`--push` 时只推版本 tag、绝不推 `:latest`；rc/分支/非发布路径无 login/push；OCI 标签名与三个规范 ref 存在；`packages: write` 唯一性）。`scripts/test-installer-contract.sh` 扩到 **106/106**（含 `ensure_runtime_images` 失败路径、`--skip-runtime-images` 降级、渲染出的规范 ref、升级保留三种模式）。
+
+### R2 RustFS Readiness
+
+**原故障（Phase 13 实测）**：compose 的 rustfs healthcheck 仅 `nc -z 127.0.0.1 9000`（TCP 开放 ≠ S3/HTTP 层可用）；API 在 `depends_on: service_healthy` 下启动并调用 `ensure_buckets()`（**无重试**）→ `init rustfs failed: service error` → `bootstrap/mod.rs:131` panic → crash-loop（`restart: unless-stopped` 最终自愈，但有失败重启窗口）。
+
+**修复（两层，均已落地）**
+1. **Compose 边界**：rustfs healthcheck 改为**真实 HTTP 就绪探测**——镜像内只有 BusyBox `nc`（无 curl），故用 `nc` 发真实 HTTP 请求读 RustFS 的 `/health`（实测该端点在此 pinned 镜像返回 **200**；`/healthz` 返回 503 故不使用），`{ printf 'GET /health HTTP/1.1\r\n...'; sleep 1; } | nc -w 3 127.0.0.1 9000 | head -1 | grep -q ' 200 '`；因探针最多约 4s，参数为 `interval 10s / timeout 10s / retries 12 / start_period 30s`（原 `timeout 3s` 会把探针掐死）。**未**新增镜像包、**未**发明端点。
+   - 独立验证：从 `docker compose config --format json` 取出**渲染后**的探针字符串，作为真实 `--health-cmd` 跑 RustFS：`starting → healthy`（约 12s，`exit=0`）；TCP-only 假服务上探针 **fail closed**（1s 内失败）。
+   - 开发 compose（`infra/compose/compose.dev.yml`）同步为同一探针（参数按 dev 节奏 5s/10s/24/10s），并已对**运行中的真实 dev rustfs 容器**验证 PASS。
+2. **API 侧有界重试 + 错误分类**（`apps/api/src/infrastructure/storage.rs`）：`RetryPolicy` = `max_attempts=12`、`total_deadline=90s`、`initial_backoff=1s`、`max_backoff=8s`、`jitter 0..250ms`（退避 1/2/4/8… 累计 71s < 90s，且 `elapsed+delay >= deadline` 提前收敛 → **绝不无限重试**）。
+   - 分类器只读取 SDK 的**状态码与错误 code**（不读 message/body，避免 RustFS 在消息里回显 access key 片段）：`DispatchFailure`/`TimeoutError`/`ConstructionFailure`/5xx/非 401-403 的 4xx（含 404 NoSuchBucket、408、429、无状态裸 `service error`）/`Unknown` → **transient 重试**；HTTP **401/403** 或 code ∈ {InvalidAccessKeyId, SignatureDoesNotMatch, AccessDenied, InvalidAccessKey, InvalidSecurity, InvalidToken, ExpiredToken, TokenRefreshRequired, AccountProblem, AuthorizationHeaderMalformed} → **permanent 立即失败**（不烧满预算）。
+   - 逐次日志：`RustFS bucket initialization failed attempt=N max_attempts=12 class="transient" error=…` + `retrying … delay_ms=…`；耗尽错误：`RustFS did not become usable within the bounded retry window (12 attempts / 90s, elapsed 93s); last classified error: …`；永久错误：`RustFS storage configuration error (permanent, not retryable): …`。**无密钥泄漏**。
+   - `bootstrap/mod.rs` **有意未改**（保留 panic-on-Err）：现在只在永久配置错误或有界耗尽时触发。
+   - 单测 20 项（分类器 + 策略边界）：`cargo test -p floatctf --lib storage` → **20 passed / 0 failed**。
+
+**重启次数证据（真实 Docker，`scripts/test-rustfs-readiness.sh`，隔离网络 + 自建 PostgreSQL/Redis + 自有 48 迁移 DB + 宿主侧只答 `/_ping` 的 fake Docker socket，全程**不触碰宿主 Docker/helper 与既有 `fctf*` 资源**）**：**PASS=24 FAIL=0 SKIP=0**
+| 场景 | 观测 |
+|---|---|
+| 1 healthcheck 契约 | TCP-only 假服务：旧 `nc -z` 会判 healthy，新 `/health` 探针 1s 内 **fail closed** |
+| 2 RustFS 迟到（API 先起） | API 未退出；日志出现 `class="transient"` 与退避重试；RustFS 就绪后 API **2s 内 healthy**；**RestartCount = 0**（无 crash-loop churn）；日志 `Rustfs connected OK` |
+| 3 RustFS 永不到达 | API 在 **95s** 后以 exit code 101 有界失败（不无限挂起），日志含确切耗尽消息 |
+
+清理佐证：容器 306→306、网络 181→181（与基线**逐字节相同**），`fctf*` 172/174 前后不变，无 `r2test*` 残留镜像/卷。
+
+### R3 Python / tomllib Precheck
+
+- **精确检查**（能力探测，而非版本字符串）：`python3 -c 'import tomllib' >/dev/null 2>&1`，置于 `main()` **最前**（早于 `require_root`、包安装、`mkdir`、下载、`docker build`、迁移），并在 `check_commands` 与 `precheck` 再做纵深防御。**无任何 pip**（测试断言不存在 `pip install`）。
+- **失败信息**（真实运行取证）：`[FAIL] Python 缺少 stdlib tomllib（需要 Python 3 且带标准库 tomllib，即 **Python ≥3.11**；检测到: Python 3.10.13）。release 的 db/migrate.sh 用它解析 TOML 配置，**升级/迁移路径**必须有它才能运行。请用宿主包管理器升级 python3 到 ≥3.11（tomllib 只随标准库提供：不要用 pip 往宿主装，也不要用 sudo pip）后重新运行本安装器。`
+- **负向测试（证明"改动前失败"）**：`test-installer-contract.sh` 真的以 fake `python3`（`import tomllib` 失败、`-V` 报 `3.10.13`）运行 `scripts/install.sh --version 1.0.0`，断言 ① rc≠0；② stderr 为上述精确消息（含 `Python ≥3.11`、检测到的 `3.10.13`、迁移路径）；③ stderr **不含** `需要 root`（证明执行确实走到该检查而不是更早退出）；④ 临时 `FLOATCTF_HOME` **从未被创建**（零改动）。另有静态顺序断言（`check_python_tomllib` 早于 `run_init`，而 `run_init` 含 `require_root`）。
+- 正向对照：本机 Python 3.14.7 → `[ OK ] Python tomllib 可用`，随后按预期停在 `[FAIL] 需要 root`（无写入）。
+- 文档前置条件已在 `INSTALL.md` / `README.md` / `RELEASE.md` 同步（§4.1 要求）。
+
+### B2 Exclusive Host E2E
+
+**未执行 — BLOCKED（exclusive disposable host required）**
+
+**宿主安全门禁（§5）证据**（`var/rc131/host-gate-evidence.txt`）：本机是**共享宿主且承载重要生产实例**——
+- `floatctf-helper.service` active；helper 两 socket 就位（`helper-control.sock` / `helper-docker.sock`）
+- compose 项目 `floatctf` 5 容器全部 healthy（`floatctf-api:1.0.0`、caddy、postgres、redis、rustfs）
+- `fctf*` 容器 **172** 个、`fctf*` 网络 **174** 个、`floatctf_awd*`/`floatctf_awdp*` nft 表 **172** 张
+- 生产 `FLOATCTF_HOME` 存在（`/home/fb0sh/floatctf-prod`）
+- 且 agent **无 root**：`sudo -n true` → `The "no new privileges" flag is set`；`NoNewPrivs: 1`；`unshare -r` 被拒
+
+按 §5「If this is a shared/production host: DO NOT RUN B2/B3」，**未执行**任何 B2/B3 测试，**未**尝试 namespace 技巧或第二 API 共存，**未**复制生产 `internal_token_key` 进 RC，**未**再触碰生产运行时资源。
+Jeopardy / AWD / AWDP 的宿主级 E2E **全部待执行**（需独占宿主，命令见 §7）。
+
+### B3 Privileged Lifecycle
+
+**未执行 — BLOCKED（需独占宿主 + 真实 root）**
+
+`sudo` 不可用使"普通用户 + sudo"的安装/升级/安全卸载/purge/重装链路在本机**不可能**执行；且本机 purge 会删除生产共享的全局 AWD nft 表等资源，按 §5 禁止。
+已完成的替代（非端到端，仅代码/隔离级）：Phase 13 的安装器契约（现 106 项，含 `apply_migrations` 真集群 48/48、活跃运行时守卫四分支、R3 负向测试、Caddyfile/TOML 参考文件零漂移）与真实备份/恢复演练（15/15）。**未**声称 B3 通过。
+
+### B4 Accepted Limitation
+
+- 产品负责人**明确豁免**真实公网域名 / 公共 DNS / Let's Encrypt 签发验证：**B4 不是 v1.0 的 GA 阻塞**。
+- **保留真实证据、不夸大**：本地已验证生产配置下的 Caddy + 其**受信任本地 CA**——证书链校验通过（**未使用 `curl -k`**，`tls=0`、`Verify return code: 0`）、HTTP→HTTPS 308、`/` 200、`/api/frontend` 200、registry `no-store`、版本化资产 `immutable`、深层路由 200、恢复后 S3 对象经 `/public` 200。
+- **未**删除任何证据；文档统一表述为「真实公网 TLS 未验证，属已接受的 v1.0 运维限制；操作者须在安装后自行验证其域名」。文档中**没有**"真实 HTTPS 已完整验证"这类表述。
+
+### Documentation Closure
+
+| 文档 | 处理 |
+|---|---|
+| `infra/caddy/Caddyfile.prod` | 与 `install.sh` 内嵌 `CADDY_TMPL_EOF` **正文逐字节一致**（仅多一个"勿单独编辑"头部）；新增契约测试断言，杜绝静默漂移 |
+| `infra/config/floatctf.prod.toml` | 补 `[auth] awd_root_key`/`internal_token_key`；运行时镜像改为 `${RUNTIME_IMAGE_REGISTRY}/…` 规范值；无任何密钥字面量；新增"参考副本"说明；新增契约测试断言覆盖安装器模板全部键值 |
+| `apps/api/tests/README.md` | 修正默认端口误导（harness 默认 `8080`，而 `mise run dev` 是 `9090`，须显式导出否则静默 soft-skip） |
+| `docs/frontend/ARCHITECTURE.md` | 修正 9 节下误编为 5.1/5.2/5.3 的子节编号 |
+| `apps/api/README.md` | 用"源码为权威 + 代表性模块/路由总览"替换上千行易腐的端点清单 |
+| `INSTALL.md` | R1 警告、Python/tomllib 前置、两条产物通道、`--ops-url`/`--skip-migrations`/`--skip-runtime-images`/`--reset|--keep-runtime-images`、升级子节、镜像获取与 `docker load` 逃生口、健康检查、B4 已接受限制、重装 |
+| `RELEASE.md` | 两条通道（GitHub Release 文件制品 vs GHCR OCI）与实际名字；tag 路径的 GHCR 登录+推送步骤；R3 前置；B2/B3 必须执行但**本阶段未执行**；R1 警告；明确"未执行任何发布动作" |
+| `README.md` | 架构/部署模型、GHCR 运行时镜像、外部前端、备份/恢复、最低前置（含 Python ≥3.11 + `tomllib`）、当前产物、单控制面警告、指向 INSTALL/RELEASE 而非重复细节 |
+| `DEVELOPMENT.md` | 顶部 R1 警告 + 「绝不在生产宿主启动开发栈」专节 |
+| `docs/agents/ARCHITECTURE.md`、`docs/deployment/portability.md` | R1、GHCR 引用、运行时镜像分发、修正 Caddy "host network" 等陈旧描述 |
+| `infra/compose/compose.dev.yml` | dev rustfs healthcheck 与生产同构（同一 `/health` 探针），已对真实 dev 容器验证 |
+| `chore/v1.0.0-release-notes.md` | 运行时镜像改为 GHCR 分发（移除"无分发渠道"的阻塞表述）；已知限制更新为：公网 HTTPS 未验证（已接受）、单控制面/宿主、bundle 体积、无热切换、无 Marketplace/签名、B2/B3 待独占宿主；**未**把已修项列为当前阻塞 |
+
+**R1 单控制面不变量**（统一措辞，见 6 个文件）：同一宿主/helper/Docker daemon 同时刻只允许一个 FloatCTF 控制面（API）；第二套 API（开发/RC/测试栈或第二份生产安装）会 reconcile 全局/固定命名的宿主资源（`floatctf_awd` 单一全局 nft 表；`fctf-awdp-practice` / `fctf-awdp-practice-judge` 固定名）→ **Phase 13 实测发生过**，非理论风险；**绝不在承载生产实例的宿主上启动开发/RC/测试 API**。文档未包含任何生产主机名/IP/路径/token。
+
+### Final Artifacts
+
+**文件制品（`release-checksums.sh --assemble … 1.0.0` 于干净构建态装配；11 项；`sha256sum -c SHA256SUMS` → 10/10 OK）**
+
+| artifact | size | SHA256 |
+|---|---|---|
+| `floatctf` | 48M | `b0318af1f8c16ea6ae799b8439b993efef5cec3dd7bbc8978ab736dedb8da719` |
+| `floatctf-helper` | 2.8M | `6c7624c82d8b4f792c9a5b7575b5ce24b4a67a345a08b760cb6ef178a8decb3c` |
+| `web-dist.tar.gz` | 2.6M | `dc1b5bd71a2b087f25bb289365fa7f262d03dfcaa9d209ecf9bea838a35f36ce` |
+| `merged.sql` | 360K | `c898a88a2a2bdd88327a23b6f566ab5d4d04ca66478cbcd39f42b5b1d6346e1a` |
+| `frontend.sh` | 68K | `8babf9c47e435b99f31292cd37d112849cbb9e679ba7d276a1bcc63354b41345` |
+| `install.sh` | 124K | `9adb76ea8ca62593dec8dfbd342c3e985fb4b23f7519a8ae663aad652f1c6564` |
+| `ops-tools.tar.gz` | 84K | `1084b0dddb75e1084c8501a07c8277a4232130e08ff454fd987a8759e32b24f2` |
+| `floatctf-sdk-1.0.0.tgz` | 108K | `a75c13ed70284de998a85e20fb02f134776f5c7e3e9b35d87ac33ec1f0919ef5` |
+| `floatctf-react-1.0.0.tgz` | 32K | `12004c37803ca8fc53c5a984a9091e241bf385ff59450fb80ea7c0fef20206f6` |
+| `floatctf-frontend-runtime-1.0.0.tgz` | 44K | `dc55c72c35847d57dd11ceaa0d6db48ad574cbf8e9ef7e2db919fa0887d2e913` |
+| `SHA256SUMS` | 4.0K | `d9ed141801be0075cd01f85f7486a9db243765cea8f487a196e5045a549fb475` |
+
+**本地运行时镜像 — LOCAL TEST DIGEST（**未**推送；**不是** GHCR 已发布 digest）**
+构建命令：`FLOATCTF_BUILD_{SOURCE,VERSION,REVISION,CREATED}=… bash scripts/build-runtime-images.sh --tag 1.0.0`；构建时 revision = `df81f58`（Phase 13.1 代码改动之前的 HEAD；GA 由 CI 在 release tag 上重建，revision 标签届时为 tag 指向的 commit）。
+
+| ref | LOCAL TEST DIGEST | size | Arch | User | Entrypoint |
+|---|---|---|---|---|---|
+| `ghcr.io/floatctf/awd-flagserver:1.0.0` | `sha256:e3cb344ad7e2c46e8717a6bb3b32e8c14ec56ccaf0c26247aab0aefd9d5b2781` | 188.2 MiB | amd64/linux | unset (root) | `/usr/local/bin/awd_flagserver` |
+| `ghcr.io/floatctf/awd-judgeserver:1.0.0` | `sha256:4957dff7599d1302e0d5b1e6f493ffb846a4194ec560373d4bc5d749f69ca60c` | 188.6 MiB | amd64/linux | unset (root) | `/usr/local/bin/awd_judgeserver` |
+| `ghcr.io/floatctf/awdp-judgeserver:1.0.0` | `sha256:fe4fbf4a4d2c7754026ac2d58a35835e07e2bfd82c1233c410676e7c1f6b0a85` | 188.9 MiB | amd64/linux | unset (root) | `/usr/local/bin/awdp_judgeserver` |
+
+三镜像 OCI 标签：`source=https://github.com/FloatCTF/floatctf`、`version=1.0.0`、`revision=df81f587…`、`created=2026-10-07T11:21:03Z`；无密钥标签，`Config.Env` 无凭据。
+**PUBLISHED DIGEST = not yet available**（GA 首次 tag 发布后才存在；本阶段**未**推送任何镜像）。
+
+### Remaining Risks
+
+**GA blockers（仍需闭环，均为"须在独占宿主执行/决策"，非代码缺陷）**
+| # | 阻塞 | 说明 |
+|---|---|---|
+| B2 | 独占宿主 Jeopardy/AWD/AWDP 宿主级 E2E 未执行 | §5 门禁：本机是共享宿主且有生产实例 → 禁止；命令见 Phase 13 §13/§14/§15 |
+| B3 | 普通用户 + sudo 的安装/升级/安全卸载/purge/重装未端到端执行 | 无 root；须可弃置宿主 |
+| — | **真实 GHCR 推送未执行** | workflow 仅静态+行为验证；首次真实 `v*` tag 需人工确认 `packages: write`、镜像可拉取、digest 记录 |
+
+**accepted v1.0 limitations（产品负责人已接受 / 设计取舍）**
+- 真实公网域名 HTTPS 未验证（B4，**已豁免**）；操作者须在安装后自行验证域名。
+- 单控制面/宿主不变量（R1）：同一宿主只能有一套 FloatCTF API；不得在生产宿主跑开发/RC/测试栈。
+- 三个运行时服务镜像容器内 `User` 未设置（=root）——沿用既有基础镜像行为，未在本次收口中改动。
+- Default Frontend bundle 约 4.3 MB（gzip ~1.08 MB）。
+- 前端切换需页面重载；无 Marketplace/包签名。
+
+**post-v1.0 items**：前端 Marketplace 与签名、无刷新热切换、UI 代码分割、`packages/sdk` 的 `./api/*` 通配子路径补全、`packages/react` `skipLibCheck` 上游问题、源码 map `sourcesContent`、clippy 告警清理、宿主历史残留（172 容器/174 网络/172 nft 表）按护栏分批清理、运行时镜像容器内非 root 化、`awd`/`awdp` 服务镜像的 `--registry`+digest 固定（pin by digest）。
+
+### Final Verdict
+
+**READY FOR EXCLUSIVE-HOST GA VALIDATION — NOT YET V1.0.0 READY**
+
+代码侧 GA 工作已全部完成并通过全部门禁（B1 运行时镜像分发、R2 RustFS 就绪、R3 tomllib 前置、文档收口、发布工作流安全、备份/恢复、前端平台、质量门禁全绿）；B4 已由产品负责人豁免。
+**唯一未完成项是 B2/B3 在独占宿主上的执行**——本环境是承载重要生产实例的共享宿主且无可用的 root，按 §5 明确禁止执行、按 §19 亦不足以判定 `V1.0.0 READY`。**不存在代码侧 GA 阻塞**，故不判定 `BLOCKED`。

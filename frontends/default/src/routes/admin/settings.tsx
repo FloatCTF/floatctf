@@ -4,7 +4,7 @@ import { useReactive, useTitle } from "ahooks";
 
 import { adminApi } from "@/api";
 import type { SettingsDto } from "@floatctf/sdk";
-import { GenericTable } from "@/components";
+import { FrontendSelector, GenericTable } from "@/components";
 import { MyTruncate } from "@/components/Truncate";
 import { SettingValueType } from "@floatctf/sdk/entity";
 import { DatetimeToShow } from "@/util";
@@ -151,16 +151,21 @@ function RouteComponent() {
     },
   ];
   return (
-    <GenericTable
-      subject={subject}
-      columns={columns}
-      mutationColumns={mutationColumns}
-      mutationData={mutationSetting}
-      queryFn={adminApi.settings.fetch}
-      createFn={adminApi.settings.create}
-      removeFn={adminApi.settings.remove}
-      patchFn={adminApi.settings.patch}
-      disablePagination={true}
-    />
+    <>
+      {/* 已安装前端选择器（Frontend != Theme）：只选择已安装前端，写入 FRONTEND_ACTIVE。
+          安装/升级属于运维 CLI（frontend.sh），浏览器不参与。 */}
+      <FrontendSelector />
+      <GenericTable
+        subject={subject}
+        columns={columns}
+        mutationColumns={mutationColumns}
+        mutationData={mutationSetting}
+        queryFn={adminApi.settings.fetch}
+        createFn={adminApi.settings.create}
+        removeFn={adminApi.settings.remove}
+        patchFn={adminApi.settings.patch}
+        disablePagination={true}
+      />
+    </>
   );
 }

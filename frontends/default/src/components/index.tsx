@@ -12,3 +12,4 @@ export * from "@/components/SubmitWriteup";
 export * from "@/components/awd/AwdEventProgress";
 export * from "@/components/RouterUnderlineNavItem";
 export * from "@/components/UnderlineNavButton";
+export * from "@/components/admin/FrontendSelector";

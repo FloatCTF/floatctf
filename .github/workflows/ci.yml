@@ -103,6 +103,12 @@ jobs:
       # SDK 分发包：打包 → 校验 → 外部全新工程消费（npm 安装 + tsc + node 运行）。
       # registry 不可达时自动 SKIP 联网部分并仍校验 tarball。
       - run: ./scripts/test-sdk-dist.sh
+      # 运行时镜像分发契约：GHCR 只在 tag 发布路径构建+推送、OCI 标签齐全、
+      # rc/分支/手工非发布路径绝不推送、--push 非默认（stub-docker 行为验证）。
+      - run: ./scripts/test-runtime-images.sh
+      # RustFS 就绪契约：镜像就绪探测 + API 有界重试（延迟就绪不产生 crash-loop）。
+      # 需要 docker；不可用时脚本自行 SKIP 并说明原因。
+      - run: ./scripts/test-rustfs-readiness.sh
 
   docker-e2e:
     name: CI-docker · AWD infra smoke (on-demand)

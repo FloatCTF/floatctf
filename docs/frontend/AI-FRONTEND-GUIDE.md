@@ -41,7 +41,10 @@ Cursor / 其它）以及驱动它们的人类。它同时适用于：
 | 视觉权威 | Default 现有 Primer / 布局 / 导航 / 组件就是权威 | 新前端**自主决定** |
 | 允许复用 Default 源码 | 必须复用（同域参照页、既有 components） | **禁止依赖**（只可阅读参照） |
 | 路由路径 | 沿用 Default 既有路由树 | 由新前端自定，平台不关心 |
+| 交互模型 / 导航 / 信息架构 | 沿用 Default 既有页面层级与操作序列 | 新前端**自主设计**（能力覆盖即可，见 §2.3） |
 | 框架 | 固定 React + TanStack Router/Query + Primer + Tailwind + Zustand | 任意框架 / 任意状态库 / 任意 CSS |
+
+交互层的权限边界与 §2.3 的 canonical 政策一致：平台只规定**能力语义**，不规定用户如何触达该能力。
 
 ### 2.1 修改官方 Default Frontend
 
@@ -65,16 +68,43 @@ Cursor / 其它）以及驱动它们的人类。它同时适用于：
 - **不得**为了创建新前端去修改 `frontends/default/`。若发现必须改后端才能继续，先确认
   这是**真实的公共契约缺口**，记录 `PUBLIC SDK GAP: <细节>` 并上报，不要擅自改后端。
 
-### 2.3 路由路径示例：两者都合法
+### 2.3 政策基线（Canonical policy block）
 
-Default 使用
-`/service/events/awd/$id/scoreboard`
-（文件 `frontends/default/src/routes/service/events/awd.$id/scoreboard.tsx`，
-`createFileRoute("/service/events/awd/$id/scoreboard")`）。
+> **决策规则（canonical，唯一权威出处）：**
+>
+> FloatCTF defines what a Frontend can do, not what the Frontend must look like or how users must navigate it.
+>
+> 平台定义**前端能做什么**，不定义前端**必须长什么样**，也不定义**用户必须如何导航**。
 
-新前端完全可以使用 `/arena/$id`、`/workspace/$id`、`/event/$id/live` ——
-后端不关心浏览器路由，`@floatctf/frontend-runtime` 也不关心
-（见 [ARCHITECTURE.md §1](./ARCHITECTURE.md)）。
+| Platform contract（平台拥有，前端必须遵守） | Frontend-owned（新前端自主决定） |
+|---|---|
+| capability semantics / API 与数据契约 / authorization 与鉴权语义 / lifecycle 与 scoring 真相 / realtime（SSE）协议 / `mount(context)` / artifact 契约与安全边界 | presentation / navigation / interaction / information architecture / routes / page grouping / component system / design system / state management / animations / responsive strategy / UX flow |
+
+本节是这条政策**唯一**的 canonical 位置。其它章节只**引用**本节，不重述政策表
+（见 §8、§10、§12.2）；发现两处表述不一致时，以本节为准。
+
+结论：
+
+- 两个 Frontend **可以**用**完全不同**的交互模式暴露**同一组** FloatCTF 能力，且**两者都是完整的**。
+- **"Same business behavior" ≠ "same click sequence."**：同样的业务行为**不等于**同样的点击序列。
+- 完整性由能力覆盖判定，不由路由 / 页面数量判定（见 §10）。
+
+#### 2.3.1 落地示例：AWD 能力与 `/arena/$id`
+
+Default 把 AWD 拆成多个独立页面（以下三条路径已核对存在，括号内为定义 `createFileRoute` 的文件）：
+
+- `/service/events/awd/$id/gameboxes`（`frontends/default/src/routes/service/events/awd.$id/gameboxes.tsx`）
+- `/service/events/awd/$id/scoreboard`（`frontends/default/src/routes/service/events/awd.$id/scoreboard.tsx`）
+- `/service/events/awd/$id/wireguard`（`frontends/default/src/routes/service/events/awd.$id/wireguard.tsx`）
+
+新前端**可以**把上述全部能力实现进**单个** `/arena/$id`——用 tabs / drawers / panels /
+command palette / cockpit layout / workspace model 的任意组合——**它依然是 COMPLETE**
+（能力覆盖口径见 §10；`/arena/$id`、`/workspace/$id`、`/event/$id/live` 这类路径后端不关心，
+`@floatctf/frontend-runtime` 也不关心，见 [ARCHITECTURE.md §1](./ARCHITECTURE.md)）。
+
+**本节不强制上述任何模式**：tabs / drawer / panel / command palette / cockpit / workspace
+都只是**自由度示例（示例，非要求）**，不是推荐、不是默认、不是验收标准；任何具体交互形态
+都不是平台要求。换一种同样自由的交互模型照样可以通过验收。
 
 ---
 
@@ -194,6 +224,28 @@ const client = createFloatCTFClient({ baseUrl: "/api", getUserToken: () => token
 - **非 React 前端完全不需要这个包**：直接用 `@floatctf/sdk`。
 
 ---
+
+### 5.4 逃生舱（低层公共接口，合法但必须记录）
+
+领域门面（`client.service.*` / `client.admin.*` / `client.awd.*` / `client.awdp.*`）覆盖了绝大多数能力。
+**当某项能力在门面上没有对应方法时，不意味着你不能做** —— SDK 有意暴露了几个**低层公共接口**。
+本节就是能力矩阵 `## Gaps found` 里 **B 类**（"需要文档化的逃生舱"）的权威写法。
+
+| 逃生舱 | 真实签名 / 用法 | 适用场景 |
+|---|---|---|
+| `client.serviceHttp` / `client.adminHttp` | `FloatCTFHttpClient`：`get` / `post` / `put` / `patch` / `delete`；已绑定正确的 base URL 与 token 注入 | 门面缺方法，但后端端点存在且返回 `UniResponse<T>` |
+| `client.transport.service` / `client.transport.admin` | 原始 axios 实例（可挂拦截器、上传进度、流式响应） | 需要 axios 级能力（如 `onUploadProgress`） |
+| 同源 `fetch` + `parseRegistry` | `DEFAULT_REGISTRY_URL` + `parseRegistry`（`@floatctf/frontend-runtime`） | 读取**本地前端注册表**（同源静态文件，不是后端 API） |
+| 原始 `WebSocket` | `await client.adminHttp.post("/terminal/session")` 后 `new WebSocket(...)` | 管理端 Web 终端：先拿一次性 HttpOnly ticket cookie，再升级协议 |
+| `client.sse.connect({ url })` | 显式传流路径（如 `/events/<id>/awd/stream`） | **非 React** 前端实现实时面板（`@floatctf/react` 的 hook 把路径写死在内部） |
+
+**规则（MUST）：**
+
+- 逃生舱是**受支持的公共接口**，不是 hack：B 类能力**允许**用逃生舱实现，该能力**仍算完整**。
+- **MUST** 在交付说明（或代码注释）里写清用了哪个逃生舱、为什么、对应哪个后端端点 —— 否则下一位维护者会以为它是门面能力。
+- **MUST NOT** 臆造 SDK 方法、`as any` 绕过类型、或直接抄 `packages/*/src` 的内部实现。
+- **MUST** 继续遵守安全约定：token **绝不**进 URL / query string（逃生舱已复用客户端的 base URL 与 `Authorization` 注入）。
+- 若某项能力连逃生舱都到不了（**C 类**）：**停下来**，输出 `PUBLIC SDK GAP: <细节>` 并上报，**不要**擅自改后端或平台包。
 
 ## 6. 认证（Authentication）
 
@@ -330,7 +382,8 @@ export function assetUrl(context: FloatCTFMountContext, path: string): string {
 
 ## 8. 路由自由（Routing freedom）
 
-浏览器路由**完全归前端所有**。平台不要求 Default 的路径、层级或导航结构。
+浏览器路由**完全归前端所有**。平台不要求 Default 的路径、层级或导航结构。这是 §2.3 canonical
+政策在「路由 + 导航」维度的实例；本节不重述该政策表。
 
 可选方案（任选，非穷举）：TanStack Router、React Router、Vue Router、SvelteKit 路由、
 Solid Router、自研路由、直接使用 History API、hash routing。
@@ -368,7 +421,7 @@ Solid Router、自研路由、直接使用 History API、hash routing。
    字段含义以 SDK 类型 + `docs/frontend/CAPABILITY-MATRIX.md` 为准。
 5. **在你自己的 UX 里重新实现 BEHAVIOR**：用你自己的框架、组件、布局、路由。
 6. **不要因为 Default 存在某种布局就照抄它**。配色、字体、栅格、导航、页面层级全部
-   由你决定（§12）。
+   由你决定（§2.3、§12）。
 
 ### 9.2 三个落地示例
 
@@ -407,7 +460,7 @@ Solid Router、自研路由、直接使用 History API、hash routing。
 
 「完整」指的是**能力覆盖**，不是 URL / 页面数量对齐。同一个能力，Default 用多个页面
 表达，你的前端可以合并成一页；反之亦然。判定基准是
-[CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md) 中的能力行。
+[CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md) 中的能力行（canonical 政策见 §2.3）。
 
 ### 10.1 Complete Frontend
 
@@ -438,6 +491,22 @@ Solid Router、自研路由、直接使用 History API、hash routing。
 - **MUST NOT** 用「演示落地页 + 假数据」冒充完整前端。只显示一个静态 landing page
   **不是** complete frontend，也不算任何 profile 的完成。
 
+### 10.5 合法替代示例（Acceptance examples）
+
+以下均为**合法**实现，用于校准「非 URL parity」的判定；每一条都以同一句验收前提收尾。
+
+1. Default 把 AWD 拆成多个页面（overview / gameboxes / scoreboard / wireguard）；新前端把
+   它们合并成单个 `/arena/:eventId` 驾驶舱：常驻积分榜侧栏 + GameBox 网格 + 上下文 Reset 抽屉
+   + WireGuard 引导对话框。**VALID** —— provided required capability semantics remain correct。
+2. Default 用传统管理后台侧边栏 + CRUD 页面；新前端做成 command-center dashboard：资源搜索
+   打开 command palette，详情编辑打开 side panel，赛事操作使用 contextual workspace。**VALID**
+   —— provided required capability semantics remain correct。
+3. Default 是面向桌面的 dashboard 结构；新前端是 mobile-first 的底部导航。**VALID** ——
+   provided required capability semantics remain correct。
+
+这三条**只用于说明自由度**：平台不排序、不推荐其中任何一种，也不把它当作期望形态或验收标准
+（canonical 政策见 §2.3；交互自由度见 §12.2）。
+
 ---
 
 ## 11. 编码前必须先产出计划
@@ -465,33 +534,52 @@ Solid Router、自研路由、直接使用 History API、hash routing。
 - Motion: <...>
 - Accessibility: <...>
 
-## 4. Information architecture
+## 4. Interaction model
+- Primary navigation model:
+- Workspace/task model:
+- Desktop interaction:
+- Mobile interaction:
+- Keyboard / command palette:
+- Modal / drawer / panel strategy:
+- Destructive action confirmation:
+- Realtime update presentation:
+
+## 5. Information architecture
 - Sections: <...>
 - Route plan: <path → capability>      # 与 Default 无关，自定
 
-## 5. Capability coverage
+## 6. Capability coverage
 | Capability (CAPABILITY-MATRIX) | required? | covered? | route |
 |---|---|---|---|
 # 结论：complete 或 partial（partial 必须列出缺口）
 
-## 6. Auth
+## 7. Auth
 - User token strategy: <...>
 - Admin token strategy: <...>
 - Unauthorized behaviour: <...>
 
-## 7. Realtime
+## 8. Realtime
 - AWD: <stream / polling / none>
 - AWDP: <stream / polling / none>
 
-## 8. Artifact
+## 9. Artifact
 - Entry: <...>
 - Styles: <...>
 - Build script: <...>
 - outputDir: <...>
 ```
 
-说明：本文**不**要求每个琐碎决定都等用户批准——除非用户明确要求交互式设计评审。
-但 `FRONTEND-PLAN.md` 必须在写实现前存在，并且是后续自查覆盖率的依据。
+`## Interaction model` 的**目的**：强迫 Agent **有意识地设计交互（consciously DESIGN
+interaction）**，而不是顺手复刻 Default 的流程。视觉风格 ≠ 交互架构：`<VISUAL_DIRECTION>`
+回答「长什么样」，交互模型回答「用户怎么操作、怎么到达、怎么完成任务」。该段字段值全部
+留空，由 Agent 自行填写，**不得**照搬 Default 的导航层级或点击序列（§2.3、§12.2）。
+
+说明（防止把计划写成审批官僚流程）：本文**不**要求每个琐碎决定都等用户批准——除非用户
+明确要求交互式设计评审，Agent **MAY** 自行做出合理的 UX 决定并继续实现。以下都**不需要**
+逐项询问用户：按钮放在哪里 / 路由怎么命名 / 抽屉从哪一侧出现 / 用哪个组件库 /
+导航如何分组。Agent **SHOULD** 基于以下已知信息做出连贯一致的判断：用户要求的视觉方向、
+用户要求的范围（`<SCOPE>`）、[CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)、以及响应式与
+可访问性要求。但 `FRONTEND-PLAN.md` 必须在写实现前存在，并且是后续自查覆盖率的依据。
 
 ---
 
@@ -500,7 +588,9 @@ Solid Router、自研路由、直接使用 History API、hash routing。
 - 除用户明确要求，新前端 **SHOULD NOT** 长得像 Default。
 - 允许的方向（非穷举）：Material、cyberpunk、terminal-inspired、glassmorphism、
   minimalist、dashboard-heavy、mobile-first、editorial、自定义品牌系统。
+- **交互自由度与视觉自由度等价**，不是「只有视觉能自定义」（见 §12.2、§2.3）。
 - **但是**：视觉创意**绝不能**改变后端语义。
+- 以上方向列表同样**只是自由度示例**：平台不推荐、不排序、不要求其中任何一种风格。
 
 ### 12.1 数据真实性（硬规则）
 
@@ -510,6 +600,32 @@ Solid Router、自研路由、直接使用 History API、hash routing。
 - mock 只允许存在于**隔离的**测试 / Storybook / dev fixture 中，**绝不**作为 live 平台
   数据随制品发布。
 - 状态判定（进行中 / 已结束 / 暂停 / 封禁 …）**MUST** 与后端一致，不得自造。
+
+### 12.2 交互自由（Interaction freedom）
+
+交互设计与视觉设计**同等自由**（canonical 政策见 §2.3）。新前端 **MAY** 重新设计：
+
+page transitions · workflows · navigation hierarchy · task grouping · progressive disclosure ·
+command palette · tabbed workspace · split panes · drawers · contextual panels ·
+mobile bottom navigation · keyboard-driven UI · dashboard/cockpit model
+
+前提是**保持不变**：permissions · backend semantics · destructive-action semantics ·
+authentication scope · capability availability · scoring/lifecycle truth · real data。
+
+原则：**"Same business behavior" ≠ "same click sequence."**（同样的业务行为**不等于**同样的
+点击序列。）
+
+落地示例（**仅为自由度示例，不是推荐，也不是要求**）：
+
+- Default **可能**要求：`Events → AWD Event → GameBoxes → Reset`
+- 另一个 Frontend **可能**暴露：`Arena → select GameBox → contextual action menu → Reset`
+- 只要真实的 Reset 语义不变，**两者都合法**。
+
+**MUST NOT** 把上面任何一种形态写成推荐、默认或验收标准：平台没有首选导航模型、没有首选
+布局、没有首选组件库、没有首选页面分组方式、没有首选交互范式。**交互自由的责任边界**是：
+能力语义、权限、破坏性操作语义、鉴权范围、计分与生命周期真相、真实数据——这些不可改；
+其余全部由前端决定。`FRONTEND-PLAN.md` 的 `## Interaction model` 段（§11）就是用来显式
+记录这些决定，而不是用来请求批准。
 
 ---
 
@@ -830,12 +946,15 @@ npm install react@^19 react-dom@^19 @tanstack/react-query@^5
 参数：
 - <FRONTEND_NAME>: 前端显示名
 - <FRONTEND_ID>:   前端 ID（[a-z0-9][a-z0-9._-]*，≤64）
-- <FRAMEWORK>:     任意浏览器框架/技术栈（React / Vue / Svelte / Solid / 原生 TS / …）
-- <VISUAL_DIRECTION>: 视觉方向（例如 cyberpunk / minimal / material / terminal-inspired）
+- <FRAMEWORK>:     任意浏览器框架/技术栈（React / Vue / Svelte / Solid / 原生 TS / …，非穷举）
+- <VISUAL_DIRECTION>: 视觉方向（例如 cyberpunk / minimal / material / terminal-inspired；示例，非要求）
+- <INTERACTION_DIRECTION>: 交互方向（例如 workspace/cockpit · keyboard-first · dashboard ·
+  command palette · mobile-first · content-centric；示例，非要求）。视觉风格 ≠ 交互架构，
+  两者是**独立**维度，不要用一个代替另一个。
 - <SCOPE>:         complete | player-only | admin-only | scoreboard-only | kiosk
 
 必读（按顺序）：
-1. docs/frontend/AI-FRONTEND-GUIDE.md          —— 本任务的权威手册
+1. docs/frontend/AI-FRONTEND-GUIDE.md          —— 本任务的权威手册（§2.3 canonical 政策）
 2. docs/frontend/CAPABILITY-MATRIX.md          —— 能力覆盖基准（required 行）
 3. docs/frontend/ARTIFACT.md                   —— manifest / 注册表 / 版本不可变
 4. docs/frontend/ARCHITECTURE.md               —— mount 契约 / 依赖方向 / 信任模型
@@ -843,21 +962,40 @@ npm install react@^19 react-dom@^19 @tanstack/react-query@^5
    packages/frontend-runtime/README.md        —— 公共包的真实消费方式
 
 硬性规则：
-- 只用公共包：@floatctf/sdk + @floatctf/frontend-runtime（仅 React 可加 @floatctf/react）。
-  禁止 import apps/web/*、frontends/default/*、packages/*/src/*、@/...、任何逃逸进
-  FloatCTF monorepo 的相对路径或私有 alias。
+- 只用公共包：@floatctf/sdk + @floatctf/frontend-runtime（React 前端可加 @floatctf/react，
+  非 React 前端不要引入它）。禁止 import apps/web/*、frontends/default/*、packages/*/src/*、
+  @/...、任何逃逸进 FloatCTF monorepo 的相对路径或私有 alias。
 - frontends/default 只作**语义/行为参照**（业务能力、API 调用方式、鉴权语义、状态语义、
   错误与边界、实时行为、用户/管理员可见信息）。它不是视觉模板，更不是依赖。
-  配色、字体、组件、布局、页面层级、导航、路由路径全部由本前端自主决定。
+  配色、字体、组件库、布局、页面层级、导航、路由路径**全部由本前端自主决定**。
 - 不得修改 frontends/default，不得为了前端方便而擅自改后端。若发现真实的公共契约缺口，
   停下来，输出 `PUBLIC SDK GAP: <细节>` 并询问，不要自行改后端。
 - Token 归本前端所有：SDK 不写 localStorage、不跳转；绝不把 token 放进 URL。
 - 禁止假数据/占位数据冒充真实平台数据；mock 仅限隔离测试。
-- 视觉自由不等于语义自由：真实 API 数据、与后端一致的状态判定。
+- 视觉自由与交互自由都不等于语义自由：真实 API 数据、与后端一致的状态判定、
+  权限与破坏性操作语义必须保持不变。
+
+视觉与交互要求（本任务的核心评判点）：
+- **不要**复刻 Default 的视觉设计（配色 / 字体 / 组件 / 布局 / 动效）。
+- **不要**为了省事而复刻 Default 的信息架构（页面分组 / 导航层级 / 路由树）。
+- **设计一套原创的交互模型**，与 <INTERACTION_DIRECTION> 保持一致；交互设计和视觉设计
+  同等自由（页面转场、工作流、导航层级、任务分组、渐进披露、命令面板、标签式工作区、
+  分屏、抽屉、上下文面板、移动端底部导航、键盘优先 UI、驾驶舱/仪表盘模型都可以重做）。
+- 你**可以**自由合并 / 拆分 / 重组能力：同一个能力可以跨多个页面，也可以合并进一个工作区。
+- **验收标准是能力覆盖（capability coverage），不是路由对齐（route parity）**：
+  页面数量、URL 形态、点击次数都不是判据。
+- 交付一套**连贯的 UX（a coherent UX）**，不是「一个路由对应一个 Default 页面」的逐条克隆。
+- 上述交互方向示例（workspace/cockpit · keyboard-first · dashboard · command palette ·
+  mobile-first · content-centric）**只是示例**：平台不推荐、不排序、不要求任何一种；
+  请依据 <INTERACTION_DIRECTION> 与 <VISUAL_DIRECTION> 自行设计。
+- 交互自由度**不削弱** Default 自身的维护规则：本任务完全不触碰 frontends/default。
 
 流程：
-1. 先写 FRONTEND-PLAN.md（identity / technology / visual direction / IA+路由 /
-   capability coverage 表 / auth / realtime / artifact 八段）。
+1. 先写 FRONTEND-PLAN.md（identity / technology / visual direction / **interaction model** /
+   信息架构+路由 / capability coverage 表 / auth / realtime / artifact 九段）。`## Interaction
+   model` 用来**有意识地设计**交互，而不是复刻 Default；除非用户明确要求设计评审，
+   按钮位置 / 路由命名 / 抽屉位置 / 组件库选型 / 导航分组这类决定**不需要**逐项问用户，
+   做出连贯一致的判断即可。
 2. 按 CAPABILITY-MATRIX 的 required 能力逐项实现（<SCOPE> 若为部分范围，在计划与
    README 中显式标注 partial 并列出缺口）。
 3. 实现 mount(context)：使用 context.apiBaseUrl 建客户端，使用 context.assetBaseUrl

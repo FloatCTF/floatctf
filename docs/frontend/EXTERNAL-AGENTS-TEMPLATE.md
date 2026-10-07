@@ -1,6 +1,7 @@
 # AGENTS.md — FloatCTF Frontend 仓库
 
-> 把本文件复制到 `my-floatctf-frontend/AGENTS.md`，替换所有 `<...>` 占位符。
+> 把本文件复制到 `my-floatctf-frontend/AGENTS.md`，替换所有 `<...>` 占位符
+> （含 `<FLOATCTF_DOC_REF>`，见 §0.1）。
 > 本仓库是一个 **FloatCTF Frontend**（可插拔浏览器应用），不是 FloatCTF 平台仓库。
 
 ## 0. 这是什么
@@ -10,19 +11,36 @@
 - 技术栈: `<FRAMEWORK>`
 - 覆盖范围: `<SCOPE>`（`complete` / `player-only` / `admin-only` / `scoreboard-only` / `kiosk`）
 - 视觉方向: `<VISUAL_DIRECTION>`
+- 交互方向: `<INTERACTION_DIRECTION>`（例：workspace/cockpit、keyboard-first、dashboard、
+  command palette、mobile-first、content-centric —— 仅为示例，不强制）
+- **FloatCTF 兼容目标**：
+  - Platform / API contract: `<FLOATCTF_API_CONTRACT>`（例：`1`）
+  - Documentation ref: `<FLOATCTF_DOC_REF>`
+
+### 0.1 文档引用必须钉版本（不要用 `main`）
+
+平台文档随版本演进。本仓库针对**哪个版本**开发，就把文档链接钉在**那个版本**上，
+否则一年后 `main` 上是 v1.2/v2 的文档，与你的依赖不再一致：
+
+- 针对**已发布版本**开发：`<FLOATCTF_DOC_REF>` = `v1.0.0`
+- 针对**未发布分支**开发：`<FLOATCTF_DOC_REF>` = `release/v1.0`
+- 升级平台时：同时升级依赖版本 **与** `<FLOATCTF_DOC_REF>`
+
+权威手册（把 `<FLOATCTF_DOC_REF>` 替换为上面选定的 ref）：
+
+- 在 FloatCTF 仓库内阅读本模板时：[AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)
+- 外部仓库请用（**规范地址**）：
+  `https://github.com/FloatCTF/floatctf/blob/<FLOATCTF_DOC_REF>/docs/frontend/AI-FRONTEND-GUIDE.md`
+- 能力矩阵：
+  `https://github.com/FloatCTF/floatctf/blob/<FLOATCTF_DOC_REF>/docs/frontend/CAPABILITY-MATRIX.md`
+- 制品 / manifest：
+  `https://github.com/FloatCTF/floatctf/blob/<FLOATCTF_DOC_REF>/docs/frontend/ARTIFACT.md`
+- 运行时架构：
+  `https://github.com/FloatCTF/floatctf/blob/<FLOATCTF_DOC_REF>/docs/frontend/ARCHITECTURE.md`
 
 **先读 `<...>/FRONTEND-PLAN.md`（本仓库根目录）再动手**：它记录身份、技术选型、视觉方向、
-信息架构与路由、能力覆盖表、鉴权策略、实时策略与制品配置。任何实现决策必须与它一致；
+**交互模型**、信息架构与路由、能力覆盖表、鉴权策略、实时策略与制品配置。任何实现决策必须与它一致；
 若要偏离，先更新计划。
-
-权威手册（FloatCTF 平台侧，先读）：
-- 在 FloatCTF 仓库内阅读本模板时：[AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)
-- 外部仓库（AGENTS.md 已被复制出去）请用下面的 GitHub 地址
-- 规范地址（外部仓库请用这个）：
-  https://github.com/FloatCTF/floatctf/blob/main/docs/frontend/AI-FRONTEND-GUIDE.md
-- 能力矩阵：https://github.com/FloatCTF/floatctf/blob/main/docs/frontend/CAPABILITY-MATRIX.md
-- 制品 / manifest：https://github.com/FloatCTF/floatctf/blob/main/docs/frontend/ARTIFACT.md
-- 运行时架构：https://github.com/FloatCTF/floatctf/blob/main/docs/frontend/ARCHITECTURE.md
 
 ## 1. 依赖边界（硬规则）
 
@@ -43,16 +61,30 @@
 API 调用方式、鉴权语义、状态语义、错误与边界、实时行为，以及用户/管理员有权看到什么。
 它**不是**视觉模板，也**永远不是**依赖。
 
+> **Default 是参考实现，不是 UX 规范。** 它**不是**要你复刻的点击流程。
+> 读它是为了搞清**语义与边界情况**，不是为了照抄交互。
+
 ## 2. 本仓库自主决定的东西
 
+**平台规定 Frontend「能做什么」；本仓库决定用户「怎么看到、怎么走到」。**
 以下全部归本仓库所有，平台不作要求：
 
 - 视觉架构、设计系统、配色、字体、间距、动效、响应式策略
+- **交互模型**：导航层级、任务分组、工作流、页面转场、渐进披露、命令面板、
+  标签式工作区、分屏、抽屉、上下文面板、移动端底部导航、键盘优先 UI、驾驶舱/仪表盘模型
 - 路由与路由路径（不必与 Default 一致）、页面层级、导航结构
-- 布局、组件库、CSS 方案
+- 页面组成：**可以把 Default 的多个页面合并成一个，也可以把一个拆成多个**
+- 布局、组件库（Primer 只是 Default 的选择，**本仓库不要求使用它**）、CSS 方案
 - 框架与状态库（`<FRAMEWORK>` 及配套）
 - **认证**：token 存哪里、怎么清、登出 UX、路由守卫（SDK 不写 `localStorage`、不跳转）
 - **UI**：所有渲染与交互
+
+**Agent 应当主动设计自己的 UX，而不是复现 Default：**
+
+- 同一项能力可以被重组为**完全不同**的工作流，两者都算实现完成。
+- **页面数量与路由对齐与本仓库无关**；完整性由能力覆盖判定，不由 URL 判定。
+- 交互步骤顺序可以不同：「行为相同」**不等于**「流程相同」。
+- Default 源码的唯一用途是理解**语义与边界情况**（含破坏性操作的确认语义、权限边界）。
 
 ## 3. 必须遵守的平台契约
 
@@ -65,6 +97,8 @@ API 调用方式、鉴权语义、状态语义、错误与边界、实时行为�
 - token **绝不**放进 URL / query string；Bearer 只走 `Authorization` 头。
 - **真实 API 数据 only**：禁止假数据 / mock / 占位数据充当 live 平台数据。
   mock 只允许出现在隔离的测试 / fixture 中，绝不随制品发布。
+- **语义必须与后端一致**：权限、生命周期（开赛/结束）、计分与判题真相以后端字段为准，
+  不得前端自造；破坏性操作（重置环境、删除、下线）的确认语义不得被弱化。
 - 每次失败都渲染可见状态；禁止空白屏（loading / empty / permission-denied /
   network error / validation error / expired auth / not-found / realtime 断线都要覆盖）。
 - 制品必须满足 `<floatctf-repo>/docs/frontend/ARTIFACT.md`：源码 manifest
@@ -75,11 +109,13 @@ API 调用方式、鉴权语义、状态语义、错误与边界、实时行为�
 
 ## 4. Definition of done
 
-- [ ] `FRONTEND-PLAN.md` 存在，且实现与之一致（含 `<SCOPE>` 声明；partial 已列出缺口）
+- [ ] `FRONTEND-PLAN.md` 存在（含**交互模型**一节），且实现与之一致
+      （含 `<SCOPE>` 声明；partial 已列出缺口）
 - [ ] 只依赖 `@floatctf/sdk` + `@floatctf/frontend-runtime`（+ 仅 React 的 `@floatctf/react`）
 - [ ] 无任何 FloatCTF monorepo / 私有源码 import
 - [ ] `mount(context)` 已实现，使用 `context.apiBaseUrl` 与 `context.assetBaseUrl`
 - [ ] 覆盖 `<SCOPE>` 对应的 CAPABILITY-MATRIX 能力；未覆盖项已显式记录
+- [ ] 交互模型是**自主设计**的，不是 Default 的页面/导航/点击流程复刻
 - [ ] loading / empty / error / unauthorized / not-found / realtime 断线状态都有 UI
 - [ ] 全部展示数据来自真实 API（无假数据）
 - [ ] token 存储、登出、路由守卫由本仓库实现；token 从不出现在 URL
@@ -94,3 +130,5 @@ API 调用方式、鉴权语义、状态语义、错误与边界、实时行为�
 
 跑构建与测试，**不得**仅以「构建成功」宣布完成。若发现必须修改 FloatCTF 后端/公共包
 才能继续，停下来，输出 `PUBLIC SDK GAP: <细节>` 并上报，**不要**擅自修改上游仓库。
+（公共 SDK 未覆盖、但文档明确支持的逃生舱 —— 如 `client.adminHttp` / 原生 `WebSocket` /
+同源 `fetch` —— 允许使用，只在交付说明里写清即可。）

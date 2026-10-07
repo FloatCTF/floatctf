@@ -13,6 +13,8 @@
 
 ## How to use this matrix
 
+> **`Default reference` 列 ≠ 要求。** 该列是**语义**指针（Default 的哪个页面 / API 演示了该行为与边界情况），**不是**必须复刻的路由、页面、导航形态或 UI 组合：Default 的若干页面可以合并成新前端的一个页面，一个 Default 页面也可以拆成多个新页面。`required` 的含义是**该能力对相应用户可用**，不是与 Default 的 UX 对齐。
+
 1. **逐行勾选**：为新前端建一份本表的副本，每实现一项就把该行状态标为 done。未实现的行必须显式声明（部分范围的前端要在交付说明里写清覆盖 / 未覆盖）。
 2. **一行算 done 的标准**：该行使用**真实 API 数据**（不是假数据 / 占位），并处理了 **loading / empty / error** 三种状态；分页 / 筛选 / 权限边界按后端语义实现（例如 `EventInfo.joined`、`AwdPlayerStatus.banned`、`AwdpOverview.phase` 必须与后端判定一致）。
 3. **完整性 = 能力覆盖，不是路由对齐**：Default 的若干页面可以合并成新前端的一个页面，一个新页面也可以拆成多页；路由路径、布局、导航、组件自由。唯一判据是本文的 `required` 能力是否都有真实实现。
@@ -29,14 +31,16 @@
 
 | Area | Capability | User/Admin | Public SDK surface | Default reference | Realtime | Required for complete frontend |
 |---|---|---|---|---|---|---|
-| Platform | 公开引导元数据 `GET /api/frontend`（`active_frontend` / `platform_version` / `api_contract_version` / `frontend_runtime_version` / `capabilities`） | public（未认证） | 无 SDK 方法；`@floatctf/frontend-runtime`：`bootstrapFrontend`、`parseBootstrapInfo`、`FloatCTFBootstrapInfo` | `apps/web/src/main.ts` + `frontends/default/src/dev.tsx` | — | required — 登录页归属所选前端，必须在登录前拿到引导信息 |
+| Platform | 公开引导元数据 `GET /api/frontend`（`active_frontend` / `platform_version` / `api_contract_version` / `frontend_runtime_version` / `capabilities`） | platform（bootstrap 提供；前端不实现） | 无 SDK 方法；`@floatctf/frontend-runtime`：`bootstrapFrontend`、`parseBootstrapInfo`、`FloatCTFBootstrapInfo` | `apps/web/src/main.ts` + `frontends/default/src/dev.tsx` | — | required（前端义务 = 正确消费 `mount(context)`）— 取数 / 解析 / 选前端 / 兼容性校验由平台 bootstrap 完成；新前端**不需要**自己 fetch `GET /api/frontend`，只要正确使用 `FloatCTFMountContext` 中已解析的字段；自行读取该元数据属可选增强，不计入完整性 |
 | Platform | 前端挂载契约 `mount(context)` 与 `FloatCTFMountContext` 字段（`root` / `apiBaseUrl` / `assetBaseUrl` / `frontendId` / `frontendVersion` / `platformVersion` / `apiContractVersion` / `frontendRuntimeVersion` / `capabilities`） | both | `FloatCTFFrontendModule.mount`、`FloatCTFMountContext`、`normalizeFrontendModule`（frontend-runtime） | `frontends/default/src/entry.tsx` | — | required — 新前端唯一入口契约 |
 | Platform | 契约版本常量与兼容性判断 | both | `API_CONTRACT_VERSION`、`FRONTEND_RUNTIME_VERSION`、`FRONTEND_MANIFEST_SCHEMA_VERSION`、`FRONTEND_REGISTRY_SCHEMA_VERSION`、`isMajorCompatible`、`parseMajorConstraint` | `packages/frontend-runtime/src/version.ts` | — | required — 前端与平台契约不匹配时必须能判定并给出诊断 |
 | Platform | 制品 manifest / 本地注册表解析 | admin（运维 / 平台管理） | `parseFrontendManifest`、`parseRegistry`、`resolveFrontend`、`listFrontendIds`、`emptyRegistry`（frontend-runtime） | `frontends/default/src/components/admin/FrontendSelector.tsx` | — | optional — 浏览器端只做「选择已安装前端」与兼容性展示，安装由宿主 CLI 完成 |
-| Platform | 破窗回退（`?frontend=<id>` / 内置 `default`） | both | `BootstrapFrontendOptions.overrideFrontendId`、`fallbackFrontendId`、`renderBootstrapEmergencyUi`（frontend-runtime） | `apps/web/src/main.ts` | — | optional — 自定义前端加载失败时的恢复路径，不影响正常流程 |
+| Platform | 破窗回退（`?frontend=<id>` / 内置 `default`） | platform（bootstrap 提供） | `BootstrapFrontendOptions.overrideFrontendId`、`fallbackFrontendId`、`renderBootstrapEmergencyUi`（frontend-runtime） | `apps/web/src/main.ts` | — | optional — 由 bootstrap 提供的恢复路径（`overrideFrontendId` / `fallbackFrontendId`）；前端无需实现，也不要求消费 `?frontend=`；不影响正常流程 |
 | Platform | 统一响应封装与成功码 | both | `UniResponse<T>`、`QueryParams`、`UNI_SUCCESS_CODE` | `frontends/default/src/components/Table.tsx`（读取 `res.data` / `meta`） | — | required — 所有领域调用都返回该封装，分页依赖 `meta` |
 | Platform | 统一错误模型 | both | `FloatCTFError`、`FloatCTFErrorKind`、`FloatCTFErrorResponse`、`toFloatCTFError`、`floatCTFErrorFromEnvelope` | `frontends/default/src/components/apiErrorMessage.ts` | — | required — 错误提示必须来自真实后端消息，不能自造文案 |
 | Platform | SSE 传输原语（Bearer 走 `Authorization`，指数退避重连） | both | `client.sse.connect`、`client.sse.connectAdmin`、`client.sse.createParser`、`resolveSseUrl`、`connectSse`、`createSseParser`、`SseConnection` | `packages/react/src/useAwdEventStream.ts` | SSE（通用） | required — AWD / AWDP 实时面板的基础设施 |
+
+> **引导职责归平台（bootstrap-owned）。** `GET /api/frontend` 与本地注册表（`/__floatctf/frontends/registry.json`）的取数、解析、前端选择与兼容性校验都由平台 bootstrap 完成（`apps/web/src/main.ts` → `@floatctf/frontend-runtime` 的 `bootstrapFrontend`）；新前端只需正确实现 `mount(context)` 并消费已解析的 `FloatCTFMountContext` 字段。自行再读该元数据或本地注册表（例如实现前端选择器）属**可选增强**，不计入完整性，不实现不构成缺口。
 
 ## 认证与会话
 
@@ -48,11 +52,11 @@
 | Auth | 修改个人资料 | player | `client.service.users.patchMe` | `frontends/default/src/routes/service/profile.tsx` | — | required — 选手账号基础维护 |
 | Auth | 头像上传 | player | `client.service.uploads.upload_avatar` | `frontends/default/src/routes/service/profile.tsx` | — | optional — 展示性资料，缺省不影响赛程 |
 | Auth | 忘记密码（发送重置邮件） | player | `client.service.users.resetPassword` | `frontends/default/src/routes/reset_password.tsx`（`/reset_password`） | — | required — 账号自助恢复入口 |
-| Auth | 凭 token 重置密码 | player | `client.service.users.reset` | `frontends/default/src/routes/reset.tsx`（`/reset`） | — | required — 重置邮件落地页 |
+| Auth | 凭 token 重置密码 | player | `client.service.users.reset` | `frontends/default/src/routes/reset.tsx`（`/reset`） | — | required — 用户必须能用重置邮件中的 token 完成改密；页面与路由由前端自定 |
 | Auth | 选手登出 | player | 无服务端端点（JWT 无状态）；前端自行清除 token | `frontends/default/src/components/Header.tsx`（`useAuthStore.getState().removeToken()`） | — | required — 选手必须能结束本地会话 |
 | Auth | 管理端登录 | admin | `client.admin.login` | `frontends/default/src/routes/admin/index.tsx`（`/admin/`） | — | required — 运维端必经入口 |
 | Auth | 管理端登出 | admin | 无服务端端点（JWT 无状态）；前端自行清除 admin token | `frontends/default/src/components/Header.tsx`（`removeAdminToken()`） | — | required — 运维必须能结束本地会话 |
-| Auth | 401 统一处理（清对应 token + 回该端登录入口） | both | `FloatCTFClientOptions.onUnauthorized`、`UnauthorizedContext`、`FloatCTFAuthScope` | `frontends/default/src/api/client.ts` | — | required — 令牌过期 / 失效后的统一行为 |
+| Auth | 401 统一处理（清对应 token；重新登录的引导方式由前端决定） | both | `FloatCTFClientOptions.onUnauthorized`、`UnauthorizedContext`、`FloatCTFAuthScope` | `frontends/default/src/api/client.ts` | — | required — 令牌过期 / 失效后的统一行为（清对应用户端 token），不得静默失败 |
 | Auth | token 注入（选手 / 管理端两个来源） | both | `FloatCTFClientOptions.getUserToken`、`getAdminToken` | `frontends/default/src/api/client.ts` + `frontends/default/src/stores/AuthStore.ts` | — | required — SDK 不持有 token，必须由前端注入 |
 | Auth | 非 401 错误回调 | both | `FloatCTFClientOptions.onError`、`requestConfig` | `frontends/default/src/api/client.ts` | — | optional — 统一日志 / 埋点，不影响功能 |
 
@@ -63,7 +67,7 @@
 | Community | 全站公告列表 | player | `client.service.announcements.fetch` | `frontends/default/src/routes/service/announcements.tsx` | — | required — 平台级通知是选手常规信息面 |
 | Community | 武器库（Arsenal）列表 | player | `client.service.weapons.fetch` | `frontends/default/src/routes/service/weapons.tsx` | — | optional — 附加资料库，不阻塞赛程 |
 | Community | 解题流水（分页 / 筛选） | player | `client.service.solves.fetch`（`SolveResult`） | `frontends/default/src/routes/service/solves.tsx` | — | required — 赛事公开动态与题目验证 |
-| Community | Top15 用户排行榜 | player | `client.service.solves.getTop15Users`（`TopUser`） | `frontends/default/src/routes/service/top.tsx` | — | required — Default 选手端落地页（`/service` 重定向至此） |
+| Community | Top15 用户排行榜 | player | `client.service.solves.getTop15Users`（`TopUser`） | `frontends/default/src/routes/service/top.tsx` | — | required — 用户必须能查看 Top15 排行数据；可并入其他视图，不要求独立页面，也不要求 `/service` 或任何特定路由 |
 | Community | 讨论区列表 | player | `client.service.discussions.fetch` | `frontends/default/src/routes/service/discussions/index.tsx` | — | required — 选手社区主入口 |
 | Community | 讨论详情 | player | `client.service.discussions.get`（`DiscussionWithAuthor`） | `frontends/default/src/routes/service/discussions/$id.tsx` | — | required — 帖子阅读页 |
 | Community | 发帖 / 编辑 / 删除自己的讨论 | player | `client.service.discussions.create`、`patch`、`remove` | `frontends/default/src/routes/service/discussions/my.tsx` | — | required — 选手创建内容的基本闭环 |
@@ -75,7 +79,7 @@
 | Area | Capability | User/Admin | Public SDK surface | Default reference | Realtime | Required for complete frontend |
 |---|---|---|---|---|---|---|
 | Events | 赛事列表（含 `hidden` / 家族 / 赛制过滤） | player | `client.service.events.fetch`（`EventInfo[]`） | `frontends/default/src/routes/service/events/index.tsx` | — | required — 选手进入比赛的第一跳 |
-| Events | 赛事详情（`EventInfo.event` / `joined` / `team_result`） | player | `client.service.events.get` | `frontends/default/src/routes/service/events/jeopardy.$id/index.tsx` | — | required — 所有赛事子页面的上下文 |
+| Events | 赛事详情（`EventInfo.event` / `joined` / `team_result`） | player | `client.service.events.get` | `frontends/default/src/routes/service/events/jeopardy.$id/index.tsx` | — | required — 参赛、题目、积分、实例等赛事能力共同依赖的赛事上下文数据；不要求页面层级或导航结构 |
 | Events | 加入 / 退出赛事 | player | `client.service.events.join`、`leave` | `frontends/default/src/routes/service/events/jeopardy.$id/index.tsx` | — | required — 参赛资格与可见性由 `joined` 决定 |
 | Events | 战队创建 / 加入 / 退出 | player | `client.service.events.createTeam`、`joinTeam`、`quitTeam` | `frontends/default/src/routes/service/events/jeopardy.$id/index.tsx`、`.../awd.$id/index.tsx` | — | required — 团队赛制（`participant_mode`）参赛必经 |
 | Events | 赛事公告 | player | `client.service.events.getAnnouncements`（`EventAnnouncements[]`） | `frontends/default/src/routes/service/events/jeopardy.$id/announcement.tsx` | — | required — 赛程 / 规则变更通知 |
@@ -84,7 +88,7 @@
 | Events | 赛事实例列表 | player | `client.service.events.getInstances`（`EventInstanceResult[]`） | `frontends/default/src/routes/service/events/jeopardy.$id/instances.tsx` | — | required — 选手管理自己已启动的题目环境 |
 | Events | 赛事 writeup 状态 / PDF 提交 | player | `client.service.events.getOwnWp`、`client.service.submit.submitWriteup` | `frontends/default/src/components/SubmitWriteup.tsx` | — | optional — 赛后材料提交，非比赛进行时必经 |
 | Jeopardy | 题目目录（挑战列表，分页 / 分类筛选） | player | `client.service.challenges.fetch`（`ChallengesListItem`） | `frontends/default/src/routes/service/challenges/index.tsx` | — | required — Jeopardy 选手主入口 |
-| Jeopardy | 题目详情（附件 / 描述 / 分值） | player | `client.service.challenges.get` | `frontends/default/src/routes/service/challenges/$id/index.tsx` | — | required — 解题页面基础数据 |
+| Jeopardy | 题目详情（附件 / 描述 / 分值） | player | `client.service.challenges.get` | `frontends/default/src/routes/service/challenges/$id/index.tsx` | — | required — 解题流程（展示题目 / 获取实例 / 提交 flag）所需的基础数据 |
 | Jeopardy | 独立题目实例获取 / 启动 | player | `client.service.challenges.getInstance`、`client.service.instances.launch` | `frontends/default/src/routes/service/challenges/$id/index.tsx` | — | required — 动态题（容器题）解题必经 |
 | Jeopardy | 独立题目实例销毁 | player | `client.service.instances.destroy` | `frontends/default/src/routes/service/challenges/$id/index.tsx` | — | required — 释放资源 / 重开环境 |
 | Jeopardy | flag 提交（挑战维度） | player | `client.service.submit.submit`（`SolveResult`） | `frontends/default/src/routes/service/challenges/$id/index.tsx` | — | required — 得分核心动作 |
@@ -132,7 +136,7 @@
 
 | Area | Capability | User/Admin | Public SDK surface | Default reference | Realtime | Required for complete frontend |
 |---|---|---|---|---|---|---|
-| AWDP Training | 练习 GameBox 目录 + 开始训练（`capability: "awdp"`） | player | `client.awdp.runs.gameboxCatalog`、`startTraining`（`GameBoxCatalogDto` / `AwdpRunDto`） | `frontends/default/src/routes/service/gameboxes.tsx` | — | required — 选手端导航中的一等入口，练习是 AWDP 的核心训练方式 |
+| AWDP Training | 练习 GameBox 目录 + 开始训练（`capability: "awdp"`） | player | `client.awdp.runs.gameboxCatalog`、`startTraining`（`GameBoxCatalogDto` / `AwdpRunDto`） | `frontends/default/src/routes/service/gameboxes.tsx` | — | required — 选手必须能发现并开始 AWDP 练习；练习是 AWDP 的核心训练方式，不要求特定导航位置或入口形态 |
 | AWDP Training | 练习 Run 生命周期（读取 / 开始 / 停止 / 重置 / 结束 / 切阶段 / 重新训练） | player | `client.awdp.runs.getRun`、`startRun`、`stopRun`、`resetRun`、`endRun`、`setPhase`、`restartTraining` | `frontends/default/src/routes/service/awdp/runs.$runId/index.tsx` | — | required — 练习流程主干 |
 | AWDP Training | 练习 Run 实例管理 | player | `client.awdp.runs.startInstance`、`stopInstance`、`resetInstance`、`getInstance` | `frontends/default/src/routes/service/awdp/runs.$runId/index.tsx` | — | required — 练习环境生命周期 |
 | AWDP Training | 练习 Run 破题 / 补丁 / 自检 / 全量校验 / 源码 | player | `client.awdp.runs.submitBreak`、`uploadPatch`、`testCheck`、`allCheck`、`sourceUrl` | `frontends/default/src/routes/service/awdp/runs.$runId/index.tsx` | — | required — 练习的核心动作集 |
@@ -144,7 +148,7 @@
 
 | Area | Capability | User/Admin | Public SDK surface | Default reference | Realtime | Required for complete frontend |
 |---|---|---|---|---|---|---|
-| Admin | Dashboard 聚合总览（统计 / 需关注项 / 赛事 / 动态） | admin | `client.admin.dashboard.summary`（`DashboardSummary`） | `frontends/default/src/routes/admin/dashboard.tsx` | — | required — 运维落地页，聚合待处理事项 |
+| Admin | Dashboard 聚合总览（统计 / 需关注项 / 赛事 / 动态） | admin | `client.admin.dashboard.summary`（`DashboardSummary`） | `frontends/default/src/routes/admin/dashboard.tsx` | — | required — 运维必须能看到平台聚合状态（统计 / 需关注项 / 赛事 / 动态）；不要求作为默认落地路由或独立页面 |
 | Admin | 系统监控（CPU / 内存 / 磁盘 / 网卡 / Docker 概况） | admin | `client.admin.system.monitor`（`SystemInformation`）+ `@floatctf/react` `systemInformationQueryOptions` | `frontends/default/src/routes/admin/dashboard.tsx` | — | optional — 仪表盘增强信息，不影响操作 |
 | Admin | 平台版本（API 版本） | admin | `client.admin.system.version` | `frontends/default/src/routes/admin/version.tsx` | — | optional — 诊断信息 |
 | Admin | 用户管理 CRUD | admin | `client.admin.users.fetch`、`create`、`patch`、`remove` | `frontends/default/src/routes/admin/users.tsx` | — | required — 平台账号治理基础 |
@@ -216,22 +220,37 @@
 
 ## Gaps found
 
-> 口径：Default Frontend 已实现、但公共 SDK 没有抽象（被迫走 `client.adminHttp` / `client.transport.*` / 原生 API / 裸 `fetch`），或 SDK 明显缺少公共符号。**以下只报告，不修代码。**
+### 缺口分类政策（A / B / C）
 
-**PUBLIC SDK GAP: Web 终端没有 SDK 抽象。** 后端 `POST /api/admin/terminal/session`（`apps/api/src/modules/platform/operations/terminal.rs:168`）签发一次性 HttpOnly ticket cookie，随后 `GET /api/admin/terminal/ws`（同文件 `:213`）升级为 WebSocket。SDK 既没有 `client.admin.terminal.*`，也没有 WS 抽象；Default 只能 `await client.adminHttp.post("/terminal/session")`（`frontends/default/src/routes/admin/terminal.tsx:52`）并自行 `new WebSocket(...)`（同文件 `:55`），还要自己实现 `{type:"resize"}` 消息与二进制帧处理（`:58`–`:107`）。新前端若需要终端能力，必须复用同一逃生舱并复刻 WS 协议。
+`PUBLIC SDK GAP` **不等于**「新 Frontend 必须模仿 Default 的 UX」；它的含义是**公共集成面不完整**。逐项按下列类别定性：
 
-**PUBLIC SDK GAP: 本地前端注册表缺少「取数 + 解析」的公共封装。** 公共包只提供 URL 常量 `DEFAULT_REGISTRY_URL` 与解析器 `parseRegistry`（`packages/frontend-runtime/src/version.ts`、`registry.ts`）；取数必须由前端自己 `fetch`（Default：`frontends/default/src/components/admin/FrontendSelector.tsx:56`）。注册表是同源静态文件、不是后端 API，因此 SDK 未覆盖可以理解，但对「第三方前端实现前端选择器」而言没有一行式公共助手。
+| 类别 | 含义 | 前端作者的处置 |
+|---|---|---|
+| **A** | 用公共包即可干净实现（`@floatctf/sdk` / `@floatctf/frontend-runtime`，React 可选 `@floatctf/react`） | 直接用公共 API 实现；不构成缺口 |
+| **B** | 当前需要**有文档的低层逃生舱**：`client.adminHttp` / `client.serviceHttp` / `client.transport.*`、原生 `WebSocket`、同源 `fetch` 本地注册表 | **允许**：可用逃生舱实现，但**必须在交付说明里写明用了哪个逃生舱**；该能力仍算完整 |
+| **C** | 从受支持的公共契约**无法安全实现** | Agent **必须**报告 `PUBLIC SDK GAP: <细节>` 并**停止该项能力**：不得自动改后端，不得臆造 SDK 方法 |
 
-**PUBLIC SDK GAP: SSE 流路径不是公共符号。** `@floatctf/sdk` 只导出通用 `client.sse.connect` / `connectAdmin` / `createParser` 与 `resolveSseUrl`；四条真实流的 URL 只硬编码在 `@floatctf/react` 的 hook 内：`/events/{id}/awd/stream`（`packages/react/src/useAwdEventStream.ts:161`、`useAdminAwdEventStream.ts:136`）、`/events/{id}/awdp/stream`（`packages/react/src/useAwdpEventStream.ts:131`）、`/service/awdp/runs/{runId}/stream`（`packages/react/src/useAwdpRunStream.ts:112`）。**非 React 前端不受益于 `@floatctf/react`**，必须自己拼这些路径字符串，且没有编译期保护。
+- **不得臆造 SDK 方法**：公共包里没有的符号就是没有，不要假设 `client.<domain>.<method>` 存在。
+- 逃生舱的可用写法见 [`AI-FRONTEND-GUIDE.md`](./AI-FRONTEND-GUIDE.md) **§5.4 逃生舱（低层公共接口，合法但必须记录）**。
 
-**PUBLIC SDK GAP: 后端存在、SDK 未暴露的端点（Default 均未使用，因此不影响 Default 的能力覆盖，但限制第三方前端在不用逃生舱时的自由度）：**
-- `GET /api/events/{event_id}/capabilities`（`apps/api/src/modules/event/common/api/player.rs:62`，返回 `EventCapabilities`）——按赛事 `mode` 探测能力，SDK 无对应方法。
-- `POST /api/events/{event_id}/team/{team_id}/leave`（同文件 `:206`）——SDK 只封装了等效的 `client.service.events.quitTeam`（`DELETE /events/{id}/team/{team_id}`）。
-- `GET /api/instances/{instance_id}`（`apps/api/src/modules/event/jeopardy/api/instances.rs:332`）——SDK 只封装列表 / 启动 / 删除。
-- `GET /api/admin/events/{event_id}/awd/judge`（`apps/api/src/modules/event/awd/api/admin.rs:657`）——AWD 判题状态，SDK `client.awd.admin` 无对应方法。
-- `GET /api/admin/events/{event_id}/awdp/runs`（`apps/api/src/modules/event/awdp/api/admin.rs:213`）——AWDP 赛事 run 列表，SDK `client.awdp.admin` 无对应方法。
-- `POST /api/admin/events/{event_id}/teams`、`GET|POST|DELETE /api/admin/events/{event_id}/teams/{team_id}[/users]`（`apps/api/src/modules/event/common/api/event_teams.rs:24`、`:247`、`:301`、`:388`）——建队与队内成员增删，SDK `client.admin.event_teams` 只有 `getTeams` / `remove` / `banned` / `unbanned`。
-- 单条读取端点：`GET /api/admin/logs/{log_id}`（`platform/operations/logs.rs:74`）、`GET /api/admin/scheduled_tasks/{task_id}`（`platform/operations/scheduled_tasks.rs:346`）、`GET /api/admin/users/{user_id}`（`identity/user/mod.rs:292`）、`GET /api/admin/super_admin/{super_user_id}`（`identity/administrator/mod.rs:235`）、`GET /api/admin/events/{event_id}/announcements/{announcement_id}`（`event/common/api/event_announcements.rs:152`）。
+> 口径：Default Frontend 已实现、但公共 SDK 没有抽象（被迫走 `client.adminHttp` / `client.transport.*` / 原生 API / 裸 `fetch`），或 SDK 明显缺少公共符号。以下每条缺口都标注类别（A / B / C）；**以下只报告，不修代码。**
+
+**PUBLIC SDK GAP（class B）：Web 终端没有 SDK 抽象。** 后端 `POST /api/admin/terminal/session`（`apps/api/src/modules/platform/operations/terminal.rs:168`）签发一次性 HttpOnly ticket cookie，随后 `GET /api/admin/terminal/ws`（同文件 `:213`）升级为 WebSocket。SDK 既没有 `client.admin.terminal.*`，也没有 WS 抽象；Default 只能 `await client.adminHttp.post("/terminal/session")`（`frontends/default/src/routes/admin/terminal.tsx:52`）并自行 `new WebSocket(...)`（同文件 `:55`），还要自己实现 `{type:"resize"}` 消息与二进制帧处理（`:58`–`:107`）。新前端若需要终端能力，必须复用同一逃生舱并复刻 WS 协议。**类别 B**：`client.adminHttp` + 原生 `WebSocket` 是受支持的逃生舱，实现后必须在交付说明中声明；不计为 C。
+
+**PUBLIC SDK GAP（class B）：本地前端注册表缺少「取数 + 解析」的公共封装。** 公共包只提供 URL 常量 `DEFAULT_REGISTRY_URL` 与解析器 `parseRegistry`（`packages/frontend-runtime/src/version.ts`、`registry.ts`）；取数必须由前端自己 `fetch`（Default：`frontends/default/src/components/admin/FrontendSelector.tsx:56`）。注册表是同源静态文件、不是后端 API，因此 SDK 未覆盖可以理解，但对「第三方前端实现前端选择器」而言没有一行式公共助手。**类别 B**：同源 `fetch` + `parseRegistry` 是受支持的逃生舱；且该能力本身在表内为 `optional`，不实现不影响完整性。
+
+**PUBLIC SDK GAP（class B）：SSE 流路径不是公共符号。** `@floatctf/sdk` 只导出通用 `client.sse.connect` / `connectAdmin` / `createParser` 与 `resolveSseUrl`；四条真实流的 URL 只硬编码在 `@floatctf/react` 的 hook 内：`/events/{id}/awd/stream`（`packages/react/src/useAwdEventStream.ts:161`、`useAdminAwdEventStream.ts:136`）、`/events/{id}/awdp/stream`（`packages/react/src/useAwdpEventStream.ts:131`）、`/service/awdp/runs/{runId}/stream`（`packages/react/src/useAwdpRunStream.ts:112`）。**非 React 前端不受益于 `@floatctf/react`**，必须自己拼这些路径字符串，且没有编译期保护。**类别 B**：路径字符串 + `client.sse.connect({ url })` 是受支持的逃生舱，非 React 前端同样可用，需在交付说明中声明。
+
+**PUBLIC SDK GAP（逐项类别 A / B）：后端存在、SDK 未暴露的端点（Default 均未使用，因此不影响 Default 的能力覆盖，但限制第三方前端在不用逃生舱时的自由度）：**
+- **[B]** `GET /api/events/{event_id}/capabilities`（`apps/api/src/modules/event/common/api/player.rs:62`，返回 `EventCapabilities`）——按赛事 `mode` 探测能力，SDK 无对应方法；逃生舱：`client.serviceHttp.get("/events/<id>/capabilities")`（`packages/sdk/src/client.ts:80`）。公共 TS 类型 `Events` 不含 `mode`（`packages/sdk/src/entity/events.ts`），能力映射在后端 `EventCapabilities::for_mode`（`apps/api/src/modules/event/common/domain/capability.rs`），故不能由公共数据自算。
+- **[A]** `POST /api/events/{event_id}/team/{team_id}/leave`（同文件 `:206`）——SDK 已封装等效的 `client.service.events.quitTeam`（`DELETE /events/{id}/team/{team_id}`，`packages/sdk/src/api/service/events.ts:55`），该能力可用公共方法完整实现。
+- **[B]** `GET /api/instances/{instance_id}`（`apps/api/src/modules/event/jeopardy/api/instances.rs:332`）——SDK 只封装列表 / 启动 / 删除；逃生舱：`client.serviceHttp.get("/instances/<id>")`，公共面另有 `client.service.instances.fetch` 与 `client.service.challenges.getInstance` 可部分替代。
+- **[B]** `GET /api/admin/events/{event_id}/awd/judge`（`apps/api/src/modules/event/awd/api/admin.rs:657`）——AWD 判题状态，SDK `client.awd.admin` 无对应方法；逃生舱：`client.adminHttp.get("/admin/events/<id>/awd/judge")`。
+- **[B]** `GET /api/admin/events/{event_id}/awdp/runs`（`apps/api/src/modules/event/awdp/api/admin.rs:213`）——AWDP 赛事 run 列表，SDK `client.awdp.admin` 无对应方法；逃生舱：`client.adminHttp.get("/admin/events/<id>/awdp/runs")`。
+- **[B]** `POST /api/admin/events/{event_id}/teams`、`GET|POST|DELETE /api/admin/events/{event_id}/teams/{team_id}[/users]`（`apps/api/src/modules/event/common/api/event_teams.rs:24`、`:247`、`:301`、`:388`）——建队与队内成员增删，SDK `client.admin.event_teams` 只有 `getTeams` / `remove` / `banned` / `unbanned`；逃生舱：`client.adminHttp` 的 `get` / `post` / `delete`。
+- **[B]** 单条读取端点：`GET /api/admin/logs/{log_id}`（`platform/operations/logs.rs:74`）、`GET /api/admin/scheduled_tasks/{task_id}`（`platform/operations/scheduled_tasks.rs:346`）、`GET /api/admin/users/{user_id}`（`identity/user/mod.rs:292`）、`GET /api/admin/super_admin/{super_user_id}`（`identity/administrator/mod.rs:235`）、`GET /api/admin/events/{event_id}/announcements/{announcement_id}`（`event/common/api/event_announcements.rs:152`）——逃生舱：`client.adminHttp.get(...)`。
+
+**结论：本清单没有 C。** 上述每一项都能由公共方法（A）或受支持的逃生舱（B）触达；当前审计未发现「从受支持的公共契约无法安全实现」的能力。
 
 除以上各项外，**不存在**其他「Default 已实现但公共 SDK 未覆盖」的能力。逃生舱扫描命令与真实输出：
 
@@ -339,3 +358,40 @@ grep -rnE '\bfetch\(' frontends/default/src --include=*.ts --include=*.tsx | gre
 | `GET /events/{id}/capabilities` 应在能力表建行 | 移入 Gaps：后端存在、SDK 未暴露、Default 未使用 | `apps/api/src/modules/event/common/api/player.rs:62`；Default 仅在 `dev.tsx` 硬编码平台级 capabilities |
 
 未决问题及解决方式：`client.awdp.admin.listInstances`、`client.awdp.player.getInstance`、`client.awdp.player.scores`、`client.awd.admin.resetGamebox` 在 Default 中**没有调用点**（`grep -rn 'awdpAdminApi\.\|awdpPlayerApi\.\|awdAdminApi\.' frontends/default/src`）。处置：保留为 SDK 已暴露的能力行并显式标注 Default 未使用（AWDP 实例、积分流水、AWD 实例重置），不臆造页面也不改代码。
+
+### scope-clarification pass（口径收窄，行数 / 分类不变）
+
+本 pass 只做「能力语义 ≠ Default UX」的口径收窄与 bootstrap 归属澄清，**没有增删表格行，也没有改动任何 `required` / `optional` / `specialized` 分类**。
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 总行数 | 127 | **127** |
+| `required` / `optional` / `specialized` | 89 / 30 / 8 | **89 / 30 / 8** |
+| 实时（SSE / WebSocket）行 | 6 | **6** |
+| `Default reference` 路径存在性 | 129 检查 / 0 缺失 | **129 检查 / 0 缺失** |
+| `required` 行带理由 | 89 / 89 | **89 / 89** |
+
+改动的行（其余行保持字节不变；`Default reference` 列一律未动）：
+
+1. **bootstrap 归属**：`GET /api/frontend` 行 `User/Admin` 由 `public（未认证）` 改为 `platform（bootstrap 提供；前端不实现）`，第 7 列改为 `required（前端义务 = 正确消费 \`mount(context)\`）— …新前端**不需要**自己 fetch \`GET /api/frontend\`…`；「破窗回退」行 `User/Admin` 由 `both` 改为 `platform（bootstrap 提供）`。平台表后新增「引导职责归平台」说明。`mount(context)` 行**仍为 `required`**（L35，`required — 新前端唯一入口契约`）。
+2. **去掉 `required` 里的 UX 规定**（7 行）：凭 token 重置密码（原「重置邮件落地页」）、401 统一处理（原 Capability「+ 回该端登录入口」）、Top15（原「Default 选手端落地页（`/service` 重定向至此）」）、赛事详情（原「所有赛事子页面的上下文」）、题目详情（原「解题页面基础数据」）、AWDP 练习入口（原「选手端导航中的一等入口」）、Admin 总览（原「运维落地页」）。
+3. **`## Gaps found`** 增加 A / B / C 分类政策；已有缺口逐条标注类别。结论：**本清单没有 C** —— Web 终端、本地注册表 `fetch`、SSE 流路径为 **B**；端点清单中 `POST …/team/{team_id}/leave` 为 **A**（`client.service.events.quitTeam` 已覆盖），其余为 **B**（`client.serviceHttp` / `client.adminHttp` 可达）。
+4. **`## How to use this matrix`** 增加「`Default reference` 列 ≠ 要求」说明。
+
+改后重跑核对命令：
+
+```bash
+python3 /tmp/matrix-verify.py    # rows=127 required=89 optional=30 specialized=8
+                                 # realtime_rows=6 / default_files_checked=129 missing=0
+                                 # default_routes_checked=4 missing=0 / sdk_symbols_checked=119 unresolved=0
+                                 # unclassified_rows=0 realtime_mismatch=0  exit=0
+python3 /tmp/matrix-verify2.py   # public_surface_tokens=292 unresolved=0 / required_rows_without_reason=0
+```
+
+本 pass 的 UX 规定措辞扫描（只看 Capability 与第 7 列，`Hit` 全部是显式否定句「不要求…」）：
+
+```bash
+python3 - <<'EOF'   # 正则：必须提供…页面 / 侧边栏 / 入口放在 / 同 Default 一样 / 分页签 / 多页结构 / 落地页 / 子页面 / 解题页面 / 默认落地路由
+# 结果：0 条真实规定；3 条命中均为 `不要求独立页面` / `不要求作为默认落地路由` 这类否定表述
+EOF
+```

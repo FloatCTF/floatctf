@@ -26,6 +26,10 @@ Contract versions are independent constants:
 | `FRONTEND_REGISTRY_SCHEMA_VERSION` | local `registry.json` schema version |
 | `FRONTEND_MANIFEST_SCHEMA_VERSION` | `frontend.json` document schema version |
 
+> 要构建一个**完整的第三方 Frontend**，请读
+> [docs/frontend/AI-FRONTEND-GUIDE.md](../../docs/frontend/AI-FRONTEND-GUIDE.md)
+> （能力清单与完整性口径见 [CAPABILITY-MATRIX.md](../../docs/frontend/CAPABILITY-MATRIX.md)）。
+
 ## Consuming it outside the monorepo (v1.0)
 
 `@floatctf/frontend-runtime` is **not published to the npm registry for v1.0** — npm

@@ -150,6 +150,10 @@ apps/web                  = 极薄的 bootstrap 引导页
 详见 [docs/frontend/ARCHITECTURE.md](docs/frontend/ARCHITECTURE.md)、
 [DEVELOPING.md](docs/frontend/DEVELOPING.md)、[ARTIFACT.md](docs/frontend/ARTIFACT.md)。
 
+**开发自己的 FloatCTF Frontend** → [docs/frontend/AI-FRONTEND-GUIDE.md](docs/frontend/AI-FRONTEND-GUIDE.md)
+（用 AI 代理从零创建一个完整前端；能力清单见 [CAPABILITY-MATRIX.md](docs/frontend/CAPABILITY-MATRIX.md)）。
+官方前端 `frontends/default` 只是**语义/行为参照**，不是视觉模板。
+
 ## 环境要求
 
 生产和完整开发环境都需要 Linux、systemd、Docker + Compose、nftables、WireGuard、iproute2、conntrack、iptables，以及 IPv4 转发和 `br_netfilter`。自动安装路径当前验证于 Arch Linux。
@@ -482,6 +486,8 @@ sudo /var/lib/floatctf/uninstall.sh --purge
 | [改数据库](docs/agents/DATABASE.md) | 迁移 → 应用 → 实体/类型再生成 |
 | [前端数据页面](docs/agents/DATA-FETCHING.md) | 缓存分级、keepPreviousData、queryKey 失效 |
 | [测试规范](docs/agents/TESTING.md) | 测试层级、写法、禁忌 |
+| [创建新 Frontend（AI 手册）](docs/frontend/AI-FRONTEND-GUIDE.md) | **从零创建一个完整可插拔前端**：Default 仅语义参照、公共依赖边界、mount/auth/路由/SSE、完整性口径、验收流程 |
+| [前端能力矩阵](docs/frontend/CAPABILITY-MATRIX.md) | 源码审计出的能力清单：公共 SDK 面 / Default 参照 / 实时 / 完整前端是否必需 |
 
 ## 许可证
 

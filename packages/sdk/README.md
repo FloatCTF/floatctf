@@ -102,6 +102,10 @@ import type { Events } from "@floatctf/sdk/entity";
 contract in `@floatctf/frontend-runtime`. `scripts/check-architecture.sh` asserts the two
 declarations never drift.
 
+> 要构建一个**完整的第三方 Frontend**，请读
+> [docs/frontend/AI-FRONTEND-GUIDE.md](../../docs/frontend/AI-FRONTEND-GUIDE.md)
+> （能力清单与完整性口径见 [CAPABILITY-MATRIX.md](../../docs/frontend/CAPABILITY-MATRIX.md)）。
+
 ## Consuming it outside the monorepo (v1.0)
 
 `@floatctf/sdk` is **not published to the npm registry for v1.0** — npm publication is a

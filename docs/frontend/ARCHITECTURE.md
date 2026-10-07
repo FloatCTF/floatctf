@@ -2,6 +2,7 @@
 
 > 本文是**前端平台**的权威架构文档。
 > 相关：[DEVELOPING.md](./DEVELOPING.md)（开发与外部仓库流程）、[ARTIFACT.md](./ARTIFACT.md)（制品 / manifest / 注册表 / 版本策略）。
+> **从零创建一个新前端**：[AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)（AI 代理作业手册）、[CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)（能力矩阵——完整性口径由它定义，而非路由对齐）。
 > 后端整体架构见 [../agents/ARCHITECTURE.md](../agents/ARCHITECTURE.md)。
 
 ## 1. Frontend ≠ Theme

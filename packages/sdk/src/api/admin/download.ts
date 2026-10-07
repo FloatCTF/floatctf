@@ -2,7 +2,7 @@ import { admin_api } from "../../transport.js";
 
 export const downloadAdminApi = {
     download: async (key: string): Promise<void> => {
-        const res = await admin_api.get(`/download`, {
+        const res = await admin_api.get("/download", {
             params: { key },
         });
         const url = res.data.data;

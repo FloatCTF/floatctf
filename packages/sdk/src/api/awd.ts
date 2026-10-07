@@ -390,7 +390,7 @@ export const awdAdminApi = {
 	listGameboxes: async (
 		params: QueryParams = {},
 	): Promise<UniResponse<GameBoxLibraryDto[]>> => {
-		const res = await admin_api.get(`/awd/gameboxes`, { params });
+		const res = await admin_api.get("/awd/gameboxes", { params });
 		return res.data;
 	},
 	/** POST multipart 字段 `package_zip`——同步构建。 */
@@ -399,7 +399,7 @@ export const awdAdminApi = {
 	): Promise<UniResponse<ImportGameBoxResponse>> => {
 		const form = new FormData();
 		form.append("package_zip", file);
-		const res = await admin_api.post(`/awd/gameboxes/import`, form, {
+		const res = await admin_api.post("/awd/gameboxes/import", form, {
 			headers: { "Content-Type": "multipart/form-data" },
 		});
 		return res.data;
@@ -434,13 +434,13 @@ export const awdAdminApi = {
 	},
 	// 批量删除（仿 challenges.remove）：仅未被赛事 / AWDP Run 引用的可删
 	removeGamebox: async (id_list: string[]): Promise<UniResponse<number>> => {
-		const res = await admin_api.delete(`/awd/gameboxes`, {
+		const res = await admin_api.delete("/awd/gameboxes", {
 			data: { id_list },
 		});
 		return res.data;
 	},
 	scanGameboxes: async (): Promise<UniResponse<GameBoxScanItem[]>> => {
-		const res = await admin_api.post(`/awd/gameboxes/scan`);
+		const res = await admin_api.post("/awd/gameboxes/scan");
 		return res.data;
 	},
 	checkGameboxes: async (
@@ -463,27 +463,27 @@ export const awdAdminApi = {
 	getPlatformNetwork: async (): Promise<
 		UniResponse<PlatformNetworkSettings>
 	> => {
-		const res = await admin_api.get(`/awd/network`);
+		const res = await admin_api.get("/awd/network");
 		return res.data;
 	},
 	updatePlatformNetwork: async (
 		body: PlatformNetworkSettingsUpdate,
 	): Promise<UniResponse<PlatformNetworkSettingsUpdateResponse>> => {
-		const res = await admin_api.patch(`/awd/network`, body);
+		const res = await admin_api.patch("/awd/network", body);
 		return res.data;
 	},
 	/** §4.1 Host 观测状态（纯只读）。 */
 	getPlatformNetworkHealth: async (): Promise<
 		UniResponse<PlatformNetworkHealth>
 	> => {
-		const res = await admin_api.get(`/awd/network/health`);
+		const res = await admin_api.get("/awd/network/health");
 		return res.data;
 	},
 	/** §7/§66 平台分配账本（只读）。 */
 	getPlatformNetworkAllocations: async (): Promise<
 		UniResponse<PlatformNetworkAllocation[]>
 	> => {
-		const res = await admin_api.get(`/awd/network/allocations`);
+		const res = await admin_api.get("/awd/network/allocations");
 		return res.data;
 	},
 	// ── 赛事网络（§22/§64）──

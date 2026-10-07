@@ -90,7 +90,11 @@ run = "pnpm run dev:packages"
 # Web 类型检查（与 CI 的 `vite build && tsc` 对齐；biome lint 抓不到类型错误）
 [tasks."web:typecheck"]
 description = "Web TypeScript 类型检查（全部 web 包 tsc --noEmit）"
+# 先构建 packages/*：前端通过 package.json exports 解析 @floatctf/* 到各包的 dist，
+# 因此必须先有**当前**的 dist，否则会拿旧 .d.ts 做类型检查（会出现"本地看绿、CI 变红"
+# 这类与源码无关的假结果）。
 run = """
+pnpm run build:packages
 pnpm --filter @floatctf/frontend-runtime exec tsc -p tsconfig.build.json --noEmit
 pnpm --filter @floatctf/sdk exec tsc -p tsconfig.build.json --noEmit
 pnpm --filter @floatctf/react exec tsc -p tsconfig.build.json --noEmit
@@ -123,6 +127,8 @@ run = [
 description = "执行 Rust 和 Web 测试"
 run = [
     "./scripts/test-rust.sh",
+    # 同上：测试同样通过 exports → dist 解析 @floatctf/*，先确保 dist 是当前的。
+    "pnpm run build:packages",
     "pnpm run test:web",
 ]
 

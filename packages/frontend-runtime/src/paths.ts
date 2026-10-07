@@ -65,7 +65,8 @@ export function checkRelativeAssetPath(value: unknown): PathCheckResult {
 	if (value !== value.trim()) {
 		return { ok: false, reason: "path must not have surrounding whitespace" };
 	}
-	// eslint-disable-next-line no-control-regex
+	// 这里**必须**匹配控制字符：规则就是"拒绝控制字符"，因此显式豁免该 lint 规则。
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: 拒绝控制字符是本函数的目的
 	if (/[\u0000-\u001f\u007f]/.test(value)) {
 		return { ok: false, reason: "path must not contain control characters" };
 	}

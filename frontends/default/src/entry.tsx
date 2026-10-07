@@ -11,6 +11,9 @@
  * `shouldForwardProp` 过滤器都与迁移前完全一致 —— UI/UX 不变。
  */
 
+// 必须排在所有其它 import 之前：先装好 Node 全局兜底，再求值任何依赖。
+import "./node-shim.ts";
+
 import { BaseStyles, ThemeProvider } from "@primer/react";
 import { StrictMode } from "react";
 import isPropValid from "@emotion/is-prop-valid";

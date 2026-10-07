@@ -1,12 +1,12 @@
-import {
-	type AllCheckDto,
-	type AwdpEndpoint,
-	type AwdpInstance,
-	type AwdpPhase,
-	type AwdpRoundDto,
-	type BreakSubmitResponse,
-	type ManualCheckDto,
-	type PatchSubmitResponse,
+import type {
+	AllCheckDto,
+	AwdpEndpoint,
+	AwdpInstance,
+	AwdpPhase,
+	AwdpRoundDto,
+	BreakSubmitResponse,
+	ManualCheckDto,
+	PatchSubmitResponse,
 } from "./awdp.js";
 /**
  * AWDP Practice Run（Training Ground）API 客户端。

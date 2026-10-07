@@ -20,6 +20,28 @@ function versionEntry(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+/**
+ * 刻意构造"非法注册表"用的可变视图。
+ *
+ * 测试必须能塞进越界字段（坏 currentVersion / 穿越路径 / 不安全 ID），
+ * 因此这里给一个**显式**的可变形状，而不是 `any`（避免关闭类型检查）。
+ */
+type MutableRegistry = {
+	frontends: Record<
+		string,
+		{
+			id?: string;
+			currentVersion?: string;
+			protected?: boolean;
+			versions: Record<string, { entry?: unknown; version?: unknown }>;
+		}
+	>;
+};
+
+function mutableRegistry(): MutableRegistry {
+	return validRegistry() as MutableRegistry;
+}
+
 function validRegistry(): unknown {
 	return {
 		schemaVersion: 1,
@@ -65,7 +87,7 @@ describe("parseRegistry", () => {
 	});
 
 	it("rejects a currentVersion that is not installed", () => {
-		const raw = validRegistry() as Record<string, any>;
+		const raw = mutableRegistry();
 		raw.frontends.cyberpunk.currentVersion = "9.9.9";
 		const result = parseRegistry(raw);
 		expect(result.ok).toBe(false);
@@ -74,14 +96,14 @@ describe("parseRegistry", () => {
 	});
 
 	it("rejects traversal paths inside the registry", () => {
-		const raw = validRegistry() as Record<string, any>;
+		const raw = mutableRegistry();
 		raw.frontends.cyberpunk.versions["1.2.0"].entry = "../../../evil.js";
 		const result = parseRegistry(raw);
 		expect(result.ok).toBe(false);
 	});
 
 	it("rejects unsafe frontend ids", () => {
-		const raw = validRegistry() as Record<string, any>;
+		const raw = mutableRegistry();
 		raw.frontends["../evil"] = raw.frontends.cyberpunk;
 		const result = parseRegistry(raw);
 		expect(result.ok).toBe(false);

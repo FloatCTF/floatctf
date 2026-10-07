@@ -154,7 +154,7 @@ export function FrontendSelector() {
 				</Heading>
 				<Text as="p" className="text-sm color-fg-muted mt-1">
 					前端是「完整的可替换浏览器应用」（自己的路由、布局、导航与交互），不是配色主题。
-					这里只能**选择一个已经安装好的前端**；安装/升级/回滚由运维在宿主执行
+					这里只能选择一个已经安装好的前端；安装/升级/回滚由运维在宿主执行
 					<Text className="font-mono"> sudo /var/lib/floatctf/frontend.sh install … </Text>
 					，浏览器不会去克隆仓库或执行构建。
 				</Text>

@@ -116,17 +116,33 @@ function devRegistry(): Plugin {
 	};
 }
 
+// 单元测试（vitest）跑在**开发** React 下：`React.act` 只在 development 构建里导出。
+// 因此 `process.env.*` 的替换**只在构建时**生效，绝不污染测试环境
+// （否则 React 会被解析成 production 构建，act/测试工具全挂）。
+const isTest = Boolean(process.env.VITEST);
+
 export default defineConfig({
 	// 生产制品由 bootstrap 从 /__floatctf/frontends/<id>/<version>/ 动态 import，
 	// 因此所有内部引用必须是相对路径（绝不写死站点根）。
 	base: "./",
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
+		// 关键：生产制品是一个**自包含的浏览器应用**，不是给别的打包器消费的库。
+		// Vite 的 lib 模式刻意**不**替换第三方依赖里的 `process.env.*`
+		// （默认假设消费者会处理），而浏览器里根本没有 `process` ——
+		// 一旦引用执行就是 "process is not defined"（实测：默认前端整页起不来，
+		// 由 bootstrap 的兜底页如实报错）。因此构建时必须显式替换。
+		...(isTest
+			? {}
+			: {
+					"process.env.NODE_ENV": JSON.stringify("production"),
+					"process.env": JSON.stringify({ NODE_ENV: "production" }),
+				}),
 	},
 	plugins: [
 		// Vitest 下关闭路由代码分割：分割后的页面是懒加载组件，
 		// 单测里渲染路由页面会一直停在 Suspense fallback。开发/构建仍开启。
-		TanStackRouterVite({ autoCodeSplitting: !process.env.VITEST }),
+		TanStackRouterVite({ autoCodeSplitting: !isTest }),
 		viteReact(),
 		tailwindcss(),
 		devRegistry(),

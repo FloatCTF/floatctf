@@ -64,8 +64,8 @@ export interface FloatCTFClientOptions {
  * 泛型签名**逐字对齐 axios**（含 `R = AxiosResponse<T>`）：这样 `return http.get(...)`
  * 这类写法能继续按上下文返回类型推断 `R`，迁移前后的类型行为完全一致。
  */
-// biome-ignore lint/suspicious/noExplicitAny: 与 axios 的签名保持一致
 export interface FloatCTFHttpClient {
+	// biome-ignore lint/suspicious/noExplicitAny: 与 axios 的签名逐字对齐（含 D = any）
 	get<T = any, R = AxiosResponse<T>, D = any>(
 		url: string,
 		config?: AxiosRequestConfig<D>,
@@ -106,9 +106,7 @@ const binding: Binding = { service: null, admin: null };
 
 function unboundError(scope: FloatCTFAuthScope): FloatCTFError {
 	return new FloatCTFError({
-		message:
-			`FloatCTF ${scope} HTTP client is not configured. ` +
-			"Call createFloatCTFClient() before issuing API requests.",
+		message: `FloatCTF ${scope} HTTP client is not configured. Call createFloatCTFClient() before issuing API requests.`,
 		kind: "unknown",
 	});
 }

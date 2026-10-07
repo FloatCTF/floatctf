@@ -12,4 +12,5 @@ export type AwdResetRecords = {
   completed_at?: string;
   error_msg?: string;
   created_at: string;
+  requested_by_admin?: string;
 };

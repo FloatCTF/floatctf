@@ -40,8 +40,17 @@ export type FloatCTFFrontendUnmount = () => void;
 export interface FloatCTFFrontendModule {
 	/** 可选：制品内自述的 ID/版本（仅用于诊断日志，平台以注册表为准）。 */
 	manifest?: { id?: string; version?: string };
-	/** 把前端挂载到 `context.root`。允许 async；抛错会触发 bootstrap 回退。 */
-	mount(context: FloatCTFMountContext): void | FloatCTFFrontendUnmount | Promise<void | FloatCTFFrontendUnmount>;
+	/**
+	 * 把前端挂载到 `context.root`。允许 async；抛错会触发 bootstrap 回退。
+	 *
+	 * 返回类型里**刻意保留 `void`**：绝大多数前端只是把界面挂上去、不返回任何东西，
+	 * `export function mount(context) { … }` 这种最自然的写法必须能直接满足契约；
+	 * 若改写成 `FloatCTFFrontendUnmount | undefined`，所有"不返回清理函数"的实现
+	 * 都会被 TS 判为不可赋值（`() => void` 不能赋给 `() => undefined`）。
+	 * 这里表达的语义就是"可以没有返回值"，biome 的 `noConfusingVoidType` 属误报。
+	 */
+	// biome-ignore lint/suspicious/noConfusingVoidType: void 是刻意的（见上方说明）
+	mount(context: FloatCTFMountContext): void | FloatCTFFrontendUnmount | Promise<FloatCTFFrontendUnmount | undefined>;
 }
 
 /** 动态 `import()` 到的模块形状（可能是 `default`，也可能是命名导出 `mount`）。 */

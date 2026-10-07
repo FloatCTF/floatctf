@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bootstrapFrontend } from "../bootstrap";
-import type { FloatCTFFrontendModule } from "../module";
+import type { FloatCTFFrontendModule, FloatCTFMountContext } from "../module";
 
 const REGISTRY = {
 	schemaVersion: 1,
@@ -120,7 +120,7 @@ describe("bootstrapFrontend", () => {
 			emergencyHost: emergency,
 			fetchImpl: makeFetch({ activeFrontend: "cyberpunk" }),
 			importModule: async () => ({
-				mount: (context: any) => {
+				mount: (context: FloatCTFMountContext) => {
 					contexts.push(context);
 					context.root.textContent = "cyberpunk";
 				},

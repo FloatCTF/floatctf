@@ -1,14 +1,9 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "vcs": {
-    "enabled": false,
-    "clientKind": "git",
-    "useIgnoreFile": false
-  },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["src/routeTree.gen.ts"],
-    "include": ["src/*", ".vscode/*", "index.html", "vite.config.js"]
+    "ignore": ["dist"],
+    "include": ["src/*", "index.html", "vite.config.ts"]
   },
   "formatter": {
     "enabled": true,
@@ -20,27 +15,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      "style": {
-        "noNonNullAssertion": "off",
-        "noUnusedTemplateLiteral": "off",
-        "useImportType": "off",
-        "useTemplate": "off"
-      },
-      "a11y": {
-        "useKeyWithClickEvents": "off",
-        "useSemanticElements": "off",
-        "useButtonType": "off"
-      },
-      "complexity": {
-        "noForEach": "off"
-      },
-      "correctness": {
-        "useExhaustiveDependencies": "off"
-      },
-      "suspicious": {
-        "noExplicitAny": "off"
-      }
+      "recommended": true
     }
   },
   "javascript": {

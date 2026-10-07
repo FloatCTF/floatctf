@@ -1,0 +1,53 @@
+{
+  "name": "@floatctf/sdk",
+  "version": "1.0.0",
+  "description": "FloatCTF platform client SDK (framework independent): transport, error model, REST/SSE clients, DTOs",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./entity": {
+      "types": "./dist/entity/index.d.ts",
+      "import": "./dist/entity/index.js"
+    },
+    "./entity/*": {
+      "types": "./dist/entity/*.d.ts",
+      "import": "./dist/entity/*.js"
+    },
+    "./sse": {
+      "types": "./dist/sse/index.d.ts",
+      "import": "./dist/sse/index.js"
+    },
+    "./api/*": {
+      "types": "./dist/api/*.d.ts",
+      "import": "./dist/api/*.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "vitest run",
+    "lint": "biome lint src",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.11.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

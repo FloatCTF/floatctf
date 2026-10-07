@@ -1,0 +1,113 @@
+import { TextInput, Truncate } from "@primer/react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useReactive } from "ahooks";
+
+import { adminApi } from "@/api";
+import { GenericTable } from "@/components";
+import type { ChallengeSets } from "@floatctf/sdk/entity";
+import { AppLink } from "@/navigation";
+import { AdminRouteGuard } from "@/routes/admin/route";
+import { DatetimeToShow } from "@/util";
+
+export const Route = createFileRoute("/admin/challenge_sets/")({
+	component: RouteComponent,
+	loader: AdminRouteGuard,
+});
+
+function RouteComponent() {
+	const subject = "Challenge Sets";
+	const columns = [
+		{
+			accessorKey: "id",
+			header: "ID",
+			field: "id",
+			rowHeader: true,
+			renderCell: (row: ChallengeSets) => {
+				return (
+					<AppLink to="/admin/challenge_sets/$id" params={{ id: row.id }}>
+						{row.id}
+					</AppLink>
+				);
+			},
+		},
+		{
+			accessorKey: "name",
+			header: "名称",
+			field: "name",
+			label: "名称",
+			renderCell: (row: ChallengeSets) => {
+				return (
+					<AppLink to="/admin/challenge_sets/$id" params={{ id: row.id }}>
+						{row.name}
+					</AppLink>
+				);
+			},
+			sortBy: true,
+		},
+		{
+			accessorKey: "description",
+			header: "描述",
+			field: "description",
+			label: "描述",
+			sortBy: true,
+			renderCell: (row: ChallengeSets) => {
+				return <Truncate title={row.description ?? ""} />;
+			},
+		},
+		{
+			accessorKey: "created_at",
+			header: "创建时间",
+			field: "created_at",
+			sortBy: true,
+			renderCell: (row: ChallengeSets) => {
+				return <span>{DatetimeToShow(row.created_at)}</span>;
+			},
+		},
+	];
+	const mutationChallengeSet = useReactive<Partial<ChallengeSets>>({
+		name: "",
+		description: "",
+	});
+	const mutationColumns = [
+		{
+			header: "名称",
+			field: "name",
+			label: "名称",
+			render: (
+				<TextInput
+					value={mutationChallengeSet.name}
+					onChange={(e) => {
+						mutationChallengeSet.name = e.target.value;
+					}}
+				/>
+			),
+		},
+		{
+			header: "描述",
+			field: "description",
+			label: "描述",
+			render: (
+				<TextInput
+					value={mutationChallengeSet.description}
+					onChange={(e) => {
+						mutationChallengeSet.description = e.target.value;
+					}}
+				/>
+			),
+		},
+	];
+	const filterKeys = ["id", "name", "description"];
+	return (
+		<GenericTable
+			subject={subject}
+			columns={columns}
+			filterKeys={filterKeys}
+			queryFn={adminApi.challenges.getChallengeSets}
+			createFn={adminApi.challenges.createChallengeSet}
+			removeFn={adminApi.challenges.deleteChallengeSet}
+			patchFn={adminApi.challenges.patchChallengeSet}
+			mutationColumns={mutationColumns}
+			mutationData={mutationChallengeSet}
+		/>
+	);
+}

@@ -1,0 +1,10 @@
+export { userServiceApi } from "./users.js";
+export { eventServiceApi } from "./events.js";
+export { challengeServiceApi } from "./challenges.js";
+export { instanceServiceApi } from "./instances.js";
+export { submitServiceApi } from "./submit.js";
+export { solveServiceApi } from "./solves.js";
+export { weaponsServiceApi } from "./weapons.js";
+export { announcementServiceApi } from "./announcements.js";
+export { uploadsServiceApi } from "./uploads.js";
+export { discussionServiceApi } from "./discussions.js";

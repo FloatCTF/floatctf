@@ -35,11 +35,20 @@ floatctf/
 │   └── floatctf-helper/       # Docker + CAP_NET_ADMIN 宿主控制面守护进程
 ├── infra/
 │   ├── compose/                 # compose.dev.yml（db/redis/caddy/rustfs）
-│   └── caddy/                   # Caddyfile.dev / Caddyfile.prod
-├── scripts/                     # gen_entities.py、gen_web_types.py、infra-up.sh、dev.sh
+│   ├── caddy/                   # Caddyfile.dev / Caddyfile.prod（prod 是 install.sh 模板的镜像）
+│   ├── config/                  # floatctf.prod.toml（install.sh 渲染结果的参考副本）
+│   └── docker/api/              # 生产 API runtime image 的 Dockerfile
+├── scripts/                     # install.sh / dev*.sh / frontend.sh / backup.sh / restore.sh / build-runtime-images.sh …
 ├── mise.toml                    # 全部开发任务入口
 └── AGENTS.md                    # AI 工作手册索引
 ```
+
+产物与分发：AWD/AWDP 运行时镜像的**规范在线通道是 GHCR** ——
+`ghcr.io/floatctf/awd-flagserver:<V>`、`ghcr.io/floatctf/awd-judgeserver:<V>`、
+`ghcr.io/floatctf/awdp-judgeserver:<V>`（已扁平化；旧名 `floatctf/infra/awdp-judgeserver` 为历史引用）。
+本地/开发构建不带 registry 时用本地名 `floatctf/awd-flagserver:<tag>` 等。
+API runtime image（`floatctf/api:<V>`）仍由安装器在目标机用 `infra/docker/api/Dockerfile` + release
+二进制本地构建。`<V>` = release tag 去掉前导 `v`。契约见 [RELEASE.md](../../RELEASE.md)。
 
 ## 2. 业务模块（apps/api/src/modules/）
 
@@ -176,6 +185,22 @@ helper 对 Host RPC 做资源所有权校验：WireGuard interface 必须是 `fa
 API container 以数值 `65532:<floatctf GID>`（`.env` 的 `FLOATCTF_UID`/`FLOATCTF_GID`）运行——宿主不创建 `floatctf` 用户，只需要 `floatctf` 组（helper socket 权限）。`cap_drop=ALL`、`no-new-privileges`、read-only rootfs，只读挂载 `/run/floatctf`，不挂 `/var/run/docker.sock`。API 的 9090 不发布到宿主；Caddy 通过 Compose DNS `api:9090` 访问。
 
 AWD/AWDP 的 FlagServer/JudgeServer 通过 external internal network `fctf-platform-control` 回调 API：subnet `10.42.8.0/24`，API 固定 `10.42.8.2`，动态地址范围 `10.42.8.128/25`。GameBox 不加入该网络。`AwdStaticConfig.platform_internal_network` 为空时保持开发模式的“按赛事 infra gateway 派生 host”逻辑；生产设置该字段后使用固定 `platform_internal_url` 并把基础设施容器额外接入 control network。
+
+服务这些赛事的运行时镜像是 **GHCR OCI 制品**（`ghcr.io/floatctf/awd-flagserver:<V>` /
+`awd-judgeserver:<V>` / `awdp-judgeserver:<V>`，`<V>` = 平台版本 = tag 去掉前导 `v`）：
+由 tag 触发的 release workflow 以 `packages: write` 推送（**仅** tag 发布路径；PR / 分支 dispatch / RC
+永不推送）。安装器在部署前 `docker image inspect` 再 `docker pull` 精确 `<V>` ref，取不到就**硬失败**
+（`--skip-runtime-images` / `FLOATCTF_SKIP_RUNTIME_IMAGES=1` 可降级为告警，供 Jeopardy-only 宿主）。
+离线宿主用本地逃生通道：`scripts/build-runtime-images.sh --tag <V>` + `docker load`。
+
+> ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
+> 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源
+> （AWD 防火墙是单一全局 nft 表 `floatctf_awd`；AWDP 练习网络与容器名固定为 `fctf-awdp-practice` /
+> `fctf-awdp-practice-judge`），从而干扰正在运行的实例。**这在 Phase 13 实测发生过**（第二个 API
+> 重建了线上练习判题容器与网络一次），不是理论风险。
+> **绝不要在承载生产实例的宿主上启动开发 / RC / 测试 API。**
+> 这也是本仓库把 `noop`（进程内、无宿主副作用）限制在测试/mock 的原因：生产与 `mise run dev`
+> 都走同一个 helper，共用同一批全局宿主对象。
 
 ### EventContext（event/jeopardy/application/context.rs）
 Jeopardy 请求级上下文（`db`、`docker`、`event`、`user`、`team`、`config: Option<Arc<AppConfig>>`），通过 `EventContextBuilder` 构造；launch 路径会注入 config（实例数量限制等）。

@@ -8,6 +8,16 @@ Redis 是开发 API 的必需依赖。`mise run dev` 会先等待 `floatctf-dev-
 
 生产安装与运维见 [INSTALL.md](./INSTALL.md)，模块架构见 [docs/agents/ARCHITECTURE.md](./docs/agents/ARCHITECTURE.md)。
 
+> ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
+> 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源
+> （AWD 防火墙是单一全局 nft 表 `floatctf_awd`；AWDP 练习网络与容器名固定为 `fctf-awdp-practice` /
+> `fctf-awdp-practice-judge`），从而干扰正在运行的实例。**这在 Phase 13 实测发生过**（第二个 API
+> 重建了线上练习判题容器与网络一次），不是理论风险。
+> **绝不要在承载生产实例的宿主上启动开发 / RC / 测试 API。**
+>
+> 也就是说：开发机和生产机必须是**两台**机器。不要为了"复用硬件 / 环境一致"在生产宿主上
+> `git clone` + `mise run setup` + `mise run dev`。
+
 ---
 
 ## 1. 最终权限模型
@@ -375,6 +385,12 @@ cargo test -p floatctf-helper
 ```text
 setup → helper identity/socket → Docker proxy policy → API 权限 → Jeopardy → AWD → AWDP → cleanup/recovery
 ```
+
+> ⚠️ **宿主级验证必须在独占宿主上进行**（R1 不变量，见本文开头）。AWD/AWDP 的宿主资源是
+> **全局/固定命名**的（nft 表 `floatctf_awd`、`fctf-awdp-practice` /
+> `fctf-awdp-practice-judge` 容器与网络、`fawg_*` 接口），没有命名空间隔离。在正在服务线上
+> 赛事的宿主上跑这套验证会真的破坏线上运行（Phase 13 已实测到一次）。没有独占宿主时，
+> **不要**跑宿主级 AWD/AWDP E2E，如实记为"未执行"。
 
 验证过程中不要使用 `nft flush ruleset`、删除无关 Docker 对象或改动无关 WireGuard 接口。FloatCTF 动态资源必须限定在自身 naming/label contract 内。
 

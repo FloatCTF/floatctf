@@ -13,11 +13,27 @@
 
 ## HTTP 测试如何跑
 
-1. 启动完整栈（Postgres / Docker / RustFS + floatctf）
-2. 默认请求 `http://127.0.0.1:8080`，可改：
+1. 启动完整栈：`mise run dev`（Postgres / Redis / RustFS / Docker + floatctf API）。
+2. **必须导出正确的 API base**，否则测试会**静默 soft-skip**（看起来"全绿"，其实一个用例都没跑）。
+
+   端口事实（写文档时以仓库为准）：
+
+   | 来源 | 值 |
+   |------|-----|
+   | 测试 harness 的**默认** base（`tests/common/mod.rs` 的 `base_url()`） | `http://127.0.0.1:8080` |
+   | `mise run dev` 实际监听的 API（`apps/api/config/development.toml` 的 `[server].listen_port`） | `0.0.0.0:9090`，本机直连 `http://127.0.0.1:9090` |
+   | 开发统一入口（开发 Caddy 反代 `/api/*`） | `http://127.0.0.1:7780` |
+
+   默认的 `8080` **没有任何服务在听**，所以对 `mise run dev` 起的 API 必须显式导出：
+
    ```bash
-   export FLOATCTF_API_BASE=http://127.0.0.1:8080
+   # 直连开发 API（推荐）
+   export FLOATCTF_API_BASE=http://127.0.0.1:9090
+
+   # 或经开发 Caddy 统一入口（同样能代理 /api/*）
+   export FLOATCTF_API_BASE=http://127.0.0.1:7780
    ```
+
 3. 可选登录账号（用于 GET 列表与 EventMode 冒烟）：
    ```bash
    export FLOATCTF_TEST_USER=...
@@ -25,10 +41,13 @@
    export FLOATCTF_TEST_ADMIN=...
    export FLOATCTF_TEST_ADMIN_PASS=...
    ```
-4. 若希望「API 未启动就失败」：
+4. 若希望「API 未启动/端口写错就失败」而不是静默 soft-skip：
    ```bash
    export FLOATCTF_API_REQUIRE=1
    ```
+
+   设了它以后 base 不可达会直接 panic（`FLOATCTF_API_REQUIRE=1 but API not reachable at …`），
+   是发现端口写错的最快方式。
 
 ## 覆盖范围
 

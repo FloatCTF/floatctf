@@ -56,7 +56,11 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 | ---------------------------------------------------------------------- | ----------------------------------------- |
 | **[floatctf](https://github.com/FloatCTF/floatctf)**                   | FloatCTF Monorepo（当前仓库）             |
 | `apps/api`                                                             | 后端 API（Rust / Actix Web）              |
-| `apps/web`                                                             | 前端（React）                             |
+| `apps/web`                                                             | **Web bootstrap**：解析并加载已安装前端（无 React / 无 UI） |
+| `frontends/default`                                                    | **官方前端**：当前完整 UI（React + TanStack Router + Primer） |
+| `packages/sdk`                                                         | `@floatctf/sdk`：框架无关的客户端（传输 / 错误模型 / 领域 API / SSE / DTO） |
+| `packages/react`                                                       | `@floatctf/react`：可选 headless React 绑定（无 UI） |
+| `packages/frontend-runtime`                                            | `@floatctf/frontend-runtime`：前端制品 / 运行时契约与 bootstrap 加载器 |
 | `crates/fcmc`                                                          | 共享容器管理与出题工具（crates.io: `cargo install fcmc`） |
 | `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
 | `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
@@ -113,6 +117,37 @@ FloatCTF API container            ├── PostgreSQL / Redis / RustFS（Compos
 API 不发布宿主 9090 端口。Caddy 在 Compose 网络中直接访问 `api:9090`；FlagServer/JudgeServer 通过独立 internal 网络 `fctf-platform-control` 访问 API 固定地址 `10.42.8.2:9090`，GameBox 不加入该网络。开发仍使用原生 `watchexec + setpriv` API，以保留快速热重载，同时与生产保持相同的 helper 权限边界。
 
 Redis 与 PostgreSQL、RustFS 一样属于 API 的必需基础设施。API 启动时会主动 `PING` Redis，失败即停止启动；Redis 当前承载 realtime 跨节点扇出/全局 sequence、AWD 分布式限流、Web Terminal 一次性票据、scheduler 即时唤醒和 settings 热点缓存。
+
+### 可插拔前端（Pluggable Frontends）
+
+**前端 ≠ 主题**。一个前端是一个**完整的可替换浏览器应用**（自己的框架、路由、页面层级、
+布局、导航、登录 UX、管理端 UX 与设计系统）；不同前端不要求有相同的页面或路由路径。
+
+```text
+FloatCTF Backend ── REST / SSE / Bearer ──► @floatctf/sdk
+                                              │
+                              ┌───────────────┴───────────────┐
+                              ▼                               ▼
+                       @floatctf/react                  （任意非 React 前端）
+                              │                               │
+                              └───────────► Frontend ◄────────┘
+                    官方：frontends/default      第三方：独立仓库
+
+@floatctf/frontend-runtime = 制品/运行时契约（框架无关）
+apps/web                  = 极薄的 bootstrap 引导页
+```
+
+- 浏览器加载顺序：`bootstrap/index.html` → `GET /api/frontend` → 本地注册表
+  `/__floatctf/frontends/registry.json` → 兼容性校验 → 注入样式 → 同源动态 import
+  → `frontend.mount(context)`；任一步失败回退 `default`，再失败显示内置兜底页。
+- 前端安装/升级/回滚是**运维 CLI**：`sudo $FLOATCTF_HOME/frontend.sh install <目录|Git URL|制品>`；
+  激活是**管理端设置**（`FRONTEND_ACTIVE`）。浏览器不安装、不构建、不克隆。
+- 破窗恢复：任意页面加 `?frontend=default`（只影响当前加载，不改设置，不需登录）。
+- 第三方前端是**可信应用代码**：它运行在 FloatCTF 源下、会接触用户凭据；
+  构建隔离只降低宿主风险，**不是**沙箱。
+
+详见 [docs/frontend/ARCHITECTURE.md](docs/frontend/ARCHITECTURE.md)、
+[DEVELOPING.md](docs/frontend/DEVELOPING.md)、[ARTIFACT.md](docs/frontend/ARTIFACT.md)。
 
 ## 环境要求
 

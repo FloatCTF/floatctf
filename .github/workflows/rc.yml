@@ -7,9 +7,11 @@ name: RC
 #   * 制品：与 release.yml 完全相同的 ARTIFACT CONTRACT v1.0 集合，装配逻辑复用
 #     `scripts/release-checksums.sh --assemble`（同一实现，避免两份 YAML 漂移）。
 #   * 验证：verify-release-frontend.sh / test-frontend-manager.sh / check-architecture.sh
-#     + 生产 API image 断言（65532:65532 与 ldd），与 release.yml 同口径。
+#     + 生产 API image 断言（65532:65532 与 ldd）+ 运行时镜像本地构建/ldd 体检，
+#     与 release.yml 同口径。
 #   * 安全：contents: read；**绝不**创建 GitHub Release、**绝不**打 tag、
-#     **绝不**执行 npm/pnpm publish（由 scripts/test-release-workflow.sh 静态断言）。
+#     **绝不**执行 npm/pnpm publish、**绝不** docker login / docker push
+#     （由 scripts/test-release-workflow.sh 与 scripts/test-runtime-images.sh 静态断言）。
 #   * 不跑任何宿主机网络 / nftables / WireGuard 破坏性测试。
 on:
   workflow_dispatch:
@@ -136,6 +138,20 @@ jobs:
             ldd /usr/local/bin/floatctf | tee /tmp/ldd.txt
             ! grep -q "not found" /tmp/ldd.txt
           '
+
+      # AWD/AWDP 运行时镜像：RC **只本地构建 + ldd 体检**，与发布同一条构建契约
+      # （scripts/build-runtime-images.sh），但没有 --registry/--push，也绝不 docker login。
+      # 目的：在打 tag 之前就抓出 Dockerfile / 二进制名 / GLIBC 回归。
+      - name: Build & inspect runtime images (no registry, no push)
+        shell: bash
+        env:
+          FLOATCTF_BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          FLOATCTF_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          FLOATCTF_BUILD_REVISION: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          FLOATCTF_BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            bash scripts/build-runtime-images.sh --tag "${{ steps.version.outputs.version }}"
 
       # 唯一出口：workflow artifact。没有 action-gh-release，没有 npm publish。
       - name: Upload RC artifacts (workflow artifact only)

@@ -401,8 +401,11 @@ fn default_practice_judge_data_host() -> String {
     "judge-server".to_string()
 }
 
+/// canonical AWD/AWDP 运行时镜像默认值（与 install.sh 模板、build-runtime-images.sh
+/// 的 `--registry ghcr.io/floatctf` 输出一致）。`:latest` 只是 TOML 缺键时的兜底；
+/// 生产由 install.sh 渲染成 `:${VERSION}` 的钉版引用（`warn_if_latest` 会对浮动 tag 告警）。
 fn default_practice_judgeserver_image() -> String {
-    "floatctf/infra/awdp-judgeserver:latest".to_string()
+    "ghcr.io/floatctf/awdp-judgeserver:latest".to_string()
 }
 
 fn default_practice_network_subnet() -> String {
@@ -682,8 +685,9 @@ fn default_main_url() -> String {
 fn default_log_filter() -> String {
     "actix_server=info,floatctf=info,fcmc=info".to_string()
 }
+/// canonical AWD flagserver 镜像默认值（`:latest` 兜底；生产用 `${VERSION}` 钉版）。
 fn default_flagserver_image() -> String {
-    "floatctf/awd-flagserver:latest".to_string()
+    "ghcr.io/floatctf/awd-flagserver:latest".to_string()
 }
 
 /// 判别镜像引用是否为浮动 tag（`:latest` 或无 tag）。
@@ -702,8 +706,9 @@ fn warn_if_latest(field: &str, image: String) -> String {
     }
     image
 }
+/// canonical AWD judgeserver 镜像默认值（`:latest` 兜底；生产用 `${VERSION}` 钉版）。
 fn default_judgeserver_image() -> String {
-    "floatctf/awd-judgeserver:latest".to_string()
+    "ghcr.io/floatctf/awd-judgeserver:latest".to_string()
 }
 
 fn default_cors_origins() -> Vec<String> {
@@ -737,6 +742,47 @@ mod tests {
         assert_eq!(
             warn_if_latest("t", "registry.local:5000/floatctf/judge:1.0".to_string()),
             "registry.local:5000/floatctf/judge:1.0"
+        );
+    }
+
+    #[test]
+    fn runtime_image_defaults_match_canonical_ghcr_refs() {
+        // 与 install.sh 模板 / build-runtime-images.sh --registry ghcr.io/floatctf
+        // 的 canonical ref 一致；awdp 已扁平化（不再有 floatctf/infra/ 段）。
+        assert_eq!(
+            default_flagserver_image(),
+            "ghcr.io/floatctf/awd-flagserver:latest"
+        );
+        assert_eq!(
+            default_judgeserver_image(),
+            "ghcr.io/floatctf/awd-judgeserver:latest"
+        );
+        assert_eq!(
+            default_practice_judgeserver_image(),
+            "ghcr.io/floatctf/awdp-judgeserver:latest"
+        );
+        // 三个默认值都必须走 canonical registry 前缀，且 awdp 不再带 infra/ 段。
+        for image in [
+            default_flagserver_image(),
+            default_judgeserver_image(),
+            default_practice_judgeserver_image(),
+        ] {
+            assert!(
+                image.starts_with("ghcr.io/floatctf/"),
+                "默认镜像必须指向 canonical registry: {image}"
+            );
+            assert!(
+                !image.contains("/infra/"),
+                "awdp 已扁平化，默认镜像不应含 infra/ 段: {image}"
+            );
+        }
+        // 缺键时 AwdToml/AwdpToml 的 Default 必须与上面一致。
+        let awd = AwdToml::default();
+        assert_eq!(awd.flagserver_image, default_flagserver_image());
+        assert_eq!(awd.judgeserver_image, default_judgeserver_image());
+        assert_eq!(
+            AwdpToml::default().practice_judgeserver_image,
+            default_practice_judgeserver_image()
         );
     }
 

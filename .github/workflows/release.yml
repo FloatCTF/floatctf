@@ -2,9 +2,10 @@ name: Release
 
 # ── 触发语义（安全模型）────────────────────────────────────────────────────────
 #   push tag v*        → build + verify + 发布 GitHub Release（全量制品 + SHA256SUMS）
+#                        + 构建并推送 AWD/AWDP 运行时镜像到 ghcr.io（唯一 login/push 位置）
 #   workflow_dispatch  → build + verify + `actions/upload-artifact`，**仅**上传 workflow
 #                        产物；默认 publish=false，绝不创建 Release、绝不打 tag、
-#                        绝不发布 npm。
+#                        绝不发布 npm、绝不登录/推送任何镜像。
 #
 # 硬性守卫（build job 的第 1 步，fail closed）：
 #   * publish=true 但 ref 不是 v* tag → 立刻失败（绝不从分支/PR ref 发布）
@@ -257,3 +258,88 @@ jobs:
             release-artifacts/floatctf-frontend-runtime-${{ needs.build.outputs.version }}.tgz
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # ── AWD/AWDP 运行时镜像分发（B1）─────────────────────────────────────────────
+  # install.sh 会从 ghcr.io/floatctf 拉取三个运行时镜像（awd-flagserver /
+  # awd-judgeserver / awdp-judgeserver，tag = <V>）；它们必须与 GitHub Release
+  # 一起出现在真实发布路径上，否则目标机 AWD/AWDP 永远部署不了。
+  #
+  # 守卫与 publish job 完全同源：needs.build.outputs.publish == 'true'（guard 判定
+  # ⇒ 必然是 v* tag ref）+ 显式 ref_type/ref_name 断言。因此 pull_request、分支
+  # push、workflow_dispatch(publish=false) 都进不来，也拿不到 packages: write。
+  # 构建逻辑复用 scripts/build-runtime-images.sh（与本地/RC 同一契约），
+  # 本 job 内是**唯一**允许 docker login / push 的位置。
+  runtime-images:
+    name: Build & push runtime images (ghcr.io)
+    needs: build
+    if: >-
+      needs.build.outputs.publish == 'true'
+      && github.ref_type == 'tag'
+      && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # 纵深防御：job 级 if 之外再断言一次，避免 outputs/守卫漂移后误推镜像。
+      - name: Re-assert tag publish guard (defense in depth)
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH: ${{ needs.build.outputs.publish }}
+        run: |
+          set -Eeuo pipefail
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::runtime images 只允许在 tag ref 上构建/推送（ref=$REF, ref_type=$REF_TYPE）。"
+            exit 1
+          fi
+          case "$REF_NAME" in
+            v*) ;;
+            *) echo "::error::runtime images 要求 v* tag（当前 ref_name=$REF_NAME）。"; exit 1 ;;
+          esac
+          if [ "$PUBLISH" != "true" ]; then
+            echo "::error::runtime images 要求 guard 判定 publish=true（当前 publish=$PUBLISH）。"
+            exit 1
+          fi
+          echo "runtime image publish guard ok: $REF"
+
+      - uses: actions/checkout@v4
+
+      - name: Compute build metadata (OCI labels)
+        id: runtime_meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$GITHUB_OUTPUT"
+
+      # 唯一允许 login 的位置：tag-guarded publish 路径 + packages: write。
+      - name: Login to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+
+      # OCI label 值全部来自 workflow 上下文，绝不硬编码版本/revision，也不含任何密钥。
+      - name: Build & push runtime images
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          FLOATCTF_BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          FLOATCTF_BUILD_VERSION: ${{ needs.build.outputs.version }}
+          FLOATCTF_BUILD_REVISION: ${{ github.sha }}
+          FLOATCTF_BUILD_CREATED: ${{ steps.runtime_meta.outputs.created }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/build-runtime-images.sh \
+            --registry ghcr.io/floatctf \
+            --tag "$VERSION" \
+            --label "org.opencontainers.image.source=$FLOATCTF_BUILD_SOURCE" \
+            --label "org.opencontainers.image.version=$FLOATCTF_BUILD_VERSION" \
+            --label "org.opencontainers.image.revision=$FLOATCTF_BUILD_REVISION" \
+            --label "org.opencontainers.image.created=$FLOATCTF_BUILD_CREATED" \
+            --push

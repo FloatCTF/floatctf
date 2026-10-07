@@ -11,30 +11,50 @@
 #
 # 【生产安装】无需 clone 仓库：
 #   curl -fsSL <install.sh 的 URL> -o install.sh && sudo bash install.sh
-#   或显式指定 5 个 release 产物 URL：
+#   或显式指定 6 个 release 产物 URL：
 #     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> \
-#                         --migrate-url <sql> --frontend-manager-url <script>
-#   流程：主机初始化 → 下载 5 产物 → 本地构建 API runtime image → 部署 →
+#                         --migrate-url <sql> --frontend-manager-url <script> \
+#                         --ops-url <ops-tools.tar.gz>
+#   流程：主机初始化 → 下载 6 产物 → 本地构建 API runtime image → 部署 →
 #         安装 bootstrap 静态页 + Default Frontend + 前端管理器 frontend.sh →
+#         安装运维工具（backup.sh / restore.sh / db/migrate.sh + migrations）→
+#         既有数据库则先 apply 新增迁移（fresh 库由 merged.sql bootstrap，自动跳过）→
 #         写 helper/Compose systemd 单元并 enable（不 start）。
+#
+# 【升级既有安装】重新运行本脚本（同一入口，幂等）：
+#   - release 的 db/migrate.sh 按 forward-only + 版本幂等应用**新增**迁移，
+#     已应用版本由 schema_migrations 跳过；不做任何破坏性回滚。
+#   - --skip-migrations（或 FLOATCTF_SKIP_MIGRATIONS=1）跳过迁移步骤；跳过时
+#     平台可能因缺少新表/新列而启动失败。
+#
+# 安装后布局（$FLOATCTF_HOME，默认 /var/lib/floatctf）：
+#   compose.prod.yml  .env  config/  data/  runtime/  logs/  web/  frontends/
+#   merged.sql                 fresh-DB initdb 挂载（compose 引用）
+#   backup.sh restore.sh       运维备份/恢复（来自 ops-tools 产物）
+#   db/                        migrate.sh + migrations/ + merged.sql（升级用）
+#   frontend.sh uninstall.sh   前端管理器 / 生命周期工具
 #
 # 【开发宿主初始化】由 `mise run setup` 内部调用；开发者无需直接运行：
 #   sudo ./scripts/install.sh --develop --helper-bin <target/debug/floatctf-helper>
 #   仅准备主机、系统用户/组、内核参数与 floatctf-helper，不创建 dev systemd infra。
 #
-# 环境变量（覆盖 5 个产物 URL / release 版本）：
+# 环境变量（覆盖 6 个产物 URL / release 版本 / 迁移开关）：
 #   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
-#   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_VERSION
+#   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_OPS_URL /
+#   FLOATCTF_VERSION / FLOATCTF_SKIP_MIGRATIONS
 # 安装根：
 #   FLOATCTF_HOME=/opt/floatctf   （默认 /var/lib/floatctf）
 #
 # 注意：
-#   - 只做全新安装；已有数据的升级（forward-only 迁移）后续单独实现。
-#   - 本脚本只写文件、创建（enable）systemd 服务，绝不自己启动服务/容器：
+#   - 全新安装与升级共用同一入口：升级 = 重新运行本脚本 + forward-only 迁移。
+#   - 本脚本只写文件、创建（enable）systemd 服务，绝不自己启动服务/容器；
 #     整平台由运维 systemctl start floatctf.target 启动（首次启动 postgres
-#     自动用 merged.sql 初始化数据库）。
-#   - AWD 服务镜像（floatctf/awd-flagserver / awd-judgeserver）暂不在本脚本构建
-#     （TODO Phase 11.1：registry 拉取或本地 docker build）。
+#     自动用 merged.sql 初始化数据库）。唯一例外是 apply_migrations：升级既有
+#     数据库时临时 `up -d postgres` 应用迁移（平台其余服务仍不启动）。
+#   - AWD 服务镜像（floatctf/awd-flagserver / awd-judgeserver /
+#     floatctf/infra/awdp-judgeserver）**不随本 release 分发**：部署后会体检并
+#     告警，提示在有源码的机器上运行 scripts/build-runtime-images.sh --tag <版本>；
+#     缺镜像 = AWD/AWDP 赛事无法部署，故在安装时（而非比赛现场）就显式暴露。
 #
 set -Eeuo pipefail
 
@@ -55,6 +75,7 @@ DEFAULT_HELPER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.
 DEFAULT_WEB_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/web-dist.tar.gz"
 DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/merged.sql"
 DEFAULT_FRONTEND_MANAGER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/frontend.sh"
+DEFAULT_OPS_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/ops-tools.tar.gz"
 
 # ── 颜色/日志 ─────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -73,6 +94,7 @@ HELPER_URL="$DEFAULT_HELPER_URL"
 WEB_URL="$DEFAULT_WEB_URL"
 MIGRATE_URL="$DEFAULT_MIGRATE_URL"
 FRONTEND_MANAGER_URL="$DEFAULT_FRONTEND_MANAGER_URL"
+OPS_URL="$DEFAULT_OPS_URL"
 VERSION="${FLOATCTF_VERSION:-}"
 VERSION_EXPLICIT=0
 API_URL_EXPLICIT=0
@@ -80,8 +102,12 @@ HELPER_URL_EXPLICIT=0
 WEB_URL_EXPLICIT=0
 MIGRATE_URL_EXPLICIT=0
 FRONTEND_MANAGER_URL_EXPLICIT=0
+OPS_URL_EXPLICIT=0
 DEVELOP=0
 HELPER_BIN=""
+# 升级既有安装时，迁移由 release 的 db/migrate.sh forward-only 应用；可用
+# --skip-migrations 显式跳过（见 apply_migrations 的说明与风险提示）。
+SKIP_MIGRATIONS="${FLOATCTF_SKIP_MIGRATIONS:-0}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --api-url) API_URL="${2:?--api-url 需要一个地址参数}"; API_URL_EXPLICIT=1; shift ;;
@@ -90,10 +116,12 @@ while [ $# -gt 0 ]; do
         --web-url) WEB_URL="${2:?--web-url 需要一个地址参数}"; WEB_URL_EXPLICIT=1; shift ;;
         --migrate-url) MIGRATE_URL="${2:?--migrate-url 需要一个地址参数}"; MIGRATE_URL_EXPLICIT=1; shift ;;
         --frontend-manager-url) FRONTEND_MANAGER_URL="${2:?--frontend-manager-url 需要一个地址参数}"; FRONTEND_MANAGER_URL_EXPLICIT=1; shift ;;
+        --ops-url) OPS_URL="${2:?--ops-url 需要一个地址参数}"; OPS_URL_EXPLICIT=1; shift ;;
         --version) VERSION="${2:?--version 需要 release 版本，如 0.3.3}"; VERSION_EXPLICIT=1; shift ;;
+        --skip-migrations) SKIP_MIGRATIONS=1 ;;
         --develop) DEVELOP=1 ;;
         -h|--help)
-            sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) die "未知参数: $1（--help 查看用法）" ;;
@@ -107,6 +135,7 @@ done
 [ "$WEB_URL_EXPLICIT" -eq 1 ] || WEB_URL="${FLOATCTF_WEB_URL:-$WEB_URL}"
 [ "$MIGRATE_URL_EXPLICIT" -eq 1 ] || MIGRATE_URL="${FLOATCTF_MIGRATE_URL:-$MIGRATE_URL}"
 [ "$FRONTEND_MANAGER_URL_EXPLICIT" -eq 1 ] || FRONTEND_MANAGER_URL="${FLOATCTF_FRONTEND_MANAGER_URL:-$FRONTEND_MANAGER_URL}"
+[ "$OPS_URL_EXPLICIT" -eq 1 ] || OPS_URL="${FLOATCTF_OPS_URL:-$OPS_URL}"
 [ "$VERSION_EXPLICIT" -eq 1 ] || VERSION="${FLOATCTF_VERSION:-$VERSION}"
 
 # 生产镜像统一使用 release 版本 tag。GitHub Release URL 可自动推导版本；
@@ -391,7 +420,7 @@ run_init() {
 }
 
 # ============================================================================
-# 第二阶段：获取 release 产物（3 个 URL）
+# 第二阶段：获取 release 产物（6 个 URL）
 # ============================================================================
 download_url() { # url dest
     info "下载: $1"
@@ -410,6 +439,7 @@ ensure_real_release_urls() {
     [[ "$WEB_URL" == *"$placeholder"* ]] && missing+=("--web-url（或 FLOATCTF_WEB_URL）")
     [[ "$MIGRATE_URL" == *"$placeholder"* ]] && missing+=("--migrate-url（或 FLOATCTF_MIGRATE_URL）")
     [[ "$FRONTEND_MANAGER_URL" == *"$placeholder"* ]] && missing+=("--frontend-manager-url（或 FLOATCTF_FRONTEND_MANAGER_URL）")
+    [[ "$OPS_URL" == *"$placeholder"* ]] && missing+=("--ops-url（或 FLOATCTF_OPS_URL）")
     if [ "${#missing[@]}" -gt 0 ]; then
         die "缺少真实 release 地址：内置地址是 v0.0.0-fake 占位（仓库还没有对应发布产物）。请补：${missing[*]}"
     fi
@@ -417,7 +447,7 @@ ensure_real_release_urls() {
 
 download_release() {
     ensure_real_release_urls
-    info "──── 第二阶段：下载 release 产物（5 URL）────"
+    info "──── 第二阶段：下载 release 产物（6 URL）────"
     TMP_STAGE_DIR="$(mktemp -d /tmp/floatctf-install.XXXXXX)"
 
     # 1) API 二进制
@@ -443,8 +473,35 @@ download_release() {
     chmod 0755 "$TMP_STAGE_DIR/frontend.sh"
     bash -n "$TMP_STAGE_DIR/frontend.sh" || die "下载的 frontend.sh 语法无效（产物损坏？）"
 
+    # 6) 运维工具（backup.sh / restore.sh / db/migrate.sh + db/migrations/）：
+    #    升级既有安装所需的迁移器与备份工具都随 release 分发，宿主无需源码签出。
+    mkdir -p "$TMP_STAGE_DIR/ops"
+    download_url "$OPS_URL" "$TMP_STAGE_DIR/ops-tools.tar.gz"
+    tar xzf "$TMP_STAGE_DIR/ops-tools.tar.gz" -C "$TMP_STAGE_DIR/ops" \
+        || die "解压 ops-tools 失败"
+    validate_ops_tools "$TMP_STAGE_DIR/ops"
+
     ok "release 产物就绪: $TMP_STAGE_DIR"
     PKG_DIR="$TMP_STAGE_DIR"
+}
+
+# ops-tools.tar.gz 的顶层布局契约（与 release 打包脚本一致）：
+#   backup.sh  restore.sh  db/migrate.sh  db/migrations/<*.sql>
+# 任一项缺失都直接失败：带着残缺的运维工具继续部署，会让"升级=重新装一遍"
+# 这条唯一受支持的升级路径在后续时刻静默失效。
+validate_ops_tools() { # $1 = 解压根
+    local root="$1" missing=()
+    [ -f "$root/backup.sh" ] || missing+=("backup.sh")
+    [ -f "$root/restore.sh" ] || missing+=("restore.sh")
+    [ -f "$root/db/migrate.sh" ] || missing+=("db/migrate.sh")
+    if [ ! -d "$root/db/migrations" ] \
+        || [ -z "$(find "$root/db/migrations" -maxdepth 1 -type f -name '*.sql' -print -quit 2>/dev/null)" ]; then
+        missing+=("db/migrations/*.sql")
+    fi
+    if [ "${#missing[@]}" -gt 0 ]; then
+        die "ops-tools 产物布局不完整，缺少：${missing[*]}（期望顶层 backup.sh / restore.sh / db/migrate.sh / db/migrations/*.sql）"
+    fi
+    ok "运维工具就绪（backup.sh / restore.sh / db/migrate.sh / db/migrations）"
 }
 
 acquire_package() {
@@ -585,10 +642,13 @@ services:
         volumes:
             - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
             # bootstrap 引导页（apps/web 产物）。
-            - ${FLOATCTF_HOME}/web:/srv/web:ro
+            - ${FLOATCTF_HOME}/web:/srv-web:ro
             # 已安装前端（版本化制品 + registry.json）。Caddy 以 /__floatctf/frontends/*
             # 同源提供；只读挂载——前端资产由 frontend.sh 维护，运行期不可变。
-            - ${FLOATCTF_HOME}/frontends:/srv/frontends:ro
+            # 注意：必须挂在 /srv **之外**的兄弟路径。Docker 需要先在容器内创建
+            # 挂载点目录，而 /srv（runtime 挂载）是只读的 → 嵌套挂载会以
+            # "Read-only file system" 失败，Caddy 整体起不来。
+            - ${FLOATCTF_HOME}/frontends:/srv-frontends:ro
             # 挂载 API 的 work_dir 根（宿主 ${FLOATCTF_HOME}/runtime == 容器
             # /var/lib/floatctf/runtime）到 /srv；Caddyfile 里 root 是 /srv/challenges，
             # 于是附件根恒等于 CHALLENGES_DIR（{{WORK_DIR}}/challenges），与 dev 同构。
@@ -736,7 +796,7 @@ write_caddy_template() {
     # 已安装前端的本地注册表：必须**不被永久缓存**（新装前端后要立刻可见）。
     @frontend_registry path /__floatctf/frontends/registry.json
     handle @frontend_registry {
-        root * /srv/frontends
+        root * /srv-frontends
         header Cache-Control "no-store"
         header Content-Type "application/json"
         rewrite * /registry.json
@@ -746,7 +806,7 @@ write_caddy_template() {
     # 版本化前端资产（/__floatctf/frontends/<id>/<version>/...）：
     # 同源、路径确定、内容不可变 → 可以长缓存。不得遮蔽 /api（/api/* 先匹配）。
     handle_path /__floatctf/frontends/* {
-        root * /srv/frontends
+        root * /srv-frontends
         header Cache-Control "public, max-age=31536000, immutable"
         header X-Content-Type-Options nosniff
         file_server {
@@ -765,7 +825,7 @@ write_caddy_template() {
     }
 
     handle {
-        root * /srv/web
+        root * /srv-web
         try_files {path} {path}/ /index.html
         file_server
     }
@@ -914,6 +974,14 @@ write_uninstall() {
 #                                               这样重新部署能恢复同一套前端集合。
 #                                               语义：deploy → safe uninstall → deploy 应恢复相同的
 #                                               应用数据与密钥（用户/赛事/数据仍在）。
+#                                               安全守卫：数据库会被保留，但 AWD/AWDP 运行时会被销毁。
+#                                               若存在**进行中**的 AWD 赛事或 AWDP run（数据库仍在运行
+#                                               且可查询），默认拒绝卸载（避免「runtime 没了、库里
+#                                               赛事还写着 running」的不一致状态）。确认要拆时用
+#                                               --force 跳过守卫。
+#   sudo $FCTF_ROOT/uninstall.sh --force    SAFE UNINSTALL + 跳过活跃运行时守卫
+#                                               （**数据库仍保留**，进行中的赛事 runtime 会被销毁；
+#                                                只应在已确认可以放弃该场次时使用）
 #   sudo $FCTF_ROOT/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
 #                                               （PG/RustFS 数据、config、secrets、runtime、
 #                                               日志、API image/build context、bootstrap web、
@@ -949,15 +1017,24 @@ require_root() {
 # ── 工具可用性（宿主既有；缺失则报错，不尝试安装）──────────────────────────────
 MODE="safe"
 PURGE_YES=0
+SAFE_FORCE=0
 SELF_TMP=""
 
 usage() {
     cat <<EOF
 用法：
   sudo $FCTF_ROOT/uninstall.sh             安全卸载（保留 PG/RustFS 数据、config、secrets）
+  sudo $FCTF_ROOT/uninstall.sh --force     安全卸载并跳过「活跃 AWD/AWDP 运行时」守卫
+                                           （数据库仍保留；进行中的赛事 runtime 会被销毁）
   sudo $FCTF_ROOT/uninstall.sh --purge     永久删除全部 FloatCTF 自有数据（需确认 PURGE FLOATCTF）
   sudo $FCTF_ROOT/uninstall.sh --purge --yes  跳过确认（仅限非交互 purge）
   sudo $FCTF_ROOT/uninstall.sh --help
+
+说明：
+  安全卸载会保留数据库，但会销毁 AWD/AWDP 运行时（容器、赛事网络、WireGuard 接口、
+  nftables 表）。若数据库仍可查询且存在进行中的 AWD 赛事 / AWDP run，本脚本默认**拒绝**
+  卸载并列出受影响的 id：请先结束或归档这些赛事，或确认放弃后加 --force。
+  --purge 会连数据库一起删除，因此不做该守卫，但会打印销毁内容警告。
 EOF
 }
 
@@ -968,6 +1045,7 @@ parse_args() {
         case "$1" in
             --purge) MODE="purge";;
             --yes)   PURGE_YES=1;;
+            --force) SAFE_FORCE=1;;
             -h|--help) usage; exit 0 ;;
             *) die "未知参数: $1（--help 查看用法）";;
         esac
@@ -1194,6 +1272,103 @@ stop_infra_containers() {
     done
 }
 
+# ============================================================================
+# 活跃 AWD/AWDP 运行时守卫
+# ============================================================================
+#
+# 背景：safe_uninstall **刻意保留数据库**，却会删除全局 nft 表 floatctf_awd、
+# 所有 fawg_* 接口、所有 fctf-awd-*/fctf-awdp-* 网络与 FlagServer/JudgeServer
+# 容器。若此时赛事正在进行，结果就是「runtime 没了、库里赛事还是 running」的
+# 不一致状态：恢复后既看不到成绩也无法续赛。因此默认拒绝，只允许显式 --force。
+#
+# 判据（只读，绝不改库）：
+#   AWD  进行中 = awd_events.status NOT IN
+#                 ('draft','configuring','finished','archived','deploy_failed','verification_failed')
+#   AWDP 进行中 = awdp_runs.finished_at IS NULL
+# 表/列名对照 apps/api/src/entity/awd_events.rs（table_name="awd_events"，字段
+# status: AwdEventStatus）与 apps/api/src/entity/awdp_runs.rs
+# （table_name="awdp_runs"，字段 finished_at: Option<DateTimeWithTimeZone>）。
+
+# 只读 SQL：以容器内 POSTGRES_USER/POSTGRES_DB 连接；SQL 通过位置参数传入，
+# 避免在本脚本里嵌套引号。任何失败（容器不在、库未初始化、schema 缺失）
+# 都以非零返回，由调用方决定如何降级。
+pg_readonly_query() { # sql
+    ( cd "$FCTF_ROOT" \
+        && docker compose -f compose.prod.yml exec -T postgres \
+            sh -c 'psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"' _ "$1" 2>/dev/null )
+}
+
+# 探测活跃运行时。返回码：
+#   0 = 存在进行中的 AWD/AWDP 运行时（详情已打印）
+#   1 = 确无进行中的运行时
+#   2 = 无法判定（已 warn；数据库不可查询时按"无活跃"处理，不阻断卸载）
+probe_active_runtime() {
+    if [ ! -f "$FCTF_ROOT/compose.prod.yml" ] || [ ! -f "$FCTF_ROOT/.env" ]; then
+        warn "无法判定活跃赛事状态：缺少 $FCTF_ROOT/compose.prod.yml 或 $FCTF_ROOT/.env"
+        return 2
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        warn "无法判定活跃赛事状态：无 docker 命令"
+        return 2
+    fi
+    local cid
+    cid="$( cd "$FCTF_ROOT" && docker compose -f compose.prod.yml ps -q postgres 2>/dev/null | head -1 )" || cid=""
+    if [ -z "$cid" ]; then
+        warn "PostgreSQL 未运行：无法判定活跃赛事状态（平台已停 -> 无运行中赛事）"
+        return 2
+    fi
+
+    local awd_count awdp_count
+    if ! awd_count="$(pg_readonly_query "SELECT count(*) FROM awd_events WHERE status NOT IN ('draft','configuring','finished','archived','deploy_failed','verification_failed')")" \
+        || [ -z "$awd_count" ]; then
+        warn "无法查询 AWD 赛事状态（数据库不可达或 schema 未初始化）"
+        return 2
+    fi
+    if ! awdp_count="$(pg_readonly_query "SELECT count(*) FROM awdp_runs WHERE finished_at IS NULL")" \
+        || [ -z "$awdp_count" ]; then
+        warn "无法查询 AWDP run 状态（数据库不可达或 schema 未初始化）"
+        return 2
+    fi
+
+    case "$awd_count" in ''|*[!0-9]*) warn "AWD 赛事计数异常: $awd_count"; return 2 ;; esac
+    case "$awdp_count" in ''|*[!0-9]*) warn "AWDP run 计数异常: $awdp_count"; return 2 ;; esac
+    if [ "$awd_count" -eq 0 ] && [ "$awdp_count" -eq 0 ]; then
+        return 1
+    fi
+
+    echo ""
+    echo "!!!! 检测到进行中的 AWD/AWDP 运行时 !!!!"
+    if [ "$awd_count" -gt 0 ]; then
+        echo "  AWD 赛事（进行中）: $awd_count 个"
+        echo "    id: $(pg_readonly_query "SELECT string_agg(id::text, ', ') FROM awd_events WHERE status NOT IN ('draft','configuring','finished','archived','deploy_failed','verification_failed')" 2>/dev/null || true)"
+    fi
+    if [ "$awdp_count" -gt 0 ]; then
+        echo "  AWDP run（未结束）: $awdp_count 个"
+        echo "    id: $(pg_readonly_query "SELECT string_agg(id::text, ', ') FROM awdp_runs WHERE finished_at IS NULL" 2>/dev/null || true)"
+    fi
+    echo ""
+    return 0
+}
+
+# 守卫：存在活跃运行时时返回非零（并解释后果）。无法判定时放行（只 warn）。
+active_runtime_guard() {
+    local rc=0
+    probe_active_runtime || rc=$?
+    case "$rc" in
+        0)
+            echo "原因：数据库会被保留，但 AWD/AWDP 运行时（FlagServer/JudgeServer/GameBox 容器、"
+            echo "      赛事 Docker 网络、fawg_* WireGuard 接口、floatctf_awd* nft 表）会被销毁 ——"
+            echo "      这会留下「赛事仍在 running / run 未结束，但 runtime 已消失」的不一致状态。"
+            echo ""
+            echo "处理：先结束或归档这些赛事（管理端结束赛事 / 结束 AWDP run），再重新运行卸载；"
+            echo "      若确认放弃该场次，用 sudo $FCTF_ROOT/uninstall.sh --force"
+            return 1
+            ;;
+        2)  return 0 ;;
+        *)  return 0 ;;
+    esac
+}
+
 remove_api_images() {
     info "── 移除 FloatCTF API runtime images ──"
     local id
@@ -1237,6 +1412,14 @@ safe_uninstall() {
         info "$FCTF_ROOT 不存在 —— 已是未安装状态"
         ok "FloatCTF 已卸载（或从未安装）。"
         return
+    fi
+
+    # 0. 活跃运行时守卫 —— 必须排在**任何**拆除动作（含 stop_api_first）之前：
+    #    数据库会被保留，但运行时会消失，进行中的赛事/run 会变成不一致状态。
+    if [ "$SAFE_FORCE" = "1" ]; then
+        warn "--force：跳过活跃运行时守卫（数据库保留；进行中的赛事 runtime 会被销毁）"
+    elif ! active_runtime_guard; then
+        die "检测到进行中的 AWD/AWDP 运行时，已拒绝安全卸载（未改动任何内容）；用 --force 强制卸载"
     fi
 
     # 1. 先停 API（停止接受流量 + 停止 recover_all 重建动态资源）
@@ -1400,6 +1583,20 @@ purge_remove_user() {
 purge_run() {
     info "==== 永久删除（purge）===="
     purge_confirm
+
+    # purge 连数据库一起删除，因此**不需要**守卫（不存在"runtime 没了、库里还在"的
+    # 不一致状态）；但进行中的赛事意味着正在进行的比赛及其全部数据被销毁，
+    # 必须显式、醒目地警告（不额外加交互确认，既有 purge_confirm 已足够）。
+    if probe_active_runtime; then
+        warn "════════════════════════════════════════════════════════════════"
+        warn "注意：存在进行中的 AWD/AWDP 运行时 —— purge 将**永久销毁**以下内容："
+        warn "  - 全部 PostgreSQL 数据（赛事/题目/用户/成绩，不可恢复）"
+        warn "  - FlagServer / JudgeServer / GameBox 容器与 AWDP 判题容器"
+        warn "  - 赛事 Docker 网络（fctf-awd-* / fctf-awdp-*）、fawg_* WireGuard 接口"
+        warn "  - floatctf_awd* nftables 表与 Docker 反欺骗放行规则"
+        warn "  - RustFS 数据、配置与密钥（$FCTF_ROOT/config、$FCTF_ROOT/.env）"
+        warn "════════════════════════════════════════════════════════════════"
+    fi
 
     # 先移除生产 API，阻止 recovery/scheduler 继续重建资源。
     stop_api_first
@@ -1657,10 +1854,50 @@ stage_release() {
 
     install_platform_frontends
     install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
+    install_ops_tools
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     fix_infra_ownership
-    ok "产物装配完成（API image + helper + bootstrap + 前端管理器 + 已安装前端 + merged.sql）"
+    ok "产物装配完成（API image + helper + bootstrap + 前端管理器 + 已安装前端 + merged.sql + 运维工具）"
+}
+
+# 安装 ops-tools（backup.sh / restore.sh / db/migrate.sh + db/migrations/）。
+#
+# 布局契约（$FLOATCTF_HOME）：
+#   backup.sh  restore.sh           运维入口（root:root 0755）
+#   db/migrate.sh                   forward-only 迁移器（migrate.sh 以自身
+#                                   SCRIPT_DIR 为锚点找 migrations/ 与 merged.sql，
+#                                   因此这两者必须与它同级放在 db/ 下）
+#   db/migrations/*.sql             release 的全部迁移
+#   db/merged.sql                   已装配 merged.sql 的副本（fresh bootstrap 语义）
+# 所有 shell 脚本安装后都过一遍 `bash -n`：语法坏掉的迁移器在升级时才会暴露，
+# 而那时运维已经不在安装窗口里了。
+install_ops_tools() {
+    info "── 装配运维工具（backup.sh / restore.sh / db/migrate.sh）──"
+    install -m 0755 "$PKG_DIR/ops/backup.sh" "$FLOATCTF_HOME/backup.sh"
+    install -m 0755 "$PKG_DIR/ops/restore.sh" "$FLOATCTF_HOME/restore.sh"
+    chown root:root "$FLOATCTF_HOME/backup.sh" "$FLOATCTF_HOME/restore.sh"
+
+    mkdir -p "$FLOATCTF_HOME/db"
+    install -m 0755 "$PKG_DIR/ops/db/migrate.sh" "$FLOATCTF_HOME/db/migrate.sh"
+    # migrations/ 先清空再铺：release 是迁移的完整集合，残留的旧文件会让
+    # migrate.sh 看到 release 之外的迁移（历史由 schema_migrations 校验，不应出现）。
+    find "$FLOATCTF_HOME/db/migrations" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    mkdir -p "$FLOATCTF_HOME/db/migrations"
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        install -m 0644 "$f" "$FLOATCTF_HOME/db/migrations/$(basename "$f")"
+    done < <(find "$PKG_DIR/ops/db/migrations" -maxdepth 1 -type f -name '*.sql' | sort)
+    install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/db/merged.sql"
+    chown root:root "$FLOATCTF_HOME/db" "$FLOATCTF_HOME/db/migrate.sh" "$FLOATCTF_HOME/db/merged.sql"
+    chown -R root:root "$FLOATCTF_HOME/db/migrations"
+
+    local script
+    for script in "$FLOATCTF_HOME/backup.sh" "$FLOATCTF_HOME/restore.sh" "$FLOATCTF_HOME/db/migrate.sh"; do
+        bash -n "$script" || die "安装的运维脚本语法无效: $script（ops-tools 产物损坏？）"
+    done
+    ok "运维工具已安装: backup.sh / restore.sh / db/migrate.sh（db/migrations/ $(find "$FLOATCTF_HOME/db/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ') 个迁移）"
 }
 
 # 安装随 release 发布的前端（bootstrap/ 之外的 frontends/<id>/<version>/）。
@@ -1797,6 +2034,128 @@ install_systemd() {
     ok "systemd 单元已写出并 enable（未启动；用 systemctl start floatctf.target 启动）"
 }
 
+# ── 升级：既有数据库的新增迁移 ────────────────────────────────────────────────
+#
+# 为什么需要它：release 只发布 merged.sql，而 PostgreSQL 仅在**首次**初始化
+# （空数据目录）时执行 /docker-entrypoint-initdb.d。既有安装因此无法靠 merged.sql
+# 拿到新迁移 —— 唯一的受支持路径就是本函数：release 自带 db/migrate.sh +
+# db/migrations/，以 forward-only、按版本幂等的方式补齐新迁移。
+#
+# 时机与前置：本函数在 stage_release 之后、ensure_platform_control_network 之前
+# 调用；此时 compose.prod.yml 与 .env 都已写好，而平台尚未启动。fresh 安装
+# （无 PG_VERSION）直接跳过：那种情况下 merged.sql 会在首次启动 postgres 时
+# 建好**全部**表与 schema_migrations 记录。
+apply_migrations() {
+    info "──── 部署：数据库迁移（forward-only）────"
+    if [ "${SKIP_MIGRATIONS:-0}" = "1" ]; then
+        warn "--skip-migrations / FLOATCTF_SKIP_MIGRATIONS=1：跳过 migrate apply（平台可能因缺少新表/新列而启动失败）"
+        return 0
+    fi
+
+    # 既有 cluster 判据：data/postgres 存在、非空、且含 PG_VERSION。
+    # 三者任一不满足 = fresh 安装（initdb 尚未跑过）。
+    # 安装器必须以 root 运行；data/postgres 归容器内 postgres(999) 且多为 0700，
+    # 非 root 读不了 —— 此时**宁可失败也不猜**（把"读不到"误判成 fresh 会静默跳过迁移）。
+    local pg_data="$FLOATCTF_HOME/data/postgres"
+    local pg_entries=""
+    if [ -d "$pg_data" ]; then
+        pg_entries="$(ls -A "$pg_data" 2>/dev/null)" \
+            || die "无法读取 $pg_data（权限不足）；无法判定 fresh/既有安装。请以 root 运行安装器"
+    fi
+    if [ -z "$pg_entries" ] || [ ! -f "$pg_data/PG_VERSION" ]; then
+        info "fresh 数据库：由 merged.sql 完成 bootstrap，跳过 migrate apply"
+        return 0
+    fi
+
+    [ -f "$FLOATCTF_HOME/db/migrate.sh" ] \
+        || die "缺少 $FLOATCTF_HOME/db/migrate.sh（ops-tools 未装配？）；无法升级既有数据库"
+
+    info "检测到既有 PostgreSQL cluster：仅启动 postgres 服务以应用新增迁移"
+    docker compose --env-file "$ENV_FILE" -f "$FLOATCTF_HOME/compose.prod.yml" up -d postgres \
+        || die "为应用迁移启动 postgres 失败（docker compose up -d postgres）"
+
+    # 有界等待 healthcheck（90 × 2s = 180s）；失败即放弃部署，绝不在数据库
+    # 半就绪时继续。
+    local cid status attempt
+    cid="$(docker compose --env-file "$ENV_FILE" -f "$FLOATCTF_HOME/compose.prod.yml" ps -q postgres 2>/dev/null | head -1)"
+    [ -n "$cid" ] || die "无法解析 postgres 容器 id（docker compose ps -q postgres）"
+    status=""
+    for attempt in $(seq 1 90); do
+        status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || true)"
+        [ "$status" = "healthy" ] && break
+        sleep 2
+    done
+    [ "$status" = "healthy" ] \
+        || die "postgres 健康检查未在 180s 内变为 healthy（当前: ${status:-unknown}）；平台**未启动**，请 journalctl 查看后重新运行本安装器"
+
+    # migrate.sh 只从 FLOATCTF_CONFIG 的 [database].url 读取目标库，因此需要一份
+    # 宿主可达的临时配置：容器内主机名 postgres 在宿主不可解析，改用回环 + 发布的
+    # PG 端口（compose 把 ${POSTGRES_PORT} 绑在 127.0.0.1）。
+    # 假设：.env 里的用户/密码/库名不含 URL 特殊字符（新装密码是 hex；若历史密码含
+    # '@' ':' '/' '#' 等，需要改成百分号编码后手动执行 migrate.sh）。此处不做额外
+    # 编码，保持可读、可复核。
+    local db_user db_pass db_name pg_port tmp_cfg
+    db_user="$(env_get POSTGRES_USER postgres)"
+    db_pass="$(env_get POSTGRES_PASSWORD)"
+    db_name="$(env_get POSTGRES_DB floatctf_db)"
+    pg_port="$(env_get POSTGRES_PORT 5433)"
+    [ -n "$db_pass" ] || die "无法从 $ENV_FILE 读取 POSTGRES_PASSWORD；无法连接数据库应用迁移"
+    tmp_cfg="$(mktemp "${TMP_STAGE_DIR:?内部错误: TMP_STAGE_DIR 未设置}/migrate-config.XXXXXX.toml")"
+    # umask 077 + 显式 chmod：临时配置含明文密码，只在本次迁移期间存在。
+    ( umask 077
+      printf '[database]\nurl = "postgres://%s:%s@127.0.0.1:%s/%s"\n' \
+          "$db_user" "$db_pass" "$pg_port" "$db_name" > "$tmp_cfg" )
+    chmod 0600 "$tmp_cfg"
+
+    local migrate_rc=0
+    info "应用迁移: FLOATCTF_CONFIG=<临时配置> bash $FLOATCTF_HOME/db/migrate.sh apply"
+    FLOATCTF_CONFIG="$tmp_cfg" bash "$FLOATCTF_HOME/db/migrate.sh" apply || migrate_rc=$?
+    # 无论成功失败都立即删除：密码不落盘、不残留。
+    rm -f "$tmp_cfg"
+    if [ "$migrate_rc" -ne 0 ]; then
+        die "迁移应用失败（exit $migrate_rc）：平台**未启动**，数据库保持迁移前的状态（已成功的迁移已提交，可安全重试）。请修复上方错误后**重新运行本安装器**（幂等，已应用版本会自动跳过），或手动执行：FLOATCTF_CONFIG=<宿主可达的 TOML> bash $FLOATCTF_HOME/db/migrate.sh status"
+    fi
+    ok "数据库迁移已应用（postgres 容器保持运行；平台其余服务仍未启动）"
+}
+
+# ── 部署前体检：AWD/AWDP 运行时镜像 ───────────────────────────────────────────
+#
+# write_config_template 会把 AWD/AWDP 指向 floatctf/{awd-flagserver,awd-judgeserver}
+# 与 floatctf/infra/awdp-judgeserver 的 :$VERSION 标签，但 release 产物里**没有**
+# 这些镜像（分发通道待定，本安装器刻意不构建/不下载）。缺镜像时 AWD/AWDP 部署会在
+# 比赛现场才失败，且错误信息很难懂 —— 因此这里在安装时就把「缺哪些 + 怎么补」
+# 明确打出来。刻意只 warn 不 die：Jeopardy 单独部署是合法用法。
+RUNTIME_IMAGES_MISSING=""
+check_runtime_images() {
+    info "──── 部署：AWD/AWDP 运行时镜像体检 ────"
+    local images=(
+        "floatctf/awd-flagserver:$VERSION"
+        "floatctf/awd-judgeserver:$VERSION"
+        "floatctf/infra/awdp-judgeserver:$VERSION"
+    )
+    local img missing=()
+    for img in "${images[@]}"; do
+        docker image inspect "$img" >/dev/null 2>&1 || missing+=("$img")
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        RUNTIME_IMAGES_MISSING=""
+        ok "AWD/AWDP 运行时镜像齐备（$VERSION）"
+        return 0
+    fi
+    RUNTIME_IMAGES_MISSING="${missing[*]}"
+    warn "════════════════════════════════════════════════════════════════"
+    warn "缺少 AWD/AWDP 运行时镜像：**AWD/AWDP 赛事在补齐前无法部署**"
+    for img in "${missing[@]}"; do
+        warn "  缺失: $img"
+    done
+    warn "这些镜像不随本 release 分发，安装器也不会自动构建/下载它们（分发通道待定）。"
+    warn "请在**有仓库源码**的机器上构建并导入本机（需要 Rust/Docker 构建环境）："
+    warn "  sudo bash <FloatCTF 仓库>/scripts/build-runtime-images.sh --tag $VERSION"
+    warn "Jeopardy 赛制不受影响；AWD/AWDP 事件请在上面的镜像就绪后再部署。"
+    warn "════════════════════════════════════════════════════════════════"
+    return 0
+}
+
 run_deploy() {
     info "──── 第三阶段：部署（写文件/镜像/网络 + 建服务，不启动容器）→ $FLOATCTF_HOME ────"
     precheck
@@ -1807,8 +2166,12 @@ run_deploy() {
     prepare_configs
     validate_caddy_config
     stage_release
+    # 既有数据库先补新迁移（fresh 库自动跳过；平台此时尚未启动）。
+    apply_migrations
     ensure_platform_control_network
     validate_compose_config
+    # 运行时镜像体检放在 compose 校验之后：前者可能要求整改，但不阻断安装。
+    check_runtime_images
     write_systemd_units
     install_systemd
     write_uninstall
@@ -1893,7 +2256,22 @@ main() {
   systemctl status floatctf.target
   journalctl -fu floatctf.target floatctf-infra
 （生产 API 由 Compose 托管，没有 floatctf-api.service —— 不要照抄成 floatctf-api）
+备份 / 恢复（运维工具已随 release 装好）：
+  sudo $FLOATCTF_HOME/backup.sh                 # 产出 $PWD/floatctf-backup-<UTC>.tar.gz
+  sudo $FLOATCTF_HOME/restore.sh <归档> --yes
+升级既有安装：重新运行本安装器（release 的 db/migrate.sh 会 forward-only 补齐新迁移）；
+  已装好的迁移器也可手动使用：sudo $FLOATCTF_HOME/db/migrate.sh status
 EOF
+    if [ -n "$RUNTIME_IMAGES_MISSING" ]; then
+        cat <<EOF
+
+!! 注意：AWD/AWDP 运行时镜像缺失，AWD/AWDP 赛事在补齐前**无法部署** !!
+  缺失镜像: $RUNTIME_IMAGES_MISSING
+  在有仓库源码的机器上构建后导入本机：
+    sudo bash <FloatCTF 仓库>/scripts/build-runtime-images.sh --tag $VERSION
+  Jeopardy 赛制不受影响。
+EOF
+    fi
     ok "FloatCTF 安装完成：$FLOATCTF_HOME"
 }
 

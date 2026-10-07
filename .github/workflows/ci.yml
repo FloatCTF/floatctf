@@ -91,6 +91,9 @@ jobs:
       # 发布形态验证：打包 web-dist 并断言布局/manifest/脚本语法（与 release 同一脚本）。
       - run: ./scripts/package-web-dist.sh /tmp/web-dist.tar.gz
       - run: ./scripts/verify-release-frontend.sh /tmp/web-dist.tar.gz
+      # 前端管理器契约 / 安全负向测试（manifest 校验、注册表数据边界、制品树安全、
+      # 版本不可变、显式指针、构建身份非 root）。不依赖 docker。
+      - run: ./scripts/test-frontend-manager.sh
 
   docker-e2e:
     name: CI-docker · AWD infra smoke (on-demand)

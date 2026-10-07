@@ -130,6 +130,8 @@ run = [
     # 同上：测试同样通过 exports → dist 解析 @floatctf/*，先确保 dist 是当前的。
     "pnpm run build:packages",
     "pnpm run test:web",
+    # 前端管理器（frontend.sh）的契约与安全负向测试：不依赖 docker，几十秒内跑完。
+    "./scripts/test-frontend-manager.sh",
 ]
 
 # 构建

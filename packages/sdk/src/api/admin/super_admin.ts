@@ -1,30 +1,35 @@
 import type { SuperAdmin } from "../../entity/index.js";
-import { type QueryParams, type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { QueryParams, UniResponse } from "../../transport.js";
 
-export const superAdminApi = {
-    fetch: async (
-        params: QueryParams = {},
-    ): Promise<UniResponse<SuperAdmin[]>> => {
-        const res = await admin_api.get("/super_admin", { params });
-        return res.data;
-    },
-    create: async (
-        data: Partial<SuperAdmin>,
-    ): Promise<UniResponse<SuperAdmin>> => {
-        const res = await admin_api.post("/super_admin", data);
-        return res.data;
-    },
-    remove: async (id_list: string[]): Promise<UniResponse<number>> => {
-        const res = await admin_api.delete("/super_admin", {
-            data: { id_list },
-        });
-        return res.data;
-    },
-    patch: async (
-        id: string,
-        data: Partial<SuperAdmin>,
-    ): Promise<UniResponse<SuperAdmin>> => {
-        const res = await admin_api.post(`/super_admin/${id}`, data);
-        return res.data;
-    },
+export function createSuperAdminApi(http: FloatCTFHttpClient) {
+	return {
+	    fetch: async (
+	        params: QueryParams = {},
+	    ): Promise<UniResponse<SuperAdmin[]>> => {
+	        const res = await http.get("/super_admin", { params });
+	        return res.data;
+	    },
+	    create: async (
+	        data: Partial<SuperAdmin>,
+	    ): Promise<UniResponse<SuperAdmin>> => {
+	        const res = await http.post("/super_admin", data);
+	        return res.data;
+	    },
+	    remove: async (id_list: string[]): Promise<UniResponse<number>> => {
+	        const res = await http.delete("/super_admin", {
+	            data: { id_list },
+	        });
+	        return res.data;
+	    },
+	    patch: async (
+	        id: string,
+	        data: Partial<SuperAdmin>,
+	    ): Promise<UniResponse<SuperAdmin>> => {
+	        const res = await http.post(`/super_admin/${id}`, data);
+	        return res.data;
+	    },
 };
+}
+
+export type SuperAdminApi = ReturnType<typeof createSuperAdminApi>;

@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { AxiosError } from "axios";
 
-import { type AwdpTrendItem, awdpPlayerApi } from "@floatctf/sdk";
+import { type AwdpTrendItem } from "@floatctf/sdk";
 import type { UniResponse } from "@floatctf/sdk";
 import { TrendChart } from "@/routes/service/events/jeopardy.$id/trend";
 import { ServiceRouteGuard } from "../../route";
+import { awdpPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awdp/$id/trend")({
 	component: RouteComponent,

@@ -1,137 +1,164 @@
 /**
- * 领域 API 门面：把各模块客户端按使用方（选手端 / 管理端）聚合成对象。
+ * 领域 API 门面工厂：把各模块客户端按使用方（选手端 / 管理端）聚合成对象。
  *
- * 这些门面**不是工厂**：具体模块通过 `../transport` 里被绑定的 HTTP handle 发请求，
- * 因此 `createFloatCTFClient()` 绑定传输后，这里导出的门面即可直接使用。
+ * **每个门面绑定到传入的 HTTP handle**，因此不同 `createFloatCTFClient()` 实例
+ * 之间完全隔离（不存在模块级共享绑定）。领域模块本身也是工厂：
+ * 它们只依赖注入进来的 `FloatCTFHttpClient`。
  */
 
-export { adminLoginFn } from "./admin/auth.js";
-export { systemAdminApi } from "./admin/system.js";
-export { settingAdminApi, type SettingsDto } from "./admin/settings.js";
-export { announcementAdminApi } from "./admin/announcements.js";
-export { challengeAdminApi } from "./admin/challenges.js";
-export { userAdminApi } from "./admin/users.js";
-export { eventAdminApi } from "./admin/events.js";
-export { instanceAdminApi, type AdminInstanceRow } from "./admin/instances.js";
-export { eventChallengeAdminApi } from "./admin/event_challenges.js";
-export { eventUserAdminApi } from "./admin/event_users.js";
-export { eventAnnouncementAdminApi } from "./admin/event_announcements.js";
-export { eventWriteupAdminApi } from "./admin/event_writeups.js";
-export { eventTeamAdminApi } from "./admin/event_teams.js";
-export { eventLogAdminApi } from "./admin/event_logs.js";
-export { databaseAdminApi } from "./admin/database.js";
-export { scheduledTaskAdminApi } from "./admin/scheduled_tasks.js";
-export { weaponsAdminApi } from "./admin/weapons.js";
-export { logsAdminApi } from "./admin/logs.js";
-export { downloadAdminApi } from "./admin/download.js";
-export { discussionAdminApi } from "./admin/discussions.js";
-export { dashboardAdminApi, type DashboardSummary } from "./admin/dashboard.js";
-export { superAdminApi } from "./admin/super_admin.js";
-export {
-	dockerAdminApi,
-	type FloatDockerContainer,
-	type ContainerInfo,
-	type PortInfo,
-	type ImageInfo,
-	type NetworkInfo,
-} from "./admin/docker.js";
+import type { FloatCTFHttpClient } from "../transport.js";
 
-export { userServiceApi } from "./service/users.js";
-export { eventServiceApi } from "./service/events.js";
 export {
-	challengeServiceApi,
-	type UnifiedWriteupDetail,
-	type UnifiedWriteupResult,
-} from "./service/challenges.js";
-export { instanceServiceApi } from "./service/instances.js";
-export { submitServiceApi } from "./service/submit.js";
-export { solveServiceApi, type SolveResult } from "./service/solves.js";
-export { weaponsServiceApi } from "./service/weapons.js";
-export { announcementServiceApi } from "./service/announcements.js";
-export { uploadsServiceApi } from "./service/uploads.js";
-export {
-	discussionServiceApi,
-	type DiscussionWithAuthor,
-} from "./service/discussions.js";
-
-import {
-	adminLoginFn,
-	announcementAdminApi,
-	challengeAdminApi,
-	dashboardAdminApi,
-	databaseAdminApi,
-	discussionAdminApi,
-	dockerAdminApi,
-	downloadAdminApi,
-	eventAdminApi,
-	eventAnnouncementAdminApi,
-	eventChallengeAdminApi,
-	eventLogAdminApi,
-	eventTeamAdminApi,
-	eventUserAdminApi,
-	eventWriteupAdminApi,
-	instanceAdminApi,
-	logsAdminApi,
-	scheduledTaskAdminApi,
-	settingAdminApi,
-	superAdminApi,
-	systemAdminApi,
-	userAdminApi,
-	weaponsAdminApi,
+	createAdminLoginFn,
+	createAnnouncementAdminApi,
+	createChallengeAdminApi,
+	createDashboardAdminApi,
+	createDatabaseAdminApi,
+	createDiscussionAdminApi,
+	createDockerAdminApi,
+	createDownloadAdminApi,
+	createEventAdminApi,
+	createEventAnnouncementAdminApi,
+	createEventChallengeAdminApi,
+	createEventLogAdminApi,
+	createEventTeamAdminApi,
+	createEventUserAdminApi,
+	createEventWriteupAdminApi,
+	createInstanceAdminApi,
+	createLogsAdminApi,
+	createScheduledTaskAdminApi,
+	createSettingAdminApi,
+	createSuperAdminApi,
+	createSystemAdminApi,
+	createUserAdminApi,
+	createWeaponsAdminApi,
 } from "./admin/index.js";
-import {
-	announcementServiceApi,
-	challengeServiceApi,
-	discussionServiceApi,
-	eventServiceApi,
-	instanceServiceApi,
-	solveServiceApi,
-	submitServiceApi,
-	uploadsServiceApi,
-	userServiceApi,
-	weaponsServiceApi,
+export {
+	createAnnouncementServiceApi,
+	createChallengeServiceApi,
+	createDiscussionServiceApi,
+	createEventServiceApi,
+	createInstanceServiceApi,
+	createSolveServiceApi,
+	createSubmitServiceApi,
+	createUploadsServiceApi,
+	createUserServiceApi,
+	createWeaponsServiceApi,
 } from "./service/index.js";
-import { awdAdminApi, awdPlayerApi } from "./awd.js";
 
-/** 管理端 API 门面（与原 `@/api` 的 `adminApi` 形状一致）。 */
-export const adminApi = {
-	login: adminLoginFn,
-	system: systemAdminApi,
-	settings: settingAdminApi,
-	announcements: announcementAdminApi,
-	challenges: challengeAdminApi,
-	discussions: discussionAdminApi,
-	users: userAdminApi,
-	events: eventAdminApi,
-	instances: instanceAdminApi,
-	event_challenges: eventChallengeAdminApi,
-	event_users: eventUserAdminApi,
-	event_announcements: eventAnnouncementAdminApi,
-	event_logs: eventLogAdminApi,
-	event_writeups: eventWriteupAdminApi,
-	event_teams: eventTeamAdminApi,
-	database: databaseAdminApi,
-	scheduled_tasks: scheduledTaskAdminApi,
-	weapons: weaponsAdminApi,
-	logs: logsAdminApi,
-	download: downloadAdminApi,
-	docker: dockerAdminApi,
-	dashboard: dashboardAdminApi,
-	super_admin: superAdminApi,
-	awd: awdAdminApi,
-};
+export type {
+	AdminInstanceRow,
+	ContainerInfo,
+	DashboardSummary,
+	FloatDockerContainer,
+	ImageInfo,
+	NetworkInfo,
+	PortInfo,
+	SettingsDto,
+} from "./admin/index.js";
+export type {
+	DiscussionWithAuthor,
+	SolveResult,
+	UnifiedWriteupDetail,
+	UnifiedWriteupResult,
+} from "./service/index.js";
 
-/** 选手端 API 门面（与原 `@/api` 的 `serviceApi` 形状一致）。 */
-export const serviceApi = {
-	users: userServiceApi,
-	events: eventServiceApi,
-	challenges: challengeServiceApi,
-	instances: instanceServiceApi,
-	submit: submitServiceApi,
-	solves: solveServiceApi,
-	weapons: weaponsServiceApi,
-	announcements: announcementServiceApi,
-	discussions: discussionServiceApi,
-	uploads: uploadsServiceApi,
-	awd: awdPlayerApi,
-};
+import {
+	createAdminLoginFn,
+	createAnnouncementAdminApi,
+	createChallengeAdminApi,
+	createDashboardAdminApi,
+	createDatabaseAdminApi,
+	createDiscussionAdminApi,
+	createDockerAdminApi,
+	createDownloadAdminApi,
+	createEventAdminApi,
+	createEventAnnouncementAdminApi,
+	createEventChallengeAdminApi,
+	createEventLogAdminApi,
+	createEventTeamAdminApi,
+	createEventUserAdminApi,
+	createEventWriteupAdminApi,
+	createInstanceAdminApi,
+	createLogsAdminApi,
+	createScheduledTaskAdminApi,
+	createSettingAdminApi,
+	createSuperAdminApi,
+	createSystemAdminApi,
+	createUserAdminApi,
+	createWeaponsAdminApi,
+} from "./admin/index.js";
+import { createAwdAdminApi, createAwdPlayerApi } from "./awd.js";
+import { createAwdpAdminApi, createAwdpPlayerApi } from "./awdp.js";
+import { createAwdpRunApi } from "./awdpRuns.js";
+import {
+	createAnnouncementServiceApi,
+	createChallengeServiceApi,
+	createDiscussionServiceApi,
+	createEventServiceApi,
+	createInstanceServiceApi,
+	createSolveServiceApi,
+	createSubmitServiceApi,
+	createUploadsServiceApi,
+	createUserServiceApi,
+	createWeaponsServiceApi,
+} from "./service/index.js";
+
+/**
+ * 管理端 API 门面。
+ *
+ * @param http 该客户端**自己的**管理端 HTTP handle（见 `createFloatCTFTransport`）。
+ */
+export function createAdminApi(http: FloatCTFHttpClient) {
+	return {
+		login: createAdminLoginFn(http),
+		system: createSystemAdminApi(http),
+		settings: createSettingAdminApi(http),
+		announcements: createAnnouncementAdminApi(http),
+		challenges: createChallengeAdminApi(http),
+		discussions: createDiscussionAdminApi(http),
+		users: createUserAdminApi(http),
+		events: createEventAdminApi(http),
+		instances: createInstanceAdminApi(http),
+		event_challenges: createEventChallengeAdminApi(http),
+		event_users: createEventUserAdminApi(http),
+		event_announcements: createEventAnnouncementAdminApi(http),
+		event_logs: createEventLogAdminApi(http),
+		event_writeups: createEventWriteupAdminApi(http),
+		event_teams: createEventTeamAdminApi(http),
+		database: createDatabaseAdminApi(http),
+		scheduled_tasks: createScheduledTaskAdminApi(http),
+		weapons: createWeaponsAdminApi(http),
+		logs: createLogsAdminApi(http),
+		download: createDownloadAdminApi(http),
+		docker: createDockerAdminApi(http),
+		dashboard: createDashboardAdminApi(http),
+		super_admin: createSuperAdminApi(http),
+		awd: createAwdAdminApi(http),
+	};
+}
+
+export type AdminApi = ReturnType<typeof createAdminApi>;
+
+/**
+ * 选手端 API 门面。
+ *
+ * @param http 该客户端**自己的**选手端 HTTP handle。
+ */
+export function createServiceApi(http: FloatCTFHttpClient) {
+	return {
+		users: createUserServiceApi(http),
+		events: createEventServiceApi(http),
+		challenges: createChallengeServiceApi(http),
+		instances: createInstanceServiceApi(http),
+		submit: createSubmitServiceApi(http),
+		solves: createSolveServiceApi(http),
+		weapons: createWeaponsServiceApi(http),
+		announcements: createAnnouncementServiceApi(http),
+		discussions: createDiscussionServiceApi(http),
+		uploads: createUploadsServiceApi(http),
+		awd: createAwdPlayerApi(http),
+	};
+}
+
+export type ServiceApi = ReturnType<typeof createServiceApi>;

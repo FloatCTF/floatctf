@@ -12,7 +12,15 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	type MockInstance,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 
 import type {
 	SseConnection,
@@ -20,37 +28,34 @@ import type {
 	SseConnectionStatus,
 } from "@floatctf/sdk";
 
+import { createFloatCTFClient } from "@floatctf/sdk";
+
 import { createUseAwdEventStream } from "../useAwdEventStream";
 
 // ── mocks ────────────────────────────────────────────────────────────────────
 
-// vi.hoisted：mock 工厂在模块导入期执行，必须先于 const 声明初始化。
-const { mockConnectSse } = vi.hoisted(() => ({ mockConnectSse: vi.fn() }));
-
-
 type OnStateChange = (status: SseConnectionStatus) => void;
 
-vi.mock("@floatctf/sdk", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@floatctf/sdk")>();
-	return {
-		...actual,
-		connectSse: (options: import("@floatctf/sdk").ConnectSseOptions) =>
-			mockConnectSse(options),
-	};
+// hook 现在通过**客户端自己的** sse.connect 建连（P0-B）：spy 它即可拿到最终选项。
+const client = createFloatCTFClient({
+	baseUrl: "/api",
+	getUserToken: () => "test-token",
 });
+// 每个用例重建 spy：`vi.restoreAllMocks()` 会还原对象方法，模块级 spy 只会生效一次。
+let mockConnectSse: MockInstance;
 
 // 令牌来源由前端注入 —— 这里换成测试专用的固定 hook。
 const useTestToken = () => "test-token";
-const useAwdEventStream = createUseAwdEventStream(useTestToken);
+const useAwdEventStream = createUseAwdEventStream(client, useTestToken);
 
 // 捕获最近一次 connectSse 调用（含 onStateChange / close）。
 function lastConnect(): {
-	options: import("@floatctf/sdk").ConnectSseOptions;
+	options: { url: string; getToken?: () => string | null };
 	close: ReturnType<typeof vi.fn>;
 	status: { state: SseConnectionState };
 } {
 	const options = mockConnectSse.mock.calls.at(-1)?.[0];
-	if (!options) throw new Error("connectSse was not called");
+	if (!options) throw new Error("client.sse.connect was not called");
 	return {
 		options,
 		close: vi.fn(),
@@ -82,9 +87,9 @@ function makeWrapper() {
 describe("useAwdEventStream reconnect fallback", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
-		mockConnectSse.mockReset();
+		mockConnectSse = vi.spyOn(client.sse, "connect");
 		mockConnectSse.mockImplementation(
-			(options: import("@floatctf/sdk").ConnectSseOptions) => {
+			(options: import("@floatctf/sdk").FloatCTFSseOptions) => {
 				const conn: SseConnection = {
 					close: () => {
 						// 模拟 close()：同步触发 abort 语义
@@ -188,7 +193,7 @@ describe("useAwdEventStream reconnect fallback", () => {
 		unmount();
 	});
 
-	it("Bearer token is passed via getToken and never in URL", () => {
+	it("passes a base-relative URL plus the token getter to the client transport", () => {
 		const { wrapper } = makeWrapper();
 		const { unmount } = renderHook(
 			() => useAwdEventStream({ eventId: "evt-1" }),
@@ -196,7 +201,8 @@ describe("useAwdEventStream reconnect fallback", () => {
 		);
 
 		const conn = lastConnect();
-		expect(conn.options.url).toBe("/api/events/evt-1/awd/stream");
+		// 相对路径：绝对的 /api 前缀由客户端自己的 base URL 决定（见 sse-base-url.test.tsx）
+		expect(conn.options.url).toBe("/events/evt-1/awd/stream");
 		expect(conn.options.url).not.toContain("token");
 		expect(conn.options.getToken?.()).toBe("test-token");
 		// headers 由 connectSse 内部构建（buildHeaders），getToken 语义覆盖。

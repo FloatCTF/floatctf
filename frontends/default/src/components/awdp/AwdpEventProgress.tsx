@@ -2,13 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { serviceApi } from "@/api";
-import { type AwdpOverview, awdpPlayerApi } from "@floatctf/sdk";
+import { type AwdpOverview } from "@floatctf/sdk";
 import { computeEventStatus } from "@/components";
 import {
 	AwdpTimeline,
 	computeTimelineState,
 	formatEventRemaining,
 } from "@/components/awdp/AwdpPhaseOverview";
+import { awdpPlayerApi } from "@/api";
 
 /**
  * 到点后 2s 兜底轮询的过期上限：deadline 已过去超过该时长仍无阶段变化时停止

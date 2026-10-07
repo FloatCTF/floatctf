@@ -4,8 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 
-import { type AwdpScoreRow, awdpAdminApi } from "@floatctf/sdk";
+import { type AwdpScoreRow } from "@floatctf/sdk";
 import { AdminRouteGuard } from "../../route";
+import { awdpAdminApi } from "@/api";
 
 /**
  * AWDP 赛事管理端 Scoreboard（独立 tab）。

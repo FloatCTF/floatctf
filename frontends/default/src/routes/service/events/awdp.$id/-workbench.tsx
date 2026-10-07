@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 
-import { type AwdpOverview, awdpPlayerApi } from "@floatctf/sdk";
+import { type AwdpOverview } from "@floatctf/sdk";
 import { AwdpWorkbench, type AwdpWorkbenchViewModel } from "@/components/awdp/AwdpWorkbench";
+import { awdpPlayerApi } from "@/api";
 
 /**
  * 赛事（Competition）→ AwdpWorkbench 适配器（§65）。

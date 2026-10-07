@@ -4,9 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { AxiosError } from "axios";
 
-import { type AwdpScoreboardDetail, awdpPlayerApi } from "@floatctf/sdk";
+import { type AwdpScoreboardDetail } from "@floatctf/sdk";
 import { AwdpScoreboardView } from "@/components/awdp/AwdpScoreboard";
 import { ServiceRouteGuard } from "../../route";
+import { awdpPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awdp/$id/scoreboard")({
 	component: RouteComponent,

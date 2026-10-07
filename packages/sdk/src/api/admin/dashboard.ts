@@ -1,4 +1,5 @@
-import { type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { UniResponse } from "../../transport.js";
 
 export type DashboardSummary = {
 	stats: {
@@ -59,10 +60,14 @@ export type DashboardSummary = {
 	};
 };
 
-export const dashboardAdminApi = {
-	/** GET /api/admin/dashboard/summary —— 一次拿到总览所需全部聚合数据 */
-	summary: async (): Promise<UniResponse<DashboardSummary>> => {
-		const res = await admin_api.get("/dashboard/summary");
-		return res.data;
-	},
+export function createDashboardAdminApi(http: FloatCTFHttpClient) {
+	return {
+		/** GET /api/admin/dashboard/summary —— 一次拿到总览所需全部聚合数据 */
+		summary: async (): Promise<UniResponse<DashboardSummary>> => {
+			const res = await http.get("/dashboard/summary");
+			return res.data;
+		},
 };
+}
+
+export type DashboardAdminApi = ReturnType<typeof createDashboardAdminApi>;

@@ -4,7 +4,7 @@
  * 使用管理端认证令牌（adminToken）连接 `/api/admin/events/{id}/awd/stream`。
  * 认证：SuperAdminJwtGuard（super_admin 表，独立于 users 认证域）。
  *
- * 与 `useAwdEventStream` 共享 `connectSse` 传输层，仅 URL 和 token 来源不同。
+ * 与 `useAwdEventStream` 共享同一个客户端传输层，仅 base URL（管理端）与 token 来源不同。
  */
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -15,11 +15,11 @@ import {
 	invalidateAwdQueries,
 } from "./awdInvalidation.js";
 import type { AwdStreamEvent } from "./useAwdEventStream.js";
-import {
-	type SseConnection,
-	type SseConnectionState,
-	type SseEvent,
-	connectSse,
+import type {
+	FloatCTFClient,
+	SseConnection,
+	SseConnectionState,
+	SseEvent,
 } from "@floatctf/sdk";
 
 export type UseAdminAwdEventStreamOptions = {
@@ -29,7 +29,7 @@ export type UseAdminAwdEventStreamOptions = {
 	enabled?: boolean;
 };
 
-export function createUseAdminAwdEventStream(useAdminToken: UseTokenSource) {
+export function createUseAdminAwdEventStream(client: FloatCTFClient, useAdminToken: UseTokenSource) {
 	return function useAdminAwdEventStream(options: UseAdminAwdEventStreamOptions) {
 	const {
 		eventId,
@@ -132,8 +132,8 @@ export function createUseAdminAwdEventStream(useAdminToken: UseTokenSource) {
 		if (preferStream) {
 			const controller = new AbortController();
 
-			const connection = connectSse({
-				url: `/api/admin/events/${eventId}/awd/stream`,
+			const connection = client.sse.connectAdmin({
+				url: `/events/${eventId}/awd/stream`,
 				headers: {},
 				signal: controller.signal,
 				getToken: () => adminToken,
@@ -181,8 +181,7 @@ export function createUseAdminAwdEventStream(useAdminToken: UseTokenSource) {
 			disposed = true;
 			stopPoll();
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [eventId, enabled, pollMs, preferStream, adminToken, handleSseEvent, invalidateAwd]);
+			}, [client, eventId, enabled, pollMs, preferStream, adminToken, handleSseEvent, invalidateAwd]);
 
 	return {
 		connected: connectionState === "connected",

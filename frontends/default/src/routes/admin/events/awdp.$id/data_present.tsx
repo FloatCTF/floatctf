@@ -11,11 +11,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useState } from "react";
 
-import { type AwdpDataPresent, awdpAdminApi } from "@floatctf/sdk";
+import { type AwdpDataPresent } from "@floatctf/sdk";
 import { RemainingTimer } from "@/routes/service/events/jeopardy.$id/route";
 import { TrendChart } from "@/routes/service/events/jeopardy.$id/trend";
 import { DatetimeToShow } from "@/util";
 import { AdminRouteGuard } from "../../route";
+import { awdpAdminApi } from "@/api";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/data_present")({
 	component: RouteComponent,

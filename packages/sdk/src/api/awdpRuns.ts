@@ -33,7 +33,8 @@ import type {
  * 形状完全一致的 `AwdpRoundDto` / `BreakSubmitResponse` / `PatchSubmitResponse` /
  * `ManualCheckDto` / `AwdpPhase` / `AwdpEndpoint`。
  */
-import { type QueryParams, type UniResponse, service_api } from "../transport.js";
+import type { FloatCTFHttpClient } from "../transport.js";
+import type { QueryParams, UniResponse } from "../transport.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -156,159 +157,163 @@ export type AwdpRunWriteupDto = {
 // Client
 // ────────────────────────────────────────────────────────────────────────────
 
-export const awdpRunApi = {
-	// 目录 / Start Training（§56-57）
-	gameboxCatalog: async (params?: QueryParams) => {
-		const res = await service_api.get<UniResponse<GameBoxCatalogDto[]>>(
-			"/service/gameboxes",
-			{ params: { ...params, capability: "awdp" } },
-		);
-		return res.data;
-	},
-	startTraining: async (gameboxId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/gameboxes/${gameboxId}/awdp/runs`,
-		);
-		return res.data;
-	},
+export function createAwdpRunApi(http: FloatCTFHttpClient) {
+	return {
+		// 目录 / Start Training（§56-57）
+		gameboxCatalog: async (params?: QueryParams) => {
+			const res = await http.get<UniResponse<GameBoxCatalogDto[]>>(
+				"/service/gameboxes",
+				{ params: { ...params, capability: "awdp" } },
+			);
+			return res.data;
+		},
+		startTraining: async (gameboxId: string) => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/gameboxes/${gameboxId}/awdp/runs`,
+			);
+			return res.data;
+		},
 
-	// Practice Run（§58）
-	getRun: async (runId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}`,
-		);
-		return res.data;
-	},
-	stopRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<null>>(
-			`/service/awdp/runs/${runId}/stop`,
-		);
-		return res.data;
-	},
-	resetRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}/reset`,
-		);
-		return res.data;
-	},
-	/** 练习「开始」：冻结 run → 回卷全新 Break + 启动实例（与 Challenge 练习 Launch 同效）。 */
-	startRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}/start`,
-		);
-		return res.data;
-	},
-	/** 练习「End」：停止全部实例并恢复如初（计分/破解清零，回冻结 Break）。 */
-	endRun: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}/end`,
-		);
-		return res.data;
-	},
-	setPhase: async (runId: string, phase: "break" | "fix") => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}/phase`,
-			{ phase },
-		);
-		return res.data;
-	},
+		// Practice Run（§58）
+		getRun: async (runId: string) => {
+			const res = await http.get<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}`,
+			);
+			return res.data;
+		},
+		stopRun: async (runId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/service/awdp/runs/${runId}/stop`,
+			);
+			return res.data;
+		},
+		resetRun: async (runId: string) => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}/reset`,
+			);
+			return res.data;
+		},
+		/** 练习「开始」：冻结 run → 回卷全新 Break + 启动实例（与 Challenge 练习 Launch 同效）。 */
+		startRun: async (runId: string) => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}/start`,
+			);
+			return res.data;
+		},
+		/** 练习「End」：停止全部实例并恢复如初（计分/破解清零，回冻结 Break）。 */
+		endRun: async (runId: string) => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}/end`,
+			);
+			return res.data;
+		},
+		setPhase: async (runId: string, phase: "break" | "fix") => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}/phase`,
+				{ phase },
+			);
+			return res.data;
+		},
 
-	restartTraining: async (runId: string) => {
-		const res = await service_api.post<UniResponse<AwdpRunDto>>(
-			`/service/awdp/runs/${runId}/restart-training`,
-		);
-		return res.data;
-	},
-	rounds: async (runId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRoundDto[]>>(
-			`/service/awdp/runs/${runId}/rounds`,
-		);
-		return res.data;
-	},
-	evaluations: async (runId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRunEvaluationDto[]>>(
-			`/service/awdp/runs/${runId}/evaluations`,
-		);
-		return res.data;
-	},
-	scores: async (runId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRunScoresDto>>(
-			`/service/awdp/runs/${runId}/scores`,
-		);
-		return res.data;
-	},
-	getWriteup: async (runId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRunWriteupDto>>(
-			`/service/awdp/runs/${runId}/writeup`,
-		);
-		return res.data;
-	},
-	saveWriteup: async (runId: string, content: string) => {
-		const res = await service_api.put<UniResponse<AwdpRunWriteupDto>>(
-			`/service/awdp/runs/${runId}/writeup`,
-			{ content },
-		);
-		return res.data;
-	},
+		restartTraining: async (runId: string) => {
+			const res = await http.post<UniResponse<AwdpRunDto>>(
+				`/service/awdp/runs/${runId}/restart-training`,
+			);
+			return res.data;
+		},
+		rounds: async (runId: string) => {
+			const res = await http.get<UniResponse<AwdpRoundDto[]>>(
+				`/service/awdp/runs/${runId}/rounds`,
+			);
+			return res.data;
+		},
+		evaluations: async (runId: string) => {
+			const res = await http.get<UniResponse<AwdpRunEvaluationDto[]>>(
+				`/service/awdp/runs/${runId}/evaluations`,
+			);
+			return res.data;
+		},
+		scores: async (runId: string) => {
+			const res = await http.get<UniResponse<AwdpRunScoresDto>>(
+				`/service/awdp/runs/${runId}/scores`,
+			);
+			return res.data;
+		},
+		getWriteup: async (runId: string) => {
+			const res = await http.get<UniResponse<AwdpRunWriteupDto>>(
+				`/service/awdp/runs/${runId}/writeup`,
+			);
+			return res.data;
+		},
+		saveWriteup: async (runId: string, content: string) => {
+			const res = await http.put<UniResponse<AwdpRunWriteupDto>>(
+				`/service/awdp/runs/${runId}/writeup`,
+				{ content },
+			);
+			return res.data;
+		},
 
-	// run-scoped gamebox 子资源
-	submitBreak: async (runId: string, gameboxId: string, flag: string) => {
-		const res = await service_api.post<UniResponse<BreakSubmitResponse>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/break`,
-			{ flag },
-		);
-		return res.data;
-	},
-	uploadPatch: async (runId: string, gameboxId: string, file: File) => {
-		const form = new FormData();
-		form.append("patch_file", file);
-		const res = await service_api.post<UniResponse<PatchSubmitResponse>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/patch`,
-			form,
-		);
-		return res.data;
-	},
-	testCheck: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<ManualCheckDto>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/test-check`,
-		);
-		return res.data;
-	},
-	/** ALL Check：一键官方判定；成功 → 剩余回合全部计分 + run 直接结束。 */
-	allCheck: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<AllCheckDto>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/all-check`,
-		);
-		return res.data;
-	},
-	sourceUrl: async (runId: string, gameboxId: string) => {
-		const res = await service_api.get<UniResponse<string>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/source`,
-		);
-		return res.data;
-	},
-	startInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<AwdpInstance>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
-		);
-		return res.data;
-	},
-	stopInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<null>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/stop`,
-		);
-		return res.data;
-	},
-	resetInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.post<UniResponse<AwdpInstance>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/reset`,
-		);
-		return res.data;
-	},
-	getInstance: async (runId: string, gameboxId: string) => {
-		const res = await service_api.get<UniResponse<AwdpInstance | null>>(
-			`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
-		);
-		return res.data;
-	},
+		// run-scoped gamebox 子资源
+		submitBreak: async (runId: string, gameboxId: string, flag: string) => {
+			const res = await http.post<UniResponse<BreakSubmitResponse>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/break`,
+				{ flag },
+			);
+			return res.data;
+		},
+		uploadPatch: async (runId: string, gameboxId: string, file: File) => {
+			const form = new FormData();
+			form.append("patch_file", file);
+			const res = await http.post<UniResponse<PatchSubmitResponse>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/patch`,
+				form,
+			);
+			return res.data;
+		},
+		testCheck: async (runId: string, gameboxId: string) => {
+			const res = await http.post<UniResponse<ManualCheckDto>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/test-check`,
+			);
+			return res.data;
+		},
+		/** ALL Check：一键官方判定；成功 → 剩余回合全部计分 + run 直接结束。 */
+		allCheck: async (runId: string, gameboxId: string) => {
+			const res = await http.post<UniResponse<AllCheckDto>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/all-check`,
+			);
+			return res.data;
+		},
+		sourceUrl: async (runId: string, gameboxId: string) => {
+			const res = await http.get<UniResponse<string>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/source`,
+			);
+			return res.data;
+		},
+		startInstance: async (runId: string, gameboxId: string) => {
+			const res = await http.post<UniResponse<AwdpInstance>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
+			);
+			return res.data;
+		},
+		stopInstance: async (runId: string, gameboxId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/stop`,
+			);
+			return res.data;
+		},
+		resetInstance: async (runId: string, gameboxId: string) => {
+			const res = await http.post<UniResponse<AwdpInstance>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance/reset`,
+			);
+			return res.data;
+		},
+		getInstance: async (runId: string, gameboxId: string) => {
+			const res = await http.get<UniResponse<AwdpInstance | null>>(
+				`/service/awdp/runs/${runId}/gameboxes/${gameboxId}/instance`,
+			);
+			return res.data;
+		},
 };
+}
+
+export type AwdpRunApi = ReturnType<typeof createAwdpRunApi>;

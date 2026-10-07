@@ -1,14 +1,16 @@
-import {
-	type SseConnection,
-	type SseConnectionState,
-	type SseEvent,
-	connectSse,
+import type {
+	FloatCTFClient,
+	SseConnection,
+	SseConnectionState,
+	SseEvent,
 } from "@floatctf/sdk";
 /**
  * AWD 实时事件流 Hook。
  *
- * 使用 fetch-based SSE（`connectSse`）连接 `/api/events/{id}/awd/stream`，
- * 通过 Authorization: Bearer 头传递认证令牌。
+ * 使用 `client.sse.connect()`（fetch-based SSE）连接
+ * `{client.baseUrl}/events/{id}/awd/stream`，通过 Authorization: Bearer 头传递认证令牌。
+ * URL 由**客户端自己的 base URL** 决定（绝不硬编码 `/api`），因此跨源/自建 base URL 的前端
+ * 与 REST 请求走同一个地址。
  *
  * 原生 EventSource 无法发送自定义请求头，因此本 hook 不再使用 EventSource。
  *
@@ -47,7 +49,7 @@ export type UseAwdEventStreamOptions = {
 	enabled?: boolean;
 };
 
-export function createUseAwdEventStream(useUserToken: UseTokenSource) {
+export function createUseAwdEventStream(client: FloatCTFClient, useUserToken: UseTokenSource) {
 	return function useAwdEventStream(options: UseAwdEventStreamOptions) {
 	const {
 		eventId,
@@ -155,8 +157,8 @@ export function createUseAwdEventStream(useUserToken: UseTokenSource) {
 		if (preferStream) {
 			const controller = new AbortController();
 
-			const connection = connectSse({
-				url: `/api/events/${eventId}/awd/stream`,
+			const connection = client.sse.connect({
+				url: `/events/${eventId}/awd/stream`,
 				headers: {},
 				signal: controller.signal,
 				// 使用闭包捕获的 token（effect 重建时更新）
@@ -206,8 +208,7 @@ export function createUseAwdEventStream(useUserToken: UseTokenSource) {
 			stopPoll();
 		};
 		// token 在依赖数组中 → 令牌变更触发清理 + 重建
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [eventId, enabled, pollMs, preferStream, token, handleSseEvent, invalidateAwd]);
+			}, [client, eventId, enabled, pollMs, preferStream, token, handleSseEvent, invalidateAwd]);
 
 	return {
 		connected: connectionState === "connected",

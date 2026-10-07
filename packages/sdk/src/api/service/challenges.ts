@@ -6,7 +6,8 @@ import type {
 } from "../../entity/index.js";
 import type { ChallengeWriteupResult } from "../../types/challengeWriteup.js";
 import type { ChallengesListItem } from "../../types/challengeDto.js";
-import { type QueryParams, type UniResponse, service_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { QueryParams, UniResponse } from "../../transport.js";
 
 /** 全局 Writeup 列表统一条目（challenge + gamebox 合并；writeup_type 区分类型）。 */
 export type UnifiedWriteupResult = {
@@ -35,68 +36,72 @@ export type UnifiedWriteupDetail = {
 	updated_at: string;
 };
 
-export const challengeServiceApi = {
-	fetch: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<ChallengesListItem[]>> => {
-		const res = await service_api.get("/challenges", { params });
-		return res.data;
-	},
-	get: async (id: string): Promise<UniResponse<ChallengesListItem>> => {
-		const res = await service_api.get(`/challenges/${id}`);
-		return res.data;
-	},
-	getInstance: async (id: string): Promise<UniResponse<Instances>> => {
-		const res = await service_api.get(`/challenges/${id}/instance`);
-		return res.data;
-	},
-	getMyWriteup: async (
-		challenge_id: string,
-	): Promise<UniResponse<ChallengeWriteup>> => {
-		const res = await service_api.get(`/challenges/${challenge_id}/my_writeup`);
-		return res.data;
-	},
-	createMyWriteup: async ({
-		challenge_id,
-		content,
-	}: {
-		challenge_id: string;
-		content: string;
-	}): Promise<UniResponse<ChallengeWriteup>> => {
-		const res = await service_api.post(
-			`/challenges/${challenge_id}/my_writeup`,
-			{
-				content,
-			},
-		);
-		return res.data;
-	},
-	getWriteup: async (
-		id: string,
-	): Promise<UniResponse<UnifiedWriteupDetail>> => {
-		const res = await service_api.get(`/writeups/${id}`);
-		return res.data;
-	},
-	getWriteups: async (
-		challenge_id: string,
-	): Promise<UniResponse<ChallengeWriteupResult[]>> => {
-		const res = await service_api.get(`/challenges/${challenge_id}/writeups`);
-		return res.data;
-	},
-	getAllWriteups: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<UnifiedWriteupResult[]>> => {
-		const res = await service_api.get("/writeups", { params });
-		return res.data;
-	},
-	getChallengeSets: async (): Promise<UniResponse<ChallengeSets[]>> => {
-		const res = await service_api.get("/challenge_sets");
-		return res.data;
-	},
-	getChallengeSet: async (
-		id: string,
-	): Promise<UniResponse<ChallengesListItem[]>> => {
-		const res = await service_api.get(`/challenge_sets/${id}`);
-		return res.data;
-	},
+export function createChallengeServiceApi(http: FloatCTFHttpClient) {
+	return {
+		fetch: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<ChallengesListItem[]>> => {
+			const res = await http.get("/challenges", { params });
+			return res.data;
+		},
+		get: async (id: string): Promise<UniResponse<ChallengesListItem>> => {
+			const res = await http.get(`/challenges/${id}`);
+			return res.data;
+		},
+		getInstance: async (id: string): Promise<UniResponse<Instances>> => {
+			const res = await http.get(`/challenges/${id}/instance`);
+			return res.data;
+		},
+		getMyWriteup: async (
+			challenge_id: string,
+		): Promise<UniResponse<ChallengeWriteup>> => {
+			const res = await http.get(`/challenges/${challenge_id}/my_writeup`);
+			return res.data;
+		},
+		createMyWriteup: async ({
+			challenge_id,
+			content,
+		}: {
+			challenge_id: string;
+			content: string;
+		}): Promise<UniResponse<ChallengeWriteup>> => {
+			const res = await http.post(
+				`/challenges/${challenge_id}/my_writeup`,
+				{
+					content,
+				},
+			);
+			return res.data;
+		},
+		getWriteup: async (
+			id: string,
+		): Promise<UniResponse<UnifiedWriteupDetail>> => {
+			const res = await http.get(`/writeups/${id}`);
+			return res.data;
+		},
+		getWriteups: async (
+			challenge_id: string,
+		): Promise<UniResponse<ChallengeWriteupResult[]>> => {
+			const res = await http.get(`/challenges/${challenge_id}/writeups`);
+			return res.data;
+		},
+		getAllWriteups: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<UnifiedWriteupResult[]>> => {
+			const res = await http.get("/writeups", { params });
+			return res.data;
+		},
+		getChallengeSets: async (): Promise<UniResponse<ChallengeSets[]>> => {
+			const res = await http.get("/challenge_sets");
+			return res.data;
+		},
+		getChallengeSet: async (
+			id: string,
+		): Promise<UniResponse<ChallengesListItem[]>> => {
+			const res = await http.get(`/challenge_sets/${id}`);
+			return res.data;
+		},
 };
+}
+
+export type ChallengeServiceApi = ReturnType<typeof createChallengeServiceApi>;

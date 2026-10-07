@@ -1,8 +1,9 @@
 import { Label } from "@primer/react";
 
-import { instanceAdminApi, type AdminInstanceRow } from "@floatctf/sdk";
+import { type AdminInstanceRow } from "@floatctf/sdk";
 import { GenericTable } from "@/components";
 import { DatetimeToShow } from "@/util";
+import { instanceAdminApi } from "@/api";
 
 /**
  * Admin 赛事 Instance Tab 共享组件（归一化 event_instances 视图）。

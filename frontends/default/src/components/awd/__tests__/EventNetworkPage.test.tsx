@@ -44,9 +44,6 @@ const fixtures = vi.hoisted(() => {
 	};
 });
 
-// @/api/axios 会反向导入 @/main（路由实例），单测中必须隔离，否则会加载整棵路由树。
-vi.mock("@/api/axios", () => ({ admin_api: {}, service_api: {} }));
-
 vi.mock("@/api", () => ({
 	serviceApi: { downloadFile: vi.fn() },
 	adminApi: {

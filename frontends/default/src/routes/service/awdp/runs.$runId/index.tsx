@@ -5,7 +5,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 import { useMemo } from "react";
 
-import { awdpRunApi } from "@floatctf/sdk";
+
 import { useMsgBanner } from "@/components";
 import {
 	AwdpWorkbench,
@@ -14,6 +14,7 @@ import {
 } from "@/components/awdp/AwdpWorkbench";
 import { useAwdpRunStream } from "@/api/react";
 import { ServiceRouteGuard } from "../../route";
+import { awdpRunApi } from "@/api";
 
 export const Route = createFileRoute("/service/awdp/runs/$runId/")({
 	component: RouteComponent,

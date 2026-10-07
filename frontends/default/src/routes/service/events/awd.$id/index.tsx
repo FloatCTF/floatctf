@@ -7,7 +7,7 @@ import dayjs from "dayjs";
 import { Fragment, type FormEvent, useState } from "react";
 
 import { serviceApi } from "@/api";
-import { awdPlayerApi } from "@floatctf/sdk";
+
 import {
 	EVENT_STATUS_LABEL,
 	SubmitWriteup,
@@ -19,6 +19,7 @@ import {
 	invalidateAwdQueries,
 } from "@floatctf/react";
 import { ServiceRouteGuard } from "../../route";
+import { awdPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awd/$id/")({
 	component: RouteComponent,

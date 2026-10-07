@@ -1,4 +1,5 @@
-import { type QueryParams, type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { QueryParams, UniResponse } from "../../transport.js";
 
 export interface FloatDockerContainer {
 	id: string;
@@ -45,54 +46,58 @@ export interface NetworkInfo {
 	created: number;
 }
 
-export const dockerAdminApi = {
-	fetchContainers: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<FloatDockerContainer[]>> => {
-		const res = await admin_api.get("/docker/containers", { params });
-		return res.data;
-	},
-	stopContainer: async (container_id: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/docker/containers/${container_id}/stop`);
-		return res.data;
-	},
-	startContainer: async (container_id: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(
-			`/docker/containers/${container_id}/start`,
-		);
-		return res.data;
-	},
-	deleteContainer: async (container_id: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.delete(`/docker/containers/${container_id}`);
-		return res.data;
-	},
-	fetchImages: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<ImageInfo[]>> => {
-		const res = await admin_api.get("/docker/images", { params });
-		return res.data;
-	},
-	deleteImage: async (image_id: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.delete(`/docker/images/${image_id}`);
-		return res.data;
-	},
-	fetchNetworks: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<NetworkInfo[]>> => {
-		const res = await admin_api.get("/docker/networks", { params });
-		return res.data;
-	},
-	createNetwork: async (network: {
-		name: string;
-		subnet: string;
-		gateway: string;
-		driver?: string;
-	}): Promise<UniResponse<NetworkInfo>> => {
-		const res = await admin_api.post("/docker/networks", network);
-		return res.data;
-	},
-	deleteNetwork: async (network_id: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.delete(`/docker/networks/${network_id}`);
-		return res.data;
-	},
+export function createDockerAdminApi(http: FloatCTFHttpClient) {
+	return {
+		fetchContainers: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<FloatDockerContainer[]>> => {
+			const res = await http.get("/docker/containers", { params });
+			return res.data;
+		},
+		stopContainer: async (container_id: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/docker/containers/${container_id}/stop`);
+			return res.data;
+		},
+		startContainer: async (container_id: string): Promise<UniResponse<null>> => {
+			const res = await http.post(
+				`/docker/containers/${container_id}/start`,
+			);
+			return res.data;
+		},
+		deleteContainer: async (container_id: string): Promise<UniResponse<null>> => {
+			const res = await http.delete(`/docker/containers/${container_id}`);
+			return res.data;
+		},
+		fetchImages: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<ImageInfo[]>> => {
+			const res = await http.get("/docker/images", { params });
+			return res.data;
+		},
+		deleteImage: async (image_id: string): Promise<UniResponse<null>> => {
+			const res = await http.delete(`/docker/images/${image_id}`);
+			return res.data;
+		},
+		fetchNetworks: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<NetworkInfo[]>> => {
+			const res = await http.get("/docker/networks", { params });
+			return res.data;
+		},
+		createNetwork: async (network: {
+			name: string;
+			subnet: string;
+			gateway: string;
+			driver?: string;
+		}): Promise<UniResponse<NetworkInfo>> => {
+			const res = await http.post("/docker/networks", network);
+			return res.data;
+		},
+		deleteNetwork: async (network_id: string): Promise<UniResponse<null>> => {
+			const res = await http.delete(`/docker/networks/${network_id}`);
+			return res.data;
+		},
 };
+}
+
+export type DockerAdminApi = ReturnType<typeof createDockerAdminApi>;

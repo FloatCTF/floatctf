@@ -1,4 +1,4 @@
-import { uploadsServiceApi } from "@floatctf/sdk";
+
 import { ImageIcon, UploadIcon } from "@primer/octicons-react";
 import { Button } from "@primer/react";
 import MDEditor, {
@@ -17,6 +17,7 @@ import {
     useState,
 } from "react";
 import { getCodeString } from "rehype-rewrite";
+import { uploadsServiceApi } from "@/api";
 
 const randomid = () =>
     Number.parseInt(String(Math.random() * 1e15), 10).toString(36);

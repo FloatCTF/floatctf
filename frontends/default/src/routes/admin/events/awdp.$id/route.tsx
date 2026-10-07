@@ -4,9 +4,10 @@ import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { createContext } from "react";
 
 import { adminApi } from "@/api";
-import { awdpAdminApi } from "@floatctf/sdk";
+
 import { type Events, ParticipantMode } from "@floatctf/sdk/entity";
 import { RouterUnderlineNavItem as RouterNavItem } from "@/components/RouterUnderlineNavItem";
+import { awdpAdminApi } from "@/api";
 
 export const Route = createFileRoute("/admin/events/awdp/$id")({
 	component: RouteComponent,

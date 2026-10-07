@@ -2,10 +2,11 @@ import { Spinner, Truncate } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { awdpRunApi } from "@floatctf/sdk";
+
 import { AppLink } from "@/navigation";
 import { useAuthStore } from "@/stores/AuthStore";
 import { DatetimeToShow } from "@/util";
+import { awdpRunApi } from "@/api";
 
 export const Route = createFileRoute("/service/awdp/runs/$runId/writeup")({
 	component: RouteComponent,

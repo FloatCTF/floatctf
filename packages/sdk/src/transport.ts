@@ -1,5 +1,6 @@
 /**
- * HTTP 传输层：共享的 Axios 实例 + Bearer 认证注入 + 错误归一化 + 401 回调。
+ * HTTP 传输层：**每个客户端实例各自拥有**的 Axios 实例 + Bearer 认证注入 +
+ * 错误归一化 + 401 回调。
  *
  * **这个模块是 SDK 与 UI 的分界线**（替换旧的 `apps/web/src/api/axios.ts`）：
  *
@@ -11,12 +12,18 @@
  *
  * SDK **绝不** import router / Zustand / localStorage / 任何登录页 URL。
  *
- * ## 关于模块级 handle
+ * ## 实例隔离（重要）
  *
- * `service_api` / `admin_api` 是"待绑定的 HTTP handle"：API 模块直接 import 它们，
- * 由 `createFloatCTFClient()` 在启动时绑定真实 axios 实例。这样一个页面只会有一个
- * 客户端（bootstrap 每次加载只挂载一个前端），而 **认证来源与 UI 反应仍然由调用方注入**。
- * 未绑定就调用会抛出可读错误，而不是静默发到错误地址。
+ * 本模块**没有**任何模块级可变状态：不存在"当前绑定的 transport"。
+ * `createFloatCTFTransport()` 每次调用都返回**独立**的 axios 实例与 handle，
+ * 因此：
+ *
+ * ```ts
+ * const a = createFloatCTFClient({ baseUrl: "https://a.example/api", getUserToken: () => "A" });
+ * const b = createFloatCTFClient({ baseUrl: "https://b.example/api", getUserToken: () => "B" });
+ * await b.service.events.fetch();   // 用的是 b 的 baseUrl + B
+ * await a.service.events.fetch();   // 仍然是 a 的 baseUrl + A，创建顺序无关
+ * ```
  */
 
 import axios, {
@@ -25,18 +32,30 @@ import axios, {
 	type AxiosResponse,
 } from "axios";
 
-import { FloatCTFError, toFloatCTFError } from "./errors.js";
+import type { FloatCTFError } from "./errors.js";
+import { toFloatCTFError } from "./errors.js";
 
 export type { QueryParams, UniResponse } from "./protocol.js";
 
 /** 认证作用域：选手端 / 管理端各自独立携带 token（互不影响）。 */
 export type FloatCTFAuthScope = "user" | "admin";
 
+/** 默认选手端 base URL。 */
+export const DEFAULT_API_BASE_URL = "/api";
+
 export interface UnauthorizedContext {
 	scope: FloatCTFAuthScope;
 	status: number;
 	error: FloatCTFError;
 }
+
+/**
+ * 两个 axios 实例共用的默认配置。
+ *
+ * 刻意**不允许** `baseURL`：客户端自己的 `baseUrl` / `adminBaseUrl` 是唯一权威来源，
+ * 否则 `client.baseUrl` 报告一个地址、请求实际发到另一个地址（静默串号）。
+ */
+export type FloatCTFRequestConfig = Omit<AxiosRequestConfig, "baseURL">;
 
 export interface FloatCTFClientOptions {
 	/** 选手端 API base URL，默认 `/api`。 */
@@ -55,11 +74,11 @@ export interface FloatCTFClientOptions {
 	/** 每次请求失败时调用（已归一化的错误）。 */
 	onError?: (error: FloatCTFError, scope: FloatCTFAuthScope) => void;
 	/** 附加到两个 axios 实例的默认配置（如 `withCredentials`、`timeout`）。 */
-	requestConfig?: AxiosRequestConfig;
+	requestConfig?: FloatCTFRequestConfig;
 }
 
 /**
- * 绑定后暴露给 API 模块的 HTTP handle。
+ * 暴露给领域 API 模块的 HTTP handle。
  *
  * 泛型签名**逐字对齐 axios**（含 `R = AxiosResponse<T>`）：这样 `return http.get(...)`
  * 这类写法能继续按上下文返回类型推断 `R`，迁移前后的类型行为完全一致。
@@ -97,66 +116,21 @@ export interface FloatCTFHttpClient {
 	readonly instance: AxiosInstance;
 }
 
-interface Binding {
-	service: AxiosInstance | null;
-	admin: AxiosInstance | null;
+/** 一个作用域的完整传输：权威 base URL + axios 实例 + handle。 */
+export interface FloatCTFTransport {
+	readonly scope: FloatCTFAuthScope;
+	/** 权威 base URL（已去掉尾部斜杠）。 */
+	readonly baseUrl: string;
+	/** 底层 axios 实例。 */
+	readonly instance: AxiosInstance;
+	/** 领域模块使用的 handle（与本 transport 一一对应）。 */
+	readonly http: FloatCTFHttpClient;
 }
 
-const binding: Binding = { service: null, admin: null };
-
-function unboundError(scope: FloatCTFAuthScope): FloatCTFError {
-	return new FloatCTFError({
-		message: `FloatCTF ${scope} HTTP client is not configured. Call createFloatCTFClient() before issuing API requests.`,
-		kind: "unknown",
-	});
+/** 去掉尾部斜杠，避免拼出 `//events` 这类路径。 */
+export function normalizeBaseUrl(url: string): string {
+	return url.replace(/\/+$/, "");
 }
-
-function createHandle(scope: FloatCTFAuthScope): FloatCTFHttpClient {
-	const current = (): AxiosInstance | null =>
-		scope === "user" ? binding.service : binding.admin;
-	const require = (): AxiosInstance => {
-		const instance = current();
-		if (!instance) throw unboundError(scope);
-		return instance;
-	};
-	/**
-	 * 未绑定时返回**被拒绝的 Promise** 而不是同步抛错：
-	 * 所有 API 方法都必须保持 axios 的"总是返回 Promise"语义，否则调用方的
-	 * `.catch()` 会漏掉这个错误，变成未捕获异常。
-	 */
-	const run = <T>(fn: (instance: AxiosInstance) => Promise<T>): Promise<T> => {
-		const instance = current();
-		if (!instance) return Promise.reject(unboundError(scope));
-		return fn(instance);
-	};
-	const handle: FloatCTFHttpClient = {
-		get(url, config) {
-			return run((instance) => instance.get(url, config));
-		},
-		delete(url, config) {
-			return run((instance) => instance.delete(url, config));
-		},
-		post(url, data, config) {
-			return run((instance) => instance.post(url, data, config));
-		},
-		put(url, data, config) {
-			return run((instance) => instance.put(url, data, config));
-		},
-		patch(url, data, config) {
-			return run((instance) => instance.patch(url, data, config));
-		},
-		get instance() {
-			return require();
-		},
-	};
-	return handle;
-}
-
-/** 选手端 HTTP handle（由 `createFloatCTFClient()` 绑定）。 */
-export const service_api: FloatCTFHttpClient = createHandle("user");
-
-/** 管理端 HTTP handle（由 `createFloatCTFClient()` 绑定）。 */
-export const admin_api: FloatCTFHttpClient = createHandle("admin");
 
 function attachInterceptors(
 	instance: AxiosInstance,
@@ -193,39 +167,58 @@ function attachInterceptors(
 	);
 }
 
-/**
- * 构建并绑定两个 axios 实例。
- *
- * @internal 由 `createFloatCTFClient()` 调用；单独使用请优先用后者。
- */
-export function bindHttpClients(options: FloatCTFClientOptions = {}): {
-	service: AxiosInstance;
-	admin: AxiosInstance;
-	dispose: () => void;
-} {
-	const baseUrl = (options.baseUrl ?? "/api").replace(/\/+$/, "");
-	const adminBaseUrl = (options.adminBaseUrl ?? `${baseUrl}/admin`).replace(/\/+$/, "");
-
-	const service = axios.create({ baseURL: baseUrl, ...options.requestConfig });
-	const admin = axios.create({ baseURL: adminBaseUrl, ...options.requestConfig });
-	attachInterceptors(service, "user", options);
-	attachInterceptors(admin, "admin", options);
-
-	binding.service = service;
-	binding.admin = admin;
-
+function makeHandle(instance: AxiosInstance): FloatCTFHttpClient {
 	return {
-		service,
-		admin,
-		dispose: () => {
-			if (binding.service === service) binding.service = null;
-			if (binding.admin === admin) binding.admin = null;
+		get: (url, config) => instance.get(url, config),
+		delete: (url, config) => instance.delete(url, config),
+		post: (url, data, config) => instance.post(url, data, config),
+		put: (url, data, config) => instance.put(url, data, config),
+		patch: (url, data, config) => instance.patch(url, data, config),
+		get instance() {
+			return instance;
 		},
 	};
 }
 
-/** 测试用：解除绑定，避免用例之间互相污染。 */
-export function resetHttpClientsForTests(): void {
-	binding.service = null;
-	binding.admin = null;
+/**
+ * 创建一个作用域的传输（选手端或管理端）。
+ *
+ * 返回的对象完全独立：不写入任何模块级状态，因此可以同时存在任意多个客户端。
+ */
+export function createFloatCTFTransport(
+	scope: FloatCTFAuthScope,
+	options: FloatCTFClientOptions,
+	baseUrl: string,
+): FloatCTFTransport {
+	const normalized = normalizeBaseUrl(baseUrl);
+	// `baseURL` 放在 requestConfig **之后**：客户端配置是唯一权威，
+	// 即使调用方通过 `as any` 之类的途径塞了 baseURL 也会被覆盖。
+	const instance = axios.create({
+		...options.requestConfig,
+		baseURL: normalized,
+	});
+	attachInterceptors(instance, scope, options);
+	return {
+		scope,
+		baseUrl: normalized,
+		instance,
+		http: makeHandle(instance),
+	};
+}
+
+/**
+ * 解析客户端选项里的两个 base URL。
+ *
+ * 单独导出：`createFloatCTFClient()` 与实际建连都要用同一套规则，
+ * 避免 "client.baseUrl 报告的值" 与 "请求真正发往的地址" 不一致。
+ */
+export function resolveBaseUrls(options: FloatCTFClientOptions): {
+	baseUrl: string;
+	adminBaseUrl: string;
+} {
+	const baseUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_API_BASE_URL);
+	const adminBaseUrl = normalizeBaseUrl(
+		options.adminBaseUrl ?? `${baseUrl}/admin`,
+	);
+	return { baseUrl, adminBaseUrl };
 }

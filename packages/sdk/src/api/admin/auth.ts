@@ -1,12 +1,17 @@
-import { type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { UniResponse } from "../../transport.js";
 
-export const adminLoginFn = async ({
-    username,
-    password,
-}: {
-    username: string;
-    password: string;
-}): Promise<UniResponse<string>> => {
-    const response = await admin_api.post("/session", { username, password });
-    return response.data;
-};
+export function createAdminLoginFn(http: FloatCTFHttpClient) {
+	return async ({
+		username,
+		password,
+	}: {
+		username: string;
+		password: string;
+	}): Promise<UniResponse<string>> => {
+		const response = await http.post("/session", { username, password });
+		return response.data;
+	};
+}
+
+export type AdminLoginFn = ReturnType<typeof createAdminLoginFn>;

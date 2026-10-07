@@ -11,8 +11,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { serviceApi } from "@/api";
-import { awdPlayerApi } from "@floatctf/sdk";
+
 import { ServiceRouteGuard } from "../../route";
+import { awdPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awd/$id/ssh")({
 	component: RouteComponent,

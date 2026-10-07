@@ -7,8 +7,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { awdpRunApi } from "@floatctf/sdk";
+
 import { MDPlusEditor, useMsgBanner } from "@/components";
+import { awdpRunApi } from "@/api";
 export function RunWriteupEditor({ runId }: { runId: string }) {
 	const banner = useMsgBanner();
 	const queryClient = useQueryClient();

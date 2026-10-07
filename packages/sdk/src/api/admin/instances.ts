@@ -1,4 +1,5 @@
-import { type QueryParams, type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { QueryParams, UniResponse } from "../../transport.js";
 import type { InstancesDto } from "../service/instances.js";
 
 /**
@@ -26,15 +27,19 @@ export type AdminInstanceRow = {
 	destroy_at?: string | null;
 };
 
-export const instanceAdminApi = {
-	/** 某赛事的归一化实例列表（admin 赛事 Instance Tab）。 */
-	listForEvent: async (
-		eventId: string,
-		params: QueryParams = {},
-	): Promise<UniResponse<AdminInstanceRow[]>> => {
-		const res = await admin_api.get(`/events/${eventId}/instances`, { params });
-		return res.data;
-	},
+export function createInstanceAdminApi(http: FloatCTFHttpClient) {
+	return {
+		/** 某赛事的归一化实例列表（admin 赛事 Instance Tab）。 */
+		listForEvent: async (
+			eventId: string,
+			params: QueryParams = {},
+		): Promise<UniResponse<AdminInstanceRow[]>> => {
+			const res = await http.get(`/events/${eventId}/instances`, { params });
+			return res.data;
+		},
 };
+}
+
+export type InstanceAdminApi = ReturnType<typeof createInstanceAdminApi>;
 
 export type { InstancesDto as Instances };

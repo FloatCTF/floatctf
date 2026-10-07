@@ -1,13 +1,18 @@
-import { type UniResponse, admin_api } from "../../transport.js";
+import type { FloatCTFHttpClient } from "../../transport.js";
+import type { UniResponse } from "../../transport.js";
 import type { SystemInformation } from "../../types/systemInformation.js";
 
-export const systemAdminApi = {
-	monitor: async (): Promise<UniResponse<SystemInformation>> => {
-		const response = await admin_api.get("/system/monitor");
-		return response.data;
-	},
-	version: async (): Promise<UniResponse<string>> => {
-		const response = await admin_api.get("/system/version");
-		return response.data;
-	},
+export function createSystemAdminApi(http: FloatCTFHttpClient) {
+	return {
+		monitor: async (): Promise<UniResponse<SystemInformation>> => {
+			const response = await http.get("/system/monitor");
+			return response.data;
+		},
+		version: async (): Promise<UniResponse<string>> => {
+			const response = await http.get("/system/version");
+			return response.data;
+		},
 };
+}
+
+export type SystemAdminApi = ReturnType<typeof createSystemAdminApi>;

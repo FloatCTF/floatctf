@@ -51,10 +51,10 @@ export function createFloatCTFReact(options: CreateFloatCTFReactOptions) {
 	return {
 		client,
 		// ── 实时事件流（SSE + 轮询兜底 + React Query 失效）──
-		useAwdEventStream: createUseAwdEventStream(useUserToken),
-		useAdminAwdEventStream: createUseAdminAwdEventStream(useAdminToken),
-		useAwdpEventStream: createUseAwdpEventStream(useUserToken),
-		useAwdpRunStream: createUseAwdpRunStream(useUserToken),
+		useAwdEventStream: createUseAwdEventStream(client, useUserToken),
+		useAdminAwdEventStream: createUseAdminAwdEventStream(client, useAdminToken),
+		useAwdpEventStream: createUseAwdpEventStream(client, useUserToken),
+		useAwdpRunStream: createUseAwdpRunStream(client, useUserToken),
 		// ── query options 工厂 ──
 		...createQueryFactories(client),
 		// ── 失效工具（页面手动刷新与事件流共用同一份 key 常量）──

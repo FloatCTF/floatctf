@@ -6,12 +6,13 @@ import { useCallback, useRef, useState } from "react";
 
 import { adminApi } from "@/api";
 import type { AwdpAdminEventGameBoxDto } from "@floatctf/sdk";
-import { awdpAdminApi } from "@floatctf/sdk";
+
 import type { QueryParams } from "@floatctf/sdk";
 import { GenericTable, useMsgBanner } from "@/components";
 import { QUERY_KEY as LIB_QUERY_KEY } from "@/routes/admin/awd/gameboxes";
 import { useSelectedRowIds } from "@/util";
 import { AdminRouteGuard } from "../../route";
+import { awdpAdminApi } from "@/api";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/gameboxes")({
 	component: RouteComponent,

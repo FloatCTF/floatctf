@@ -1,8 +1,8 @@
-import {
-	type SseConnection,
-	type SseConnectionState,
-	type SseEvent,
-	connectSse,
+import type {
+	FloatCTFClient,
+	SseConnection,
+	SseConnectionState,
+	SseEvent,
 } from "@floatctf/sdk";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -30,7 +30,7 @@ export type UseAwdpEventStreamOptions = {
 const SNAPSHOT_RE =
 	/awdp\.(score|phase|config|event|patch|manual|round|evaluation|instance)/;
 
-export function createUseAwdpEventStream(useUserToken: UseTokenSource) {
+export function createUseAwdpEventStream(client: FloatCTFClient, useUserToken: UseTokenSource) {
 	return function useAwdpEventStream({
 	eventId,
 	pollMs = 15000,
@@ -127,8 +127,8 @@ export function createUseAwdpEventStream(useUserToken: UseTokenSource) {
 		if (preferStream) {
 			const controller = new AbortController();
 
-			const connection = connectSse({
-				url: `/api/events/${eventId}/awdp/stream`,
+			const connection = client.sse.connect({
+				url: `/events/${eventId}/awdp/stream`,
 				headers: {},
 				signal: controller.signal,
 				getToken: () => token,
@@ -183,7 +183,7 @@ export function createUseAwdpEventStream(useUserToken: UseTokenSource) {
 				invalidateTimerRef.current = null;
 			}
 		};
-	}, [eventId, enabled, preferStream, pollMs, token, invalidate, onEvent]);
+	}, [client, eventId, enabled, preferStream, pollMs, token, invalidate, onEvent]);
 
 	return {
 		connected: connectionState === "connected",

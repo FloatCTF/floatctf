@@ -7,10 +7,11 @@ import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import type { AxiosError } from "axios";
 
 import { serviceApi } from "@/api";
-import { awdPlayerApi } from "@floatctf/sdk";
+
 import type { AwdGameBox } from "@floatctf/sdk";
 import { useMsgBanner } from "@/components";
 import { ServiceRouteGuard } from "../../route";
+import { awdPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awd/$id/gameboxes")({
 	component: RouteComponent,

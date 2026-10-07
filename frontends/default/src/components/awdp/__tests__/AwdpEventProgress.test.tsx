@@ -19,9 +19,10 @@ import {
 
 import { serviceApi } from "@/api";
 import type { AwdpOverview } from "@floatctf/sdk";
-import { awdpPlayerApi } from "@floatctf/sdk";
+
 
 import { AwdpEventProgress } from "../AwdpEventProgress";
+import { awdpPlayerApi } from "@/api";
 
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {

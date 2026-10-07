@@ -2,114 +2,174 @@
  * `createFloatCTFClient()` —— SDK 的唯一入口工厂。
  *
  * 它做三件事：
- * 1. 建立并**绑定**共享 HTTP 传输（baseURL + Bearer 注入 + 错误归一化 + 401 回调）
- * 2. 返回按领域分组的 API 门面（`service` / `admin` / `awd` / `awdp` / `awdpRuns`）
- * 3. 暴露实时（SSE）工具与可以 `dispose()` 的生命周期
+ * 1. 为**这个实例**建立两个 HTTP 传输（选手端 / 管理端：baseURL + Bearer 注入 +
+ *    错误归一化 + 401 回调）
+ * 2. 基于这两个 handle 构建按领域分组的 API 门面
+ *    （`service` / `admin` / `awd` / `awdp` / `sse`）
+ * 3. 返回一个**完全独立**的客户端对象
  *
  * 前端负责注入"token 从哪来"和"401 干什么"；SDK 负责其余全部传输机制。
  *
+ * ## 实例隔离
+ *
+ * 不存在模块级共享绑定，也没有"当前客户端"。同一进程里可以同时创建任意多个客户端，
+ * 它们各自的 base URL、token 来源与错误回调互不影响，创建顺序也无关：
+ *
  * ```ts
- * const client = createFloatCTFClient({
- *   baseUrl: "/api",
- *   getUserToken: () => useAuthStore.getState().token,
- *   getAdminToken: () => useAuthStore.getState().adminToken,
- *   onUnauthorized: ({ scope }) => {
- *     if (scope === "admin") { useAuthStore.getState().removeAdminToken(); router.navigate({ to: "/admin" }); }
- *     else { useAuthStore.getState().removeToken(); router.navigate({ to: "/" }); }
- *   },
- * });
+ * const a = createFloatCTFClient({ baseUrl: "https://a.example/api", getUserToken: () => "A" });
+ * const b = createFloatCTFClient({ baseUrl: "https://b.example/api", getUserToken: () => "B" });
+ *
+ * await b.service.events.fetch(); // → b.example + "B"
+ * await a.service.events.fetch(); // → a.example + "A"
  * ```
  */
 
 import type { AxiosInstance } from "axios";
 
+import { type AdminApi, type ServiceApi, createAdminApi, createServiceApi } from "./api/index.js";
+import { type AwdAdminApi, type AwdPlayerApi, createAwdAdminApi, createAwdPlayerApi } from "./api/awd.js";
+import { type AwdpAdminApi, type AwdpPlayerApi, createAwdpAdminApi, createAwdpPlayerApi } from "./api/awdp.js";
+import { type AwdpRunApi, createAwdpRunApi } from "./api/awdpRuns.js";
 import {
+	type ConnectSseOptions,
+	type SseConnection,
+	connectSse,
+} from "./sse/connectSse.js";
+import { type SseEvent, type SseParser, createSseParser } from "./sse/parser.js";
+import {
+	type FloatCTFAuthScope,
 	type FloatCTFClientOptions,
-	admin_api,
-	service_api,
-	bindHttpClients,
+	type FloatCTFHttpClient,
+	createFloatCTFTransport,
+	resolveBaseUrls,
 } from "./transport.js";
 
-import { adminApi, serviceApi } from "./api/index.js";
-import { awdAdminApi, awdPlayerApi } from "./api/awd.js";
-import { awdpAdminApi, awdpPlayerApi } from "./api/awdp.js";
-import { awdpRunApi } from "./api/awdpRuns.js";
-import { connectSse, type ConnectSseOptions, type SseConnection } from "./sse/connectSse.js";
-import {
-	createSseParser,
-	type SseEvent,
-	type SseParser,
-} from "./sse/parser.js";
+export type {
+	FloatCTFAuthScope,
+	FloatCTFClientOptions,
+	FloatCTFHttpClient,
+	FloatCTFRequestConfig,
+	FloatCTFTransport,
+	UnauthorizedContext,
+} from "./transport.js";
 
-export type { FloatCTFClientOptions } from "./transport.js";
+export type { AdminApi, ServiceApi } from "./api/index.js";
+export type { AwdAdminApi, AwdPlayerApi } from "./api/awd.js";
+export type { AwdpAdminApi, AwdpPlayerApi } from "./api/awdp.js";
+export type { AwdpRunApi } from "./api/awdpRuns.js";
+
+/** SSE 连接选项：`url` 可以是绝对地址，也可以是**相对本实例 base URL** 的路径。 */
+export type FloatCTFSseOptions = Omit<ConnectSseOptions, "url" | "getToken"> & {
+	/** 相对路径（如 `/events/<id>/awd/stream`）或绝对 URL。 */
+	url: string;
+	/** 覆盖默认 token 来源（默认：选手端用 `getUserToken`，管理端用 `getAdminToken`）。 */
+	getToken?: () => string | null;
+};
 
 export interface FloatCTFClient {
-	/** 选手端 API base URL。 */
+	/** 选手端 API base URL（权威值，等于请求真正发往的地址）。 */
 	readonly baseUrl: string;
-	/** 管理端 API base URL。 */
+	/** 管理端 API base URL（权威值）。 */
 	readonly adminBaseUrl: string;
 	/** 底层 axios 实例（逃生舱：自定义拦截器/上传进度/流式响应）。 */
 	readonly transport: {
 		readonly service: AxiosInstance;
 		readonly admin: AxiosInstance;
 	};
-	/** 领域门面。 */
-	readonly service: typeof serviceApi;
-	readonly admin: typeof adminApi;
+	/** 本实例的选手端 HTTP handle（领域模块的注入目标）。 */
+	readonly serviceHttp: FloatCTFHttpClient;
+	/** 本实例的管理端 HTTP handle。 */
+	readonly adminHttp: FloatCTFHttpClient;
+	/** 领域门面（全部绑定到本实例的 handle）。 */
+	readonly service: ServiceApi;
+	readonly admin: AdminApi;
 	readonly awd: {
-		readonly player: typeof awdPlayerApi;
-		readonly admin: typeof awdAdminApi;
+		readonly player: AwdPlayerApi;
+		readonly admin: AwdAdminApi;
 	};
 	readonly awdp: {
-		readonly player: typeof awdpPlayerApi;
-		readonly admin: typeof awdpAdminApi;
-		readonly runs: typeof awdpRunApi;
+		readonly player: AwdpPlayerApi;
+		readonly admin: AwdpAdminApi;
+		readonly runs: AwdpRunApi;
 	};
 	/** 实时传输（fetch-based SSE，Bearer 走 Authorization 头）。 */
 	readonly sse: {
-		connect(options: Omit<ConnectSseOptions, "getToken"> & { getToken?: () => string | null }): SseConnection;
+		/** 默认使用**本实例**的选手端 base URL 与 token 来源。 */
+		connect(options: FloatCTFSseOptions): SseConnection;
+		/** 管理端 SSE（admin base URL + admin token）。 */
+		connectAdmin(options: FloatCTFSseOptions): SseConnection;
 		createParser(): SseParser;
 	};
-	/** 解绑传输（登出 / 卸载 / 测试）。 */
-	dispose(): void;
+}
+
+/** 把相对路径解析到指定 base URL 上（绝对 URL 原样返回）。 */
+export function resolveSseUrl(baseUrl: string, url: string): string {
+	if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+		return url;
+	}
+	const path = url.startsWith("/") ? url : `/${url}`;
+	return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
 /**
- * 创建并绑定 FloatCTF 客户端。
+ * 创建 FloatCTF 客户端。
  *
- * ⚠️ 同一个页面同时只支持**一个**绑定的客户端（bootstrap 每次加载只挂载一个前端）。
- * 再次创建会替换绑定并使先前客户端的传输失效——这是刻意的、有文档的约束，
- * 换来的是 API 模块不需要到处传递实例。
+ * 返回的对象**完全独立**：不写入任何模块级状态。不需要"解绑"或测试用全局重置；
+ * 丢弃引用即可，其它客户端不受影响。
  */
 export function createFloatCTFClient(
 	options: FloatCTFClientOptions = {},
 ): FloatCTFClient {
-	const { service, admin, dispose } = bindHttpClients(options);
-	const baseUrl = (options.baseUrl ?? "/api").replace(/\/+$/, "");
-	const adminBaseUrl = (options.adminBaseUrl ?? `${baseUrl}/admin`).replace(/\/+$/, "");
+	const { baseUrl, adminBaseUrl } = resolveBaseUrls(options);
+
+	const serviceTransport = createFloatCTFTransport("user", options, baseUrl);
+	const adminTransport = createFloatCTFTransport("admin", options, adminBaseUrl);
+
+	const serviceApi = createServiceApi(serviceTransport.http);
+	const adminApi = createAdminApi(adminTransport.http);
+
+	const connect = (
+		scope: FloatCTFAuthScope,
+		sseOptions: FloatCTFSseOptions,
+	): SseConnection => {
+		const transport = scope === "user" ? serviceTransport : adminTransport;
+		const defaultToken =
+			scope === "user"
+				? (): string | null => options.getUserToken?.() ?? null
+				: (): string | null => options.getAdminToken?.() ?? null;
+		return connectSse({
+			...sseOptions,
+			url: resolveSseUrl(transport.baseUrl, sseOptions.url),
+			getToken: sseOptions.getToken ?? defaultToken,
+		});
+	};
 
 	return {
 		baseUrl,
 		adminBaseUrl,
-		transport: { service, admin },
+		transport: {
+			service: serviceTransport.instance,
+			admin: adminTransport.instance,
+		},
+		serviceHttp: serviceTransport.http,
+		adminHttp: adminTransport.http,
 		service: serviceApi,
 		admin: adminApi,
-		awd: { player: awdPlayerApi, admin: awdAdminApi },
-		awdp: { player: awdpPlayerApi, admin: awdpAdminApi, runs: awdpRunApi },
+		awd: {
+			player: serviceApi.awd,
+			admin: adminApi.awd,
+		},
+		awdp: {
+			player: createAwdpPlayerApi(serviceTransport.http),
+			admin: createAwdpAdminApi(adminTransport.http),
+			runs: createAwdpRunApi(serviceTransport.http),
+		},
 		sse: {
-			connect: (sseOptions) =>
-				connectSse({
-					...sseOptions,
-					// 默认复用客户端注入的 token 来源，除非调用方显式覆盖。
-					getToken: sseOptions.getToken ?? (() => options.getUserToken?.() ?? null),
-				}),
+			connect: (sseOptions) => connect("user", sseOptions),
+			connectAdmin: (sseOptions) => connect("admin", sseOptions),
 			createParser: createSseParser,
 		},
-		dispose,
 	};
 }
-
-/** 当前绑定的 handle（供需要直接使用 handle 的 SDK 内部/高级场景）。 */
-export const httpClients = { service: service_api, admin: admin_api } as const;
 
 export type { SseConnection, SseEvent, SseParser, ConnectSseOptions };

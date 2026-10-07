@@ -7,7 +7,7 @@ import { useTitle } from "ahooks";
 import { createContext } from "react";
 
 import { serviceApi } from "@/api";
-import { awdPlayerApi } from "@floatctf/sdk";
+
 import { RouterUnderlineNavItem } from "@/components/RouterUnderlineNavItem";
 import {
 	AwdEventProgress,
@@ -15,6 +15,7 @@ import {
 } from "@/components/awd/AwdEventProgress";
 import { useAwdEventStream } from "@/api/react";
 import { ServiceRouteGuard } from "../../route";
+import { awdPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awd/$id")({
 	component: RouteComponent,

@@ -2,9 +2,10 @@ import { Button, ButtonGroup, Label, Spinner, useConfirm } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { awdpAdminApi } from "@floatctf/sdk";
+
 import { useMsgBanner } from "@/components";
 import { AdminRouteGuard } from "../../route";
+import { awdpAdminApi } from "@/api";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/ops")({
 	component: RouteComponent,

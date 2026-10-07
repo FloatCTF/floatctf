@@ -16,7 +16,7 @@ import {
 	useState,
 } from "react";
 
-import { type AwdpEventConfigDto, awdpAdminApi } from "@floatctf/sdk";
+import { type AwdpEventConfigDto } from "@floatctf/sdk";
 import { useMsgBanner } from "@/components";
 import {
 	AwdpTimeline,
@@ -25,6 +25,7 @@ import {
 } from "@/components/awdp/AwdpPhaseOverview";
 import { AdminRouteGuard } from "../../route";
 import { EventContext } from "./route";
+import { awdpAdminApi } from "@/api";
 
 export const Route = createFileRoute("/admin/events/awdp/$id/configure")({
 	component: RouteComponent,

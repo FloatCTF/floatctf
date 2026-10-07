@@ -3,12 +3,8 @@
  * 管理端：/api/admin/events/{eventId}/awdp/...
  * 选手端：/api/events/{eventId}/awdp/...
  */
-import {
-	type QueryParams,
-	type UniResponse,
-	admin_api,
-	service_api,
-} from "../transport.js";
+import type { FloatCTFHttpClient } from "../transport.js";
+import type { QueryParams, UniResponse } from "../transport.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -258,181 +254,189 @@ export type AwdpDataPresent = {
 // Admin client
 // ────────────────────────────────────────────────────────────────────────────
 
-export const awdpAdminApi = {
-	getConfig: async (eventId: string) => {
-		const res = await admin_api.get<UniResponse<AwdpEventConfigDto>>(
-			`/events/${eventId}/awdp`,
-		);
-		return res.data;
-	},
-	updateConfig: async (eventId: string, body: AwdpConfigPatchInput) => {
-		const res = await admin_api.patch<UniResponse<AwdpEventConfigDto>>(
-			`/events/${eventId}/awdp`,
-			body,
-		);
-		return res.data;
-	},
-	start: async (eventId: string) => {
-		const res = await admin_api.post<UniResponse<null>>(
-			`/events/${eventId}/awdp/start`,
-		);
-		return res.data;
-	},
-	breakToFix: async (eventId: string) => {
-		const res = await admin_api.post<UniResponse<null>>(
-			`/events/${eventId}/awdp/break-to-fix`,
-		);
-		return res.data;
-	},
-	finish: async (eventId: string) => {
-		const res = await admin_api.post<UniResponse<null>>(
-			`/events/${eventId}/awdp/finish`,
-		);
-		return res.data;
-	},
-	attachGamebox: async (
-		eventId: string,
-		gameboxId: string,
-		hidden?: boolean,
-	) => {
-		const res = await admin_api.post<UniResponse<AwdpAdminEventGameBoxDto>>(
-			`/events/${eventId}/awdp/gameboxes`,
-			{
-				gamebox_id: gameboxId,
-				hidden,
-			},
-		);
-		return res.data;
-	},
-	detachGamebox: async (eventId: string, egId: string) => {
-		const res = await admin_api.delete<UniResponse<null>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}`,
-		);
-		return res.data;
-	},
-	listEventGameboxes: async (eventId: string, params?: QueryParams) => {
-		const res = await admin_api.get<UniResponse<AwdpAdminEventGameBoxDto[]>>(
-			`/events/${eventId}/awdp/gameboxes`,
-			{ params },
-		);
-		return res.data;
-	},
-	listInstances: async (eventId: string) => {
-		const res = await admin_api.get<UniResponse<AwdpAdminInstanceDto[]>>(
-			`/events/${eventId}/awdp/instances`,
-		);
-		return res.data;
-	},
-	scores: async (eventId: string) => {
-		const res = await admin_api.get<UniResponse<AwdpScoreRow[]>>(
-			`/events/${eventId}/awdp/scores`,
-		);
-		return res.data;
-	},
-	dataPresent: async (eventId: string) => {
-		const res = await admin_api.get<UniResponse<AwdpDataPresent>>(
-			`/events/${eventId}/awdp/data`,
-		);
-		return res.data;
-	},
+export function createAwdpAdminApi(http: FloatCTFHttpClient) {
+	return {
+		getConfig: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpEventConfigDto>>(
+				`/events/${eventId}/awdp`,
+			);
+			return res.data;
+		},
+		updateConfig: async (eventId: string, body: AwdpConfigPatchInput) => {
+			const res = await http.patch<UniResponse<AwdpEventConfigDto>>(
+				`/events/${eventId}/awdp`,
+				body,
+			);
+			return res.data;
+		},
+		start: async (eventId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/events/${eventId}/awdp/start`,
+			);
+			return res.data;
+		},
+		breakToFix: async (eventId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/events/${eventId}/awdp/break-to-fix`,
+			);
+			return res.data;
+		},
+		finish: async (eventId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/events/${eventId}/awdp/finish`,
+			);
+			return res.data;
+		},
+		attachGamebox: async (
+			eventId: string,
+			gameboxId: string,
+			hidden?: boolean,
+		) => {
+			const res = await http.post<UniResponse<AwdpAdminEventGameBoxDto>>(
+				`/events/${eventId}/awdp/gameboxes`,
+				{
+					gamebox_id: gameboxId,
+					hidden,
+				},
+			);
+			return res.data;
+		},
+		detachGamebox: async (eventId: string, egId: string) => {
+			const res = await http.delete<UniResponse<null>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}`,
+			);
+			return res.data;
+		},
+		listEventGameboxes: async (eventId: string, params?: QueryParams) => {
+			const res = await http.get<UniResponse<AwdpAdminEventGameBoxDto[]>>(
+				`/events/${eventId}/awdp/gameboxes`,
+				{ params },
+			);
+			return res.data;
+		},
+		listInstances: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpAdminInstanceDto[]>>(
+				`/events/${eventId}/awdp/instances`,
+			);
+			return res.data;
+		},
+		scores: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpScoreRow[]>>(
+				`/events/${eventId}/awdp/scores`,
+			);
+			return res.data;
+		},
+		dataPresent: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpDataPresent>>(
+				`/events/${eventId}/awdp/data`,
+			);
+			return res.data;
+		},
 };
+}
+
+export type AwdpAdminApi = ReturnType<typeof createAwdpAdminApi>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Player client
 // ────────────────────────────────────────────────────────────────────────────
 
-export const awdpPlayerApi = {
-	overview: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpOverview>>(
-			`/events/${eventId}/awdp`,
-		);
-		return res.data;
-	},
-	startInstance: async (eventId: string, egId: string) => {
-		const res = await service_api.post<UniResponse<AwdpInstance>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/instance`,
-		);
-		return res.data;
-	},
-	stopInstance: async (eventId: string, egId: string) => {
-		const res = await service_api.post<UniResponse<null>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/instance/stop`,
-		);
-		return res.data;
-	},
-	resetInstance: async (eventId: string, egId: string) => {
-		const res = await service_api.post<UniResponse<AwdpInstance>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/instance/reset`,
-		);
-		return res.data;
-	},
-	getInstance: async (eventId: string, egId: string) => {
-		const res = await service_api.get<UniResponse<AwdpInstance | null>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/instance`,
-		);
-		return res.data;
-	},
-	submitBreak: async (eventId: string, egId: string, flag: string) => {
-		const res = await service_api.post<UniResponse<BreakSubmitResponse>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/break`,
-			{
-				flag,
-			},
-		);
-		return res.data;
-	},
-	uploadPatch: async (eventId: string, egId: string, file: File) => {
-		const form = new FormData();
-		form.append("patch_file", file);
-		const res = await service_api.post<UniResponse<PatchSubmitResponse>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/patch`,
-			form,
-		);
-		return res.data;
-	},
-	testCheck: async (eventId: string, egId: string) => {
-		const res = await service_api.post<UniResponse<ManualCheckDto>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/test-check`,
-		);
-		return res.data;
-	},
-	sourceUrl: async (eventId: string, egId: string) => {
-		const res = await service_api.get<UniResponse<string>>(
-			`/events/${eventId}/awdp/gameboxes/${egId}/source`,
-		);
-		return res.data;
-	},
-	rounds: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpRoundDto[]>>(
-			`/events/${eventId}/awdp/rounds`,
-		);
-		return res.data;
-	},
-	evaluations: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpEvaluationDto[]>>(
-			`/events/${eventId}/awdp/evaluations`,
-		);
-		return res.data;
-	},
-	scores: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpScoreRow[]>>(
-			`/events/${eventId}/awdp/scores`,
-		);
-		return res.data;
-	},
-	scoreboard: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpScoreboardDetail>>(
-			`/events/${eventId}/awdp/scoreboard`,
-		);
-		return res.data;
-	},
-	trend: async (eventId: string) => {
-		const res = await service_api.get<UniResponse<AwdpTrendItem[]>>(
-			`/events/${eventId}/awdp/trend`,
-		);
-		return res.data;
-	},
+export function createAwdpPlayerApi(http: FloatCTFHttpClient) {
+	return {
+		overview: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpOverview>>(
+				`/events/${eventId}/awdp`,
+			);
+			return res.data;
+		},
+		startInstance: async (eventId: string, egId: string) => {
+			const res = await http.post<UniResponse<AwdpInstance>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/instance`,
+			);
+			return res.data;
+		},
+		stopInstance: async (eventId: string, egId: string) => {
+			const res = await http.post<UniResponse<null>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/instance/stop`,
+			);
+			return res.data;
+		},
+		resetInstance: async (eventId: string, egId: string) => {
+			const res = await http.post<UniResponse<AwdpInstance>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/instance/reset`,
+			);
+			return res.data;
+		},
+		getInstance: async (eventId: string, egId: string) => {
+			const res = await http.get<UniResponse<AwdpInstance | null>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/instance`,
+			);
+			return res.data;
+		},
+		submitBreak: async (eventId: string, egId: string, flag: string) => {
+			const res = await http.post<UniResponse<BreakSubmitResponse>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/break`,
+				{
+					flag,
+				},
+			);
+			return res.data;
+		},
+		uploadPatch: async (eventId: string, egId: string, file: File) => {
+			const form = new FormData();
+			form.append("patch_file", file);
+			const res = await http.post<UniResponse<PatchSubmitResponse>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/patch`,
+				form,
+			);
+			return res.data;
+		},
+		testCheck: async (eventId: string, egId: string) => {
+			const res = await http.post<UniResponse<ManualCheckDto>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/test-check`,
+			);
+			return res.data;
+		},
+		sourceUrl: async (eventId: string, egId: string) => {
+			const res = await http.get<UniResponse<string>>(
+				`/events/${eventId}/awdp/gameboxes/${egId}/source`,
+			);
+			return res.data;
+		},
+		rounds: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpRoundDto[]>>(
+				`/events/${eventId}/awdp/rounds`,
+			);
+			return res.data;
+		},
+		evaluations: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpEvaluationDto[]>>(
+				`/events/${eventId}/awdp/evaluations`,
+			);
+			return res.data;
+		},
+		scores: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpScoreRow[]>>(
+				`/events/${eventId}/awdp/scores`,
+			);
+			return res.data;
+		},
+		scoreboard: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpScoreboardDetail>>(
+				`/events/${eventId}/awdp/scoreboard`,
+			);
+			return res.data;
+		},
+		trend: async (eventId: string) => {
+			const res = await http.get<UniResponse<AwdpTrendItem[]>>(
+				`/events/${eventId}/awdp/trend`,
+			);
+			return res.data;
+		},
 };
+}
+
+export type AwdpPlayerApi = ReturnType<typeof createAwdpPlayerApi>;
 
 export type AwdpRoundDto = {
 	id: string;

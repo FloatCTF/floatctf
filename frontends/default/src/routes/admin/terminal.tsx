@@ -3,8 +3,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
-import { admin_api } from "@floatctf/sdk";
+
 import { ADMIN_API_URL } from "@/config";
+import { client } from "@/api";
 
 export const Route = createFileRoute("/admin/terminal")({
 	component: RouteComponent,
@@ -48,7 +49,7 @@ function RouteComponent() {
 			try {
 				// 常规管理员 JWT 只通过 Authorization header 使用一次，后端签发
 				// 60 秒、单次消费的 HttpOnly terminal ticket cookie。
-				await admin_api.post("/terminal/session");
+				await client.adminHttp.post("/terminal/session");
 				if (disposed) return;
 
 				const ws = new WebSocket(buildWsUrl());

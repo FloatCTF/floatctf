@@ -2,12 +2,13 @@ import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
-import { type GameBoxCatalogDto, awdpRunApi } from "@floatctf/sdk";
+import { type GameBoxCatalogDto } from "@floatctf/sdk";
 import { GenericTable, useMsgBanner } from "@/components";
 import { AppLink } from "@/navigation";
 import { DatetimeToShow } from "@/util";
 import { CheckIcon } from "@primer/octicons-react";
 import { ServiceRouteGuard } from "./route";
+import { awdpRunApi } from "@/api";
 
 export const Route = createFileRoute("/service/gameboxes")({
 	component: RouteComponent,

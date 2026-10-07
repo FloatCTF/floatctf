@@ -5,12 +5,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import dayjs from "dayjs";
 
-import {
-	awdpPlayerApi,
-	type AwdpEvaluationDto,
-	type AwdpRoundDto,
-} from "@floatctf/sdk";
+import { type AwdpEvaluationDto, type AwdpRoundDto } from "@floatctf/sdk";
 import { ServiceRouteGuard } from "../../route";
+import { awdpPlayerApi } from "@/api";
 
 export const Route = createFileRoute("/service/events/awdp/$id/rounds")({
 	component: RouteComponent,

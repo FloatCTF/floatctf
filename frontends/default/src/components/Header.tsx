@@ -1,9 +1,10 @@
-import { userServiceApi } from "@floatctf/sdk";
+
 import { useAppNavigate } from "@/navigation";
 import { useAuthStore } from "@/stores/AuthStore";
 import { Button } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { userServiceApi } from "@/api";
 
 export interface GenericHeaderProps
 	extends React.HTMLAttributes<HTMLDivElement> {

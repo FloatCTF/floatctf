@@ -3,12 +3,8 @@
  * 管理端：/api/admin/events/{eventId}/awd/...（创建：POST /api/admin/events/awd）
  * 选手端：/api/events/{eventId}/awd/...
  */
-import {
-	type QueryParams,
-	type UniResponse,
-	admin_api,
-	service_api,
-} from "../transport.js";
+import type { FloatCTFHttpClient } from "../transport.js";
+import type { QueryParams, UniResponse } from "../transport.js";
 
 export type AwdEventStatus = {
 	event_id: string;
@@ -278,347 +274,355 @@ export type NetworkAllocationRequest = {
 };
 
 /** 管理端 AWD 生命周期（SuperAdmin）。 */
-export const awdAdminApi = {
-	getStatus: async (
-		eventId: string,
-	): Promise<UniResponse<AwdEventStatus | null>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd`);
-		return res.data;
-	},
-	createEvent: async (
-		body: AwdEventConfigInput & { event_id: string },
-	): Promise<UniResponse<string>> => {
-		const res = await admin_api.post("/events/awd", body);
-		return res.data;
-	},
-	updateConfig: async (
-		eventId: string,
-		body: AwdEventConfigInput,
-	): Promise<UniResponse<AwdEventStatus>> => {
-		const res = await admin_api.patch(`/events/${eventId}/awd`, body);
-		return res.data;
-	},
-	deploy: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/deploy`);
-		return res.data;
-	},
-	start: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/start`);
-		return res.data;
-	},
-	pause: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/pause`);
-		return res.data;
-	},
-	resume: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/resume`);
-		return res.data;
-	},
-	finish: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/finish`);
-		return res.data;
-	},
-	precheck: async (eventId: string): Promise<UniResponse<string>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/precheck`);
-		return res.data;
-	},
-	// 最近一次预检的 errors/notes：运维页据此展示失败原因（原先只显示 Verification Failed）。
-	prechecks: async (
-		eventId: string,
-	): Promise<UniResponse<AwdPrecheckRun[]>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd/prechecks`);
-		return res.data;
-	},
-	scores: async (eventId: string): Promise<UniResponse<AwdScoreRow[]>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd/scores`);
-		return res.data;
-	},
-	archive: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/archive`);
-		return res.data;
-	},
-	resetGamebox: async (
-		eventId: string,
-		instanceId: string,
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(
-			`/events/${eventId}/awd/gameboxes/${instanceId}/reset`,
-		);
-		return res.data;
-	},
-	/** 手动封禁队伍（无定时，需管理员手动解封）。 */
-	banTeam: async (
-		eventId: string,
-		teamId: string,
-		body: { reason?: string },
-	): Promise<UniResponse<string>> => {
-		const res = await admin_api.post(
-			`/events/${eventId}/awd/teams/${teamId}/ban`,
-			{
-				reason: body.reason,
+export function createAwdAdminApi(http: FloatCTFHttpClient) {
+	return {
+		getStatus: async (
+			eventId: string,
+		): Promise<UniResponse<AwdEventStatus | null>> => {
+			const res = await http.get(`/events/${eventId}/awd`);
+			return res.data;
+		},
+		createEvent: async (
+			body: AwdEventConfigInput & { event_id: string },
+		): Promise<UniResponse<string>> => {
+			const res = await http.post("/events/awd", body);
+			return res.data;
+		},
+		updateConfig: async (
+			eventId: string,
+			body: AwdEventConfigInput,
+		): Promise<UniResponse<AwdEventStatus>> => {
+			const res = await http.patch(`/events/${eventId}/awd`, body);
+			return res.data;
+		},
+		deploy: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/deploy`);
+			return res.data;
+		},
+		start: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/start`);
+			return res.data;
+		},
+		pause: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/pause`);
+			return res.data;
+		},
+		resume: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/resume`);
+			return res.data;
+		},
+		finish: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/finish`);
+			return res.data;
+		},
+		precheck: async (eventId: string): Promise<UniResponse<string>> => {
+			const res = await http.post(`/events/${eventId}/awd/precheck`);
+			return res.data;
+		},
+		// 最近一次预检的 errors/notes：运维页据此展示失败原因（原先只显示 Verification Failed）。
+		prechecks: async (
+			eventId: string,
+		): Promise<UniResponse<AwdPrecheckRun[]>> => {
+			const res = await http.get(`/events/${eventId}/awd/prechecks`);
+			return res.data;
+		},
+		scores: async (eventId: string): Promise<UniResponse<AwdScoreRow[]>> => {
+			const res = await http.get(`/events/${eventId}/awd/scores`);
+			return res.data;
+		},
+		archive: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/archive`);
+			return res.data;
+		},
+		resetGamebox: async (
+			eventId: string,
+			instanceId: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.post(
+				`/events/${eventId}/awd/gameboxes/${instanceId}/reset`,
+			);
+			return res.data;
+		},
+		/** 手动封禁队伍（无定时，需管理员手动解封）。 */
+		banTeam: async (
+			eventId: string,
+			teamId: string,
+			body: { reason?: string },
+		): Promise<UniResponse<string>> => {
+			const res = await http.post(
+				`/events/${eventId}/awd/teams/${teamId}/ban`,
+				{
+					reason: body.reason,
+				},
+			);
+			return res.data;
+		},
+		/** P4-5：AWD 解封（反向闭环：DB unbanned → WG 恢复 peers → banned set reconcile）。 */
+		unbanTeam: async (
+			eventId: string,
+			teamId: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.delete(
+				`/events/${eventId}/awd/teams/${teamId}/ban`,
+			);
+			return res.data;
+		},
+		/** P3-10：内部 token 轮换（key_version+1 + 容器 rollout + 审计）。 */
+		rotateTokens: async (eventId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/tokens/rotate`);
+			return res.data;
+		},
+		/** P5-11：AWD 分数调整（审计）。 */
+		adjustScore: async (
+			eventId: string,
+			body: { team_id: string; delta: number; reason: string },
+		): Promise<UniResponse<null>> => {
+			const res = await http.post(
+				`/events/${eventId}/awd/score/adjust`,
+				body,
+			);
+			return res.data;
+		},
+		// ── GameBox 库（identity + revisions；package import）──
+		listGameboxes: async (
+			params: QueryParams = {},
+		): Promise<UniResponse<GameBoxLibraryDto[]>> => {
+			const res = await http.get("/awd/gameboxes", { params });
+			return res.data;
+		},
+		/** POST multipart 字段 `package_zip`——同步构建。 */
+		importGamebox: async (
+			file: File | Blob,
+		): Promise<UniResponse<ImportGameBoxResponse>> => {
+			const form = new FormData();
+			form.append("package_zip", file);
+			const res = await http.post("/awd/gameboxes/import", form, {
+				headers: { "Content-Type": "multipart/form-data" },
+			});
+			return res.data;
+		},
+		updateGamebox: async (
+			gameboxId: string,
+			body: {
+				name?: string;
+				category?: string;
+				description?: string;
+				hidden?: boolean;
+				username?: string | null;
+				recommended_cpu_millis?: number | null;
+				recommended_memory_bytes?: number | null;
+				recommended_pids_limit?: number | null;
+				/** JSON 文本；null 清空。 */
+				healthchecks_json?: string | null;
+				judge_script_name?: string | null;
+				judge_script_content?: string | null;
+				/** JSON 文本；null 清空。 */
+				judge_args_json?: string | null;
+				judge_timeout_secs?: number | null;
+				judge_retry_interval_secs?: number | null;
 			},
-		);
-		return res.data;
-	},
-	/** P4-5：AWD 解封（反向闭环：DB unbanned → WG 恢复 peers → banned set reconcile）。 */
-	unbanTeam: async (
-		eventId: string,
-		teamId: string,
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.delete(
-			`/events/${eventId}/awd/teams/${teamId}/ban`,
-		);
-		return res.data;
-	},
-	/** P3-10：内部 token 轮换（key_version+1 + 容器 rollout + 审计）。 */
-	rotateTokens: async (eventId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/tokens/rotate`);
-		return res.data;
-	},
-	/** P5-11：AWD 分数调整（审计）。 */
-	adjustScore: async (
-		eventId: string,
-		body: { team_id: string; delta: number; reason: string },
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(
-			`/events/${eventId}/awd/score/adjust`,
-			body,
-		);
-		return res.data;
-	},
-	// ── GameBox 库（identity + revisions；package import）──
-	listGameboxes: async (
-		params: QueryParams = {},
-	): Promise<UniResponse<GameBoxLibraryDto[]>> => {
-		const res = await admin_api.get("/awd/gameboxes", { params });
-		return res.data;
-	},
-	/** POST multipart 字段 `package_zip`——同步构建。 */
-	importGamebox: async (
-		file: File | Blob,
-	): Promise<UniResponse<ImportGameBoxResponse>> => {
-		const form = new FormData();
-		form.append("package_zip", file);
-		const res = await admin_api.post("/awd/gameboxes/import", form, {
-			headers: { "Content-Type": "multipart/form-data" },
-		});
-		return res.data;
-	},
-	updateGamebox: async (
-		gameboxId: string,
-		body: {
-			name?: string;
-			category?: string;
-			description?: string;
-			hidden?: boolean;
-			username?: string | null;
-			recommended_cpu_millis?: number | null;
-			recommended_memory_bytes?: number | null;
-			recommended_pids_limit?: number | null;
-			/** JSON 文本；null 清空。 */
-			healthchecks_json?: string | null;
-			judge_script_name?: string | null;
-			judge_script_content?: string | null;
-			/** JSON 文本；null 清空。 */
-			judge_args_json?: string | null;
-			judge_timeout_secs?: number | null;
-			judge_retry_interval_secs?: number | null;
+		): Promise<UniResponse<GameBoxLibraryDto>> => {
+			const res = await http.patch(`/awd/gameboxes/${gameboxId}`, body);
+			return res.data;
 		},
-	): Promise<UniResponse<GameBoxLibraryDto>> => {
-		const res = await admin_api.patch(`/awd/gameboxes/${gameboxId}`, body);
-		return res.data;
-	},
-	hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(`/awd/gameboxes/${gameboxId}/hide`);
-		return res.data;
-	},
-	// 批量删除（仿 challenges.remove）：仅未被赛事 / AWDP Run 引用的可删
-	removeGamebox: async (id_list: string[]): Promise<UniResponse<number>> => {
-		const res = await admin_api.delete("/awd/gameboxes", {
-			data: { id_list },
-		});
-		return res.data;
-	},
-	scanGameboxes: async (): Promise<UniResponse<GameBoxScanItem[]>> => {
-		const res = await admin_api.post("/awd/gameboxes/scan");
-		return res.data;
-	},
-	checkGameboxes: async (
-		gamebox_id_list?: string[],
-	): Promise<UniResponse<GameBoxCheckResult[]>> => {
-		const res = await admin_api.post("/awd/gameboxes/check", {
-			gamebox_id_list,
-		});
-		return res.data;
-	},
-	buildGameboxes: async (
-		gamebox_id_list?: string[],
-	): Promise<UniResponse<GameBoxBuildResult[]>> => {
-		const res = await admin_api.post("/awd/gameboxes/build", {
-			gamebox_id_list,
-		});
-		return res.data;
-	},
-	// ── 平台网络（Control Plane，§73）──
-	getPlatformNetwork: async (): Promise<
-		UniResponse<PlatformNetworkSettings>
-	> => {
-		const res = await admin_api.get("/awd/network");
-		return res.data;
-	},
-	updatePlatformNetwork: async (
-		body: PlatformNetworkSettingsUpdate,
-	): Promise<UniResponse<PlatformNetworkSettingsUpdateResponse>> => {
-		const res = await admin_api.patch("/awd/network", body);
-		return res.data;
-	},
-	/** §4.1 Host 观测状态（纯只读）。 */
-	getPlatformNetworkHealth: async (): Promise<
-		UniResponse<PlatformNetworkHealth>
-	> => {
-		const res = await admin_api.get("/awd/network/health");
-		return res.data;
-	},
-	/** §7/§66 平台分配账本（只读）。 */
-	getPlatformNetworkAllocations: async (): Promise<
-		UniResponse<PlatformNetworkAllocation[]>
-	> => {
-		const res = await admin_api.get("/awd/network/allocations");
-		return res.data;
-	},
-	// ── 赛事网络（§22/§64）──
-	/** 未分配时后端返回 404（data=null）。 */
-	getEventNetwork: async (
-		eventId: string,
-	): Promise<UniResponse<EventNetworkInfo>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd/network`);
-		return res.data;
-	},
-	/** PUT 分配：无 body 即 automatic；manual 需 gamebox_cidr + wireguard_cidr。 */
-	allocateEventNetwork: async (
-		eventId: string,
-		body: NetworkAllocationRequest,
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.put(`/events/${eventId}/awd/network`, body);
-		return res.data;
-	},
-	/** §33/§93 重新分配（仅未锁定）。 */
-	reallocateEventNetwork: async (
-		eventId: string,
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.post(
-			`/events/${eventId}/awd/network/reallocate`,
-		);
-		return res.data;
-	},
-	// ── 赛事 GameBox 选择（EventGameBox）──
-	listEventGameboxes: async (
-		eventId: string,
-		params: QueryParams = {},
-	): Promise<UniResponse<EventGameBoxDto[]>> => {
-		const res = await admin_api.get(`/events/${eventId}/awd/gameboxes`, {
-			params,
-		});
-		return res.data;
-	},
-	addEventGamebox: async (
-		eventId: string,
-		body: {
-			gamebox_id: string;
-			host_offset?: number;
-			hidden?: boolean;
-			attack_score?: number;
-			judge_down_penalty?: number;
-			first_bonus?: number;
+		hideGamebox: async (gameboxId: string): Promise<UniResponse<null>> => {
+			const res = await http.post(`/awd/gameboxes/${gameboxId}/hide`);
+			return res.data;
 		},
-	): Promise<UniResponse<EventGameBoxDto>> => {
-		const res = await admin_api.post(`/events/${eventId}/awd/gameboxes`, body);
-		return res.data;
-	},
-	updateEventGamebox: async (
-		eventId: string,
-		eventGameboxId: string,
-		body: {
-			enabled?: boolean;
-			hidden?: boolean;
-			cpu_millis?: number;
-			memory_bytes?: number;
-			pids_limit?: number;
-			judge_timeout_secs?: number | null;
-			judge_retry_interval_secs?: number | null;
-			attack_score?: number;
-			judge_down_penalty?: number;
-			first_bonus?: number;
+		// 批量删除（仿 challenges.remove）：仅未被赛事 / AWDP Run 引用的可删
+		removeGamebox: async (id_list: string[]): Promise<UniResponse<number>> => {
+			const res = await http.delete("/awd/gameboxes", {
+				data: { id_list },
+			});
+			return res.data;
 		},
-	): Promise<UniResponse<EventGameBoxDto>> => {
-		const res = await admin_api.patch(
-			`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
-			body,
-		);
-		return res.data;
-	},
-	removeEventGamebox: async (
-		eventId: string,
-		eventGameboxId: string,
-	): Promise<UniResponse<null>> => {
-		const res = await admin_api.delete(
-			`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
-		);
-		return res.data;
-	},
+		scanGameboxes: async (): Promise<UniResponse<GameBoxScanItem[]>> => {
+			const res = await http.post("/awd/gameboxes/scan");
+			return res.data;
+		},
+		checkGameboxes: async (
+			gamebox_id_list?: string[],
+		): Promise<UniResponse<GameBoxCheckResult[]>> => {
+			const res = await http.post("/awd/gameboxes/check", {
+				gamebox_id_list,
+			});
+			return res.data;
+		},
+		buildGameboxes: async (
+			gamebox_id_list?: string[],
+		): Promise<UniResponse<GameBoxBuildResult[]>> => {
+			const res = await http.post("/awd/gameboxes/build", {
+				gamebox_id_list,
+			});
+			return res.data;
+		},
+		// ── 平台网络（Control Plane，§73）──
+		getPlatformNetwork: async (): Promise<
+			UniResponse<PlatformNetworkSettings>
+		> => {
+			const res = await http.get("/awd/network");
+			return res.data;
+		},
+		updatePlatformNetwork: async (
+			body: PlatformNetworkSettingsUpdate,
+		): Promise<UniResponse<PlatformNetworkSettingsUpdateResponse>> => {
+			const res = await http.patch("/awd/network", body);
+			return res.data;
+		},
+		/** §4.1 Host 观测状态（纯只读）。 */
+		getPlatformNetworkHealth: async (): Promise<
+			UniResponse<PlatformNetworkHealth>
+		> => {
+			const res = await http.get("/awd/network/health");
+			return res.data;
+		},
+		/** §7/§66 平台分配账本（只读）。 */
+		getPlatformNetworkAllocations: async (): Promise<
+			UniResponse<PlatformNetworkAllocation[]>
+		> => {
+			const res = await http.get("/awd/network/allocations");
+			return res.data;
+		},
+		// ── 赛事网络（§22/§64）──
+		/** 未分配时后端返回 404（data=null）。 */
+		getEventNetwork: async (
+			eventId: string,
+		): Promise<UniResponse<EventNetworkInfo>> => {
+			const res = await http.get(`/events/${eventId}/awd/network`);
+			return res.data;
+		},
+		/** PUT 分配：无 body 即 automatic；manual 需 gamebox_cidr + wireguard_cidr。 */
+		allocateEventNetwork: async (
+			eventId: string,
+			body: NetworkAllocationRequest,
+		): Promise<UniResponse<null>> => {
+			const res = await http.put(`/events/${eventId}/awd/network`, body);
+			return res.data;
+		},
+		/** §33/§93 重新分配（仅未锁定）。 */
+		reallocateEventNetwork: async (
+			eventId: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.post(
+				`/events/${eventId}/awd/network/reallocate`,
+			);
+			return res.data;
+		},
+		// ── 赛事 GameBox 选择（EventGameBox）──
+		listEventGameboxes: async (
+			eventId: string,
+			params: QueryParams = {},
+		): Promise<UniResponse<EventGameBoxDto[]>> => {
+			const res = await http.get(`/events/${eventId}/awd/gameboxes`, {
+				params,
+			});
+			return res.data;
+		},
+		addEventGamebox: async (
+			eventId: string,
+			body: {
+				gamebox_id: string;
+				host_offset?: number;
+				hidden?: boolean;
+				attack_score?: number;
+				judge_down_penalty?: number;
+				first_bonus?: number;
+			},
+		): Promise<UniResponse<EventGameBoxDto>> => {
+			const res = await http.post(`/events/${eventId}/awd/gameboxes`, body);
+			return res.data;
+		},
+		updateEventGamebox: async (
+			eventId: string,
+			eventGameboxId: string,
+			body: {
+				enabled?: boolean;
+				hidden?: boolean;
+				cpu_millis?: number;
+				memory_bytes?: number;
+				pids_limit?: number;
+				judge_timeout_secs?: number | null;
+				judge_retry_interval_secs?: number | null;
+				attack_score?: number;
+				judge_down_penalty?: number;
+				first_bonus?: number;
+			},
+		): Promise<UniResponse<EventGameBoxDto>> => {
+			const res = await http.patch(
+				`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
+				body,
+			);
+			return res.data;
+		},
+		removeEventGamebox: async (
+			eventId: string,
+			eventGameboxId: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.delete(
+				`/events/${eventId}/awd/gameboxes/${eventGameboxId}`,
+			);
+			return res.data;
+		},
 };
+}
+
+export type AwdAdminApi = ReturnType<typeof createAwdAdminApi>;
 
 /** 选手端 AWD 接口（用户 JWT）。 */
-export const awdPlayerApi = {
-	/** 获取 AWD 赛事状态（phase, round, ban state, score）。 */
-	status: async (eventId: string): Promise<UniResponse<AwdPlayerStatus>> => {
-		const res = await service_api.get(`/events/${eventId}/awd/status`);
-		return res.data;
-	},
-	gameboxes: async (eventId: string): Promise<UniResponse<AwdGameBox[]>> => {
-		const res = await service_api.get(`/events/${eventId}/awd/gameboxes`);
-		return res.data;
-	},
-	resetGamebox: async (
-		eventId: string,
-		instanceId: string,
-	): Promise<UniResponse<null>> => {
-		const res = await service_api.post(
-			`/events/${eventId}/awd/gameboxes/${instanceId}/reset`,
-		);
-		return res.data;
-	},
-	submitFlag: async (
-		eventId: string,
-		flag: string,
-	): Promise<UniResponse<null>> => {
-		const res = await service_api.post(`/events/${eventId}/awd/submissions`, {
-			flag,
-		});
-		return res.data;
-	},
-	scores: async (eventId: string): Promise<UniResponse<AwdScoreRow[]>> => {
-		const res = await service_api.get(`/events/${eventId}/awd/scores`);
-		return res.data;
-	},
-	wireguardConfig: async (
-		eventId: string,
-	): Promise<UniResponse<WireGuardConfigResponse>> => {
-		const res = await service_api.get(
-			`/events/${eventId}/awd/wireguard/config`,
-		);
-		return res.data;
-	},
-	/**
-	 * 队伍级 SSH 访问凭据（GET /events/{eventId}/awd/ssh-config）。
-	 */
-	sshConfig: async (
-		eventId: string,
-	): Promise<UniResponse<SshAccessResponse>> => {
-		const res = await service_api.get(`/events/${eventId}/awd/ssh-config`);
-		return res.data;
-	},
+export function createAwdPlayerApi(http: FloatCTFHttpClient) {
+	return {
+		/** 获取 AWD 赛事状态（phase, round, ban state, score）。 */
+		status: async (eventId: string): Promise<UniResponse<AwdPlayerStatus>> => {
+			const res = await http.get(`/events/${eventId}/awd/status`);
+			return res.data;
+		},
+		gameboxes: async (eventId: string): Promise<UniResponse<AwdGameBox[]>> => {
+			const res = await http.get(`/events/${eventId}/awd/gameboxes`);
+			return res.data;
+		},
+		resetGamebox: async (
+			eventId: string,
+			instanceId: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.post(
+				`/events/${eventId}/awd/gameboxes/${instanceId}/reset`,
+			);
+			return res.data;
+		},
+		submitFlag: async (
+			eventId: string,
+			flag: string,
+		): Promise<UniResponse<null>> => {
+			const res = await http.post(`/events/${eventId}/awd/submissions`, {
+				flag,
+			});
+			return res.data;
+		},
+		scores: async (eventId: string): Promise<UniResponse<AwdScoreRow[]>> => {
+			const res = await http.get(`/events/${eventId}/awd/scores`);
+			return res.data;
+		},
+		wireguardConfig: async (
+			eventId: string,
+		): Promise<UniResponse<WireGuardConfigResponse>> => {
+			const res = await http.get(
+				`/events/${eventId}/awd/wireguard/config`,
+			);
+			return res.data;
+		},
+		/**
+		 * 队伍级 SSH 访问凭据（GET /events/{eventId}/awd/ssh-config）。
+		 */
+		sshConfig: async (
+			eventId: string,
+		): Promise<UniResponse<SshAccessResponse>> => {
+			const res = await http.get(`/events/${eventId}/awd/ssh-config`);
+			return res.data;
+		},
 };
+}
+
+export type AwdPlayerApi = ReturnType<typeof createAwdPlayerApi>;
 
 export type SshInstanceInfo = {
 	id: string;

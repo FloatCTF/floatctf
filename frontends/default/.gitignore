@@ -1,0 +1,9 @@
+# Default Frontend 的可再生构建产物
+node_modules
+dist
+dist-ssr
+.tanstack
+*.local
+.env
+# TanStack Router 的路由树由 Vite 插件生成（mise run dev / build 会重建）
+src/routeTree.gen.ts

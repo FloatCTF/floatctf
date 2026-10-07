@@ -8,12 +8,17 @@
 #
 #   默认（无参数）：
 #     - target/                          Cargo 构建缓存（cargo build 可再生）
-#     - apps/web/dist/                   Web 构建产物（vite build 可再生）
-#     - release/                         本地发布包（可经 install.sh 从 GitHub Release 下载）
+#     - packages/*/dist/                 workspace 包构建产物（tsc 可再生）
+#     - apps/web/dist/                   bootstrap 构建产物（vite build 可再生）
+#     - frontends/default/dist/          Default Frontend 制品（vite build 可再生）
+#       （routeTree.gen.ts 刻意**不**清理：它是 Vite 插件生成物，删掉会让
+#        `tsc --noEmit` 在没有跑过 Vite 的树上失败。mise run dev/build 会按需重生成。）
+#     - release/                         本地发布包/web-dist 归档（可重新打包）
 #     - scripts/__pycache__/             Python 生成器字节码
+#     - .frontend-pack/                  前端打包临时输出（pnpm pack 的 tarball）
 #
 #   --all（更彻底，额外清理依赖与开发运行时数据）：
-#     - node_modules/ 与 apps/web/node_modules/  pnpm 依赖（pnpm install 可再生）
+#     - node_modules/（根 + apps/web + packages/* + frontends/*）  pnpm 依赖（pnpm install 可再生）
 #     - app/                                 开发运行时 WORK_DIR（git 忽略；含水后的
 #                                             开发日志/上传/题目文件，仅开发用，可再生）
 #
@@ -21,6 +26,8 @@
 #   - 所有删除路径一律锚定在仓库根（由脚本路径稳健推导），绝不越出仓库。
 #   - 绝不触碰：/var/lib/floatctf、systemd 单元、sysctl/modules 文件、Docker 生产容器/
 #     网络、PostgreSQL/RustFS 数据、生产 config/secrets、nftables、WireGuard、主机路由。
+#   - 也绝不触碰**已安装前端**：/var/lib/floatctf/frontends（含 registry.json）与
+#     /var/lib/floatctf/frontend.sh 属于部署产物，不在本脚本（源码签出清理）的范围内。
 #   - 删除前打印将被移除的路径；幂等，重复运行安全。
 #
 # 用法：
@@ -91,9 +98,14 @@ esac
 info "FloatCTF clean（MODE=$MODE，仓库根: $REPO_ROOT）"
 
 # ── 默认：可再生构建产物 ───────────────────────────────────────────────────────
-remove_path "Cargo target"            "$REPO_ROOT/target"
-remove_path "Web dist"                "$REPO_ROOT/apps/web/dist"
+remove_path "Cargo target"             "$REPO_ROOT/target"
+remove_path "frontend-runtime dist"   "$REPO_ROOT/packages/frontend-runtime/dist"
+remove_path "sdk dist"                 "$REPO_ROOT/packages/sdk/dist"
+remove_path "react dist"               "$REPO_ROOT/packages/react/dist"
+remove_path "bootstrap dist"           "$REPO_ROOT/apps/web/dist"
+remove_path "Default Frontend dist"    "$REPO_ROOT/frontends/default/dist"
 remove_path "发布包 release"           "$REPO_ROOT/release"
+remove_path "前端打包临时输出"          "$REPO_ROOT/.frontend-pack"
 remove_path "Python 字节码 __pycache__" "$REPO_ROOT/scripts/__pycache__"
 
 # ── --all：额外清理依赖安装与开发运行时数据（均有再生路径）─────────────────────
@@ -101,6 +113,10 @@ if [ "$MODE" = "all" ]; then
     info "── 清理依赖安装与开发运行时数据（--all）──"
     remove_path "根 node_modules"            "$REPO_ROOT/node_modules"
     remove_path "apps/web node_modules"      "$REPO_ROOT/apps/web/node_modules"
+    remove_path "packages node_modules"      "$REPO_ROOT/packages/frontend-runtime/node_modules"
+    remove_path "sdk node_modules"           "$REPO_ROOT/packages/sdk/node_modules"
+    remove_path "react node_modules"         "$REPO_ROOT/packages/react/node_modules"
+    remove_path "Default Frontend node_modules" "$REPO_ROOT/frontends/default/node_modules"
     remove_path "开发运行时工作目录 app"       "$REPO_ROOT/app"
 fi
 

@@ -11,18 +11,20 @@
 #
 # 【生产安装】无需 clone 仓库：
 #   curl -fsSL <install.sh 的 URL> -o install.sh && sudo bash install.sh
-#   或显式指定 4 个 release 产物 URL：
-#     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> --migrate-url <sql>
-#   流程：主机初始化 → 下载 4 产物 → 本地构建 API runtime image → 部署 →
+#   或显式指定 5 个 release 产物 URL：
+#     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> \
+#                         --migrate-url <sql> --frontend-manager-url <script>
+#   流程：主机初始化 → 下载 5 产物 → 本地构建 API runtime image → 部署 →
+#         安装 bootstrap 静态页 + Default Frontend + 前端管理器 frontend.sh →
 #         写 helper/Compose systemd 单元并 enable（不 start）。
 #
 # 【开发宿主初始化】由 `mise run setup` 内部调用；开发者无需直接运行：
 #   sudo ./scripts/install.sh --develop --helper-bin <target/debug/floatctf-helper>
 #   仅准备主机、系统用户/组、内核参数与 floatctf-helper，不创建 dev systemd infra。
 #
-# 环境变量（覆盖 4 个产物 URL / release 版本）：
+# 环境变量（覆盖 5 个产物 URL / release 版本）：
 #   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
-#   FLOATCTF_MIGRATE_URL / FLOATCTF_VERSION
+#   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_VERSION
 # 安装根：
 #   FLOATCTF_HOME=/opt/floatctf   （默认 /var/lib/floatctf）
 #
@@ -52,6 +54,7 @@ DEFAULT_API_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-f
 DEFAULT_HELPER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf-helper"
 DEFAULT_WEB_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/web-dist.tar.gz"
 DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/merged.sql"
+DEFAULT_FRONTEND_MANAGER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/frontend.sh"
 
 # ── 颜色/日志 ─────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -69,12 +72,14 @@ API_URL="$DEFAULT_API_URL"
 HELPER_URL="$DEFAULT_HELPER_URL"
 WEB_URL="$DEFAULT_WEB_URL"
 MIGRATE_URL="$DEFAULT_MIGRATE_URL"
+FRONTEND_MANAGER_URL="$DEFAULT_FRONTEND_MANAGER_URL"
 VERSION="${FLOATCTF_VERSION:-}"
 VERSION_EXPLICIT=0
 API_URL_EXPLICIT=0
 HELPER_URL_EXPLICIT=0
 WEB_URL_EXPLICIT=0
 MIGRATE_URL_EXPLICIT=0
+FRONTEND_MANAGER_URL_EXPLICIT=0
 DEVELOP=0
 HELPER_BIN=""
 while [ $# -gt 0 ]; do
@@ -84,6 +89,7 @@ while [ $# -gt 0 ]; do
         --helper-bin) HELPER_BIN="${2:?--helper-bin 需要本地二进制路径}"; shift ;;
         --web-url) WEB_URL="${2:?--web-url 需要一个地址参数}"; WEB_URL_EXPLICIT=1; shift ;;
         --migrate-url) MIGRATE_URL="${2:?--migrate-url 需要一个地址参数}"; MIGRATE_URL_EXPLICIT=1; shift ;;
+        --frontend-manager-url) FRONTEND_MANAGER_URL="${2:?--frontend-manager-url 需要一个地址参数}"; FRONTEND_MANAGER_URL_EXPLICIT=1; shift ;;
         --version) VERSION="${2:?--version 需要 release 版本，如 0.3.3}"; VERSION_EXPLICIT=1; shift ;;
         --develop) DEVELOP=1 ;;
         -h|--help)
@@ -100,6 +106,7 @@ done
 [ "$HELPER_URL_EXPLICIT" -eq 1 ] || HELPER_URL="${FLOATCTF_HELPER_URL:-$HELPER_URL}"
 [ "$WEB_URL_EXPLICIT" -eq 1 ] || WEB_URL="${FLOATCTF_WEB_URL:-$WEB_URL}"
 [ "$MIGRATE_URL_EXPLICIT" -eq 1 ] || MIGRATE_URL="${FLOATCTF_MIGRATE_URL:-$MIGRATE_URL}"
+[ "$FRONTEND_MANAGER_URL_EXPLICIT" -eq 1 ] || FRONTEND_MANAGER_URL="${FLOATCTF_FRONTEND_MANAGER_URL:-$FRONTEND_MANAGER_URL}"
 [ "$VERSION_EXPLICIT" -eq 1 ] || VERSION="${FLOATCTF_VERSION:-$VERSION}"
 
 # 生产镜像统一使用 release 版本 tag。GitHub Release URL 可自动推导版本；
@@ -145,7 +152,9 @@ detect_distro() {
 
 # postgresql 包仅取其客户端 psql（dev 的 migrate.sh status/apply 在宿主执行；
 # Arch 无 client-only 包）。生产手动运维/备份同样受益。
-ARCH_PKGS=(docker docker-compose nftables wireguard-tools iproute2 conntrack-tools iptables procps-ng openssl curl tar postgresql)
+# python3 是前端管理器（$FLOATCTF_HOME/frontend.sh）的运行时依赖：它用 python3 做
+# frontend.json / registry.json 的 JSON 解析与原子注册表更新（见 docs/frontend/ARTIFACT.md）。
+ARCH_PKGS=(docker docker-compose nftables wireguard-tools iproute2 conntrack-tools iptables procps-ng openssl curl tar postgresql python3)
 
 install_arch_pkgs() {
     local missing=() p
@@ -176,7 +185,10 @@ check_commands() {
     for c in ip wg nft conntrack iptables docker sysctl modprobe; do
         command -v "$c" >/dev/null 2>&1 || die "缺少命令: $c"
     done
-    ok "基础命令齐全（ip/wg/nft/conntrack/iptables/docker/sysctl/modprobe）"
+    # 前端管理器 frontend.sh 需要 python3（JSON 解析 + 原子注册表更新）。
+    command -v python3 >/dev/null 2>&1 \
+        || die "缺少命令: python3（前端管理器 frontend.sh 的依赖；apt/dnf/pacman 安装 python3 后重试）"
+    ok "基础命令齐全（ip/wg/nft/conntrack/iptables/docker/sysctl/modprobe/python3）"
 }
 
 check_docker() {
@@ -397,6 +409,7 @@ ensure_real_release_urls() {
     [[ "$HELPER_URL" == *"$placeholder"* ]] && missing+=("--helper-url（或 FLOATCTF_HELPER_URL）")
     [[ "$WEB_URL" == *"$placeholder"* ]] && missing+=("--web-url（或 FLOATCTF_WEB_URL）")
     [[ "$MIGRATE_URL" == *"$placeholder"* ]] && missing+=("--migrate-url（或 FLOATCTF_MIGRATE_URL）")
+    [[ "$FRONTEND_MANAGER_URL" == *"$placeholder"* ]] && missing+=("--frontend-manager-url（或 FLOATCTF_FRONTEND_MANAGER_URL）")
     if [ "${#missing[@]}" -gt 0 ]; then
         die "缺少真实 release 地址：内置地址是 v0.0.0-fake 占位（仓库还没有对应发布产物）。请补：${missing[*]}"
     fi
@@ -404,7 +417,7 @@ ensure_real_release_urls() {
 
 download_release() {
     ensure_real_release_urls
-    info "──── 第二阶段：下载 release 产物（4 URL）────"
+    info "──── 第二阶段：下载 release 产物（5 URL）────"
     TMP_STAGE_DIR="$(mktemp -d /tmp/floatctf-install.XXXXXX)"
 
     # 1) API 二进制
@@ -424,6 +437,11 @@ download_release() {
 
     # 4) merged.sql
     download_url "$MIGRATE_URL" "$TMP_STAGE_DIR/merged.sql"
+
+    # 5) 前端管理器（安装后落到 $FLOATCTF_HOME/frontend.sh，运维无需源码签出）
+    download_url "$FRONTEND_MANAGER_URL" "$TMP_STAGE_DIR/frontend.sh"
+    chmod 0755 "$TMP_STAGE_DIR/frontend.sh"
+    bash -n "$TMP_STAGE_DIR/frontend.sh" || die "下载的 frontend.sh 语法无效（产物损坏？）"
 
     ok "release 产物就绪: $TMP_STAGE_DIR"
     PKG_DIR="$TMP_STAGE_DIR"
@@ -566,7 +584,11 @@ services:
             API_PORT: ${API_PORT:-9090}
         volumes:
             - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
+            # bootstrap 引导页（apps/web 产物）。
             - ${FLOATCTF_HOME}/web:/srv/web:ro
+            # 已安装前端（版本化制品 + registry.json）。Caddy 以 /__floatctf/frontends/*
+            # 同源提供；只读挂载——前端资产由 frontend.sh 维护，运行期不可变。
+            - ${FLOATCTF_HOME}/frontends:/srv/frontends:ro
             # 挂载 API 的 work_dir 根（宿主 ${FLOATCTF_HOME}/runtime == 容器
             # /var/lib/floatctf/runtime）到 /srv；Caddyfile 里 root 是 /srv/challenges，
             # 于是附件根恒等于 CHALLENGES_DIR（{{WORK_DIR}}/challenges），与 dev 同构。
@@ -708,6 +730,28 @@ write_caddy_template() {
         rewrite * /floatctf-private{path}
         reverse_proxy rustfs:9000 {
             header_up Host rustfs:9000
+        }
+    }
+
+    # 已安装前端的本地注册表：必须**不被永久缓存**（新装前端后要立刻可见）。
+    @frontend_registry path /__floatctf/frontends/registry.json
+    handle @frontend_registry {
+        root * /srv/frontends
+        header Cache-Control "no-store"
+        header Content-Type "application/json"
+        rewrite * /registry.json
+        file_server
+    }
+
+    # 版本化前端资产（/__floatctf/frontends/<id>/<version>/...）：
+    # 同源、路径确定、内容不可变 → 可以长缓存。不得遮蔽 /api（/api/* 先匹配）。
+    handle_path /__floatctf/frontends/* {
+        root * /srv/frontends
+        header Cache-Control "public, max-age=31536000, immutable"
+        header X-Content-Type-Options nosniff
+        file_server {
+            # 注册表写入锁等内部文件不外泄。
+            hide .registry.lock .staging-*
         }
     }
 
@@ -862,14 +906,19 @@ write_uninstall() {
 # 两个模式：
 #   sudo $FCTF_ROOT/uninstall.sh            SAFE UNINSTALL —— 移除可运行应用
 #                                               （systemd、生产 Compose 容器/赛事资源、API image、
-#                                               web 资产），但保留可恢复状态：
+#                                               bootstrap web 资产），但保留可恢复状态：
 #                                               data/{postgres,rustfs,caddy,caddy-config}, config/, .env,
-#                                               runtime/, logs/, .initialized, 本卸载脚本。
+#                                               runtime/, logs/, .initialized, 本卸载脚本，
+#                                               **以及 frontends/（已安装前端 + registry.json）
+#                                               与 frontend.sh（前端管理器）** ——
+#                                               这样重新部署能恢复同一套前端集合。
 #                                               语义：deploy → safe uninstall → deploy 应恢复相同的
 #                                               应用数据与密钥（用户/赛事/数据仍在）。
 #   sudo $FCTF_ROOT/uninstall.sh --purge    PERMANENT 删除全部 FloatCTF 自有数据
 #                                               （PG/RustFS 数据、config、secrets、runtime、
-#                                               日志、API image/build context、web、compose、systemd 单元、
+#                                               日志、API image/build context、bootstrap web、
+#                                               **frontends/ 已安装前端与注册表、frontend.sh**、
+#                                               compose、systemd 单元、
 #                                               动态赛事资源、sysctl/modules 文件、helper 用户、
 #                                               安装根目录、本脚本自身）。需输入确认文本
 #                                               "PURGE FLOATCTF"（除非 --yes）。
@@ -1160,7 +1209,10 @@ remove_api_images() {
 }
 
 remove_application_artifacts() {
-    info "── 移除可运行应用产物（保留 data/config/.env/runtime/logs）──"
+    info "── 移除可运行应用产物（保留 data/config/.env/runtime/logs 与已安装前端）──"
+    # 刻意**不**删除：$FCTF_ROOT/frontends（已安装前端 + registry.json）与
+    # $FCTF_ROOT/frontend.sh。它们是运维/第三方投入的"已安装状态"，
+    # 保留才能让"卸载 → 重新部署"恢复同一套前端集合（见 docs/frontend/ARCHITECTURE.md）。
     # image/ 是生产 API build context；bin/ 仅为旧版 native API 兼容清理。
     local p
     for p in "$FCTF_ROOT/image" "$FCTF_ROOT/bin" "$FCTF_ROOT/web" "$FCTF_ROOT/compose.dev.yml" "$FCTF_ROOT/compose.prod.yml" "$FCTF_ROOT/merged.sql" "$HELPER_INSTALL_PATH"; do
@@ -1216,6 +1268,8 @@ safe_uninstall() {
   配置/密钥      : $FCTF_ROOT/config 与 $FCTF_ROOT/.env
   运行时工作目录 : $FCTF_ROOT/runtime
   日志          : $FCTF_ROOT/logs
+  已安装前端      : $FCTF_ROOT/frontends（含 registry.json，第三方前端与版本一并保留）
+  前端管理器      : $FCTF_ROOT/frontend.sh
 
 重新安装:
   运行 scripts/install.sh（会恢复相同数据与密钥，API 启动时自动重建 AWD 动态资源）。
@@ -1374,6 +1428,7 @@ purge_run() {
     echo ""
     echo "遗留检查："
     echo "  - 未曾触碰共享宿主依赖（Docker / compose / nftables 包 / WG 包 / iproute2 / systemd）。"
+    echo "  - 已删除全部已安装前端与注册表（$FCTF_ROOT/frontends）以及前端管理器 frontend.sh。"
     echo "  - 未曾触碰无关 Docker 对象 / WG 接口 / nftables 规则 / 路由 / libvirt / Incus。"
     echo "  - 如需关闭 IPv4 转发 / br_netfilter，请手动评估（可能被其他负载依赖）。"
     echo ""
@@ -1586,15 +1641,71 @@ stage_release() {
         || die "构建生产 API image 失败"
     ok "生产 API image 已构建: floatctf/api:$VERSION"
 
+    # ── 前端管理器：先安装它，后面的前端安装复用它的注册表语义与安全校验 ──
+    install -m 0755 "$PKG_DIR/frontend.sh" "$FLOATCTF_HOME/frontend.sh"
+    chown root:root "$FLOATCTF_HOME/frontend.sh"
+    bash -n "$FLOATCTF_HOME/frontend.sh" || die "frontend.sh 语法无效（产物损坏？）"
+    ok "前端管理器已安装: $FLOATCTF_HOME/frontend.sh"
+
+    # ── bootstrap 引导页（apps/web 产物；**不含**任何官方 UI 实现）──
+    [ -d "$PKG_DIR/web/bootstrap" ]         || die "web-dist 归档缺少 bootstrap/ 目录（旧格式产物？请使用与新安装器配套的 release）"
     mkdir -p "$FLOATCTF_HOME/web"
     find "$FLOATCTF_HOME/web" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-    cp -a "$PKG_DIR/web/." "$FLOATCTF_HOME/web/"
+    cp -a "$PKG_DIR/web/bootstrap/." "$FLOATCTF_HOME/web/"
     chown -R root:root "$FLOATCTF_HOME/web"
+    ok "bootstrap 静态页已安装: $FLOATCTF_HOME/web"
+
+    install_platform_frontends
     install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
     mkdir -p "$FLOATCTF_HOME/runtime"
     chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     fix_infra_ownership
-    ok "产物装配完成（API image + helper + web + merged.sql）"
+    ok "产物装配完成（API image + helper + bootstrap + 前端管理器 + 已安装前端 + merged.sql）"
+}
+
+# 安装随 release 发布的前端（bootstrap/ 之外的 frontends/<id>/<version>/）。
+#
+# 关键语义（见 docs/frontend/ARCHITECTURE.md）：
+#   - **只动 release 里带的前端**（当前仅 default）；第三方已安装前端与其版本目录、
+#     以及注册表里第三方条目的 currentVersion 指针，一律保持不变。
+#   - `default` 升级：装新版本 + 把 currentVersion 指到新版本（旧版本保留 → 可回滚）。
+#   - 同版本同内容 = 幂等重装（不重写资产）；同版本不同内容 = `--platform --reinstall` 原子替换。
+#   - `FRONTEND_ACTIVE`（数据库设置）与本流程无关，升级不会改动它。
+install_platform_frontends() {
+    local release_frontends="$PKG_DIR/web/frontends"
+    if [ ! -d "$release_frontends" ]; then
+        warn "web-dist 归档不含 frontends/ —— 平台不会安装任何前端（请检查 release 产物）"
+        return 0
+    fi
+
+    local version_dir id version installed=0
+    while IFS= read -r version_dir; do
+        [ -n "$version_dir" ] || continue
+        id="$(basename "$(dirname "$version_dir")")"
+        version="$(basename "$version_dir")"
+        [ -f "$version_dir/frontend.json" ]             || die "release 内前端制品缺少 frontend.json: $version_dir"
+
+        info "安装 release 前端: $id@$version"
+        if [ "$id" = "default" ]; then
+            # default 始终随平台发布：受保护、可放在 release 之外被移除，并移动 current 指针。
+            "$FLOATCTF_HOME/frontend.sh" install "$version_dir"                 --platform --reinstall --make-current                 || die "安装平台前端失败: $id@$version"
+        else
+            # 其他由平台发布的前端：安装但不擅自改变其 current 指针。
+            "$FLOATCTF_HOME/frontend.sh" install "$version_dir" --platform --reinstall                 || die "安装平台前端失败: $id@$version"
+        fi
+        installed=$((installed + 1))
+    done < <(find "$release_frontends" -mindepth 2 -maxdepth 2 -type d | sort)
+
+    [ "$installed" -gt 0 ] || die "release 的 frontends/ 目录里没有任何前端制品"
+    [ -f "$FLOATCTF_HOME/frontends/registry.json" ]         || die "前端注册表未生成: $FLOATCTF_HOME/frontends/registry.json"
+
+    # 前端目录与注册表归 root（前端资产由 frontend.sh 设为全局只读，API 用户不可写）。
+    # 以 root 运行时 chown 必然成功；非 root 场景（测试/自建根目录）只告警不中断。
+    chown root:root "$FLOATCTF_HOME/frontends" "$FLOATCTF_HOME/frontends/registry.json" 2>/dev/null \
+        || warn "无法把前端目录 chown 为 root:root（非 root 安装？前端功能不受影响）"
+    chmod 0755 "$FLOATCTF_HOME/frontends" 2>/dev/null || true
+    chmod 0644 "$FLOATCTF_HOME/frontends/registry.json" 2>/dev/null || true
+    ok "已安装 $installed 个 release 前端（注册表: $FLOATCTF_HOME/frontends/registry.json）"
 }
 
 ensure_platform_control_network() {

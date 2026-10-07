@@ -91,9 +91,11 @@ services:
             RUSTFS_CONSOLE_ENABLE: "true"
             RUSTFS_OBS_LOG_DIRECTORY: /logs
         healthcheck:
-            test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
-            interval: 2s
-            timeout: 3s
-            retries: 30
-            start_period: 5s
+            # 与生产模板同构：TCP 开放 ≠ S3/HTTP 层可用（镜像内只有 BusyBox nc，
+            # 故用 nc 发真实 HTTP 请求读 /health；stdin 需保持打开才能读到响应）。
+            test: ["CMD-SHELL", "{ printf 'GET /health HTTP/1.1\r\nHost: 127.0.0.1:9000\r\nConnection: close\r\n\r\n'; sleep 1; } | nc -w 3 127.0.0.1 9000 | head -1 | grep -q ' 200 '"]
+            interval: 5s
+            timeout: 10s
+            retries: 24
+            start_period: 10s
         restart: unless-stopped

@@ -1,0 +1,163 @@
+name: RC
+
+# Release Candidate（**非发布**）工作流：只构建 + 验证 + 上传 workflow artifact。
+#
+# 与 release.yml 的关系：
+#   * 触发：仅 workflow_dispatch（不监听 push/tag，绝不因推送自动产生任何发布物）。
+#   * 制品：与 release.yml 完全相同的 ARTIFACT CONTRACT v1.0 集合，装配逻辑复用
+#     `scripts/release-checksums.sh --assemble`（同一实现，避免两份 YAML 漂移）。
+#   * 验证：verify-release-frontend.sh / test-frontend-manager.sh / check-architecture.sh
+#     + 生产 API image 断言（65532:65532 与 ldd）+ 运行时镜像本地构建/ldd 体检，
+#     与 release.yml 同口径。
+#   * 安全：contents: read；**绝不**创建 GitHub Release、**绝不**打 tag、
+#     **绝不**执行 npm/pnpm publish、**绝不** docker login / docker push
+#     （由 scripts/test-release-workflow.sh 与 scripts/test-runtime-images.sh 静态断言）。
+#   * 不跑任何宿主机网络 / nftables / WireGuard 破坏性测试。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "制品版本号 <V>（默认：v* tag ref 取 tag，否则取根 package.json 的 version）"
+        type: string
+        default: ""
+
+# 非发布工作流：只需要读权限。
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rc:
+    name: Build & verify RC artifacts (non-publishing)
+    # 与 release.yml 同构建机（API runtime image 固定 ubuntu:24.04）。
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # <V> 只用于制品命名：tag ref → tag；否则显式输入；再否则取仓库平台版本。
+      # 全都不成立（读不到版本）即 fail closed，绝不静默使用 ci/latest。
+      - name: Resolve platform version
+        id: version
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          version=""
+          source_desc=""
+          if [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == v* ]]; then
+            version="${REF_NAME#v}"
+            source_desc="v* tag ref"
+          elif [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+            source_desc="workflow_dispatch version 输入"
+          elif [ -f package.json ]; then
+            version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+            source_desc="根 package.json"
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::无法确定平台版本 VERSION（ref_type=$REF_TYPE, ref_name=$REF_NAME）。"
+            echo "::error::请传入 version 输入，或运行在 v* tag ref 上。拒绝使用 ci/latest 占位名。"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::VERSION '$version' 不是合法平台版本（期望 x.y.z / x.y.z-pre / x.y.z+build）。"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "RC 平台版本：$version（来源：$source_desc）—— 本工作流只上传 workflow artifact"
+
+      # ── 前端 ──
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.5.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:packages
+      - run: pnpm run build:web
+
+      # ── 后端 ──
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p floatctf -p floatctf-helper --bins
+
+      # 前端平台架构边界（放在 build:web 之后，apps/web/dist 存在时才会真正检查
+      # bootstrap 产物不夹带 Default Frontend）。
+      - name: Frontend architecture boundaries
+        shell: bash
+        run: bash scripts/check-architecture.sh
+
+      # 与 release.yml 同一装配实现（ARTIFACT CONTRACT v1.0 + SHA256SUMS）。
+      - name: Assemble RC artifacts
+        shell: bash
+        env:
+          PLATFORM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf release-artifacts
+          mkdir -p release-artifacts
+          bash scripts/release-checksums.sh --assemble release-artifacts "$PLATFORM_VERSION"
+          ls -la release-artifacts
+
+      - name: Verify frontend release artifacts
+        shell: bash
+        run: bash scripts/verify-release-frontend.sh release-artifacts/web-dist.tar.gz
+
+      # 前端管理器契约/安全负向测试（临时 FLOATCTF_HOME，不碰真实安装根，不需要 docker）。
+      - name: Verify frontend manager contract
+        shell: bash
+        run: bash scripts/test-frontend-manager.sh
+
+      # 与 release.yml 同一断言：生产 API image 以 65532:65532 运行且 ELF 依赖完整。
+      - name: Verify production API image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf .rc-api-image
+          mkdir .rc-api-image
+          install -m 0755 release-artifacts/floatctf .rc-api-image/floatctf
+          docker build \
+            --build-arg "FLOATCTF_VERSION=${{ steps.version.outputs.version }}" \
+            -f infra/docker/api/Dockerfile \
+            -t floatctf/api:rc-test \
+            .rc-api-image
+          test "$(docker image inspect -f '{{.Config.User}}' floatctf/api:rc-test)" = "65532:65532"
+          docker run --rm --entrypoint sh floatctf/api:rc-test -c '
+            set -eu
+            ldd /usr/local/bin/floatctf | tee /tmp/ldd.txt
+            ! grep -q "not found" /tmp/ldd.txt
+          '
+
+      # AWD/AWDP 运行时镜像：RC **只本地构建 + ldd 体检**，与发布同一条构建契约
+      # （scripts/build-runtime-images.sh），但没有 --registry/--push，也绝不 docker login。
+      # 目的：在打 tag 之前就抓出 Dockerfile / 二进制名 / GLIBC 回归。
+      - name: Build & inspect runtime images (no registry, no push)
+        shell: bash
+        env:
+          FLOATCTF_BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          FLOATCTF_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          FLOATCTF_BUILD_REVISION: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          FLOATCTF_BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            bash scripts/build-runtime-images.sh --tag "${{ steps.version.outputs.version }}"
+
+      # 唯一出口：workflow artifact。没有 action-gh-release，没有 npm publish。
+      - name: Upload RC artifacts (workflow artifact only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: floatctf-rc-${{ steps.version.outputs.version }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 14

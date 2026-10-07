@@ -101,3 +101,37 @@ import type { Events } from "@floatctf/sdk/entity";
 `API_CONTRACT_VERSION` (see `docs/frontend/ARCHITECTURE.md`) lives with the runtime
 contract in `@floatctf/frontend-runtime`. `scripts/check-architecture.sh` asserts the two
 declarations never drift.
+
+> 要构建一个**完整的第三方 Frontend**，请读
+> [docs/frontend/AI-FRONTEND-GUIDE.md](../../docs/frontend/AI-FRONTEND-GUIDE.md)
+> （能力清单与完整性口径见 [CAPABILITY-MATRIX.md](../../docs/frontend/CAPABILITY-MATRIX.md)）。
+
+## Consuming it outside the monorepo (v1.0)
+
+`@floatctf/sdk` is **not published to the npm registry for v1.0** — npm publication is a
+separate, optional release step that has *not* been performed. External consumers install
+the release tarball instead:
+
+```bash
+# 1. build the release tarballs (also runs `pnpm run build:packages`)
+scripts/package-sdk-dist.sh /tmp/floatctf-dist
+
+# 2. verify them (SDK-SHA256SUMS lists `<sha256>  <name>`)
+( cd /tmp/floatctf-dist && sha256sum -c SDK-SHA256SUMS )
+
+# 3. install into a project outside this repository
+npm install /tmp/floatctf-dist/floatctf-sdk-1.0.0.tgz
+```
+
+Replace `1.0.0` with the release version (`<V>` in `floatctf-sdk-<V>.tgz`). The tarball
+ships `dist/` (with `.d.ts`), `README.md` and the AGPL-3.0-only `LICENSE`; it contains no
+source, tests or `node_modules`. Its one runtime dependency, `axios`, is installed from the
+public registry, so the tarball install needs network access. Everything exported here —
+including the `@floatctf/sdk/entity` entry point — resolves from the tarball alone.
+
+> **pnpm note.** `pnpm add` cannot install the three interdependent tarballs while the
+> `@floatctf/*` names are absent from the registry (it tries to resolve `@floatctf/react`'s
+> `"@floatctf/sdk"` through the registry and fails with `ERR_PNPM_FETCH_404`). Use
+> `npm install` for the tarball flow; once the packages *are* on a registry,
+> `pnpm add @floatctf/sdk` works normally. `scripts/test-sdk-dist.sh` documents and
+> reproduces both behaviours.

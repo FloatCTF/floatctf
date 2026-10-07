@@ -29,7 +29,7 @@ A CTF Platform based on <a href="https://rust-lang.org/">Rust</a>.
 - [架构说明](#架构说明)
 - [环境要求](#环境要求)
 - [生产安装与部署](#生产安装与部署)
-- [发布渠道（crates.io / GitHub Release）](#发布渠道cratesio--github-release)
+- [发布渠道（crates.io / GitHub Release / GHCR）](#发布渠道cratesio--github-release--ghcr)
 - [开发指南](#开发指南)
 - [功能展示](#功能展示)
 - [核心功能](#核心功能)
@@ -64,6 +64,7 @@ FloatCTF 采用 Monorepo 结构，应用、共享 crate 和仓库级工具统一
 | `crates/fcmc`                                                          | 共享容器管理与出题工具（crates.io: `cargo install fcmc`） |
 | `crates/awd-flagserver`                                                | AWD FlagServer 独立服务                  |
 | `crates/awd-judgeserver`                                               | AWD JudgeServer 独立服务                 |
+| `crates/awdp-judgeserver`                                              | AWDP（攻防+补丁）JudgeServer 独立服务      |
 | `crates/helper-protocol`                                             | API ↔ helper Host RPC 协议                  |
 | `crates/floatctf-helper`                                             | Docker + 网络宿主控制面守护进程             |
 | [floatctf-develop](https://github.com/FloatCTF/floatctf-develop)       | 开发环境（DevContainer）                  |
@@ -149,22 +150,48 @@ apps/web                  = 极薄的 bootstrap 引导页
 详见 [docs/frontend/ARCHITECTURE.md](docs/frontend/ARCHITECTURE.md)、
 [DEVELOPING.md](docs/frontend/DEVELOPING.md)、[ARTIFACT.md](docs/frontend/ARTIFACT.md)。
 
+**开发自己的 FloatCTF Frontend** → [docs/frontend/AI-FRONTEND-GUIDE.md](docs/frontend/AI-FRONTEND-GUIDE.md)
+（用 AI 代理从零创建一个完整前端；能力清单见 [CAPABILITY-MATRIX.md](docs/frontend/CAPABILITY-MATRIX.md)）。
+官方前端 `frontends/default` 只是**语义/行为参照**，不是视觉模板。
+
 ## 环境要求
 
 生产和完整开发环境都需要 Linux、systemd、Docker + Compose、nftables、WireGuard、iproute2、conntrack、iptables，以及 IPv4 转发和 `br_netfilter`。自动安装路径当前验证于 Arch Linux。
+
+生产安装还要求：
+
+- **`python3` ≥ 3.11（stdlib 自带 `tomllib`）** —— `migrate.sh` 用它解析配置。安装器在任何改动
+  之前做能力检查（`python3 -c 'import tomllib'`），缺失即中止；**不会**也不需要 `pip install`。
+- **出网**以拉取 release 产物与 GHCR 运行时镜像；离线宿主的本地构建 / `docker load` 逃生通道见
+  [INSTALL.md](./INSTALL.md) 的「通道 B —— GHCR 运行时镜像」。
 
 完整要求与宿主内核参数见 [INSTALL.md](./INSTALL.md) 和 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
 ## 生产安装与部署
 
-权威指南见 **[INSTALL.md](./INSTALL.md)**。Release 提供 4 个部署产物：
+权威指南见 **[INSTALL.md](./INSTALL.md)**；发布契约见 **[RELEASE.md](./RELEASE.md)**。
 
-```text
-floatctf
-floatctf-helper
-web-dist.tar.gz
-merged.sql
-```
+部署模型：生产把应用面全部收进 Docker Compose（API / PostgreSQL / Redis / RustFS / Caddy），
+宿主只保留一个高权限控制面 `floatctf-helper`（systemd）。API 是非 root 容器、`cap_drop=ALL`、
+read-only rootfs，**不挂 Docker socket**；Docker 与宿主网络（WireGuard / nftables / conntrack）
+统一经 helper 的两个 Unix socket。前端是**可插拔制品**：`apps/web` 只是 bootstrap 引导页，
+官方 UI 在 `frontends/default`，第三方前端按版本安装、由管理端激活。
+
+v1.0 有**两条产物通道**（完整清单与核对方式见 [RELEASE.md](./RELEASE.md#0-本次发布的产物契约artifact-contract-v10)）：
+
+- **GitHub Release 文件产物（11 个）**：`floatctf`、`floatctf-helper`、`web-dist.tar.gz`、
+  `merged.sql`、`frontend.sh`、`install.sh`、`ops-tools.tar.gz`、`floatctf-sdk-<V>.tgz`、
+  `floatctf-react-<V>.tgz`、`floatctf-frontend-runtime-<V>.tgz`、`SHA256SUMS`。
+  安装器实际下载其中 6 个部署产物（API / helper / web-dist / merged.sql / frontend.sh / ops-tools）；
+  `ops-tools.tar.gz` 内含 `backup.sh` / `restore.sh` / `db/migrate.sh` / `db/migrations/*.sql`。
+- **GHCR OCI 运行时镜像（3 个）**：`ghcr.io/floatctf/awd-flagserver:<V>`、
+  `ghcr.io/floatctf/awd-judgeserver:<V>`、`ghcr.io/floatctf/awdp-judgeserver:<V>`（awdp 已扁平化）。
+  GHCR 是 AWD/AWDP 运行时镜像的**规范在线分发通道**（由 tag 触发的 release workflow 推送，
+  `packages: write` 仅在 tag 发布路径）；本地构建默认仍用历史名 `floatctf/awd-flagserver:<tag>` 等。
+  离线宿主可用逃生通道：`sudo bash scripts/build-runtime-images.sh --tag <V>`（本地名）或
+  `--registry ghcr.io/floatctf --tag <V>`（规范名），再 `docker save` / `docker load`。
+
+`<V>` = tag 去掉前导 `v`（`v1.0.0` → `1.0.0`）。
 
 全新主机：
 
@@ -177,6 +204,13 @@ systemctl status floatctf.target
 
 默认安装根为 `/var/lib/floatctf`，可用 `FLOATCTF_HOME` 覆盖。安装器只创建 `floatctf` **组**（辅助账号只有 `floatctf-helper`，供宿主控制面使用），用 release `floatctf` 二进制本地构建 `floatctf/api:<version>` runtime image，并以数值 `65532:<floatctf GID>` 运行 API 容器；helper 独占 Docker 与网络宿主权限。
 
+备份与恢复（运维工具随 release 装在安装根）：
+
+```bash
+sudo /var/lib/floatctf/backup.sh --out <file>            # 归档为明文，务必保护介质
+sudo /var/lib/floatctf/restore.sh <归档> --yes           # 覆盖既有安装需额外 --force
+```
+
 卸载：
 
 ```bash
@@ -184,10 +218,27 @@ sudo /var/lib/floatctf/uninstall.sh
 sudo /var/lib/floatctf/uninstall.sh --purge
 ```
 
-## 发布渠道（crates.io / GitHub Release）
+> ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
+> 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源
+> （AWD 防火墙是单一全局 nft 表 `floatctf_awd`；AWDP 练习网络与容器名固定为 `fctf-awdp-practice` /
+> `fctf-awdp-practice-judge`），从而干扰正在运行的实例。**这在 Phase 13 实测发生过**（第二个 API
+> 重建了线上练习判题容器与网络一次），不是理论风险。
+> **绝不要在承载生产实例的宿主上启动开发 / RC / 测试 API。**
+
+`install.sh --help` 的完整开关、运行时镜像获取（含 `--skip-runtime-images`）与升级语义，
+见 [INSTALL.md §6–§7](./INSTALL.md)。
+
+## 发布渠道（crates.io / GitHub Release / GHCR）
 
 - **crates.io**：`fcmc` 可通过 `cargo install fcmc` 安装。
-- **GitHub Release**：`v*` tag 触发 `.github/workflows/release.yml`，构建 API binary、helper、Web 静态文件和 fresh-production `merged.sql`。CI 还会实际构建一次生产 API runtime image；部署时 installer 用同一 Dockerfile 在目标机生成 `floatctf/api:<version>`。
+- **GitHub Release**：`v*` tag 触发 `.github/workflows/release.yml`，构建并发布 11 个文件产物（API binary、helper、Web 静态文件、fresh-production `merged.sql`、`frontend.sh`、`install.sh`、`ops-tools.tar.gz`、三个 `@floatctf/*` tarball 与 `SHA256SUMS`）。`workflow_dispatch` 默认只上传 workflow artifact，不创建 Release。
+- **GHCR（OCI 镜像）**：同一条 tag 路径推送 3 个 AWD/AWDP 运行时镜像
+  （`ghcr.io/floatctf/{awd-flagserver,awd-judgeserver,awdp-judgeserver}:<V>`）。
+  `packages: write` **只**在 tag 发布路径上；PR / 分支 dispatch / RC 永不推送镜像。
+- CI 还会实际构建一次生产 API runtime image；部署时 installer 用同一 Dockerfile 在目标机生成 `floatctf/api:<version>`。
+
+> **尚未发布**：截至 Phase 13.1，不存在 `v1.0.0` tag / GitHub Release / npm 发布 / GHCR 镜像推送。
+> 人工发布清单（含两条通道的核对步骤）见 [RELEASE.md](./RELEASE.md)。
 
 ## 开发指南
 
@@ -213,6 +264,10 @@ mise run dev
 ```
 
 它会依次启动并等待 PostgreSQL / Redis / RustFS / Caddy，自动应用 migrations，然后启动 API watchexec 和 Vite HMR。
+
+> ⚠️ **开发栈只能跑在开发机上。** `mise run dev` 会连宿主 Docker daemon 与 helper，并 reconcile
+> 全局/固定命名的宿主资源；在承载生产实例的宿主上启动它会干扰线上运行（R1 不变量，
+> 见上文「生产安装与部署」的警告块）。
 
 常用命令：
 
@@ -315,7 +370,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — `scripts/install.sh` 下载 4 个 release 产物、构建非 root API runtime image、创建 internal control network、渲染 Compose/Caddy/TOML，并由 systemd 管理 helper + Compose 生命周期；`uninstall.sh` 完整覆盖安全卸载与 purge
+- **一键部署** — `scripts/install.sh` 下载 6 个部署产物（API / helper / web-dist / merged.sql / frontend.sh / ops-tools）、拉取或本地构建运行时镜像、构建非 root API runtime image、创建 internal control network、渲染 Compose/Caddy/TOML，并由 systemd 管理 helper + Compose 生命周期；`uninstall.sh` 完整覆盖安全卸载与 purge（含活跃运行时守卫）
 
 ## 目录结构
 
@@ -323,18 +378,23 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 floatctf/
 ├── apps/
 │   ├── api/                    # Rust / Actix Web API
-│   └── web/                    # React 前端
+│   └── web/                    # Web bootstrap 引导页（无 React / 无 UI）
+├── frontends/
+│   └── default/                # 官方前端：当前完整 UI（React + TanStack Router + Primer）
+├── packages/                   # 可插拔前端平台（sdk / react / frontend-runtime）
 ├── crates/
 │   ├── fcmc/                   # 容器管理 / 出题工具
 │   ├── awd-flagserver/         # AWD FlagServer
 │   ├── awd-judgeserver/        # AWD JudgeServer
+│   ├── awdp-judgeserver/       # AWDP JudgeServer
 │   ├── helper-protocol/        # API ↔ helper Host RPC 协议
 │   └── floatctf-helper/        # Docker + 网络宿主控制面
-├── infra/                      # Compose / Caddy / 配置
-├── scripts/                    # setup / install / dev / clean 生命周期脚本
+├── infra/                      # Compose / Caddy / 生产配置参考 / Dockerfile
+├── scripts/                    # setup / install / dev / frontend / backup / restore 生命周期脚本
 ├── docs/                       # 项目文档
 ├── DEVELOPMENT.md              # 开发权威指南
 ├── INSTALL.md                  # 生产安装与运维权威指南
+├── RELEASE.md                  # 发布清单与产物契约
 ├── Cargo.toml                  # Rust workspace
 ├── pnpm-workspace.yaml         # pnpm workspace
 └── mise.toml                   # 统一开发任务入口
@@ -387,7 +447,10 @@ mise run build
 | API 无法连接数据库 | 开发检查 `floatctf-dev-db`；生产检查 `docker compose ... ps postgres` 与 Compose DNS |
 | 开发 Caddy 502 | 确认 API 9090 / Vite 13000 已完成启动 |
 | 生产 Caddy 502 | `docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api caddy` |
-| 生产 HTTPS 失败 | 检查 `SITE_ADDRESS`、DNS、80/443 与 `floatctf-caddy` 日志 |
+| 生产 HTTPS 失败 | 检查 `SITE_ADDRESS`、DNS、80/443 与 `floatctf-caddy` 日志。**真实域名 TLS 未随 RC 验证（B4，产品负责人已接受）**，安装后由运维方自行验证 |
+| 安装器报缺少 `python3` / `tomllib` | 需要 Python ≥ 3.11（stdlib `tomllib`）；升级系统 Python，不要 `pip install` |
+| 安装器报缺少 AWD/AWDP 运行时镜像 | 见 [INSTALL.md §6.2](./INSTALL.md)（GHCR 规范通道 / 离线构建 / `--skip-runtime-images`） |
+| AWD/AWDP 资源被莫名重建 | 疑似同宿主跑了第二套 API（dev/RC/第二份安装）；见 R1 不变量 |
 
 ## 运维速查
 
@@ -401,6 +464,9 @@ journalctl -fu floatctf-helper floatctf-infra
 
 docker compose -f /var/lib/floatctf/compose.prod.yml ps
 docker compose -f /var/lib/floatctf/compose.prod.yml logs -f api caddy
+
+sudo /var/lib/floatctf/backup.sh --out <file>
+sudo /var/lib/floatctf/restore.sh <归档> --yes
 
 sudo /var/lib/floatctf/uninstall.sh
 sudo /var/lib/floatctf/uninstall.sh --purge
@@ -420,6 +486,8 @@ sudo /var/lib/floatctf/uninstall.sh --purge
 | [改数据库](docs/agents/DATABASE.md) | 迁移 → 应用 → 实体/类型再生成 |
 | [前端数据页面](docs/agents/DATA-FETCHING.md) | 缓存分级、keepPreviousData、queryKey 失效 |
 | [测试规范](docs/agents/TESTING.md) | 测试层级、写法、禁忌 |
+| [创建新 Frontend（AI 手册）](docs/frontend/AI-FRONTEND-GUIDE.md) | **从零创建一个完整可插拔前端**：Default 仅语义参照、公共依赖边界、mount/auth/路由/SSE、完整性口径、验收流程 |
+| [前端能力矩阵](docs/frontend/CAPABILITY-MATRIX.md) | 源码审计出的能力清单：公共 SDK 面 / Default 参照 / 实时 / 完整前端是否必需 |
 
 ## 许可证
 

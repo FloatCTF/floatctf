@@ -1,19 +1,114 @@
 name: Release
 
+# ── 触发语义（安全模型）────────────────────────────────────────────────────────
+#   push tag v*        → build + verify + 发布 GitHub Release（全量制品 + SHA256SUMS）
+#                        + 构建并推送 AWD/AWDP 运行时镜像到 ghcr.io（唯一 login/push 位置）
+#   workflow_dispatch  → build + verify + `actions/upload-artifact`，**仅**上传 workflow
+#                        产物；默认 publish=false，绝不创建 Release、绝不打 tag、
+#                        绝不发布 npm、绝不登录/推送任何镜像。
+#
+# 硬性守卫（build job 的第 1 步，fail closed）：
+#   * publish=true 但 ref 不是 v* tag → 立刻失败（绝不从分支/PR ref 发布）
+#   * VERSION 无法确定             → 立刻失败（绝不回落 ci/latest 命名制品）
+# 权限最小化：workflow 默认 contents: read；只有 publish job 提权到 contents: write。
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "创建 GitHub Release（必须运行在 v* tag ref 上，否则直接失败）"
+        type: boolean
+        default: false
+      version:
+        description: "非 tag ref 下用于制品命名的平台版本（如 1.0.0）；tag ref 忽略此项"
+        type: string
+        default: ""
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Build release artifacts
+  build:
+    name: Build & verify release artifacts
     # API runtime image 固定 ubuntu:24.04；构建机同版可避免 release ELF 引用更新 glibc。
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+      publish: ${{ steps.guard.outputs.publish }}
     steps:
+      # 第 1 步：触发/版本守卫。任何「不可能的发布组合」都在这里 fail closed，
+      # 而不是静默跳过或静默发布。
+      - name: Assert trigger guard (fail closed)
+        id: guard
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+
+          is_tag=false
+          if [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == v* ]]; then
+            is_tag=true
+          fi
+
+          # VERSION = 平台版本 = v* tag 去掉前导 v；非 tag ref 只接受显式 version 输入。
+          # 两者都没有 → fail closed（绝不静默使用 ci/latest）。
+          version=""
+          if [ "$is_tag" = "true" ]; then
+            version="${REF_NAME#v}"
+            if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$version" ]; then
+              echo "::warning::忽略 version 输入 '$INPUT_VERSION'：tag ref 的版本为 '$version'"
+            fi
+          elif [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          fi
+
+          if [ -z "$version" ]; then
+            echo "::error::无法确定平台版本 VERSION（ref=$REF, ref_type=$REF_TYPE）。"
+            echo "::error::请在 v* tag ref 上运行，或显式传入 version 输入。"
+            echo "::error::拒绝以 ci/latest 之类的占位名命名发布制品。"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::VERSION '$version' 不是合法平台版本（期望 x.y.z / x.y.z-pre / x.y.z+build）。"
+            exit 1
+          fi
+
+          # 发布意图：push v* tag 自动发布；workflow_dispatch 仅在显式 publish=true 时发布。
+          publish=false
+          if [ "$EVENT_NAME" = "push" ] && [ "$is_tag" = "true" ]; then
+            publish=true
+          fi
+          if [ "$INPUT_PUBLISH" = "true" ]; then
+            publish=true
+          fi
+
+          # 硬性断言：发布路径必须落在 v* tag ref 上。
+          if [ "$publish" = "true" ] && [ "$is_tag" != "true" ]; then
+            echo "::error::publish=true 只允许在 v* tag ref 上执行（ref=$REF, ref_type=$REF_TYPE, event=$EVENT_NAME）。"
+            echo "::error::拒绝执行：绝不从分支 / PR / 非 v* tag ref 创建 Release。"
+            exit 1
+          fi
+
+          {
+            echo "is_tag=$is_tag"
+            echo "publish=$publish"
+            echo "version=$version"
+          } >>"$GITHUB_OUTPUT"
+          printf 'guard: is_tag=%s publish=%s version=%s event=%s ref=%s\n' \
+            "$is_tag" "$publish" "$version" "$EVENT_NAME" "$REF"
+
       - uses: actions/checkout@v4
 
       # ── 前端 ──
@@ -39,54 +134,51 @@ jobs:
       # 不构建 tests / benches / examples，也不为未发布的 workspace bin 产生本地 artifact。
       - run: cargo build --locked --release -p floatctf -p floatctf-helper --bins
 
-      # ── 发布 5 个产物（供 install.sh 下载部署）──
-      #   1. floatctf           API 二进制（installer 以此本地构建生产容器 image）
-      #   2. floatctf-helper   宿主控制面二进制
-      #   3. web-dist.tar.gz    bootstrap 静态页 + 版本化 Default Frontend 制品
-      #   4. merged.sql        单个 SQL（fresh-DB bootstrap）
-      #   5. frontend.sh       前端管理器（安装到 $FLOATCTF_HOME/frontend.sh）
+      # ── 装配 ARTIFACT CONTRACT v1.0 全量制品 ──
+      # 逻辑集中在 scripts/release-checksums.sh（release.yml 与 rc.yml 共用同一实现，
+      # 避免两份 YAML 漂移），workflow 只负责清理暂存目录与传参。
+      #   1.  floatctf                          API 二进制（installer 以此本地构建生产 image）
+      #   2.  floatctf-helper                   宿主控制面二进制
+      #   3.  web-dist.tar.gz                   bootstrap 静态页 + 版本化 Default Frontend
+      #   4.  merged.sql                        单个 SQL（fresh-DB bootstrap）
+      #   5.  frontend.sh                       前端管理器
+      #   6.  install.sh                        安装器（documented releases/download/<tag>/install.sh）
+      #   7.  ops-tools.tar.gz                  backup.sh + restore.sh + db/{migrate.sh,migrations/}
+      #   8.  floatctf-sdk-<V>.tgz              npm 包
+      #   9.  floatctf-react-<V>.tgz            npm 包
+      #   10. floatctf-frontend-runtime-<V>.tgz npm 包
+      #   11. SHA256SUMS                        上面每个文件的 sha256sum（不含自身）
+      # 任何一步失败都让整个 job 失败：缺 install.sh / SHA256SUMS 的 release 是缺陷。
       - name: Assemble release artifacts
         shell: bash
+        env:
+          PLATFORM_VERSION: ${{ steps.guard.outputs.version }}
         run: |
-          set -euo pipefail
-
-          # 1) API 二进制
-          install -m 0755 target/release/floatctf floatctf
-
-          # 2) 宿主控制面
-          install -m 0755 target/release/floatctf-helper floatctf-helper
-
-          # 3) Web 产物（bootstrap/ + frontends/default/<version>/，布局由脚本保证）
-          bash scripts/package-web-dist.sh web-dist.tar.gz
-
-          # 4) merged.sql（确定性 fresh-DB bootstrap）
-          bash apps/api/src/sql/migrate.sh make
-          install -m 0644 apps/api/src/sql/merged.sql merged.sql
-
-          # 5) 前端管理器（生产无需源码签出即可安装前端）
-          install -m 0755 scripts/frontend.sh frontend.sh
-
+          set -Eeuo pipefail
+          rm -rf release-artifacts
+          mkdir -p release-artifacts
+          bash scripts/release-checksums.sh --assemble release-artifacts "$PLATFORM_VERSION"
           echo "release artifacts:"
-          ls -la floatctf floatctf-helper web-dist.tar.gz merged.sql frontend.sh
+          ls -la release-artifacts
 
       - name: Verify frontend release artifacts
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           # 断言归档布局、Default Frontend manifest/entry/styles、无源码残留、
           # 脚本语法，并用 frontend-runtime 的**真实校验器**再验一遍 manifest。
-          bash scripts/verify-release-frontend.sh web-dist.tar.gz
+          bash scripts/verify-release-frontend.sh release-artifacts/web-dist.tar.gz
 
       - name: Verify production API image
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           rm -rf .release-api-image
           mkdir .release-api-image
-          install -m 0755 floatctf .release-api-image/floatctf
-          version="${GITHUB_REF_NAME#v}"
+          install -m 0755 release-artifacts/floatctf .release-api-image/floatctf
+          version="${{ steps.guard.outputs.version }}"
           docker build \
-            --build-arg "FLOATCTF_VERSION=${version:-ci}" \
+            --build-arg "FLOATCTF_VERSION=${version}" \
             -f infra/docker/api/Dockerfile \
             -t floatctf/api:release-test \
             .release-api-image
@@ -97,13 +189,157 @@ jobs:
             ! grep -q "not found" /tmp/ldd.txt
           '
 
-      - name: Upload release artifacts
+      # workflow_dispatch 路径的**唯一**产物出口：workflow artifact，绝不建 Release。
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: floatctf-release-${{ steps.guard.outputs.version }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  # 只有 guard 判定 publish=true（⇒ 必然是 v* tag ref）时才会进入这个 job。
+  # dispatch 默认路径不会进入这里，因此也拿不到 contents: write。
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # 纵深防御：即使 build 的 outputs 被篡改/漂移，这里也再断言一次。
+      - name: Re-assert tag guard (defense in depth)
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -Eeuo pipefail
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::publish job 只允许在 tag ref 上运行（ref=$REF, ref_type=$REF_TYPE）。"
+            exit 1
+          fi
+          case "$REF_NAME" in
+            v*) ;;
+            *) echo "::error::publish job 要求 v* tag（当前 ref_name=$REF_NAME）。"; exit 1 ;;
+          esac
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${INPUT_PUBLISH:-false}" != "true" ]; then
+            echo "::error::workflow_dispatch 未显式 publish=true，拒绝创建 Release。"
+            exit 1
+          fi
+          echo "publish guard ok: $REF"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: floatctf-release-${{ needs.build.outputs.version }}
+          path: release-artifacts
+
+      # 显式列出 ARTIFACT CONTRACT v1.0 的每个文件：少一个即失败
+      # （fail_on_unmatched_files），绝不静默发布不完整 release。
+      - name: Publish GitHub Release
+        if: needs.build.outputs.publish == 'true' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            floatctf
-            floatctf-helper
-            web-dist.tar.gz
-            merged.sql
-            frontend.sh
+            release-artifacts/floatctf
+            release-artifacts/floatctf-helper
+            release-artifacts/web-dist.tar.gz
+            release-artifacts/merged.sql
+            release-artifacts/frontend.sh
+            release-artifacts/install.sh
+            release-artifacts/ops-tools.tar.gz
+            release-artifacts/SHA256SUMS
+            release-artifacts/floatctf-sdk-${{ needs.build.outputs.version }}.tgz
+            release-artifacts/floatctf-react-${{ needs.build.outputs.version }}.tgz
+            release-artifacts/floatctf-frontend-runtime-${{ needs.build.outputs.version }}.tgz
+          fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # ── AWD/AWDP 运行时镜像分发（B1）─────────────────────────────────────────────
+  # install.sh 会从 ghcr.io/floatctf 拉取三个运行时镜像（awd-flagserver /
+  # awd-judgeserver / awdp-judgeserver，tag = <V>）；它们必须与 GitHub Release
+  # 一起出现在真实发布路径上，否则目标机 AWD/AWDP 永远部署不了。
+  #
+  # 守卫与 publish job 完全同源：needs.build.outputs.publish == 'true'（guard 判定
+  # ⇒ 必然是 v* tag ref）+ 显式 ref_type/ref_name 断言。因此 pull_request、分支
+  # push、workflow_dispatch(publish=false) 都进不来，也拿不到 packages: write。
+  # 构建逻辑复用 scripts/build-runtime-images.sh（与本地/RC 同一契约），
+  # 本 job 内是**唯一**允许 docker login / push 的位置。
+  runtime-images:
+    name: Build & push runtime images (ghcr.io)
+    needs: build
+    if: >-
+      needs.build.outputs.publish == 'true'
+      && github.ref_type == 'tag'
+      && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # 纵深防御：job 级 if 之外再断言一次，避免 outputs/守卫漂移后误推镜像。
+      - name: Re-assert tag publish guard (defense in depth)
+        shell: bash
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH: ${{ needs.build.outputs.publish }}
+        run: |
+          set -Eeuo pipefail
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::runtime images 只允许在 tag ref 上构建/推送（ref=$REF, ref_type=$REF_TYPE）。"
+            exit 1
+          fi
+          case "$REF_NAME" in
+            v*) ;;
+            *) echo "::error::runtime images 要求 v* tag（当前 ref_name=$REF_NAME）。"; exit 1 ;;
+          esac
+          if [ "$PUBLISH" != "true" ]; then
+            echo "::error::runtime images 要求 guard 判定 publish=true（当前 publish=$PUBLISH）。"
+            exit 1
+          fi
+          echo "runtime image publish guard ok: $REF"
+
+      - uses: actions/checkout@v4
+
+      - name: Compute build metadata (OCI labels)
+        id: runtime_meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$GITHUB_OUTPUT"
+
+      # 唯一允许 login 的位置：tag-guarded publish 路径 + packages: write。
+      - name: Login to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+
+      # OCI label 值全部来自 workflow 上下文，绝不硬编码版本/revision，也不含任何密钥。
+      - name: Build & push runtime images
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          FLOATCTF_BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          FLOATCTF_BUILD_VERSION: ${{ needs.build.outputs.version }}
+          FLOATCTF_BUILD_REVISION: ${{ github.sha }}
+          FLOATCTF_BUILD_CREATED: ${{ steps.runtime_meta.outputs.created }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/build-runtime-images.sh \
+            --registry ghcr.io/floatctf \
+            --tag "$VERSION" \
+            --label "org.opencontainers.image.source=$FLOATCTF_BUILD_SOURCE" \
+            --label "org.opencontainers.image.version=$FLOATCTF_BUILD_VERSION" \
+            --label "org.opencontainers.image.revision=$FLOATCTF_BUILD_REVISION" \
+            --label "org.opencontainers.image.created=$FLOATCTF_BUILD_CREATED" \
+            --push

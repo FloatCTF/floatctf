@@ -172,7 +172,7 @@ cargo test -p floatctf <相关测试>   # 涉及行为的变更跑相关 DB-gate
 - `mise run db:migration:merge` 从 migrations/ **确定性**生成（同一批文件两次生成 sha256 一致；无时间戳/hostname/路径），chmod 0644
 - 内容：`CREATE TABLE IF NOT EXISTS schema_migrations` + 每个迁移 `BEGIN; SQL; INSERT INTO schema_migrations; COMMIT;`（与 apply 同一套 metadata 逻辑）
 - **不受 git 追踪**（生成产物）；供 release / fresh-production bootstrap 使用，**日常开发不需要**（`mise run dev` 会直接对 fresh DB 从 migration #1 应用）
-- 开发与生产 Compose **都没有**把 merged.sql 挂载为数据库初始化脚本：schema 一律由 `db:migration:apply` 负责
+- 开发 Compose **没有**把 merged.sql 挂载为数据库初始化脚本（schema 由 `db:migration:apply` 负责）；**生产** Compose 会把它挂到 `/docker-entrypoint-initdb.d/00-init.sql`，仅用于 fresh DB 的一次性 bootstrap（见 INSTALL.md §13）
 - 不要手改 merged.sql；永远改 migrations/ 再 merge
 
 ## 其他规范

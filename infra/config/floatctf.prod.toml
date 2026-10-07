@@ -1,5 +1,20 @@
 # FloatCTF production process-static configuration.
-# This file is rendered by scripts/install.sh; ${...} placeholders are installer substitutions.
+#
+# REFERENCE COPY: this file mirrors what `scripts/install.sh` renders into
+# `$FLOATCTF_HOME/config/floatctf.toml` (the embedded CONFIG_TMPL_EOF heredoc in
+# write_config_template). scripts/install.sh is authoritative — this file exists so the
+# rendered production configuration can be reviewed without parsing the installer.
+#
+# ${...} are installer substitutions (envsubst from `$FLOATCTF_HOME/.env`), never literal
+# values. Never put a real secret into this file. `${VERSION}` is the platform version
+# (= release tag with the leading `v` stripped: tag `v1.0.0` -> `1.0.0`).
+#
+# ⚠️ Single control plane per host: only one FloatCTF API may manage a given host's Docker
+# daemon and helper-managed host resources. A second API (dev/RC stack or a second
+# production install) reconciles global/fixed-named resources — the AWD firewall is a
+# single global nft table (`floatctf_awd`), and the AWDP practice network/containers are
+# fixed-named (`fctf-awdp-practice`, `fctf-awdp-practice-judge`) — and will interfere with
+# the running instance. Observed in practice (Phase 13), not a theoretical risk.
 
 [application]
 main_url = "https://${SITE_ADDRESS}:${HTTPS_PORT}"
@@ -32,6 +47,13 @@ region = "cn-east-1"
 
 [auth]
 jwt_secret = "${JWT_SECRET}"
+# 与 JWT 主密钥解耦的两个派生根（可选；空值 = 回落 jwt_secret，启动时会告警）：
+#   awd_root_key       —— AWD/AWDP flag 与实例密钥的 HKDF 根
+#   internal_token_key —— AWDP 判题容器 INTERNAL_TOKEN 的派生根（会下发进容器）
+# 全新安装由 installer 生成独立随机值；**既有安装保持为空**（不改变已派生 flag），
+# 需要轮换时再显式填值。升级重跑 installer 时，管理员自定义过的值会被保留。
+awd_root_key = "${AWD_ROOT_KEY}"
+internal_token_key = "${INTERNAL_TOKEN_KEY}"
 
 [redis]
 url = "redis://redis:6379/"
@@ -39,15 +61,34 @@ url = "redis://redis:6379/"
 [realtime]
 channel = "floatctf:realtime"
 
+# AWD/AWDP 运行时镜像：GHCR 是**规范在线分发通道**，由 tag 触发的 release workflow
+# 以 `packages: write` 推送（仅 tag 发布路径）。`${VERSION}` 即上文 `<V>`。
+#
+# `${RUNTIME_IMAGE_REGISTRY}` 是安装器的单一事实来源（同一变量同时用于渲染本文件与
+# 运行时镜像检查），默认 `ghcr.io/floatctf`，可用 `FLOATCTF_RUNTIME_IMAGE_REGISTRY`
+# 覆盖。用默认值时渲染结果就是规范 GHCR ref：
+#   ghcr.io/floatctf/awd-flagserver:<V>
+#   ghcr.io/floatctf/awd-judgeserver:<V>
+#   ghcr.io/floatctf/awdp-judgeserver:<V>      # awdp 已扁平化（无 infra/ 段）
+#
+# 离线宿主可用本地逃生通道：源码签出上 `sudo bash scripts/build-runtime-images.sh
+# --tag <V>`（不带 `--registry` 时沿用本地历史名，awdp 仍带 `infra/` 段；
+# 加 `--registry ghcr.io/floatctf` 则直接产出规范名），或对预置镜像归档执行
+# `docker load`。此时需把下面三个值指向实际镜像名。
 [awd]
 network_runtime = "helper"
-flagserver_image = "floatctf/awd-flagserver:${VERSION}"
-judgeserver_image = "floatctf/awd-judgeserver:${VERSION}"
+# canonical 运行时镜像 ref（= release.yml 推送到 GHCR 的同一组）：
+#   ${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION} 等；awdp 已扁平化（无 infra/ 段）。
+# 升级时管理员的自定义值会被保留（见 preserve_custom_runtime_images）。
+flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"
+judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"
 platform_internal_url = "http://10.42.8.2:${API_PORT}"
 platform_internal_network = "fctf-platform-control"
 
 [awdp]
-practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:${VERSION}"
+# 已扁平化：旧名 `floatctf/infra/awdp-judgeserver` 仅作历史引用（不带 --registry 的
+# 本地构建仍沿用该名以向后兼容），规范 ref 没有 infra/ 段。
+practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"
 practice_network_subnet = "10.42.2.0/23"
 practice_judge_ip = "10.42.2.2"
 network_pool = "10.43.0.0/16"

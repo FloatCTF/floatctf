@@ -2,6 +2,7 @@
 
 > 本文是**前端平台**的权威架构文档。
 > 相关：[DEVELOPING.md](./DEVELOPING.md)（开发与外部仓库流程）、[ARTIFACT.md](./ARTIFACT.md)（制品 / manifest / 注册表 / 版本策略）。
+> **从零创建一个新前端**：[AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)（AI 代理作业手册）、[CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)（能力矩阵——完整性口径由它定义，而非路由对齐）。
 > 后端整体架构见 [../agents/ARCHITECTURE.md](../agents/ARCHITECTURE.md)。
 
 ## 1. Frontend ≠ Theme
@@ -214,7 +215,7 @@ Frontend（default 或第三方，任意框架）
 
 ## 9. 生命周期
 
-### 5.1 `$FLOATCTF_HOME/frontends` 是**公开**静态树
+### 9.1 `$FLOATCTF_HOME/frontends` 是**公开**静态树
 
 Caddy 以只读方式把它挂在 `/srv/frontends` 下并**无鉴权**提供
 （`/__floatctf/frontends/...`）。因此：
@@ -224,7 +225,7 @@ Caddy 以只读方式把它挂在 `/srv/frontends` 下并**无鉴权**提供
 - 需要溯源信息时，把它放在**这个树之外**（例如数据库 / 运维记录），不要放在这里；
 - 注册表的字段白名单是**公开契约**的一部分，见 [ARTIFACT.md](./ARTIFACT.md)。
 
-### 5.2 版本不可变
+### 9.2 版本不可变
 
 前端资产 URL 带 `Cache-Control: immutable` 长缓存，因此 **前端 ID + 版本 = 一组不可变字节**：
 
@@ -232,7 +233,7 @@ Caddy 以只读方式把它挂在 `/srv/frontends` 下并**无鉴权**提供
 - 同 ID + 同版本 + **不同内容 → 硬失败**（包括 `default` 与平台重部署路径）；
 - Default UI 变了就必须**升它的前端版本号**（平台版本与前端版本独立演进）。
 
-### 5.3 生命周期
+### 9.3 生命周期
 
 | 动作 | 谁来执行 | 说明 |
 |------|----------|------|

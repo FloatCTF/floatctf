@@ -4,8 +4,18 @@
 > - **在 FloatCTF 仓库里改官方前端** → §1
 > - **在别的仓库里写第三方前端** → §2、§3
 > - **把前端装到服务器上** → §4
+> - **用 AI 代理从零创建一个新前端** → [AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md) +
+>   [CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)
 >
 > 契约细节见 [ARTIFACT.md](./ARTIFACT.md)，架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+
+> [!IMPORTANT]
+> **本文 §1 的"仿照既有页面"约定只约束 `frontends/default/`（官方前端）。**
+> 创建新的可插拔 Frontend 时，视觉语言 / 信息架构 / 导航 / 路由 / 布局 / 组件 / 设计系统 /
+> CSS 策略 / 状态管理 / 框架**由你的前端自主决定**，本节不构成约束。
+> 新前端的权威作业手册是 [AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)（能力清单：
+> [CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)）；判型规则见仓库根 [AGENTS.md](../../AGENTS.md)
+> 的「前端任务先判型」。
 
 ## 1. 在 FloatCTF 仓库里开发
 
@@ -67,6 +77,10 @@ mise run check              # fmt + lint + test
 2. **不要 import 其它包的源码路径**：只能用 `@floatctf/sdk` / `@floatctf/react` /
    `@floatctf/frontend-runtime` 的公开导出。`scripts/check-architecture.sh` 会拦截
    `@floatctf/sdk/src/...`、`../apps/web`、仓库私有别名等写法。
+3. **本节的视觉约定只对官方前端生效**：§1 讲的"先找同域参照页 / 复用 `components/`
+   既有组件 / 与参照页保持一致"是 **`frontends/default/` 内部**的规矩（见
+   [RULES.md](../agents/RULES.md)）。第三方前端**不受**这些视觉约定约束——上述第 1、2 条
+   是**运行时与依赖边界**约束，对所有前端一视同仁。
 
 ## 2. 在独立仓库里开发第三方前端
 
@@ -74,6 +88,9 @@ mise run check              # fmt + lint + test
 
 - 可以拿到平台发布的包：`@floatctf/sdk`、`@floatctf/frontend-runtime`
   （可选 `@floatctf/react`，仅 React 前端需要）。
+- **动手前先读** [AI-FRONTEND-GUIDE.md](./AI-FRONTEND-GUIDE.md)（AI 代理作业手册：鉴权 /
+  mount / 路由 / SSE / 完整性口径 / 验收流程）与 [CAPABILITY-MATRIX.md](./CAPABILITY-MATRIX.md)
+  （能力清单，用来判断"完整前端"意味着覆盖哪些能力）。
 - 本地开发时若包尚未发布到 npm，用 **packed tarball**（见 §2.4）。
 - Node 基线：与平台一致的大版本（平台开发基线 `node 26.x`；源码构建默认用
   `node:26-bookworm` 镜像）。

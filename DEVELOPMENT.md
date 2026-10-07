@@ -8,6 +8,16 @@ Redis 是开发 API 的必需依赖。`mise run dev` 会先等待 `floatctf-dev-
 
 生产安装与运维见 [INSTALL.md](./INSTALL.md)，模块架构见 [docs/agents/ARCHITECTURE.md](./docs/agents/ARCHITECTURE.md)。
 
+> ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
+> 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源
+> （AWD 防火墙是单一全局 nft 表 `floatctf_awd`；AWDP 练习网络与容器名固定为 `fctf-awdp-practice` /
+> `fctf-awdp-practice-judge`），从而干扰正在运行的实例。**这在 Phase 13 实测发生过**（第二个 API
+> 重建了线上练习判题容器与网络一次），不是理论风险。
+> **绝不要在承载生产实例的宿主上启动开发 / RC / 测试 API。**
+>
+> 也就是说：开发机和生产机必须是**两台**机器。不要为了"复用硬件 / 环境一致"在生产宿主上
+> `git clone` + `mise run setup` + `mise run dev`。
+
 ---
 
 ## 1. 最终权限模型
@@ -119,7 +129,7 @@ mise run setup
 3. 编译 `floatctf-helper`；
 4. 通过 sudo 检查/安装 Docker、nftables、WireGuard、iproute2 等宿主能力；
 5. 配置 IPv4 forwarding、`br_netfilter` 与 bridge netfilter sysctl；
-6. 创建 `floatctf` 与 `floatctf-helper` 系统身份；
+6. 创建 `floatctf` 系统**组**与 `floatctf-helper` 系统**用户**（不创建 `floatctf` 用户）；
 7. 把 `floatctf-helper` 加入 `docker` 组；
 8. 把开发者加入 `docker` 与 `floatctf` 组；
 9. 安装 root-owned `/usr/local/libexec/floatctf-helper`；
@@ -279,7 +289,7 @@ Release workflow 会确定性重新生成它。
 |---|---|---|
 | 主入口 | `mise run dev` | `systemctl start floatctf.target` |
 | API 载体 | native `watchexec + setpriv` | Docker Compose container |
-| API UID | 当前开发者 | 宿主 `floatctf` numeric UID |
+| API UID | 当前开发者 | `$FLOATCTF_UID`（默认 65532）:`$FLOATCTF_GID`（floatctf 组 GID） |
 | API docker group | 启动时显式丢弃 | 无 |
 | API capabilities | 全部丢弃 | `cap_drop=ALL` |
 | API NoNewPrivileges | yes | yes |
@@ -295,7 +305,7 @@ Release workflow 会确定性重新生成它。
 | Web | Vite HMR | Caddy static dist |
 | fresh DB | migrations | `merged.sql` |
 | API listen | `0.0.0.0:9090`（仅开发；供 Caddy 容器经 host-gateway 访问） | 不发布 |
-| 外部入口 | `0.0.0.0:7780` | Caddy HTTP（开发模式，对所有宿主 IPv4 接口开放） |
+| 外部入口 | `0.0.0.0:7780`（开发 Caddy） | `https://$SITE_ADDRESS`（生产 Caddy :80/:443 自动 HTTPS） |
 
 ---
 
@@ -375,6 +385,12 @@ cargo test -p floatctf-helper
 ```text
 setup → helper identity/socket → Docker proxy policy → API 权限 → Jeopardy → AWD → AWDP → cleanup/recovery
 ```
+
+> ⚠️ **宿主级验证必须在独占宿主上进行**（R1 不变量，见本文开头）。AWD/AWDP 的宿主资源是
+> **全局/固定命名**的（nft 表 `floatctf_awd`、`fctf-awdp-practice` /
+> `fctf-awdp-practice-judge` 容器与网络、`fawg_*` 接口），没有命名空间隔离。在正在服务线上
+> 赛事的宿主上跑这套验证会真的破坏线上运行（Phase 13 已实测到一次）。没有独占宿主时，
+> **不要**跑宿主级 AWD/AWDP E2E，如实记为"未执行"。
 
 验证过程中不要使用 `nft flush ruleset`、删除无关 Docker 对象或改动无关 WireGuard 接口。FloatCTF 动态资源必须限定在自身 naming/label contract 内。
 

@@ -11,72 +11,89 @@ use sea_orm::{ActiveValue::Set, DbConn, EntityTrait, sea_query::OnConflict};
 ///
 /// 取值来自进程 TOML 配置；种子写入后仍可通过数据库编辑。
 pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
-    let defaults = vec![
+    // 元组：(key, value, type, description, protected)
+    //
+    // `protected = true` 表示管理端**可以编辑**但**不可删除**。用于那些"删掉就
+    // 静默回落默认值、但运维以为自己改坏了"的键（例如 FRONTEND_ACTIVE：删掉后
+    // 平台会回到 default 前端，看起来像自定义前端"自己消失了"）。
+    #[allow(clippy::type_complexity)]
+    let defaults: Vec<(&str, String, SettingValueType, &str, bool)> = vec![
         (
             "INSTANCE_DESTROY_DELAY",
             "60".to_string(),
             SettingValueType::Integer,
             "实例销毁延迟时间 (分钟)",
+            false,
         ),
         (
             "EVENT_SCORE_DECAY",
             "500".to_string(),
             SettingValueType::Integer,
             "比赛题目分数衰减系数",
+            false,
         ),
         (
             "EVENT_SCORE_MIN_PERCENT",
             "0.45".to_string(),
             SettingValueType::Float,
             "比赛题目最低分数为题目的百分比",
+            false,
         ),
         (
             "WORK_DIR",
             config.server.work_dir.clone(),
             SettingValueType::String,
             "工作目录（其他设置可用 {{WORK_DIR}} 引用）",
+            false,
         ),
         (
             "CHALLENGES_DIR",
             "{{WORK_DIR}}/challenges".to_string(),
             SettingValueType::String,
             "题目位置（支持 {{WORK_DIR}} 等变量引用）",
+            false,
         ),
         (
             "GAMEBOXES_DIR",
             "{{WORK_DIR}}/gameboxes".to_string(),
             SettingValueType::String,
             "GameBox 位置（支持 {{WORK_DIR}} 等变量引用）",
+            false,
         ),
         (
             "HTTP_PREFIX",
             "http://".to_string(),
             SettingValueType::String,
             "HTTP前缀",
+            false,
         ),
         (
             "NODE_IP",
             "127.0.0.1".to_string(),
             SettingValueType::String,
             "节点IP",
+            false,
         ),
         (
             "FLAG_PREFIX",
             "flag".to_string(),
             SettingValueType::String,
             "全局flag前缀",
+            false,
         ),
         (
             "MAIN_URL",
             config.main_url.clone(),
             SettingValueType::String,
             "主站地址前缀baseURL",
+            false,
         ),
         (
             "SMTP_URI",
             "smtp.example.com:user@example.com:SMTP_PASS".to_string(),
             SettingValueType::String,
             "SMTP服务器地址与凭证",
+            false,
         ),
         // ── 风险清单 #14：以下 5 个键一直被代码读取，却从未 seed ──────────────────
         // 缺失时靠代码内兜底默认值生效，管理端设置页看不到它们 —— 想调限流阈值的人
@@ -88,38 +105,55 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             "30".to_string(),
             SettingValueType::Integer,
             "AWD 提交 flag 限流（每用户每分钟，Redis 滑动窗口；代码默认 30）",
+            false,
         ),
         (
             "AWD_RATE_RESET_PER_HOUR",
             "5".to_string(),
             SettingValueType::Integer,
             "AWD 重置 GameBox 限流（每队伍每小时；代码默认 5）",
+            false,
         ),
         (
             "AWD_RATE_INTERNAL_PER_MIN",
             "120".to_string(),
             SettingValueType::Integer,
             "AWD internal 端点限流（每赛事每分钟；代码默认 120）",
+            false,
         ),
         (
             "AWD_NETWORK_REVISION",
             "0".to_string(),
             SettingValueType::Integer,
             "AWD 网络策略 revision（每次期望状态变化 +1；0 = 尚未 reconcile，由 reconcile 自动推进）",
+            false,
         ),
         (
             "AWDP_DATA_PLANE_EXEC",
             "false".to_string(),
             SettingValueType::Boolean,
             "AWDP 判定是否在 JudgeServer 容器（数据面）内执行；生产必须置 true（API 只挂控制网，进程内探测必然失败），仅测试/mock 保持 false",
+            false,
+        ),
+        // ── 可插拔前端：当前生效的前端 ID（不是进程静态 TOML 配置）─────────────
+        // 前端安装/版本由文件系统注册表（$FLOATCTF_HOME/frontends/registry.json）描述，
+        // 这里只记录"用哪个 ID"。protected：可编辑但不可删除（删掉等于静默回落 default）。
+        // 值必须是安全前端 ID 否则后端会回落 default（见 platform/frontend/domain.rs）。
+        (
+            "FRONTEND_ACTIVE",
+            "default".to_string(),
+            SettingValueType::String,
+            "当前生效的前端 ID（对应 $FLOATCTF_HOME/frontends 下已安装的前端；default 始终随平台发布）",
+            true,
         ),
     ];
-    for (key, value, value_type, description) in defaults {
+    for (key, value, value_type, description, protected) in defaults {
         let e = settings::Entity::insert(settings::ActiveModel {
             key: Set(key.to_string()),
             value: Set(value.to_string()),
             r#type: Set(value_type),
             description: Set(description.to_string()),
+            protected: Set(protected),
             ..Default::default()
         })
         .on_conflict(

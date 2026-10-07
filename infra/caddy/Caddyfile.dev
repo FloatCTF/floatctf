@@ -10,6 +10,15 @@ http:// {
         reverse_proxy host.docker.internal:9090
     }
 
+    # 本地已安装前端注册表 / 资产。
+    # 开发环境没有 $FLOATCTF_HOME 安装目录：注册表由 Default Frontend 的 Vite 插件按
+    # **真实 schema** 提供（只含 default），因此管理端「前端选择器」在 dev 下走的是与
+    # 生产完全相同的代码路径与数据格式。生产由 Caddy 从 /srv/frontends 直接提供。
+    handle /__floatctf/frontends/* {
+        header Cache-Control "no-store"
+        reverse_proxy host.docker.internal:13000
+    }
+
     handle_path /public/* {
         rewrite * /floatctf-public{path}
         reverse_proxy rustfs:9000

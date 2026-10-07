@@ -1,13 +1,18 @@
 # 前端数据请求规范（DATA-FETCHING.md）
 
+> **路径变更（可插拔前端平台）**：当前官方前端在 `frontends/default/src/`（`apps/web` 现在只是引导页）。
+> 下文的 `apps/web/src/X` 一律按 `frontends/default/src/X` 阅读。
+> 领域 API / DTO 在 `@floatctf/sdk`；query 工厂与 SSE hook 在 `@floatctf/react`，
+> 由 `frontends/default/src/api/react.ts` 接线后以 `@/api/react` 暴露。
+
 > 数据页面（列表/详情/统计）的性能基线。**新增任何数据页面都要遵守本文件**，否则会退化：切 tab 反复请求、翻页闪骨架屏、窗口聚焦重刷。
 
 ## 现状：已实施的基础设施（勿回退）
 
 | 位置 | 内容 |
 |------|------|
-| `apps/web/src/integrations/tanstack-query/root-provider.tsx` | QueryClient **全局默认**：`staleTime: 5s`、`gcTime: 10min`、`refetchOnWindowFocus: false`、`retry: 1`（指数退避上限 8s）；**模块级真单例**（HMR 热更新不重建缓存） |
-| `apps/web/src/components/Table.tsx`（GenericTable） | 所有表格页内置 `staleTime: 30s` + `placeholderData: keepPreviousData`（翻页保留上一页数据） |
+| `frontends/default/src/integrations/tanstack-query/root-provider.tsx` | QueryClient **全局默认**：`staleTime: 5s`、`gcTime: 10min`、`refetchOnWindowFocus: false`、`retry: 1`（指数退避上限 8s）；**模块级真单例**（HMR 热更新不重建缓存） |
+| `frontends/default/src/components/Table.tsx`（GenericTable） | 所有表格页内置 `staleTime: 30s` + `placeholderData: keepPreviousData`（翻页保留上一页数据） |
 | 分级示例（低频覆盖） | `admin/version.tsx` changelog、`service/profile.tsx` profile → `staleTime: 5min`（低频数据覆盖全局） |
 | 轮询（实时数据） | 得分榜/趋势/仪表盘等用 `refetchInterval`（30-60s），见各 events 页面 |
 
@@ -68,11 +73,11 @@ const deleteMutation = useMutation({
 ```
 
 ### 5. 实时数据
-- 优先用封装好的 `useAwdEventStream`（SSE + 轮询兜底，`hooks/useAwdEventStream.ts`），不要自己写轮询
+- 优先用封装好的 `useAwdEventStream`（SSE + 轮询兜底；实现已迁到 `@floatctf/react`，页面从 `@/api/react` 引入），不要自己写轮询；SSE 传输本身在 `@floatctf/sdk`（Bearer 走 Authorization 头，绝不进 URL）
 - 轮询用 `refetchInterval`（React Query 内置，带后台暂停），不要用 `setInterval + 手动 setState`
 
 ### 6. entity 类型同步
-- 页面引用 `src/entity/*.ts`（由 `db:gen` 生成），**Schema 变更后必须重新生成并同步页面字段**
+- 页面引用 `@floatctf/sdk/entity`（源文件 `packages/sdk/src/entity/*.ts`，由 `db:gen` 生成），**Schema 变更后必须重新生成并同步页面字段**
 - 引用了 entity 不存在的字段 → tsc 报错（历史遗留：solves.tsx 的 avatar/nickname、discussions 页面的字段）；改 Schema 后 `mise run db:gen` 并用 `pnpm exec tsc --noEmit` 校验
 
 ## 审查清单（新数据页面提交前）
@@ -87,8 +92,8 @@ const deleteMutation = useMutation({
 ## 验证命令
 
 ```bash
-cd apps/web
+cd frontends/default
 pnpm exec tsc --noEmit          # 类型检查（含 entity 同步）
-pnpm build                      # 生产构建
+pnpm build                      # 生产构建（vite build && tsc）
 # dev 手动验证：切走再切回数据页，5s 内 Network 面板应无新请求（超过 5s 会后台刷新）
 ```

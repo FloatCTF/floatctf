@@ -1,5 +1,7 @@
 target/
 node_modules/
+# pnpm 的本地 content-addressable store（某些 CI/离线安装配置会在仓库根创建）
+/.pnpm-store/
 dist/
 .env
 .env.*

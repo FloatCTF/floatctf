@@ -1,6 +1,7 @@
 packages:
   - "apps/web"
   - "packages/*"
+  - "frontends/*"
 
 allowBuilds:
   "@biomejs/biome": true

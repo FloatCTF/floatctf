@@ -1,45 +1,25 @@
-import { defineConfig } from "vite";
-import viteReact from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-import pkg from "./package.json";
-import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
-import { resolve } from "node:path";
+import { defineConfig } from "vitest/config";
 
-// https://vitejs.dev/config/
+/**
+ * Bootstrap 的构建配置**刻意保持最小**：
+ * 没有 React 插件、没有 Tailwind、没有路由插件、没有代码分割魔法。
+ * 产物只有 `index.html` + 一个入口 JS —— 任何"bootstrap 悄悄带上默认前端"
+ * 的回归都会在体积和 `scripts/check-architecture.sh` 的产物断言上暴露。
+ */
 export default defineConfig({
-    define: {
-        "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
-    },
-    plugins: [
-        // Vitest 下关闭路由代码分割：分割后的页面是懒加载组件，
-        // 单测里渲染路由页面会一直停在 Suspense fallback。开发/构建仍开启。
-        TanStackRouterVite({ autoCodeSplitting: !process.env.VITEST }),
-        viteReact(),
-        tailwindcss(),
-    ],
-
-    resolve: {
-        alias: {
-            "@": resolve(__dirname, "./src"),
-        },
-    },
-    server: {
-        // host: true 让 dev server 监听 0.0.0.0，
-        // 这样 Caddy 容器可通过 host-gateway (172.17.0.1:13000) 反向代理。
-        host: true,
-        watch: {
-            ignored: ["**/routeTree.gen.ts"], // ← 加这 3 行
-        },
-        // 启动时预编译常用页面，避免开发时首次点击标签页要等编译。
-        warmup: {
-            clientFiles: [
-                "./src/routes/service/index.tsx",
-                "./src/routes/service/top.tsx",
-                "./src/routes/service/challenges/index.tsx",
-                "./src/routes/admin/index.tsx",
-                "./src/routes/admin/dashboard.tsx",
-                "./src/routes/admin/challenges.tsx",
-            ],
-        },
-    },
+	build: {
+		outDir: "dist",
+		emptyOutDir: true,
+		target: "esnext",
+		rollupOptions: {
+			output: {
+				entryFileNames: "assets/bootstrap-[hash].js",
+				chunkFileNames: "assets/[name]-[hash].js",
+				assetFileNames: "assets/[name]-[hash][extname]",
+			},
+		},
+	},
+	test: {
+		environment: "node",
+	},
 });

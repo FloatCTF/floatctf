@@ -218,14 +218,35 @@ net.bridge.bridge-nf-call-ip6tables=1
 
 ## 6. Release 产物与 API image
 
-`v*` tag 触发 `.github/workflows/release.yml`，发布四个部署产物：
+`v*` tag 触发 `.github/workflows/release.yml`，发布五个部署产物：
 
 ```text
 floatctf            API release binary
 floatctf-helper     host control plane binary
-web-dist.tar.gz     Web static dist
+web-dist.tar.gz     bootstrap 引导页 + 版本化 Default Frontend 制品
 merged.sql          fresh PostgreSQL bootstrap
+frontend.sh         前端管理器（安装到 $FLOATCTF_HOME/frontend.sh）
 ```
+
+`web-dist.tar.gz` 的布局是固定契约（由 `scripts/package-web-dist.sh` 组装、
+`scripts/verify-release-frontend.sh` 在发布前断言）：
+
+```text
+bootstrap/                          # 引导页（无 React / 无 UI）
+  index.html
+  assets/…
+frontends/
+  default/
+    <version>/                      # 版本化不可变制品
+      frontend.json
+      assets/{frontend.js,frontend.css,<chunks>.js}
+```
+
+安装器把 `bootstrap/` 铺到 `$FLOATCTF_HOME/web`，把 `frontends/` 交给前端管理器安装
+（`$FLOATCTF_HOME/frontend.sh install … --platform --make-current`）：
+**升级只更新 release 里的前端，第三方已安装的前端、其版本与注册表指针一律保留**，
+`FRONTEND_ACTIVE` 设置也不会被改动。详见
+[docs/frontend/ARCHITECTURE.md](docs/frontend/ARCHITECTURE.md)。
 
 仍然发布原始 API binary，是为了让安装器无需依赖外部容器 registry。部署阶段会使用：
 
@@ -263,7 +284,8 @@ sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
   --api-url <floatctf-url> \
   --helper-url <floatctf-helper-url> \
   --web-url <web-dist.tar.gz-url> \
-  --migrate-url <merged.sql-url>
+  --migrate-url <merged.sql-url> \
+  --frontend-manager-url <frontend.sh-url>
 ```
 
 等价环境变量：
@@ -273,6 +295,7 @@ FLOATCTF_API_URL
 FLOATCTF_HELPER_URL
 FLOATCTF_WEB_URL
 FLOATCTF_MIGRATE_URL
+FLOATCTF_FRONTEND_MANAGER_URL
 FLOATCTF_VERSION
 ```
 
@@ -350,8 +373,18 @@ enable units（不启动整个平台）
 ├── compose.prod.yml
 ├── merged.sql
 ├── .env
+├── web/                      # bootstrap 引导页（Caddy root /srv/web）
+├── frontends/                # 已安装前端（Caddy 只读挂载到 /srv/frontends）
+│   ├── registry.json         # 本地注册表（no-store）
+│   └── default/<version>/    # 平台内置前端（受保护、版本化）
+├── frontend.sh               # 前端管理器（root:root 0755；无需源码签出）
 └── uninstall.sh
 ```
+
+前端生命周期：安装/升级/回滚用 `sudo $FLOATCTF_HOME/frontend.sh install|set-current|remove`；
+**激活**在管理端 → 设置 → 前端（写动态设置 `FRONTEND_ACTIVE`）；破窗恢复在任意页面加
+`?frontend=default`。安全卸载（不带 `--purge`）**保留** `frontends/` 与 `frontend.sh`，
+因此重新部署能恢复同一套前端；`--purge` 才会一并删除。
 
 说明：`data/`、`logs/`、`runtime/` 属主是 API 容器的数值身份 `65532:floatctf`；
 根目录本身是 `root:floatctf 0750`。Redis 的数据落在 Compose named volume

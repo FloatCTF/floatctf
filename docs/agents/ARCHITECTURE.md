@@ -13,13 +13,19 @@ floatctf/
 │   │   └── src/
 │   │       ├── api/             # HTTP 层：extractor(ReqCtx)、dto、app_error
 │   │       ├── bootstrap/       # 启动装配：mod(run)、state(AppState)、routes、scheduler
-│   │       ├── core/            # 跨模块核心：config(AppConfig)、secret、security(jwt)
+│   │       ├── core/            # 跨模块核心：config(AppConfig)、contract(契约版本)、secret、security(jwt)
 │   │       ├── entity/          # SeaORM 实体（脚本生成，勿手改）
 │   │       ├── infrastructure/  # 适配器：database、docker、redis、storage、logging、realtime、audit、settings、package、ratelimit、script_runner、helper
-│   │       ├── modules/         # 业务模块（见 §2）
+│   │       ├── modules/         # 业务模块（见 §2）；platform/frontend = GET /api/frontend
 │   │       ├── scheduler/       # 后台任务引擎（engine + handlers + task_key）
 │   │       └── sql/             # SQL 迁移（migrations/ + merged.sql + migrate.sh）
-│   └── web/                     # 前端（React + TanStack Query + Tailwind）
+│   └── web/                     # **Web bootstrap**：解析并挂载已安装前端（无 React / 无 UI）
+├── frontends/
+│   └── default/                 # **官方前端**：当前完整 UI（React + TanStack Router + Primer）
+├── packages/
+│   ├── sdk/                     # @floatctf/sdk：传输/错误/领域 API/SSE/DTO/生成实体
+│   ├── react/                   # @floatctf/react：可选 headless React 绑定（无 UI）
+│   └── frontend-runtime/        # @floatctf/frontend-runtime：制品与运行时契约 + bootstrap
 ├── crates/
 │   ├── fcmc/                    # 容器管理 / 出题工具 CLI
 │   ├── awd-flagserver/          # AWD FlagServer 独立服务
@@ -277,4 +283,6 @@ mise run fmt / lint / test / check / build
 - **不要新增环境变量读取**：配置一律从 TOML（`ctx.config`）或 settings 表获取。
 - **API 禁止直连 Docker daemon**：生产 API container 不挂 Docker socket、不带 capabilities；Bollard 必须连接 `[docker].socket_path = "/run/floatctf/helper-docker.sock"`。
 - **entity/代码/DB Schema 三者必须一致**（详见 DATABASE.md 的"三处一致"原则）。
-- **前端导航必须走 TanStack Router**（`Link` 或 `navigate`），禁止裸 `<a href>`：裸 anchor 点击会整页刷新白屏并清空 QueryClient 缓存。SideBar 已有 onClick 拦截实现，新侧栏/导航组件照抄；回归测试见 `apps/web/src/components/SideBar.test.tsx`。
+- **前端导航必须走 TanStack Router**（`Link` 或 `navigate`），禁止裸 `<a href>`：裸 anchor 点击会整页刷新白屏并清空 QueryClient 缓存。SideBar 已有 onClick 拦截实现，新侧栏/导航组件照抄；回归测试见 `frontends/default/src/components/SideBar.test.tsx`。
+- **前端制品跑在纯浏览器环境**：没有 `process` / `require` / Node 全局。第三方依赖里的 `process.env.*` 必须在构建期替换（见 `frontends/default/vite.config.ts` 的 `define`）。漏掉会导致整页起不来。
+- **不要跨包 import 源码路径**：只能用 `@floatctf/sdk`、`@floatctf/react`、`@floatctf/frontend-runtime` 的公开导出；`mise run web:architecture` 会拦截。

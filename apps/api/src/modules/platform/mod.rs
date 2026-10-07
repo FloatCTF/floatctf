@@ -2,11 +2,13 @@
 
 pub mod announcements;
 pub mod files;
+pub mod frontend;
 pub mod operations;
 pub mod settings;
 
 pub use announcements::AnnouncementsDto;
 pub use files::presign_private_download_url;
+pub use frontend::FrontendBootstrapDto;
 pub use operations::{LogsDto, ScheduledTasksDto};
 pub use settings::SettingsDto;
 
@@ -14,6 +16,9 @@ use actix_web::web::{ServiceConfig, scope};
 
 /// 选手侧平台路由（`/api` 下）。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
+    // GET /api/frontend —— 未认证的公开前端引导元数据（登录前必须可用）。
+    cfg.service(scope("/frontend").service(frontend::api::get_frontend_bootstrap));
+
     cfg.service(scope("/announcements").service(announcements::get_player_announcements));
 
     cfg.service(

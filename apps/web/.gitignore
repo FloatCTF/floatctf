@@ -1,10 +1,5 @@
+# bootstrap 的可再生构建产物
 node_modules
-.DS_Store
 dist
-dist-ssr
 *.local
-count.txt
 .env
-.nitro
-.tanstack
-src/routeTree.gen.ts

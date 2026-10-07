@@ -72,10 +72,76 @@ watchexec --restart --exts rs,toml \
 """
 
 # 前端
+# 开发模式：先构建 workspace 包（frontend-runtime / sdk / react 的 dist 是前端
+# 解析 `@floatctf/*` 的真实产物），再启动 Default Frontend 的 Vite（HMR）。
+# 生产模式完全不经过这里：apps/web bootstrap → Caddy → 已安装的版本化制品。
 [tasks."dev:web"]
-description = "启动 Web 开发服务器"
-dir = "apps/web"
-run = "pnpm dev"
+description = "构建 workspace 包并启动 Default Frontend 开发服务器（Vite HMR）"
+run = """
+pnpm run build:packages
+pnpm --filter @floatctf/frontend-default dev
+"""
+
+# 只在开发 workspace 包本身时用：tsc --watch 持续刷新 packages/*/dist。
+[tasks."dev:packages"]
+description = "以 watch 模式重建 workspace 包（改动 packages/* 时用）"
+run = "pnpm run dev:packages"
+
+# Web 类型检查（与 CI 的 `vite build && tsc` 对齐；biome lint 抓不到类型错误）
+[tasks."web:typecheck"]
+description = "Web TypeScript 类型检查（全部 web 包 tsc --noEmit）"
+# 先构建 packages/*：前端通过 package.json exports 解析 @floatctf/* 到各包的 dist，
+# 因此必须先有**当前**的 dist，否则会拿旧 .d.ts 做类型检查（会出现"本地看绿、CI 变红"
+# 这类与源码无关的假结果）。
+run = """
+pnpm run build:packages
+pnpm --filter @floatctf/frontend-runtime exec tsc -p tsconfig.build.json --noEmit
+pnpm --filter @floatctf/sdk exec tsc -p tsconfig.build.json --noEmit
+pnpm --filter @floatctf/react exec tsc -p tsconfig.build.json --noEmit
+pnpm --filter @floatctf/web exec tsc --noEmit
+pnpm --filter @floatctf/frontend-default exec tsc --noEmit
+"""
+
+# 前端平台架构边界守卫（SDK 必须框架无关、默认前端不得逃出自身包、bootstrap 不得
+# 带上默认前端……见 docs/frontend/ARCHITECTURE.md）。
+[tasks."web:architecture"]
+description = "校验可插拔前端架构边界与契约版本一致性"
+run = "./scripts/check-architecture.sh"
+
+# 静态检查
+[tasks.lint]
+description = "执行 Rust 和 Web 静态检查"
+run = [
+    "cargo clippy --workspace --all-targets --all-features",
+    "pnpm --filter @floatctf/frontend-runtime lint",
+    "pnpm --filter @floatctf/sdk lint",
+    "pnpm --filter @floatctf/react lint",
+    "pnpm --filter @floatctf/web lint",
+    "pnpm --filter @floatctf/frontend-default lint",
+    { task = "web:typecheck" },
+    { task = "web:architecture" },
+]
+
+# 测试
+[tasks.test]
+description = "执行 Rust 和 Web 测试"
+run = [
+    "./scripts/test-rust.sh",
+    # 同上：测试同样通过 exports → dist 解析 @floatctf/*，先确保 dist 是当前的。
+    "pnpm run build:packages",
+    "pnpm run test:web",
+    # 前端管理器（frontend.sh）的契约与安全负向测试：不依赖 docker，几十秒内跑完。
+    "./scripts/test-frontend-manager.sh",
+]
+
+# 构建
+[tasks.build]
+description = "构建 API、workspace 包、bootstrap 与 Default Frontend"
+run = [
+    "cargo build --workspace --release",
+    "pnpm run build:packages",
+    "pnpm run build:web",
+]
 
 # 唯一开发入口：基础设施 healthy → migrations → API watch + Vite。
 [tasks.dev]
@@ -107,41 +173,10 @@ run = [
 description = "检查 Rust 格式"
 run = "cargo fmt --all -- --check"
 
-# Web 类型检查（与 CI 的 `vite build && tsc` 对齐；biome lint 抓不到类型错误）
-[tasks."web:typecheck"]
-description = "Web TypeScript 类型检查（tsc --noEmit）"
-dir = "apps/web"
-run = "pnpm exec tsc --noEmit"
-
-# 静态检查
-[tasks.lint]
-description = "执行 Rust 和 Web 静态检查"
-run = [
-    "cargo clippy --workspace --all-targets --all-features",
-    "pnpm --filter @floatctf/web lint",
-    { task = "web:typecheck" },
-]
-
-# 测试
-[tasks.test]
-description = "执行 Rust 和 Web 测试"
-run = [
-    "./scripts/test-rust.sh",
-    "pnpm --filter @floatctf/web test",
-]
-
 # 检查
 [tasks.check]
 description = "检查整个项目"
 depends = ["fmt", "lint", "test"]
-
-# 构建
-[tasks.build]
-description = "构建 API 和 Web"
-run = [
-    "cargo build --workspace --release",
-    "pnpm --filter @floatctf/web build",
-]
 
 [tasks."db:migration:new"]
 description = "创建新的数据库 migration"

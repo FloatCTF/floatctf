@@ -5,11 +5,12 @@
   "private": true,
   "packageManager": "pnpm@11.20.0",
   "scripts": {
-    "dev:web": "pnpm --filter @floatctf/web dev",
-    "build:web": "pnpm --filter @floatctf/web build",
-    "lint:web": "pnpm --filter @floatctf/web lint",
-    "test:web": "pnpm --filter @floatctf/web test --passWithNoTests",
-    "check:web": "pnpm --filter @floatctf/web lint"
+    "build:packages": "pnpm --filter @floatctf/frontend-runtime --filter @floatctf/sdk --filter @floatctf/react build",
+    "dev:packages": "pnpm --parallel --filter @floatctf/frontend-runtime --filter @floatctf/sdk --filter @floatctf/react dev",
+    "dev:web": "pnpm --filter @floatctf/frontend-default dev",
+    "build:web": "pnpm --filter @floatctf/web build && pnpm --filter @floatctf/frontend-default build",
+    "lint:web": "pnpm --filter @floatctf/frontend-runtime --filter @floatctf/sdk --filter @floatctf/react --filter @floatctf/web --filter @floatctf/frontend-default lint",
+    "test:web": "pnpm --filter @floatctf/frontend-runtime --filter @floatctf/sdk --filter @floatctf/react --filter @floatctf/web --filter @floatctf/frontend-default test"
   },
   "keywords": [],
   "author": "",

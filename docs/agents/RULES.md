@@ -5,18 +5,21 @@
 
 ## 1. 前端仿照既有页面（最高频，曾被返工 6+ 次）
 
+> **路径变更（可插拔前端平台）**：当前完整 UI 已迁到 `frontends/default/src/`；
+> `apps/web` 现在只是引导页。下面提到的参照页路径请按 `apps/web/src/X` → `frontends/default/src/X` 阅读。
+
 核心原则见 AGENTS.md 铁律 7。以下是用户明确拒绝过的真实案例与具体形态要求：
 
 ### 1.1 管理列表/库页：必须用 Challenges 页的内置 GenericTable 形态
 
-- 参照页唯一标准：`apps/web/src/routes/admin/challenges.tsx`。
+- 参照页唯一标准：`frontends/default/src/routes/admin/challenges.tsx`。
 - 必须使用 GenericTable **内置**增删改查：`createFn` / `patchFn` / `mutationColumns` / `filterKeys` + `FilterBar`。
 - **禁止**：自造普通 HTML 表格（第一版 GameBoxes 库页因此被拒）；自定义 Dialog 表单替代内置 Add/Edit（第二版仍被拒，"还是不太一样啊"）。
 - 内置编辑形态需要提交全量配置时，直接用表单编辑整行配置即可；后端对相同内容幂等（digest 去重）不会产生垃圾数据。
 
 ### 1.2 选手端赛事页：参照 JeopardyTeam 选手端
 
-- 参照页：`apps/web/src/routes/service/events/jeopardy.$id/*`。
+- 参照页：`frontends/default/src/routes/service/events/jeopardy.$id/*`。
 - 列表用 Primer `Table.Container` + `DataTable`，布局用两栏 flex（真实 flex 比例，如 `flex-[3]`，`flex-28`/`flex-13` 这类 Tailwind 类不存在）。
 - 反面案例：AWD 选手端 GameBoxes/Scoreboard 首版被用户评价"太丑了"，按 JeopardyTeam 形态重做后通过。
 
@@ -34,7 +37,7 @@
 
 ## 2. 禁止原生弹窗
 
-- 用户明确要求：前端代码中**不得出现** `alert(` / `confirm(`（全仓 grep 应为 0）。
+- 用户明确要求：前端代码中**不得出现** `alert(` / `confirm(`（`grep -rn 'alert(\|confirm(' frontends/default/src` 应为 0）。
 - 一律使用 `@primer/react` 的 `useConfirm` / `Dialog` / `useMsgBanner` 实现确认、提示与横幅。
 - 注意：`MsgBanner` 的 `BannerVariant` 只有 `critical|info|success|upsell|warning`，错误横幅用 `critical`；`useConfirm` 的 `confirmButtonType` 是直接字符串联合类型（`'normal'|'primary'|'danger'`）。
 

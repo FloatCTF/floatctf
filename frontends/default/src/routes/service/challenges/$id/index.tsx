@@ -1,0 +1,267 @@
+import { Button, Label, ProgressBar, Spinner, TextInput } from "@primer/react";
+import type { InstancesDto as Instances } from "@floatctf/sdk";
+
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useReactive, useTitle } from "ahooks";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import { useEffect, useRef, useState } from "react";
+dayjs.extend(utc);
+
+import { serviceApi } from "@/api";
+import {
+	challengeInstanceQueryOptions,
+	challengeQueryOptions,
+} from "@/api/react";
+import { useMsgBanner } from "@/components";
+
+import { ServiceRouteGuard } from "@/routes/service/route";
+
+export const Route = createFileRoute("/service/challenges/$id/")({
+	component: RouteComponent,
+	loader: async ({ context, params }) => {
+		await ServiceRouteGuard();
+		await context.queryClient.ensureQueryData(challengeQueryOptions(params.id));
+		// 尽力预取实例（非动态题可能 404）
+		void context.queryClient
+			.ensureQueryData(challengeInstanceQueryOptions(params.id))
+			.catch(() => {});
+	},
+});
+
+function RouteComponent() {
+	const { id } = Route.useParams();
+	const {
+		data: challenge_data,
+		isLoading,
+		isError,
+	} = useQuery(challengeQueryOptions(id));
+	const banner = useMsgBanner();
+
+	const challenge = challenge_data?.data;
+	// static / attachment-only 题目：没有容器，启动只是创建一个“无容器”的答题实例
+	// （flag 在服务端比对），因此不显示倒计时与 Destroy。
+	const isStatic = challenge?.container_port == null;
+	const challengeStatus = useReactive({
+		flag: "",
+		isRunning: false,
+		instance: {} as Instances,
+	});
+
+	const { data: instance_data } = useQuery(challengeInstanceQueryOptions(id));
+
+	const mutationInstance = useMutation({
+		mutationFn: serviceApi.instances.launch,
+		onSuccess: (data) => {
+			challengeStatus.isRunning = true;
+			challengeStatus.instance = data.data!;
+		},
+		onError: (error) => {
+			banner.showErrorBanner(error);
+		},
+	});
+	const destroyInstance = useMutation({
+		mutationFn: serviceApi.instances.destroy,
+		onSuccess: (_data) => {
+			challengeStatus.isRunning = false;
+			challengeStatus.instance = {} as Instances;
+		},
+		onError: (error) => {
+			banner.showErrorBanner(error);
+		},
+	});
+	const submitFlag = useMutation({
+		mutationFn: serviceApi.submit.submit,
+		onSuccess: (_data) => {
+			banner.showBanner("success", "提交成功，该题已解出");
+			// 由后端关闭
+			challengeStatus.isRunning = false;
+			challengeStatus.instance = {} as Instances;
+		},
+		onError: (error) => {
+			banner.showErrorBanner(error);
+		},
+	});
+	const navigate = useNavigate();
+		useEffect(() => {
+		if (instance_data?.data) {
+			challengeStatus.isRunning = true;
+			challengeStatus.instance = instance_data.data;
+		} else {
+			challengeStatus.isRunning = false;
+			challengeStatus.instance = {} as Instances;
+		}
+	}, [instance_data]);
+	// 顶层调用 Hook
+	useTitle(`${challenge?.name ?? "Challenge"} | FloatCTF`);
+
+	if (isError) {
+		navigate({ to: "/service/challenges" });
+	}
+
+	if (isLoading) {
+		return <Spinner size="large" />;
+	}
+
+	return (
+		<div className="h-full w-full flex flex-col gap-2 justify-between">
+			<div id="challenge-meta" className="flex-6">
+				<p className="font-bold text-2xl">{challenge?.name}</p>
+				<div className="border-top mt-2 pt-2">{challenge?.description}</div>
+			</div>
+			<banner.BannerComponent />
+			{/* 附件 */}
+			{challenge?.attachment && (
+				<a
+					href={`/static/challenges/${challenge.safe_name}/${challenge.attachment.path}`}
+					download
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-block mt-1"
+				>
+					<Label variant="accent">{challenge.attachment.name}</Label>
+				</a>
+			)}
+			{challengeStatus.instance && (
+				<div
+					// biome-ignore lint/security/noDangerouslySetInnerHtml: <explanation>
+					dangerouslySetInnerHTML={{
+						__html: challengeStatus.instance.content || "",
+					}}
+				/>
+			)}
+			<div
+				id="challenge-content"
+				className="mb-4 flex justify-center flex-1 border-bottom"
+			>
+				{challengeStatus.isRunning ? (
+					<div className="w-full flex flex-col gap-2 mb-4">
+						{!isStatic && (
+							<RemainingTimer
+								destroy_at={challengeStatus.instance.destroy_at ?? ""}
+								onExpire={() => {
+									destroyInstance.mutate(challengeStatus.instance.id);
+								}}
+							/>
+						)}
+
+						<div className="flex gap-2">
+							<TextInput
+								className="flex-1"
+								value={challengeStatus.flag}
+								onChange={(e) => {
+									challengeStatus.flag = e.target.value;
+								}}
+								placeholder="flag{}"
+							/>
+							{!isStatic && (
+								<Button
+									variant="danger"
+									onClick={() => {
+										destroyInstance.mutate(challengeStatus.instance.id);
+									}}
+								>
+									Destroy
+								</Button>
+							)}
+
+							<Button
+								variant="primary"
+								onClick={() => {
+									submitFlag.mutate({
+										instance_id: challengeStatus.instance.id,
+										flag: challengeStatus.flag,
+									});
+									// 需要清空 flag 输入
+									challengeStatus.flag = "";
+								}}
+							>
+								提交
+							</Button>
+						</div>
+					</div>
+				) : (
+					<Button
+						variant="primary"
+						onClick={() => {
+							mutationInstance.mutate(id);
+						}}
+					>
+						{isStatic ? "Start" : "Launch"}
+					</Button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+type RemainingTimerProps = {
+	destroy_at: string;
+	totalMinutes?: number;
+	onExpire?: () => void;
+};
+
+export const RemainingTimer = ({
+	destroy_at,
+	totalMinutes = 60,
+	onExpire,
+}: RemainingTimerProps) => {
+	const [remaining, setRemaining] = useState({
+		formatted: "",
+		percentage: 100,
+	});
+
+	// ✅ 防止 onExpire 重复调用
+	const expiredRef = useRef(false);
+
+	useEffect(() => {
+		const update = () => {
+			const destroyTime = dayjs.utc(destroy_at).toDate();
+			const diffSeconds = Math.floor(
+				(destroyTime.getTime() - Date.now()) / 1000,
+			);
+
+			const safeDiff = Math.max(diffSeconds, 0);
+			const minutes = Math.floor(safeDiff / 60);
+			const seconds = safeDiff % 60;
+			// ✅ <= 0 确保不会错过触发点
+			setRemaining({
+				formatted: `${minutes}m ${seconds}s`,
+				percentage: Math.max(
+					Math.min((safeDiff / (totalMinutes * 60)) * 100, 100),
+					0,
+				),
+			});
+
+			if (safeDiff <= 0 && !expiredRef.current) {
+				expiredRef.current = true;
+				console.log("🔥 Expired, calling onExpire()");
+				onExpire?.();
+			}
+		};
+
+		update(); // 初始化跑一次
+		const timer = setInterval(update, 1000);
+		return () => clearInterval(timer);
+	}, [destroy_at, totalMinutes, onExpire]);
+
+	return (
+		<>
+			<span
+				style={{
+					color: "var(--fgColor-muted)",
+					font: "var(--text-body-shorthand-medium)",
+				}}
+				className="text-center"
+			>
+				Remaining: {remaining.formatted}
+			</span>
+			<ProgressBar
+				animated
+				progress={remaining.percentage}
+				aria-label="remaining"
+			/>
+		</>
+	);
+};

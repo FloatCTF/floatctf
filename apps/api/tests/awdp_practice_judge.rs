@@ -360,15 +360,17 @@ fn push_flow_removed_from_source() {
         .exists(),
         "admin practice judge API 文件必须删除"
     );
-    let web_root = format!("{root}/../../apps/web/src");
+    // 可插拔前端平台后的真实位置：官方前端在 frontends/default，
+    // 领域 API 模块（含 awdp.ts）在 @floatctf/sdk。
+    let frontend_root = format!("{root}/../../frontends/default/src");
     assert!(
         !std::path::Path::new(&format!(
-            "{web_root}/routes/admin/events/awdp.$id/judge.tsx"
+            "{frontend_root}/routes/admin/events/awdp.$id/judge.tsx"
         ))
         .exists(),
         "admin practice judge 前端页面必须删除"
     );
-    let api_ts = std::fs::read_to_string(format!("{web_root}/api/awdp.ts"))
+    let api_ts = std::fs::read_to_string(format!("{root}/../../packages/sdk/src/api/awdp.ts"))
         .unwrap_or_else(|e| panic!("read awdp.ts: {e}"));
     assert!(
         !api_ts.contains("PracticeJudge") && !api_ts.contains("practice-judge"),

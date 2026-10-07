@@ -5,7 +5,24 @@ use crate::{
     api::{dto::DeleteItemsRequest, prelude::*},
     entity::{sea_orm_active_enums::SettingValueType, settings},
     infrastructure::settings::{resolve_setting_value, resolve_value_with_map},
+    modules::platform::frontend::api::FRONTEND_ACTIVE_SETTING_KEY,
+    modules::platform::frontend::domain::is_safe_frontend_id,
 };
+
+/// `FRONTEND_ACTIVE` 的值必须是安全前端 ID。
+///
+/// 这个值会出现在**未认证**的 `GET /api/frontend` 响应里，也是浏览器解析本地注册表
+/// 的依据。写入非法值（路径穿越、大写、空串）不会造成越权（后端会回落 `default`），
+/// 但会让"设置看起来改成功了、前端却还是旧的"这种故障极难排查，所以在写入时就拒绝。
+fn validate_setting_value(key: &str, value: &str) -> Result<(), AppError> {
+    if key == FRONTEND_ACTIVE_SETTING_KEY && !is_safe_frontend_id(value) {
+        return Err(AppError::BadRequest(format!(
+            "{} 必须是安全前端 ID（[a-z0-9][a-z0-9._-]*，最长 64 字符）: {}",
+            FRONTEND_ACTIVE_SETTING_KEY, value
+        )));
+    }
+    Ok(())
+}
 
 /// GET /api/admin/settings
 #[get("")]
@@ -47,6 +64,7 @@ pub async fn create_setting(
 ) -> UniResult<SettingsDto> {
     let user = user.into_inner();
     let csr = csr.into_inner();
+    validate_setting_value(&csr.key, &csr.value)?;
 
     let setting = settings::ActiveModel {
         key: Set(csr.key),
@@ -101,6 +119,11 @@ pub async fn patch_setting(
         .one(ctx.db.get_ref())
         .await?
         .ok_or(AppError::NotFound(format!("{} 不存在", setting_id)))?;
+
+    // 校验用 patch 之后的最终 key/value（只改 key 不改值也要按新 key 校验）。
+    let effective_key = psr.key.clone().unwrap_or_else(|| setting.key.clone());
+    let effective_value = psr.value.clone().unwrap_or_else(|| setting.value.clone());
+    validate_setting_value(&effective_key, &effective_value)?;
 
     let mut m_setting = setting.into_active_model();
 

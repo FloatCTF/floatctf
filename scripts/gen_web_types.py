@@ -15,11 +15,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 INPUT_DIR = PROJECT_ROOT / "apps" / "api" / "src" / "entity"
-OUTPUT_DIR = PROJECT_ROOT / "apps" / "web" / "src" / "entity"
+OUTPUT_DIR = PROJECT_ROOT / "packages" / "sdk" / "src" / "entity"
 
 # Generated TS types represent DATABASE columns only.
 # API computed fields (e.g. Settings.resolved_value) live in manual DTO files
-# under apps/web/src/api/, outside this generated directory.
+# under packages/sdk/src/api/, outside this generated directory.
+# The entity types are published as the `@floatctf/sdk/entity` subpath and consumed
+# by every frontend (official frontends/default and third-party ones alike).
 
 SKIP_RUST_STEMS = {
     "mod",
@@ -242,7 +244,9 @@ def rust_to_ts(
     if imports:
         import_line = (
             f"import type {{ {', '.join(sorted(imports))} }} "
-            f"from './{enums_module}';\n\n"
+            # 显式 `.js`：SDK 以 ESM 发布，tsc 不会改写相对导入的扩展名，
+            # 因此生成源码必须自带 `.js`（Vite 能容忍缺失，Node ESM 不能）。
+            f"from './{enums_module}.js';\n\n"
         )
 
     return (
@@ -275,7 +279,7 @@ def reset_output_dir(output_dir: Path) -> None:
                 # entity/ is flat generated files only; refuse nested leftovers.
                 die(
                     f"unexpected subdirectory in generated entity types: {child}\n"
-                    "manual types must live outside apps/web/src/entity/"
+                    "manual types must live outside packages/sdk/src/entity/"
                 )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +313,7 @@ def convert_directory(
     print(f"Output : {output_dir}")
     print(f"Files  : {len(rust_files)}")
     print()
-    print("Note   : generated types = DB columns only; API computed fields live in apps/web/src/api/")
+    print("Note   : generated types = DB columns only; API computed fields live in packages/sdk/src/api/")
     print()
     print("=" * 96)
     print()
@@ -418,7 +422,8 @@ def convert_directory(
 
     if exports:
         index_lines = [
-            f'export * from "./{name}";'
+            # 同上：`@floatctf/sdk/entity` 在 Node ESM 下需要显式扩展名。
+            f'export * from "./{name}.js";'
             for name in exports
         ]
 

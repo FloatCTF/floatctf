@@ -7,11 +7,16 @@
 | 层级 | 位置 | 依赖 | 命令 |
 |------|------|------|------|
 | 单元测试 | 源码内 `#[cfg(test)] mod tests` | 无（禁 I/O） | `cargo test -p floatctf <关键词>` |
+| 前端单元测试 | `frontends/default/src/**/__tests__/`、`packages/{sdk,react,frontend-runtime}/src/**/__tests__/` | 无 | `pnpm run test:web`（或 `mise run test`） |
 | 路由目录测试 | `apps/api/tests/` 下模块 | 无 | `cargo test --test http_auth_contract catalog_sizes` |
 | 鉴权契约 | `apps/api/tests/http_auth_contract.rs` | 运行中的 API | `cargo test --test http_auth_contract` |
 | 业务冒烟 | `apps/api/tests/http_flow.rs` | 运行中的 API + 可选账号 | `cargo test --test http_flow` |
 
 全部跑：`cargo test -p floatctf`（mise 任务 `mise run test` 跑 workspace + 前端）。
+
+前端测试分布（可插拔前端平台）：`packages/sdk` = 传输/错误/SSE；`packages/react` = headless hook 与 query key；
+`packages/frontend-runtime` = manifest/注册表校验与 bootstrap 回退链；`frontends/default` = 官方前端的组件/导航逻辑。
+架构边界由 `mise run web:architecture`（`scripts/check-architecture.sh`）守护。
 
 ## 后台登录接口测试凭证
 
@@ -49,6 +54,9 @@ curl -X POST http://localhost:9090/api/users \
 - `modules/event/jeopardy/domain/scoring.rs` — 积分公式
 - `modules/event/awdp/domain/*` — 阶段/配置/评测分数纯逻辑
 - `modules/event/awd/crypto.rs`、`modules/event/awd/infrastructure/firewall/*`、`modules/event/awd/domain/firewall_state.rs` 等 — 加密/防火墙规则
+- `packages/frontend-runtime/src/__tests__/*` — manifest/注册表严格校验、路径穿越拒绝、bootstrap 回退与兜底页
+- `packages/sdk/src/__tests__/*`、`src/sse/__tests__/*` — 错误归一化、token 独立注入、401 回调、SSE 重连语义
+- `frontends/default/src/components/__tests__/*` — 官方前端组件与导航回归
 
 ## 写测试的硬性规则
 

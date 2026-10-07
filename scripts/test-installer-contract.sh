@@ -534,6 +534,17 @@ check "行为：跳过时仍打印缺失 ref 与 docker load 逃生口" \
     bash -c 'grep -qF "ghcr.io/floatctf/awdp-judgeserver:1.0.0" <<<"$1" &&
              grep -qF "docker load < floatctf-runtime-images.tar" <<<"$1"' _ "$ENSURE_SKIP_OUT"
 
+# ── R2：rustfs 就绪探测契约（CI 静态门禁；真实 Docker E2E 见 test-rustfs-readiness.sh）──
+# 背景：TCP 开放 != S3/HTTP 层可用，旧的 `nc -z` 探测会让 API 在 RustFS 就绪前
+# 初始化 bucket -> panic -> crash-loop（Phase 13 实测）。这里断言安装器模板用的是
+# 真实 HTTP /health 探测，且参数足以容纳探针自身耗时（timeout 必须 > sleep+nc 超时）。
+check "install.sh 的 rustfs healthcheck 是真实 HTTP /health 探测（非 TCP-only）" \
+    bash -c 'grep -qF "GET /health HTTP/1.1" "$1" && ! grep -qF "nc -z 127.0.0.1 9000 || exit 1" "$1"' _ "$ROOT/scripts/install.sh"
+check "install.sh 的 rustfs healthcheck 参数容纳探针耗时（interval 10s/timeout 10s/retries 12/start_period 30s）" \
+    bash -c 'f="$1"; for p in "interval: 10s" "timeout: 10s" "retries: 12" "start_period: 30s"; do
+        grep -qF "$p" <<<"$(awk "/healthcheck:/{n++} n>=2 && n<=3" "$f")" || { echo "missing: $p"; exit 1; }
+      done' _ "$ROOT/scripts/install.sh"
+
 # ── 参考文件与安装器模板的一致性（防止静默漂移，see Phase 13.1 §10.5/§10.2）──
 # 生产 Caddyfile 的权威来源是 install.sh 内嵌的 CADDY_TMPL_EOF；infra/caddy/Caddyfile.prod
 # 是给运维阅读的镜像副本（仅多一个“勿单独编辑”头部）。这里断言正文逐字节相同，

@@ -157,14 +157,24 @@ apps/web                  = 极薄的 bootstrap 引导页
 
 ## 生产安装与部署
 
-权威指南见 **[INSTALL.md](./INSTALL.md)**。Release 提供 4 个部署产物：
+权威指南见 **[INSTALL.md](./INSTALL.md)**。Release 提供 **11 个产物**（ARTIFACT CONTRACT v1.0）：
 
 ```text
-floatctf
-floatctf-helper
-web-dist.tar.gz
-merged.sql
+floatctf                            API release binary
+floatctf-helper                     宿主控制面 binary
+web-dist.tar.gz                     bootstrap 引导页 + 版本化 Default Frontend
+merged.sql                          fresh PostgreSQL bootstrap
+frontend.sh                         前端管理器
+install.sh                          安装器
+ops-tools.tar.gz                    backup.sh / restore.sh / db/migrate.sh / db/migrations/
+floatctf-sdk-<V>.tgz                @floatctf/sdk
+floatctf-react-<V>.tgz              @floatctf/react
+floatctf-frontend-runtime-<V>.tgz   @floatctf/frontend-runtime
+SHA256SUMS                          上面 10 个制品的 sha256（不含自身）
 ```
+
+其中 `@floatctf/*` 三个 tarball 与 `ops-tools.tar.gz` 同属该产物集；安装器实际下载 6 个部署产物
+（API / helper / web-dist / merged.sql / frontend.sh / ops-tools）。人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
 全新主机：
 
@@ -187,7 +197,7 @@ sudo /var/lib/floatctf/uninstall.sh --purge
 ## 发布渠道（crates.io / GitHub Release）
 
 - **crates.io**：`fcmc` 可通过 `cargo install fcmc` 安装。
-- **GitHub Release**：`v*` tag 触发 `.github/workflows/release.yml`，构建 API binary、helper、Web 静态文件和 fresh-production `merged.sql`。CI 还会实际构建一次生产 API runtime image；部署时 installer 用同一 Dockerfile 在目标机生成 `floatctf/api:<version>`。
+- **GitHub Release**：`v*` tag 触发 `.github/workflows/release.yml`，构建并发布 11 个产物（API binary、helper、Web 静态文件、fresh-production `merged.sql`、`frontend.sh`、`install.sh`、`ops-tools.tar.gz`、三个 `@floatctf/*` tarball 与 `SHA256SUMS`）。`workflow_dispatch` 默认只上传 workflow artifact，不创建 Release。CI 还会实际构建一次生产 API runtime image；部署时 installer 用同一 Dockerfile 在目标机生成 `floatctf/api:<version>`。人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
 ## 开发指南
 
@@ -315,7 +325,7 @@ AWD（Attack With Defense）是平台的核心特色功能。通过 Docker 自�
 - **安全可靠** — Rust 所有权机制从编译期杜绝内存安全隐患；JWT 权限校验、Argon2 密码加密、容器资源限制多层保障
 - **环境隔离** — 每道题目独立 Docker 容器，秒级启动、自动超时回收；AWD 模式下 WireGuard 子网隔离
 - **动态积分** — 基于平方根函数的积分衰减算法，分值随解题人数非线性下降，兼顾区分度与公平性
-- **一键部署** — `scripts/install.sh` 下载 4 个 release 产物、构建非 root API runtime image、创建 internal control network、渲染 Compose/Caddy/TOML，并由 systemd 管理 helper + Compose 生命周期；`uninstall.sh` 完整覆盖安全卸载与 purge
+- **一键部署** — `scripts/install.sh` 下载 6 个部署产物（API / helper / web-dist / merged.sql / frontend.sh / ops-tools）、构建非 root API runtime image、创建 internal control network、渲染 Compose/Caddy/TOML，并由 systemd 管理 helper + Compose 生命周期；`uninstall.sh` 完整覆盖安全卸载与 purge
 
 ## 目录结构
 

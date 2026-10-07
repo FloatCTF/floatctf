@@ -119,7 +119,7 @@ mise run setup
 3. 编译 `floatctf-helper`；
 4. 通过 sudo 检查/安装 Docker、nftables、WireGuard、iproute2 等宿主能力；
 5. 配置 IPv4 forwarding、`br_netfilter` 与 bridge netfilter sysctl；
-6. 创建 `floatctf` 与 `floatctf-helper` 系统身份；
+6. 创建 `floatctf` 系统**组**与 `floatctf-helper` 系统**用户**（不创建 `floatctf` 用户）；
 7. 把 `floatctf-helper` 加入 `docker` 组；
 8. 把开发者加入 `docker` 与 `floatctf` 组；
 9. 安装 root-owned `/usr/local/libexec/floatctf-helper`；
@@ -279,7 +279,7 @@ Release workflow 会确定性重新生成它。
 |---|---|---|
 | 主入口 | `mise run dev` | `systemctl start floatctf.target` |
 | API 载体 | native `watchexec + setpriv` | Docker Compose container |
-| API UID | 当前开发者 | 宿主 `floatctf` numeric UID |
+| API UID | 当前开发者 | `$FLOATCTF_UID`（默认 65532）:`$FLOATCTF_GID`（floatctf 组 GID） |
 | API docker group | 启动时显式丢弃 | 无 |
 | API capabilities | 全部丢弃 | `cap_drop=ALL` |
 | API NoNewPrivileges | yes | yes |
@@ -295,7 +295,7 @@ Release workflow 会确定性重新生成它。
 | Web | Vite HMR | Caddy static dist |
 | fresh DB | migrations | `merged.sql` |
 | API listen | `0.0.0.0:9090`（仅开发；供 Caddy 容器经 host-gateway 访问） | 不发布 |
-| 外部入口 | `0.0.0.0:7780` | Caddy HTTP（开发模式，对所有宿主 IPv4 接口开放） |
+| 外部入口 | `0.0.0.0:7780`（开发 Caddy） | `https://$SITE_ADDRESS`（生产 Caddy :80/:443 自动 HTTPS） |
 
 ---
 

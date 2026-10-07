@@ -8,11 +8,11 @@
 
 | FloatCTF 组件 | 运行形态 | 宿主能力需求 |
 |---|---|---|
-| API（`floatctf` 二进制） | 原生 systemd 进程 | `floatctf` 用户、`CAP_NET_ADMIN`、`docker` 组访问、可写 `work_dir` |
+| API（`floatctf` 二进制） | Docker 容器（生产 Compose） | 数值 `65532:<floatctf 组 GID>`、`cap_drop=ALL`、`no-new-privileges`、read-only rootfs、可写 `runtime/`；宿主能力经 helper socket |
 | PostgreSQL | Docker 容器 | Docker daemon（任意后端）、`127.0.0.1` 回环端口 |
 | RustFS | Docker 容器 | 同上（仅回环 9000/9001） |
-| Caddy | Docker 容器（`network_mode: host`） | **宿主端口 80/443**（无端口映射，直接绑宿主） |
-| AWD 运行时 | Docker 容器（赛事动态创建） | `CAP_NET_ADMIN`（API 创建子网/桥/nftables/WireGuard） |
+| Caddy | Docker 容器（Compose bridge + 端口映射） | 发布宿主 80/443（HTTP/HTTPS）；应用端口只在 Compose 网络内 |
+| AWD 运行时 | Docker 容器（赛事动态创建） | helper 的 `CAP_NET_ADMIN` + docker 组（经 `helper-control.sock` / `helper-docker.sock` 创建子网/桥/nftables/WireGuard） |
 
 ## 2. 宿主必需软件（feature-check，非发行版清单）
 
@@ -70,7 +70,8 @@ rustfs 10001）。Redis 数据在 Compose named volume `floatctf-redis-data`。
 
 | 服务 | 默认 | 说明 |
 |---|---|---|
-| API | 9090 | 监听 `0.0.0.0`（AWD 容器回连需要），对外暴露由 nftables 限制 |
+| API | 9090 | 容器内监听；**不发布宿主端口**（生产经 Compose DNS `api:9090` 与 internal 网络 `10.42.8.2:9090`；仅开发为 `0.0.0.0:9090`） |
+| Redis | 6380（回环） | compose 映射 `127.0.0.1:6380` |
 | PostgreSQL | 5433（回环） | compose 映射 `127.0.0.1:5433` |
 | RustFS | 9000/9001（回环） | 仅 `127.0.0.1` |
 | Caddy | 80/443 | host 网络直绑宿主端口；`SITE_ADDRESS` 自动 HTTPS |

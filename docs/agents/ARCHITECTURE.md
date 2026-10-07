@@ -34,7 +34,7 @@ floatctf/
 │   ├── helper-protocol/       # API ↔ helper 结构化 Host RPC 协议
 │   └── floatctf-helper/       # Docker + CAP_NET_ADMIN 宿主控制面守护进程
 ├── infra/
-│   ├── compose/                 # compose.dev.yml（db/rustfs/Caddy/registry）
+│   ├── compose/                 # compose.dev.yml（db/redis/caddy/rustfs）
 │   └── caddy/                   # Caddyfile.dev / Caddyfile.prod
 ├── scripts/                     # gen_entities.py、gen_web_types.py、infra-up.sh、dev.sh
 ├── mise.toml                    # 全部开发任务入口

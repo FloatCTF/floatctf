@@ -218,15 +218,25 @@ net.bridge.bridge-nf-call-ip6tables=1
 
 ## 6. Release 产物与 API image
 
-`v*` tag 触发 `.github/workflows/release.yml`，发布五个部署产物：
+`v*` tag 触发 `.github/workflows/release.yml`，发布 **11 个产物**（ARTIFACT CONTRACT v1.0）：
 
 ```text
-floatctf            API release binary
-floatctf-helper     host control plane binary
-web-dist.tar.gz     bootstrap 引导页 + 版本化 Default Frontend 制品
-merged.sql          fresh PostgreSQL bootstrap
-frontend.sh         前端管理器（安装到 $FLOATCTF_HOME/frontend.sh）
+floatctf                            API release binary
+floatctf-helper                     host control plane binary
+web-dist.tar.gz                     bootstrap 引导页 + 版本化 Default Frontend 制品
+merged.sql                          fresh PostgreSQL bootstrap
+frontend.sh                         前端管理器（安装到 $FLOATCTF_HOME/frontend.sh）
+install.sh                          安装器（releases/download/v<V>/install.sh）
+ops-tools.tar.gz                    backup.sh / restore.sh / db/migrate.sh / db/migrations/
+floatctf-sdk-<V>.tgz                @floatctf/sdk
+floatctf-react-<V>.tgz              @floatctf/react
+floatctf-frontend-runtime-<V>.tgz   @floatctf/frontend-runtime
+SHA256SUMS                          上面 1-10 的 sha256（不含自身）
 ```
+
+`<V>` = tag 去掉前导 `v`；`SHA256SUMS` 覆盖除自身外的全部制品。其中安装器实际下载的是
+6 个部署产物：`floatctf` / `floatctf-helper` / `web-dist.tar.gz` / `merged.sql` /
+`frontend.sh` / `ops-tools.tar.gz`。人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
 `web-dist.tar.gz` 的布局是固定契约（由 `scripts/package-web-dist.sh` 组装、
 `scripts/verify-release-frontend.sh` 在发布前断言）：
@@ -285,7 +295,9 @@ sudo env SITE_ADDRESS=ctf.example.com bash install.sh \
   --helper-url <floatctf-helper-url> \
   --web-url <web-dist.tar.gz-url> \
   --migrate-url <merged.sql-url> \
-  --frontend-manager-url <frontend.sh-url>
+  --frontend-manager-url <frontend.sh-url> \
+  --ops-url <ops-tools.tar.gz-url> \
+  --skip-migrations
 ```
 
 等价环境变量：
@@ -296,7 +308,9 @@ FLOATCTF_HELPER_URL
 FLOATCTF_WEB_URL
 FLOATCTF_MIGRATE_URL
 FLOATCTF_FRONTEND_MANAGER_URL
+FLOATCTF_OPS_URL
 FLOATCTF_VERSION
+FLOATCTF_SKIP_MIGRATIONS=1
 ```
 
 默认安装根：
@@ -324,7 +338,7 @@ create floatctf group + floatctf-helper user
         ↓
 floatctf-helper joins docker group
         ↓
-download 4 release artifacts
+download 6 release artifacts
         ↓
 render TOML / Caddyfile / compose
         ↓
@@ -342,6 +356,22 @@ enable units（不启动整个平台）
 ```
 
 安装器会移除旧版 `/etc/systemd/system/floatctf-api.service`，避免 native API 与新 API container 冲突。
+
+### 7.1 升级既有安装
+
+升级就是**用同一入口重跑安装器**（幂等）：
+
+```bash
+sudo bash install.sh --version <新版本> --ops-url <ops-tools.tar.gz-url> ...
+```
+
+- 既有 PostgreSQL 集群上，安装器会先启动 postgres，再用 `$FLOATCTF_HOME/db/migrate.sh apply`
+  （带 `FLOATCTF_CONFIG`）应用 **forward-only** 迁移：已应用版本由 `schema_migrations` 跳过，
+  不做任何破坏性回滚。
+- `--skip-migrations`（或 `FLOATCTF_SKIP_MIGRATIONS=1`）跳过迁移步骤；跳过时平台可能因缺少
+  新表/新列而启动失败。
+- **fresh** 数据库仍由 `merged.sql`（48 个迁移）一次性 bootstrap，不属于升级路径。
+- 升级前先做可恢复备份：`sudo $FLOATCTF_HOME/backup.sh --out <file>`。
 
 ---
 
@@ -372,6 +402,12 @@ enable units（不启动整个平台）
 │   └── logs/api/             # API 日志（bootstrap 固定 WORK_DIR/logs/api）
 ├── compose.prod.yml
 ├── merged.sql
+├── backup.sh                 # 运维备份（来自 ops-tools，root:root 0755）
+├── restore.sh                # 运维恢复（来自 ops-tools，root:root 0755）
+├── db/
+│   ├── migrate.sh            # forward-only 迁移器（升级用）
+│   ├── migrations/           # release 全部 .sql 迁移（48 个）
+│   └── merged.sql            # merged.sql 的副本（fresh bootstrap 语义）
 ├── .env
 ├── web/                      # bootstrap 引导页（Caddy root /srv/web）
 ├── frontends/                # 已安装前端（Caddy 只读挂载到 /srv/frontends）
@@ -728,6 +764,17 @@ $FLOATCTF_HOME/uninstall.sh
 sudo /var/lib/floatctf/uninstall.sh
 ```
 
+**活跃运行时守卫**：若数据库仍可查询且存在进行中的 AWD 赛事或未结束的 AWDP run，
+安全卸载会**拒绝执行并以非零退出**（列出受影响的 id），因为运行时会被销毁而数据库被保留，
+会留下「赛事仍 running / run 未结束，但 runtime 已消失」的不一致状态。处理方式：先在管理端
+结束/归档这些赛事或 run，再重新运行；确认放弃该场次时用 `--force` 跳过守卫：
+
+```bash
+sudo /var/lib/floatctf/uninstall.sh --force   # 数据库仍保留；进行中的赛事 runtime 会被销毁
+```
+
+`--purge` 会连数据库一起删除，因此不做该守卫（但会打印销毁内容警告）。
+
 它会停止并清理：
 
 ```text
@@ -751,6 +798,8 @@ config
 .env
 runtime
 logs
+已安装前端 frontends/ 与 registry.json
+frontend.sh
 uninstall.sh
 ```
 
@@ -786,9 +835,25 @@ $FLOATCTF_HOME
 
 ---
 
-## 19. 备份
+## 19. 备份与恢复
 
-至少备份：
+首选随 release 安装的运维工具（root 身份运行）：
+
+```bash
+sudo $FLOATCTF_HOME/backup.sh --out <file>          # 默认 FLOATCTF_HOME=/var/lib/floatctf
+sudo $FLOATCTF_HOME/restore.sh <archive> --yes      # 覆盖既有安装需额外 --force
+```
+
+`backup.sh` 产出确定性归档（除 `pg_dump` 成员的 custom 格式头带时间戳外），包含 `.env` secrets、
+`config/`、`frontends/`、`web/`、`runtime/`（challenges + gameboxes）、Caddy 证书/ACME 状态、Redis
+持久化、`pg_dump --format=custom` 数据库转储与静默后的 RustFS 数据 tarball，以及 `META`/`MANIFEST`；
+输出权限 `0600`。**归档是明文（未加密）的，务必保护介质。** 备份期间 RustFS 会短暂停止。
+
+`restore.sh` 会校验归档 sha256 与逐成员 MANIFEST，拒绝路径穿越/符号链接/设备/setuid，未加
+`--force` 时拒绝覆盖既有安装，PostgreSQL 主版本不一致时拒绝恢复（`--allow-version-mismatch` 放行），
+只停本安装的 Compose project（绝不 `-v`），用 `pg_restore` 恢复后对五个服务做健康检查。
+
+如不想用工具，至少手动备份：
 
 ```text
 $FLOATCTF_HOME/data/postgres
@@ -805,7 +870,7 @@ docker exec floatctf-postgres \
   > floatctf-db-$(date +%F).sql
 ```
 
-生产升级前先完成可恢复备份。
+生产升级前先完成可恢复备份。人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
 ---
 

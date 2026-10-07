@@ -28,7 +28,7 @@
 | 启动 panic（SQL 列不存在） | Schema 漂移 → 见"陷阱 B" |
 | 运行时 404 | 路由没在 `bootstrap/routes.rs` 注册；前缀错误 |
 | 运行时 500 | handler 内 `AppError` 未正确映射；service 层 panic |
-| Caddy 502 | 后端进程未起（API 9090 / Web 3000）；Caddy 配置 upstream |
+| Caddy 502 | 后端进程未起（API 9090 / Web 13000）；Caddy 配置 upstream |
 | 数据对不上/查询报错 | 三处不一致（实体/代码/DB）或 settings 表缺键 |
 
 先跑编译与单元测试确认基线：

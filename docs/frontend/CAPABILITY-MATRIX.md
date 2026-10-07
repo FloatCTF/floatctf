@@ -311,7 +311,7 @@ required_rows_without_reason=0
 
 逐项核对：
 
-1. **Default 参照路径全部存在。** 脚本对 `Default reference` 列内每个 `` `frontends/…` ``、`` `apps/…` ``、`` `packages/…` `` 反引号路径做 `Path.is_file()`：**129 个路径，0 缺失**。另对行内引用的 Default 路由路径（如 `` `/register` ``、`` `/service/events/awd/$id/ssh` ``）与 `createFileRoute("…")` 声明集合比对：**4 个被脚本捕获，0 缺失**（其余路由在文档中以文件名形式给出，已按文件核对）。
+1. **Default 参照路径全部存在。** 脚本对 `Default reference` 列内每个 `` `frontends/…` ``、`` `apps/…` ``、`` `packages/…` `` 反引号路径做 `Path.is_file()`：**129 个路径，0 缺失**。另对行内以反引号给出的 Default 路由路径（`/register`、`/reset_password`、`/reset`、`/admin/`）与 107 个 route 文件的 `createFileRoute("…")` 声明集合比对：**4 个全部命中，0 缺失**（其余路由在文档中以文件名形式给出，已按文件核对）。
 2. **Public SDK 符号全部可解析。** `matrix-verify2.py` 提取 `Public SDK surface` 列的 292 个唯一反引号 token，逐一在 `packages/sdk/src/**`、`packages/react/src/**`、`packages/frontend-runtime/src/**` 的声明语料里查找（点路径按后缀逐级回退）：**0 未解析**。保留的允许清单只含包名（`@floatctf/react`、`@floatctf/frontend-runtime`）、浏览器 API（`WebSocket`）与逃生舱写法（`client.adminHttp.post(…)`、`fetch(DEFAULT_REGISTRY_URL)`）。
 3. **实时标记都有真实实现。** AWD 选手 / 管理端流对应 `packages/react/src/useAwdEventStream.ts:161` 与 `useAdminAwdEventStream.ts:136`（`/events/${eventId}/awd/stream`）；AWDP 赛事流对应 `useAwdpEventStream.ts:131`；练习 Run 流对应 `useAwdpRunStream.ts:112`；底层 `fetch`+`ReadableStream` + `text/event-stream` 见 `packages/sdk/src/sse/connectSse.ts:121`、`:197`。Web 终端行对应 `frontends/default/src/routes/admin/terminal.tsx:55` 的 `new WebSocket(...)`。默认使用它们的页面：`routes/service/events/awd.$id/route.tsx`、`routes/service/events/awdp.$id/route.tsx`、`routes/service/awdp/runs.$runId/index.tsx`、`routes/admin/events/awd.$id/route.tsx`。**0 处不匹配**。
 4. **`required` 行都带理由。** 脚本断言每个 `required` 行的第 7 列在 `required` 之后含 `—` 与理由文本：**0 例外**；理由文字都指向普通选手 / 运维工作流（参赛、解题、提交、开赛、判罚、环境生命周期等）。

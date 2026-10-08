@@ -160,9 +160,11 @@ FLOATCTF_HOME=$FLOATCTF_HOME python3 var/shadcn-e2e/bootstrap_server.py 13500
 | `player-discussions.png` | 讨论区 |
 | `admin-dashboard.png` | 控制台总览（真实统计 4 用户 / 6 赛事 / 2 题目 / 1 实例，`需要关注：一切正常`） |
 | `admin-event-console.png` | 赛事控制台 · 数据大屏 |
-| `admin-challenges.png` | 题库管理 |
 | `admin-awd-ops.png` | AWD 运维（配置态） |
-| `admin-infra-docker.png` | Docker 管理 |
+
+> 刻意未收录：宿主 Docker 容器清单（容器名 / 镜像 / 端口属运维内部信息）与含 flag 明文的页面。
+> 采集过程中发现并修复了一个真实缺陷：`SecretValue` 旁边并排的明文 `CopyText` 抵消了「默认模糊」，
+> 现已改为**只复制不回显**（含隐藏态 `title` 也不携带明文）。
 
 ## 8. 范围声明（诚实性）
 

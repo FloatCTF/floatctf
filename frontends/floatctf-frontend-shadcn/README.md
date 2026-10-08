@@ -172,13 +172,12 @@ export const feature: FeatureModule = {
 
 ### 管理端（Control Room）
 
-| 控制台总览 | 赛事控制台 · 数据大屏 | 题库管理 |
+| 控制台总览 | 赛事控制台 · 数据大屏 | AWD 运维 |
 | :--: | :--: | :--: |
-| ![控制台总览](./docs/images/admin-dashboard.png) | ![赛事控制台](./docs/images/admin-event-console.png) | ![题库管理](./docs/images/admin-challenges.png) |
+| ![控制台总览](./docs/images/admin-dashboard.png) | ![赛事控制台](./docs/images/admin-event-console.png) | ![AWD 运维](./docs/images/admin-awd-ops.png) |
 
-| AWD 运维 | Docker 管理 |
-| :--: | :--: |
-| ![AWD 运维](./docs/images/admin-awd-ops.png) | ![Docker 管理](./docs/images/admin-infra-docker.png) |
+> 截图均取自**真实 API**。刻意**不放**宿主 Docker 容器清单（容器名 / 镜像 / 端口属运维内部信息，
+> 与 Default 前端截图的处理口径一致）与含真实 flag 明文的管理页。
 
 ## 9. 交付时记录的公共契约缺口（只报告，未改后端/平台包）
 

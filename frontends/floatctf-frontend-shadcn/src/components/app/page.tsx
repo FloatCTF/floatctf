@@ -238,9 +238,18 @@ export function CopyText({
 	);
 }
 
-/** 敏感值（flag / 密码 / 网络密钥）：默认模糊，点「显示」才展开；复制按钮始终可用。 */
+/**
+ * 敏感值（flag / 密码 / 网络密钥）：默认模糊，点眼睛才展开；复制按钮**只复制不回显**。
+ *
+ * 注意（曾经的真实缺陷）：早期实现里这里并排放了一个带明文文案的 `CopyText`，
+ * 于是「默认模糊」被旁边的明文彻底抵消（截图里就能读到明文）。现在复制走**纯图标按钮**，
+ * 且隐藏状态下连 `title` 都不携带明文。
+ */
 export function SecretValue({ value, label }: { value: string; label?: string }) {
 	const [shown, setShown] = useState(false);
+	const { copied, copy } = useCopyToClipboard();
+	if (!value) return <span className="text-xs text-muted-foreground">—</span>;
+	const name = label ?? "敏感值";
 	return (
 		<span className="inline-flex min-w-0 items-center gap-1.5">
 			<span
@@ -248,20 +257,28 @@ export function SecretValue({ value, label }: { value: string; label?: string })
 					"tnum min-w-0 truncate font-mono text-xs",
 					!shown && "blur-[3px] select-none",
 				)}
-				title={shown ? value : (label ?? "点击显示")}
+				title={shown ? value : `${name}（已隐藏）`}
 			>
-				{value || "—"}
+				{value}
 			</span>
 			<Button
 				variant="ghost"
 				size="icon-xs"
 				onClick={() => setShown((prev) => !prev)}
-				aria-label={shown ? "隐藏" : "显示"}
-				title={shown ? "隐藏" : "显示"}
+				aria-label={shown ? `隐藏${name}` : `显示${name}`}
+				title={shown ? `隐藏${name}` : `显示${name}`}
 			>
 				{shown ? <EyeOff /> : <Eye />}
 			</Button>
-			{value ? <CopyText value={value} label={label} mono={false} /> : null}
+			<Button
+				variant="ghost"
+				size="icon-xs"
+				onClick={() => void copy(value)}
+				aria-label={copied ? `${name}已复制` : `复制${name}`}
+				title={copied ? "已复制" : `复制${name}`}
+			>
+				{copied ? <Check className="text-[var(--success)]" /> : <Copy />}
+			</Button>
 		</span>
 	);
 }

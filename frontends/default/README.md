@@ -74,9 +74,9 @@ mise exec -- pnpm --filter @floatctf/frontend-default test       # vitest run（
 | :--: | :--: | :--: |
 | ![概览](./docs/images/admin-dashboard.png) | ![赛事](./docs/images/admin-events.png) | ![挑战](./docs/images/admin-challenges.png) |
 
-| 用户 | 动态设置 | 容器运维 |
-| :--: | :------: | :------: |
-| ![用户](./docs/images/admin-users.png) | ![动态设置](./docs/images/admin-settings.png) | ![容器运维](./docs/images/admin-docker.png) |
+| 用户 | 动态设置 | SQL 控制台 |
+| :--: | :------: | :--------: |
+| ![用户](./docs/images/admin-users.png) | ![动态设置](./docs/images/admin-settings.png) | ![SQL 控制台](./docs/images/admin-database.png) |
 
 | AWD 网络 | 操作日志 |
 | :------: | :------: |

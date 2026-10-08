@@ -163,6 +163,7 @@ apps/web                  = 极薄的 bootstrap 引导页
 |---|---|---|---|---|---|
 | Default | `default` | 本仓库 `frontends/default` | **官方完整前端**，随平台发布、注册表标记 `protected`、不可卸载，也是 `?frontend=default` 破窗的落点 | [README](frontends/default/README.md) | [docs/images](frontends/default/docs/images) |
 | XZMU | `xzmu` | submodule → [FloatCTF/floatctf-frontend-xzmu](https://github.com/FloatCTF/floatctf-frontend-xzmu) | **西藏民族大学主题前端**（「民大红 · 鎏金」），零组件库、自研路由与 CSS 设计系统，覆盖全部 89 项 `required` 能力 | [README](https://github.com/FloatCTF/floatctf-frontend-xzmu/blob/main/README.md) | [docs/images](https://github.com/FloatCTF/floatctf-frontend-xzmu/tree/main/docs/images) |
+| Shadcn | `shadcn` | 本仓库 `frontends/floatctf-frontend-shadcn` | **shadcn/ui 主题前端**：Tailwind v4 + shadcn/ui（Radix）设计系统、react-router + TanStack Query/Table、双工作区（Field / Control Room）+ AWD/AWDP 驾驶舱 + ⌘K 命令面板，覆盖全部 89 项 `required` 能力；**不随平台 release 打包**，按制品用 `frontend.sh install` 安装 | [README](frontends/floatctf-frontend-shadcn/README.md) | [docs/images](frontends/floatctf-frontend-shadcn/docs/images) |
 
 克隆本仓库时如果要把第三方前端一起取下来：
 

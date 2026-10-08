@@ -23,7 +23,7 @@ use crate::modules::event::awdp::{
         PRACTICE_NETWORK_NAME, event_acl_table_name, event_judge_container_name,
         event_judge_worker_id, event_network_name, is_practice_event, practice_judge_token,
     },
-    repo::event_network_repo,
+    repo::{event_network_repo, instance_repo, run_repo},
 };
 
 /// 收集 docker 实际已存在的网络子网（IPAM config 里的 subnet）——
@@ -725,6 +725,139 @@ pub async fn cleanup_event_network(
         }
         let _ = event_network_repo::mark_released(db, event_id).await;
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 删除赛事时的运行时拆除（P-01）
+// ---------------------------------------------------------------------------
+
+/// AWDP 赛事运行时快照：**只读**采集，必须在 `events` 行删除**之前**完成。
+///
+/// 为什么需要快照：`awdp_event_networks.event_id` 对 `events` 是 `ON DELETE CASCADE`，
+/// 而 GameBox 实例容器名只存在于 `event_instances` 行里 —— 行被删除后就再也解析不出来。
+/// judge 容器名 / 网络名 / ACL 表名可以由 `event_id` 确定性推导，但实例容器名不行，
+/// 因此删除前先把待拆资源记下来，删除确认成功后再按名字拆除。
+#[derive(Debug, Clone)]
+pub struct AwdpEventRuntimeSnapshot {
+    pub event_id: Uuid,
+    /// `fctf-awdp-judge-{event_id 前 12 hex}`
+    pub judge_container: String,
+    /// `fctf-awdp-{event_id 前 12 hex}`
+    pub network_name: String,
+    /// nftables ACL 表名（由网络名推导）
+    pub acl_table: String,
+    /// GameBox 实例容器名（来自 `event_instances`）
+    pub instance_containers: Vec<String>,
+}
+
+/// 采集 AWDP 赛事运行时快照；**非 AWDP 赛事返回 `None`**。
+///
+/// 练习虚拟赛事的 judge 是**常驻基础设施**（不随任何一次训练结束而销毁），
+/// 因此与 `cleanup_event_network` 保持同一口径：练习赛事不参与删除清理。
+pub async fn snapshot_event_runtime(
+    db: &sea_orm::DatabaseConnection,
+    event_id: Uuid,
+) -> AwdpResult<Option<AwdpEventRuntimeSnapshot>> {
+    if is_practice_event(event_id) {
+        return Ok(None);
+    }
+
+    let event = <entity::events::Entity as sea_orm::EntityTrait>::find_by_id(event_id)
+        .one(db)
+        .await
+        .map_err(|e| AwdpError::Database(e.to_string()))?;
+    match event {
+        Some(row) if row.family == entity::sea_orm_active_enums::EventFamily::Awdp => {}
+        _ => return Ok(None),
+    }
+
+    let mut instance_containers = Vec::new();
+    for run in run_repo::list_for_event(db, event_id).await? {
+        for (instance, _ext) in instance_repo::list_for_run(db, run.id).await? {
+            if !instance.container_name.is_empty() {
+                instance_containers.push(instance.container_name);
+            }
+        }
+    }
+    instance_containers.sort();
+    instance_containers.dedup();
+
+    Ok(Some(AwdpEventRuntimeSnapshot {
+        event_id,
+        judge_container: event_judge_container_name(event_id),
+        network_name: event_network_name(event_id),
+        acl_table: event_acl_table_name(event_id),
+        instance_containers,
+    }))
+}
+
+/// 删除赛事后的物理拆除（调用时 `events` 行已确认不存在，**全程不访问 DB**）。
+///
+/// 顺序与 `cleanup_event_network` / AWDP `finish` 一致：**实例 → judge → ACL 表 → 网络**
+/// （Docker 网络仍挂有 endpoint 时无法删除）。每一步 best-effort：资源已不存在视为成功，
+/// 因此本函数**幂等**，重复调用安全。
+pub async fn teardown_event_runtime(
+    docker: &Docker,
+    snapshot: &AwdpEventRuntimeSnapshot,
+) -> AwdpResult<()> {
+    let runtime = DockerContainerRuntime::new(docker.clone());
+
+    for container in &snapshot.instance_containers {
+        match runtime
+            .stop_and_remove(container, fcmc::IMMEDIATE_STOP_TIMEOUT)
+            .await
+        {
+            Ok(_) => info!(
+                event_id = %snapshot.event_id,
+                container = %container,
+                "AWDP event instance container removed"
+            ),
+            Err(e) => warn!(
+                event_id = %snapshot.event_id,
+                container = %container,
+                error = %e,
+                "AWDP event instance container remove failed (tolerated)"
+            ),
+        }
+    }
+
+    match runtime
+        .stop_and_remove(&snapshot.judge_container, fcmc::IMMEDIATE_STOP_TIMEOUT)
+        .await
+    {
+        Ok(_) => info!(
+            event_id = %snapshot.event_id,
+            container = %snapshot.judge_container,
+            "AWDP event judge container removed"
+        ),
+        Err(e) => warn!(
+            event_id = %snapshot.event_id,
+            container = %snapshot.judge_container,
+            error = %e,
+            "AWDP event judge remove failed (tolerated)"
+        ),
+    }
+
+    // ACL 表删除（best-effort；表不存在时返回 Ok(false)）。
+    let _ =
+        crate::modules::event::awdp::service::practice_acl::remove_acl_table(&snapshot.acl_table)
+            .await;
+
+    match runtime.remove_network(&snapshot.network_name).await {
+        Ok(_) => info!(
+            event_id = %snapshot.event_id,
+            network = %snapshot.network_name,
+            "AWDP event network removed"
+        ),
+        Err(e) => warn!(
+            event_id = %snapshot.event_id,
+            network = %snapshot.network_name,
+            error = %e,
+            "AWDP event network remove failed (tolerated)"
+        ),
+    }
+
     Ok(())
 }
 

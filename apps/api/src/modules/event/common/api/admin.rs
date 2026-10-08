@@ -125,8 +125,16 @@ pub async fn get_event(
 
 /// DELETE /api/admin/events
 ///
-/// AWD 赛事的容器 / Docker 网络 / WireGuard 接口 / nftables 规则必须显式拆除：
-/// DB 行删除后这些宿主资源无法再被解析，因此先快照、删除行、再按快照拆除。
+/// 赛事运行时必须显式拆除：DB 行删除后这些宿主资源无法再被解析，因此**先快照、删除行、
+/// 再按快照拆除**。
+///
+/// 两套运行时都要拆，且**互不相同**：
+/// - AWD：容器 / Docker 网络 / WireGuard 接口 / nftables 规则（`awd::archive_service`）；
+/// - AWDP：每赛事一个 JudgeServer 容器 + 专属 Docker 网络 + nftables ACL 表 + GameBox 实例容器
+///   （`awdp::practice_judge`）。
+///
+/// P-01：此前这里只有 AWD 分支，删除已部署的 AWDP 赛事会让 judge 容器与专属网络**永久泄漏**
+/// （`awdp_event_networks.event_id` 对 `events` 是 ON DELETE CASCADE，行一删名字就再也推导不出来）。
 #[delete("")]
 pub async fn delete_event(
     user: SuperAdminJwtGuard,
@@ -150,6 +158,26 @@ pub async fn delete_event(
             Ok(None) => {}
             Err(error) => tracing::warn!(
                 "[Delete] snapshot AWD runtime for {} failed: {}",
+                event_id,
+                error
+            ),
+        }
+    }
+
+    // AWDP 运行时快照（只读）：必须在删除行之前完成，否则 `event_instances` 里的
+    // GameBox 实例容器名会随 CASCADE 一起消失，再也无法解析。
+    let mut awdp_snapshots = Vec::new();
+    for event_id in &dir.id_list {
+        match crate::modules::event::awdp::service::practice_judge::snapshot_event_runtime(
+            ctx.db.get_ref(),
+            *event_id,
+        )
+        .await
+        {
+            Ok(Some(snapshot)) => awdp_snapshots.push(snapshot),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                "[Delete] snapshot AWDP runtime for {} failed: {}",
                 event_id,
                 error
             ),
@@ -194,6 +222,46 @@ pub async fn delete_event(
         {
             tracing::warn!(
                 "[Delete] teardown AWD runtime for {} failed: {}",
+                snapshot.event_id,
+                error
+            );
+        }
+    }
+
+    // AWDP 运行时拆除。与 AWD 同一保护语义：**删除失败（例如受保护赛事）时不得拆运行时**，
+    // 否则赛事记录仍在而容器已消失。拆除本身幂等且容忍资源已不存在。
+    for snapshot in &awdp_snapshots {
+        match events::Entity::find_by_id(snapshot.event_id)
+            .one(ctx.db.get_ref())
+            .await
+        {
+            Ok(Some(_)) => {
+                tracing::warn!(
+                    "[Delete] event {} still exists after delete; skipping AWDP runtime teardown",
+                    snapshot.event_id
+                );
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[Delete] cannot confirm deletion of {}: {}; skipping AWDP runtime teardown",
+                    snapshot.event_id,
+                    error
+                );
+                continue;
+            }
+        }
+
+        if let Err(error) =
+            crate::modules::event::awdp::service::practice_judge::teardown_event_runtime(
+                ctx.docker.get_ref(),
+                snapshot,
+            )
+            .await
+        {
+            tracing::warn!(
+                "[Delete] teardown AWDP runtime for {} failed: {}",
                 snapshot.event_id,
                 error
             );

@@ -821,6 +821,61 @@ PY
 api_expect_fail POST /api/admin/events "$ADMIN_TOKEN" "$BAD_EVENT" || fail "invalid AWDP Practice/Team mode was accepted"
 pass "invalid AWDP Practice/Team mode rejected"
 
+# ────────────────────────────────────────────────────────────────────────────
+# P-01 回归：DELETE /api/admin/events 必须拆除 AWDP 运行时
+#
+# 背景（本机实测缺陷）：删除路径原先只有 AWD 分支。删除一个已部署的 AWDP 赛事会
+# **永久泄漏** `fctf-awdp-judge-{id12}` 容器与 `fctf-awdp-{id12}` 网络 —— 因为
+# `awdp_event_networks.event_id` 对 `events` 是 ON DELETE CASCADE，行一删就再也
+# 推导不出该拆什么。实测复现：189 个此类孤儿容器 + 189 个孤儿网络仍在 running。
+# ────────────────────────────────────────────────────────────────────────────
+log "P-01 regression: admin event delete must tear down AWDP runtime"
+D_START="$(iso_time 600)"; D_END="$(iso_time 3600)"
+DEV="$(api_ok POST /api/admin/events "$ADMIN_TOKEN" "$(make_awdp_event_json individual "AWDP Delete Cleanup $SUFFIX" "$D_START" "$D_END")")"
+D_ID="$(json_get data.id <<<"$DEV")"; EVENT_IDS+=("$D_ID")
+D_PREFIX="${D_ID//-/}"; D_PREFIX="${D_PREFIX:0:12}"
+D_UPDATED="$(json_get data.updated_at <<<"$(api_ok GET "/api/admin/events/$D_ID/awdp" "$ADMIN_TOKEN")")"
+api_ok PATCH "/api/admin/events/$D_ID/awdp" "$ADMIN_TOKEN" "{\"expected_updated_at\":\"$D_UPDATED\"}" >/dev/null
+api_ok POST "/api/admin/events/$D_ID/awdp/gameboxes" "$ADMIN_TOKEN" "{\"gamebox_id\":\"$GAMEBOX_ID\",\"hidden\":false}" >/dev/null
+start_common_event_now "$D_ID" 3000
+api_ok POST "/api/admin/events/$D_ID/awdp/start" "$ADMIN_TOKEN" >/dev/null
+
+# 前置断言：运行时确实已建立（否则本场景无法证明任何清理行为）。
+docker ps -aq --filter "name=^/fctf-awdp-judge-$D_PREFIX$" | grep -q . \
+  || fail "P-01 regression: judge container was not created before delete"
+docker network ls -q --filter "name=^fctf-awdp-$D_PREFIX$" | grep -q . \
+  || fail "P-01 regression: event network was not created before delete"
+
+# 无关资源基线：不属于本赛事的网络与常驻练习 judge 必须原样保留。
+UNRELATED_NET="$(docker network ls --format '{{.Name}}' | grep -v '^fctf' | grep -v '^floatctf' | head -1)"
+UNRELATED_CNT_BEFORE="$(docker ps -aq | wc -l)"
+PRACTICE_JUDGE_BEFORE="$(docker ps -q --filter 'name=^/fctf-awdp-practice-judge$' | wc -l)"
+
+# 走管理端删除路径（被测代码路径）。
+api_ok DELETE /api/admin/events "$ADMIN_TOKEN" "{\"id_list\":[\"$D_ID\"]}" >/dev/null
+
+# 核心回归断言：judge 容器与专属网络都必须被拆除。
+[[ -z "$(docker ps -aq --filter "name=^/fctf-awdp-judge-$D_PREFIX$")" ]] \
+  || fail "P-01 regression: admin delete leaked AWDP judge container fctf-awdp-judge-$D_PREFIX"
+[[ -z "$(docker network ls -q --filter "name=^fctf-awdp-$D_PREFIX$")" ]] \
+  || fail "P-01 regression: admin delete leaked AWDP event network fctf-awdp-$D_PREFIX"
+
+# 无关宿主资源保持不动。
+if [[ -n "$UNRELATED_NET" ]]; then
+  docker network inspect "$UNRELATED_NET" >/dev/null 2>&1 \
+    || fail "P-01 regression: unrelated network '$UNRELATED_NET' disappeared"
+fi
+[[ "$(docker ps -q --filter 'name=^/fctf-awdp-practice-judge$' | wc -l)" == "$PRACTICE_JUDGE_BEFORE" ]] \
+  || fail "P-01 regression: permanent practice judge was disturbed"
+
+# 幂等：重复删除不得 5xx，且资源仍保持已清理状态。
+D2_RAW="$(api_raw DELETE /api/admin/events "$ADMIN_TOKEN" "{\"id_list\":[\"$D_ID\"]}")"
+D2_STATUS="${D2_RAW%%$'\n'*}"
+[[ ! "$D2_STATUS" =~ ^5 ]] || fail "P-01 regression: repeat delete returned 5xx ($D2_STATUS)"
+[[ -z "$(docker ps -aq --filter "name=^/fctf-awdp-judge-$D_PREFIX$")" ]] \
+  || fail "P-01 regression: repeat delete re-created or re-leaked judge container"
+pass "P-01 regression: admin event delete tears down AWDP judge + event network (idempotent, unrelated resources preserved)"
+
 # Global leak checks for all isolated AWDP runs.
 while IFS= read -r run_id; do
   [[ -n "$run_id" ]] || continue

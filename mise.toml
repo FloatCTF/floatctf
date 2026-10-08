@@ -100,6 +100,7 @@ pnpm --filter @floatctf/sdk exec tsc -p tsconfig.build.json --noEmit
 pnpm --filter @floatctf/react exec tsc -p tsconfig.build.json --noEmit
 pnpm --filter @floatctf/web exec tsc --noEmit
 pnpm --filter @floatctf/frontend-default exec tsc --noEmit
+pnpm --filter @floatctf/frontend-shadcn exec tsc --noEmit
 """
 
 # 前端平台架构边界守卫（SDK 必须框架无关、默认前端不得逃出自身包、bootstrap 不得

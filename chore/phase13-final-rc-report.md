@@ -947,8 +947,9 @@ Phase 13.2 的假设是「**已终态**事件不自动回收」。实测**否证
 **无关资源完整性**：19 个无关容器（jumpserver / songloft / music-dl / migpt-server /
 strix-sandbox / proxygate 及若干匿名 exited）逐名比对
 **MISSING=[] EXTRA=[]**；`wg0` 经证据判定为**操作者自己的 VPN**
-（peer `39.107.238.170:51820`，allowed-ips `10.66.66.0/24`，与旧 prod Caddy 的
-`default_sni 10.66.66.2` 同源），**非** FloatCTF AWD 赛事接口，按指令**保留并记录**。
+（peer endpoint 是操作者的一台公网服务器，allowed-ips 是一条私有 VPN 网段，与旧 prod Caddy 的
+`default_sni` 同源），**非** FloatCTF AWD 赛事接口，按指令**保留并记录**。
+> 具体 IP 在提交前已脱敏（本仓库公开）。
 
 **P-02 处置**：旧手工部署（非默认根、无 `uninstall.sh`）已按授权移除，其 compose 与目录清单
 留档于 `artifacts/legacy-prod-deployment/`（**含凭据的 `floatctf.toml` 有意未归档**）。

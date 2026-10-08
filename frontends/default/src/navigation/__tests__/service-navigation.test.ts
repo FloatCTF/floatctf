@@ -46,7 +46,22 @@ describe("serviceNavigation", () => {
 				"/service/writeups",
 				"/service/weapons",
 				"/service/profile",
+				// 整页跳转的非 SPA 入口（由 Caddy 直接伺服；见下一条用例）
+				"/training/",
 			].sort(),
+		);
+	});
+
+	it("entries outside the SPA route space are whole-document links", () => {
+		// 不在 /service 下的入口一定是 reloadDocument：它是平台 SPA 之外的资源
+		// （目前只有训练站 /training/），走 TanStack 导航会落到 not-found。
+		const leaves = collectLeaves(serviceNavigation.flatMap((s) => s.children));
+		const outsideService = leaves.filter(
+			(leaf) => !leaf.href.startsWith("/service/"),
+		);
+		expect(outsideService.map((leaf) => leaf.href)).toEqual(["/training/"]);
+		expect(outsideService.every((leaf) => leaf.reloadDocument === true)).toBe(
+			true,
 		);
 	});
 

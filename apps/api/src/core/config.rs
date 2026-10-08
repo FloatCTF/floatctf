@@ -27,6 +27,9 @@ pub struct AppConfig {
     pub redis: RedisConfig,
     pub realtime: RealtimeConfig,
     pub logging: LoggingConfig,
+    /// 平台**出网**（访问互联网）的代理默认值。运行时以 `settings.OUTBOUND_PROXY`
+    /// 为准（管理员可改），这里只是它的 seed 默认值。
+    pub proxy: ProxyConfig,
     /// 主站地址前缀（[application] main_url），作为 MAIN_URL 设置的 seed 默认值
     pub main_url: String,
 }
@@ -111,6 +114,18 @@ impl AuthConfig {
 #[derive(Debug, Clone)]
 pub struct CorsConfig {
     pub allowed_origins: Vec<String>,
+}
+
+/// 平台出网代理（`[proxy]` 段）。
+///
+/// 只作用于平台**主动访问互联网**的请求（目前只有 `ProxyReqwest`）；数据库、Redis、
+/// RustFS、容器/内网探测一律直连，绝不受这里影响。运行时以管理端可改的
+/// `OUTBOUND_PROXY` 设置为准，本结构只是它的 seed 默认值。
+#[derive(Debug, Clone, Default)]
+pub struct ProxyConfig {
+    /// 代理地址，例如 `http://host:7890` / `http://user:pass@host:7890` / `socks5h://host:1080`。
+    /// 空 = 直连。可含凭据，因此用 [`Secret`] 包装、日志只输出主机端口。
+    pub url: Option<Secret>,
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +229,8 @@ struct TomlConfig {
     realtime: RealtimeToml,
     #[serde(default)]
     logging: LoggingToml,
+    #[serde(default)]
+    proxy: ProxyToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -508,6 +525,13 @@ impl Default for LoggingToml {
     }
 }
 
+/// `[proxy]` 段：平台出网代理的 seed 默认值（运行时以 `OUTBOUND_PROXY` 设置为准）。
+#[derive(Debug, Deserialize, Default)]
+struct ProxyToml {
+    #[serde(default)]
+    url: Option<String>,
+}
+
 impl AppConfig {
     /// Load and validate configuration from a TOML file.
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -537,6 +561,7 @@ impl AppConfig {
                 "awd.network_runtime must be 'helper' (normal runtime) or 'noop' (tests only)"
             );
         }
+        let proxy_url = parse_optional_proxy_url("proxy.url", file.proxy.url)?;
 
         Ok(Self {
             server: ServerConfig {
@@ -614,6 +639,7 @@ impl AppConfig {
                 timezone: file.logging.timezone,
             },
             main_url: file.application.main_url,
+            proxy: ProxyConfig { url: proxy_url },
         })
     }
 
@@ -634,6 +660,12 @@ impl AppConfig {
             redis_url = "Secret(***)",
             realtime_channel = %self.realtime.channel,
             jwt_secret = "Secret(***)",
+            outbound_proxy = %self
+                .proxy
+                .url
+                .as_ref()
+                .map(|url| redact_proxy(url.expose()))
+                .unwrap_or_else(|| "direct".to_string()),
             "AppConfig loaded from TOML"
         );
         if self.features.enable_unsafe_sql_admin {
@@ -651,6 +683,41 @@ fn required_value(name: &str, value: String) -> anyhow::Result<String> {
 
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
+}
+
+/// 可选出网代理：空 → `None`（直连）；非空必须是带 scheme 与 host 的合法 URL。
+///
+/// 只做**形状校验**，不校验可达性——代理不可达由使用方在请求时失败并如实报错，
+/// 不在启动期阻断平台（否则代理故障会让整个平台起不来）。
+fn parse_optional_proxy_url(name: &str, value: Option<String>) -> anyhow::Result<Option<Secret>> {
+    match non_empty(value) {
+        None => Ok(None),
+        Some(v) => {
+            let parsed = url::Url::parse(&v).map_err(|e| {
+                anyhow::anyhow!("{name} 不是合法的代理 URL（{e}）：期望形如 http://host:7890")
+            })?;
+            if parsed.host_str().is_none() {
+                anyhow::bail!("{name} 缺少主机名：{v}");
+            }
+            Ok(Some(Secret::new(v)))
+        }
+    }
+}
+
+/// 代理 URL 的脱敏展示：只保留 `scheme://host:port`，丢弃 userinfo / path / query。
+pub(crate) fn redact_proxy(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(parsed) => match parsed.port() {
+            Some(port) => format!(
+                "{}://{}:{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or("?"),
+                port
+            ),
+            None => format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or("?")),
+        },
+        Err(_) => "Secret(***)".to_string(),
+    }
 }
 
 /// 可选密钥字段：缺省/空串 → `None`（调用方回落主密钥）；一旦设置就必须满足最小长度。
@@ -742,6 +809,50 @@ mod tests {
         assert_eq!(
             warn_if_latest("t", "registry.local:5000/floatctf/judge:1.0".to_string()),
             "registry.local:5000/floatctf/judge:1.0"
+        );
+    }
+
+    #[test]
+    fn proxy_url_parsing_accepts_http_and_socks_and_rejects_garbage() {
+        assert!(
+            parse_optional_proxy_url("proxy.url", None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_optional_proxy_url("proxy.url", Some("   ".to_string()))
+                .unwrap()
+                .is_none()
+        );
+
+        for ok in [
+            "http://127.0.0.1:7890",
+            "http://user:pass@proxy.internal:3128",
+            "socks5h://127.0.0.1:1080",
+            "https://proxy.example.com",
+        ] {
+            let parsed = parse_optional_proxy_url("proxy.url", Some(ok.to_string())).unwrap();
+            assert_eq!(parsed.expect("应当解析成功").expose(), ok);
+        }
+
+        // 缺 scheme / 缺主机必须在校验期拒绝：否则要到运行期请求时才发现，排查困难
+        assert!(parse_optional_proxy_url("proxy.url", Some("127.0.0.1:7890".to_string())).is_err());
+        assert!(parse_optional_proxy_url("proxy.url", Some("http://".to_string())).is_err());
+    }
+
+    #[test]
+    fn redact_proxy_drops_credentials_and_path() {
+        assert_eq!(
+            redact_proxy("http://user:secret@proxy.internal:3128/some/path?x=1"),
+            "http://proxy.internal:3128"
+        );
+        assert_eq!(
+            redact_proxy("socks5h://127.0.0.1:1080"),
+            "socks5h://127.0.0.1:1080"
+        );
+        assert_eq!(
+            redact_proxy("http://proxy.example.com"),
+            "http://proxy.example.com"
         );
     }
 

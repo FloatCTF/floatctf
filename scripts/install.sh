@@ -666,6 +666,10 @@ services:
             - /tmp:rw,noexec,nosuid,nodev,size=64m
         environment:
             FLOATCTF_CONFIG: /etc/floatctf/floatctf.toml
+        # 出网代理常跑在宿主上：让 host.docker.internal 在 Linux 上也可用，
+        # 管理员即可把 OUTBOUND_PROXY 设为 http://host.docker.internal:<port>。
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
         volumes:
             - ${FLOATCTF_HOME}/config/floatctf.toml:/etc/floatctf/floatctf.toml:ro
             - ${FLOATCTF_HOME}/runtime:/var/lib/floatctf/runtime
@@ -753,6 +757,14 @@ work_dir = "/var/lib/floatctf/runtime"
 host_address = "${HOST_ADDRESS}"
 listen_ip = "0.0.0.0"
 listen_port = ${API_PORT}
+
+# 平台出网代理（可选）：只作用于平台主动访问互联网的请求（如训练站制品同步）；
+# 内网（postgres/redis/rustfs/容器）一律直连。可含凭据，不落日志。
+# 这里是 seed 默认值；日常修改走管理端设置 OUTBOUND_PROXY（改完无需重启）。
+# 留空时回落到标准代理环境变量（HTTPS_PROXY / HTTP_PROXY / ALL_PROXY），都没有才直连。
+# 注意：地址必须是**从 API 容器内**可达的，宿主上的代理请写 host.docker.internal。
+# [proxy]
+# url = "http://host.docker.internal:7890"
 
 [logging]
 timezone = "Asia/Shanghai"
@@ -877,6 +889,35 @@ write_caddy_template() {
         file_server {
             # 注册表写入锁等内部文件不外泄。
             hide .registry.lock .staging-*
+        }
+    }
+
+    # 训练站静态制品：platform.training.sync 解包到 ${WORK_DIR}/training，Caddy 以只读方式
+    # 挂载同一目录；`current` 是指向 releases/<sha> 的软链，切换版本无需重启 Caddy。
+    # 少写结尾斜杠时重定向到 /training/，否则会落到 bootstrap 的 SPA 回退（返回平台首页）。
+    redir /training /training/ 301
+
+    handle_path /training/* {
+        root * /srv/training/current
+        # ⚠️ 必须包含 {path}index.html：`/training/` 经 handle_path 后 path 为 `/`，而 Caddy
+        # 的 try_files **不把目录当命中**，漏掉这一项首页会直接 404（已实测）。
+        try_files {path} {path}/ {path}/index.html {path}index.html =404
+        # 分层缓存：内容哈希资源可长缓存；HTML / 搜索结果 / 字体 CSS 是固定文件名，
+        # 必须短缓存，否则内容更新后学生会拿到旧页面或旧搜索索引。
+        @training_hashed path_regexp ^/(_astro|fontsource/files)/
+        header @training_hashed Cache-Control "public, max-age=31536000, immutable"
+        @training_plain not path_regexp ^/(_astro|fontsource/files)/
+        header @training_plain Cache-Control "no-cache"
+        file_server
+    }
+
+    # 训练站自己的 404 页：`=404` 默认落到 Caddy 裸 404，这里返回站点内的 404.html。
+    handle_errors {
+        @training_404 expression {http.error.status_code} == 404 && {http.request.uri}.startsWith("/training/")
+        handle @training_404 {
+            root * /srv/training/current
+            rewrite * /404.html
+            file_server
         }
     }
 

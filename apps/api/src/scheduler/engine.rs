@@ -408,17 +408,22 @@ impl TaskScheduler {
                 .one(self.db.get_ref())
                 .await?;
             let cron_expr = crate::core::system_ids::system_task_cron_expr(task_key);
+            // 每个任务的实际超时（NULL 时引擎按 60s 兜底）。系统任务在这里自愈，
+            // 避免"行是老的、超时还是 60s、任务永远被掐断"的静默失败。
+            let timeout_secs = crate::core::system_ids::system_task_timeout_secs(task_key);
 
             if let Some(existing) = exists {
                 let expected_cron = cron_expr.map(str::to_string);
-                let schedule_changed =
-                    existing.trigger_type != trigger_type || existing.cron_expr != expected_cron;
+                let schedule_changed = existing.trigger_type != trigger_type
+                    || existing.cron_expr != expected_cron
+                    || existing.timeout_secs != timeout_secs;
                 if schedule_changed {
                     let mut model = existing.into_active_model();
                     model.task_name = ActiveValue::Set(name.to_string());
                     model.task_key = ActiveValue::Set(task_key.to_string());
                     model.trigger_type = ActiveValue::Set(trigger_type.to_string());
                     model.cron_expr = ActiveValue::Set(expected_cron);
+                    model.timeout_secs = ActiveValue::Set(timeout_secs);
                     model.protected = ActiveValue::Set(true);
                     model.status = ActiveValue::Set("pending".to_string());
                     model.execute_at = ActiveValue::Set(Some(Utc::now().into()));
@@ -437,6 +442,7 @@ impl TaskScheduler {
                     status: ActiveValue::Set("pending".to_string()),
                     protected: ActiveValue::Set(true),
                     cron_expr: ActiveValue::Set(cron_expr.map(str::to_string)),
+                    timeout_secs: ActiveValue::Set(timeout_secs),
                     execute_at: ActiveValue::Set(if trigger_type == "cron" {
                         Some(now.into())
                     } else {

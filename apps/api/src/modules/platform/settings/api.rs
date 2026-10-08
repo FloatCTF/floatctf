@@ -14,12 +14,25 @@ use crate::{
 /// 这个值会出现在**未认证**的 `GET /api/frontend` 响应里，也是浏览器解析本地注册表
 /// 的依据。写入非法值（路径穿越、大写、空串）不会造成越权（后端会回落 `default`），
 /// 但会让"设置看起来改成功了、前端却还是旧的"这种故障极难排查，所以在写入时就拒绝。
+///
+/// `OUTBOUND_PROXY` 同理：reqwest 对没有 scheme 的串会默默当成 `http://<host>`，
+/// 填错值会表现为"设置成功但出网仍然超时"，因此在这里就按形状拒绝。
 fn validate_setting_value(key: &str, value: &str) -> Result<(), AppError> {
     if key == FRONTEND_ACTIVE_SETTING_KEY && !is_safe_frontend_id(value) {
         return Err(AppError::BadRequest(format!(
             "{} 必须是安全前端 ID（[a-z0-9][a-z0-9._-]*，最长 64 字符）: {}",
             FRONTEND_ACTIVE_SETTING_KEY, value
         )));
+    }
+    if key == crate::infrastructure::OUTBOUND_PROXY_SETTING_KEY && !value.trim().is_empty() {
+        let parsed = url::Url::parse(value.trim()).map_err(|e| {
+            AppError::BadRequest(format!(
+                "{key} 不是合法的代理 URL（{e}）：期望形如 http://host:7890 或 socks5h://host:1080"
+            ))
+        })?;
+        if parsed.host_str().is_none() {
+            return Err(AppError::BadRequest(format!("{key} 缺少主机名")));
+        }
     }
     Ok(())
 }

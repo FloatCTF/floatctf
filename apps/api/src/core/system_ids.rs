@@ -22,6 +22,12 @@ pub const SCHED_CLEAN_INSTANCES: Uuid = Uuid::from_u128(1);
 /// 任务键 `platform.rustfs.clean`：回收对象存储中未引用文件。
 pub const SCHED_CLEAN_RUSTFS: Uuid = Uuid::from_u128(2);
 
+/// 任务键 `platform.training.sync`：同步训练站（floatctf-training）静态制品。
+///
+/// 触发类型是 `startup`（每次平台启动对一次远端提交，未变化则直接返回），
+/// 管理端 `/admin/scheduled_tasks` 可随时手工「运行」。
+pub const SCHED_TRAINING_SYNC: Uuid = Uuid::from_u128(3);
+
 // ── events：系统托管赛事 ────────────────────────────────────────────────────
 
 /// Jeopardy 系统练习赛事主键（`system_key = practice:jeopardy`）。
@@ -64,6 +70,12 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
             "platform.rustfs.clean",
             "cron",
         ),
+        (
+            SCHED_TRAINING_SYNC,
+            "训练站制品同步",
+            "platform.training.sync",
+            "startup",
+        ),
     ]
 }
 
@@ -73,6 +85,17 @@ pub fn system_task_cron_expr(task_key: &str) -> Option<&'static str> {
     match task_key {
         "system.practice.clean" => Some("*/30 * * * * *"),
         "platform.rustfs.clean" => Some("0 0 * * * *"),
+        _ => None,
+    }
+}
+
+/// 平台系统任务的权威超时（秒）；`None` 表示沿用引擎兜底（60s）。
+///
+/// 训练站同步要下载几十 MB 的外部制品，60s 兜底在慢网络（例如国内访问 GitHub）下
+/// 必然被掐断——而超时只表现为任务 failed + 重试，站点并不会坏，很容易被忽略。
+pub fn system_task_timeout_secs(task_key: &str) -> Option<i32> {
+    match task_key {
+        "platform.training.sync" => Some(600),
         _ => None,
     }
 }
@@ -107,6 +130,10 @@ mod tests {
             "00000000-0000-0000-0000-000000000002"
         );
         assert_eq!(
+            SCHED_TRAINING_SYNC.to_string(),
+            "00000000-0000-0000-0000-000000000003"
+        );
+        assert_eq!(
             EVENT_PRACTICE_JEOPARDY.to_string(),
             "00000000-0000-0000-0000-000000000001"
         );
@@ -115,12 +142,24 @@ mod tests {
     }
 
     #[test]
-    fn startup_seed_list_covers_three_platform_tasks() {
+    fn startup_seed_list_covers_four_platform_tasks() {
         let seeds = startup_scheduled_task_seeds();
-        assert_eq!(seeds.len(), 3);
+        assert_eq!(seeds.len(), 4);
         assert_eq!(seeds[0].0, SCHED_CHECK_PRACTICE_EVENT);
         assert_eq!(seeds[1].0, SCHED_CLEAN_INSTANCES);
         assert_eq!(seeds[2].0, SCHED_CLEAN_RUSTFS);
+        assert_eq!(seeds[3].0, SCHED_TRAINING_SYNC);
+        // task_key 必须能被解析回枚举，否则引擎校验会在启动时失败
+        for (_, _, task_key, trigger_type) in seeds {
+            assert!(
+                task_key.parse::<crate::scheduler::TaskKey>().is_ok(),
+                "{task_key} 不是已注册的任务键"
+            );
+            assert!(
+                matches!(*trigger_type, "startup" | "cron" | "once"),
+                "{task_key} 的触发类型非法：{trigger_type}"
+            );
+        }
     }
 
     #[test]
@@ -131,9 +170,10 @@ mod tests {
             .map(|(id, _, _, _)| *id)
             .collect();
         assert_eq!(ids, expected);
-        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.len(), 4);
         assert!(ids.contains(&SCHED_CHECK_PRACTICE_EVENT));
         assert!(ids.contains(&SCHED_CLEAN_INSTANCES));
         assert!(ids.contains(&SCHED_CLEAN_RUSTFS));
+        assert!(ids.contains(&SCHED_TRAINING_SYNC));
     }
 }

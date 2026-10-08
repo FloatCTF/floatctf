@@ -31,6 +31,34 @@ http:// {
         }
     }
 
+    # 训练站静态制品：与生产同构——dev Caddy 把 `${PROJECT_ROOT}/app` 挂在 /srv（见
+    # compose.dev.yml），而 API 的 [server].work_dir 就是 `../../app`，所以
+    # `${WORK_DIR}/training` 在这里同样是 `/srv/training`。
+    # 还没同步过（`current` 不存在）时这里返回 404，在管理端「定时任务」点一次
+    # 「训练站制品同步」即可出现。
+    redir /training /training/ 301
+
+    handle_path /training/* {
+        root * /srv/training/current
+        # ⚠️ 必须包含 {path}index.html：`/training/` 经 handle_path 后 path 为 `/`，而 Caddy
+        # 的 try_files **不把目录当命中**，漏掉这一项首页会直接 404（已实测）。
+        try_files {path} {path}/ {path}/index.html {path}index.html =404
+        @training_hashed path_regexp ^/(_astro|fontsource/files)/
+        header @training_hashed Cache-Control "public, max-age=31536000, immutable"
+        @training_plain not path_regexp ^/(_astro|fontsource/files)/
+        header @training_plain Cache-Control "no-cache"
+        file_server
+    }
+
+    handle_errors {
+        @training_404 expression {http.error.status_code} == 404 && {http.request.uri}.startsWith("/training/")
+        handle @training_404 {
+            root * /srv/training/current
+            rewrite * /404.html
+            file_server
+        }
+    }
+
     @challenge_attachment path_regexp challenge ^/static/challenges/([^/]+)/attachment/(.+)$
     handle @challenge_attachment {
         rewrite * /{re.challenge.1}/attachment/{re.challenge.2}

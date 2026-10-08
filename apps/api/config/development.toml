@@ -7,6 +7,14 @@ listen_ip = "0.0.0.0"
 listen_port = 9090
 work_dir = "../../app"
 
+# 平台出网代理：只作用于平台**主动访问互联网**的请求（如 platform.training.sync 下载
+# GitHub Release 制品）；数据库/Redis/RustFS/容器内网一律直连。
+# 这里只是 seed 默认值，运行期以管理端可改的设置 OUTBOUND_PROXY 为准。
+# 该设置为空时，回落到标准代理环境变量（HTTPS_PROXY / HTTP_PROXY / ALL_PROXY），
+# 都没有才直连——本机就需要走代理才能访问 GitHub。
+# [proxy]
+# url = "http://127.0.0.1:7890"
+
 [auth]
 # Change this value in production. It must be at least 16 characters.
 jwt_secret = "floatctf-development-secret-change-me"

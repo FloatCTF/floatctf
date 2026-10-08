@@ -7,6 +7,12 @@ use std::collections::{HashMap, HashSet};
 use crate::entity::settings;
 use crate::{core::AppConfig, entity::sea_orm_active_enums::SettingValueType};
 use sea_orm::{ActiveValue::Set, DbConn, EntityTrait, sea_query::OnConflict};
+
+/// 训练站静态制品目录（默认 `{{WORK_DIR}}/training`；生产即 Caddy 只读挂载的 `/srv/training`）。
+pub const TRAINING_SITE_DIR_SETTING_KEY: &str = "TRAINING_SITE_DIR";
+/// 当前生效的训练站提交（由 `platform.training.sync` 任务自动维护，供管理端查看）。
+pub const TRAINING_SITE_REVISION_SETTING_KEY: &str = "TRAINING_SITE_REVISION";
+
 /// 向 `settings` 表 upsert 默认行（冲突则跳过）。
 ///
 /// 取值来自进程 TOML 配置；种子写入后仍可通过数据库编辑。
@@ -60,6 +66,22 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             "GameBox 位置（支持 {{WORK_DIR}} 等变量引用）",
             false,
         ),
+        // 训练站静态站点目录：`platform.training.sync` 任务解包到这里，Caddy 以 /srv 只读挂载
+        // 同一目录并用 `/training/*` 内 route 伺服。
+        (
+            TRAINING_SITE_DIR_SETTING_KEY,
+            "{{WORK_DIR}}/training".to_string(),
+            SettingValueType::String,
+            "训练站静态站点目录（支持 {{WORK_DIR}} 等变量引用；需与 Caddy 挂载一致）",
+            false,
+        ),
+        (
+            TRAINING_SITE_REVISION_SETTING_KEY,
+            String::new(),
+            SettingValueType::String,
+            "当前生效的训练站提交（由 platform.training.sync 自动维护）",
+            false,
+        ),
         (
             "HTTP_PREFIX",
             "http://".to_string(),
@@ -87,6 +109,21 @@ pub async fn seed_default_settings(db: &DbConn, config: &AppConfig) {
             SettingValueType::String,
             "主站地址前缀baseURL",
             false,
+        ),
+        // 平台参数：平台**主动访问互联网**时使用的代理（ProxyReqwest）。
+        // protected=true：删掉会静默退回直连，运维却以为自己配好了 —— 正是注释里
+        // 描述的"删掉就静默回落默认值"的情形；可编辑、不可删。
+        (
+            crate::infrastructure::OUTBOUND_PROXY_SETTING_KEY,
+            config
+                .proxy
+                .url
+                .as_ref()
+                .map(|url| url.expose().to_string())
+                .unwrap_or_default(),
+            SettingValueType::String,
+            "平台访问外网使用的 HTTP(S)/SOCKS5 代理，形如 http://user:pass@host:7890；留空则回落到标准代理环境变量（HTTPS_PROXY/HTTP_PROXY/ALL_PROXY），都没有才直连。地址必须是**从 API 容器内**可达的（宿主上的代理用 host.docker.internal）。",
+            true,
         ),
         (
             "SMTP_URI",

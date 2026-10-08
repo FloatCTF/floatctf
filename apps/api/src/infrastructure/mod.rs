@@ -8,6 +8,7 @@ pub mod audit;
 pub mod database;
 pub mod docker;
 pub mod helper;
+pub mod http;
 pub mod logging;
 pub mod package;
 pub mod ratelimit;
@@ -17,6 +18,7 @@ pub mod script_runner;
 pub mod settings;
 pub mod storage;
 
+pub use http::{OUTBOUND_PROXY_SETTING_KEY, ProxyReqwest, WebProxyReqwest};
 pub use logging::{LogService, WebLog};
 pub use settings::{get_setting, seed_default_settings};
 

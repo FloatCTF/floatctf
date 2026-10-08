@@ -207,6 +207,8 @@ pub async fn run() -> Result<(), BootstrapError> {
     }
 
     // Initialize scheduler
+    // 平台出网客户端：只有访问互联网的请求走它（代理取 settings.OUTBOUND_PROXY）。
+    let outbound_http = crate::infrastructure::ProxyReqwest::new(db.get_ref().clone());
     let task_scheduler = scheduler::build_task_scheduler(
         db.clone(),
         docker.clone(),
@@ -217,6 +219,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         awd_crypto.clone(),
         publisher.clone(),
         config.clone(),
+        outbound_http.clone(),
     )
     .await
     .expect("init startup handlers failed!");
@@ -350,6 +353,8 @@ pub async fn run() -> Result<(), BootstrapError> {
             .app_data(rustfs.clone())
             .app_data(web::Data::new(log_service.clone()))
             .app_data(web::Data::new(task_scheduler_arc.clone()))
+            // 平台出网客户端（唯一走代理的出网入口；内网请求不要用它）
+            .app_data(web::Data::new(outbound_http.clone()))
             // All routes registered centrally
             .configure(configure_all_routes)
     })

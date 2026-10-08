@@ -64,6 +64,35 @@
         }
     }
 
+    # 训练站静态制品：platform.training.sync 解包到 ${WORK_DIR}/training，Caddy 以只读方式
+    # 挂载同一目录；`current` 是指向 releases/<sha> 的软链，切换版本无需重启 Caddy。
+    # 少写结尾斜杠时重定向到 /training/，否则会落到 bootstrap 的 SPA 回退（返回平台首页）。
+    redir /training /training/ 301
+
+    handle_path /training/* {
+        root * /srv/training/current
+        # ⚠️ 必须包含 {path}index.html：`/training/` 经 handle_path 后 path 为 `/`，而 Caddy
+        # 的 try_files **不把目录当命中**，漏掉这一项首页会直接 404（已实测）。
+        try_files {path} {path}/ {path}/index.html {path}index.html =404
+        # 分层缓存：内容哈希资源可长缓存；HTML / 搜索结果 / 字体 CSS 是固定文件名，
+        # 必须短缓存，否则内容更新后学生会拿到旧页面或旧搜索索引。
+        @training_hashed path_regexp ^/(_astro|fontsource/files)/
+        header @training_hashed Cache-Control "public, max-age=31536000, immutable"
+        @training_plain not path_regexp ^/(_astro|fontsource/files)/
+        header @training_plain Cache-Control "no-cache"
+        file_server
+    }
+
+    # 训练站自己的 404 页：`=404` 默认落到 Caddy 裸 404，这里返回站点内的 404.html。
+    handle_errors {
+        @training_404 expression {http.error.status_code} == 404 && {http.request.uri}.startsWith("/training/")
+        handle @training_404 {
+            root * /srv/training/current
+            rewrite * /404.html
+            file_server
+        }
+    }
+
     @challenge_attachment path_regexp challenge ^/static/challenges/([^/]+)/attachment/(.+)$
     handle @challenge_attachment {
         rewrite * /{re.challenge.1}/attachment/{re.challenge.2}

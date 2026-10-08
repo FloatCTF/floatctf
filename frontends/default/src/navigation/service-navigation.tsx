@@ -1,4 +1,5 @@
 import {
+	BookIcon,
 	CommentDiscussionIcon,
 	FlameIcon,
 	GiftIcon,
@@ -22,6 +23,7 @@ const item = (
 	options: {
 		icon?: React.ReactNode;
 		match?: NavigationItem["match"];
+		reloadDocument?: boolean;
 	} = {},
 ): NavigationItem => ({
 	type: "item",
@@ -30,6 +32,7 @@ const item = (
 	href,
 	icon: options.icon,
 	match: options.match ?? { mode: "exact" },
+	reloadDocument: options.reloadDocument,
 });
 
 /**
@@ -49,6 +52,12 @@ export const serviceNavigation: NavigationSection[] = [
 		children: [
 			item("service.top", "Top Users", "/service/top", {
 				icon: <GoalIcon />,
+			}),
+			// 训练站（floatctf-training）静态站点：同源但不由本 SPA 提供（Caddy 直接伺服
+			// `/training/`），必须整页跳转，否则会落到 TanStack 的 not-found。
+			item("service.training", "Training", "/training/", {
+				icon: <BookIcon />,
+				reloadDocument: true,
 			}),
 		],
 	},

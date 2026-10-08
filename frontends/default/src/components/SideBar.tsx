@@ -162,6 +162,7 @@ export function HierarchicalSideBar({
 						<AppLink
 							to={node.href}
 							preload="intent"
+							reloadDocument={node.reloadDocument}
 							aria-current={active ? "page" : undefined}
 							className={rowClass}
 							style={rowStyle}

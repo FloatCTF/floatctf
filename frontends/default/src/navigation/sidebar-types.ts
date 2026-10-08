@@ -27,6 +27,13 @@ export interface NavigationItem extends NavigationNodeBase {
 	match: NavigationMatchRule;
 	badge?: ReactNode;
 	disabled?: boolean;
+	/**
+	 * 强制整页跳转（不进 SPA 路由）。
+	 *
+	 * 用于**同源但不由本 SPA 处理**的路径，例如训练站 `/training/`：它由 Caddy 直接
+	 * 提供静态文件，TanStack Router 里没有对应路由，走 SPA 导航会落到 not-found。
+	 */
+	reloadDocument?: boolean;
 }
 
 export interface NavigationGroup extends NavigationNodeBase {

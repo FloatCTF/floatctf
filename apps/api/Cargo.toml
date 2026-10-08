@@ -74,7 +74,8 @@ tracing-subscriber = { version = "0.3", features = [
 uuid = { version = "1.0", features = ["serde", "v4"] }
 url = "2"
 zip = "4.3.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# `socks`：平台出网代理（settings.OUTBOUND_PROXY）允许 socks5(h):// 形式。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
 tokio = { version = "1", features = ["fs", "time", "net", "io-util"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 

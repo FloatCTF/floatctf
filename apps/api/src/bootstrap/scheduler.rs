@@ -9,6 +9,7 @@ use tracing::info;
 use crate::{
     core::AppConfig,
     infrastructure::LogService,
+    infrastructure::ProxyReqwest,
     infrastructure::realtime::EventPublisher,
     infrastructure::{WebDb, WebDocker, WebRustfs},
     modules::event::awd::{
@@ -25,7 +26,7 @@ use crate::{
     },
     scheduler::{
         CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
-        TaskHandler, TaskScheduler,
+        TaskHandler, TaskScheduler, TrainingSyncHandler,
     },
 };
 
@@ -40,6 +41,7 @@ pub async fn build_task_scheduler(
     crypto: Arc<AwdCrypto>,
     publisher: Arc<dyn EventPublisher>,
     config: Arc<AppConfig>,
+    proxy: ProxyReqwest,
 ) -> Result<TaskScheduler> {
     let mut scheduler = TaskScheduler::new(db.clone(), docker.clone(), rustfs.clone(), logger);
     // seed 需要裸 connection；handler 构造完成后 db 可能被 move，提前克隆。
@@ -62,6 +64,10 @@ pub async fn build_task_scheduler(
         Arc::new(CleanUnusedRustFSFilesHandler {
             db: db.clone(),
             rustfs,
+        }),
+        Arc::new(TrainingSyncHandler {
+            db: db.clone(),
+            proxy: proxy.clone(),
         }),
         Arc::new(AwdAutoPrecheckHandler {
             db: db.clone(),

@@ -22,6 +22,9 @@ pub enum TaskKey {
     AwdpTick,
     AwdpEvalWorker,
     AwdpPracticeJudge,
+    /// 训练站（floatctf-training）静态制品同步：下载 GitHub Release 制品 → 校验 →
+    /// 安全解包 → 原子切换 `current` 软链。可手工触发（管理端「运行」），也可改为 cron。
+    PlatformTrainingSync,
 }
 
 impl TaskKey {
@@ -40,6 +43,7 @@ impl TaskKey {
             Self::AwdpTick => "awdp.tick",
             Self::AwdpEvalWorker => "awdp.eval.worker",
             Self::AwdpPracticeJudge => "awdp.practice.judge",
+            Self::PlatformTrainingSync => "platform.training.sync",
         }
     }
 }
@@ -71,6 +75,7 @@ impl FromStr for TaskKey {
             "awdp.tick" => Ok(Self::AwdpTick),
             "awdp.eval.worker" => Ok(Self::AwdpEvalWorker),
             "awdp.practice.judge" => Ok(Self::AwdpPracticeJudge),
+            "platform.training.sync" => Ok(Self::PlatformTrainingSync),
             _ => Err(format!("unknown scheduled task key: {value}")),
         }
     }
@@ -96,6 +101,7 @@ mod tests {
             TaskKey::AwdpTick,
             TaskKey::AwdpEvalWorker,
             TaskKey::AwdpPracticeJudge,
+            TaskKey::PlatformTrainingSync,
         ];
 
         for key in keys {

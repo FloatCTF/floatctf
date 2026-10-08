@@ -2058,7 +2058,9 @@ stage_release() {
     install -m 0644 "$PKG_DIR/merged.sql" "$FLOATCTF_HOME/merged.sql"
     install_ops_tools
     mkdir -p "$FLOATCTF_HOME/runtime"
-    chown "$FCTF_USER":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
+    # 只用数值 UID：宿主按自己的权限模型**只创建 floatctf 组、不创建该用户**，
+    # 用用户名 chown 在全新宿主机上必然 "invalid user" 并中断安装。
+    chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/runtime"
     fix_infra_ownership
     ok "产物装配完成（API image + helper + bootstrap + 前端管理器 + 已安装前端 + merged.sql + 运维工具）"
 }

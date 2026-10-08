@@ -169,6 +169,12 @@ stock_ok() {
     printf '%s\n' "$STOCK_BODY" | grep -q -F 'ghcr.io/floatctf/awdp-judgeserver:*' || return 1
     return 0
 }
+
+# 宿主只创建 floatctf 组（不创建该用户，见 AGENTS.md），因此安装器里
+# 任何 `chown "floatctf":"floatctf"` 都会在全新生效的宿主机上失败。
+no_user_chown() {
+    ! grep -q -F 'chown "$FCTF_USER":"$FCTF_USER"' "$INSTALL_SH"
+}
 check "is_stock_runtime_image 含全部 6 个 stock 形态（含旧 floatctf/infra/awdp）" stock_ok
 check "install.sh 解析 --reset-runtime-images" grep -q -F -- '--reset-runtime-images)' "$INSTALL_SH"
 check "install.sh 解析 --keep-runtime-images" grep -q -F -- '--keep-runtime-images)' "$INSTALL_SH"
@@ -176,6 +182,14 @@ check "--reset/--keep-runtime-images 互斥（fail closed）" \
     grep -q -F '互斥，请只选一个' "$INSTALL_SH"
 check "preserve 写回自定义值并 warn" \
     grep -q -F '保留管理员自定义的运行时镜像' "$INSTALL_SH"
+
+# runtime 目录只能按数值 UID chown：宿主只创建 floatctf 组、不创建该用户
+# （见 AGENTS.md 生产说明），用用户名 chown 会在全新宿主机上以
+# "chown: invalid user: 'floatctf:floatctf'" 中断整个安装（实测）。
+check "install.sh 按数值 UID chown runtime" \
+    grep -q -F 'chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/runtime"' "$INSTALL_SH"
+check "install.sh 没有 chown 到 floatctf 用户名（该用户不存在）" \
+    no_user_chown
 
 # ── 7. R3：Python tomllib 能力探测 ───────────────────────────────────────────
 check "install.sh 有 check_python_tomllib 能力探测（import tomllib）" \

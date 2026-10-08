@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="color-scheme" content="dark light" />
+		<title>FloatCTF · Shadcn Console</title>
+	</head>
+	<body>
+		<!--
+			dev 入口：直接把本前端挂到 #root（与生产制品调用**同一个** mount(context)）。
+			生产由 apps/web bootstrap 注入 #root 并动态 import 版本化制品。
+		-->
+		<div id="root"></div>
+		<script type="module" src="/src/dev.tsx"></script>
+	</body>
+</html>

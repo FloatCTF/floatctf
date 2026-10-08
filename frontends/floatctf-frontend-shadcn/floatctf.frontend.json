@@ -1,0 +1,19 @@
+{
+	"schemaVersion": 1,
+	"id": "shadcn",
+	"name": "FloatCTF Shadcn Console",
+	"version": "0.1.0",
+	"description": "基于 shadcn/ui 的 FloatCTF 完整前端（选手端 + 管理端）",
+	"author": "FloatCTF",
+	"compatibility": {
+		"frontendRuntime": "1",
+		"apiContract": "1"
+	},
+	"entry": "assets/frontend.js",
+	"styles": ["assets/frontend.css"],
+	"build": {
+		"packageManager": "auto",
+		"script": "build",
+		"outputDir": "dist"
+	}
+}

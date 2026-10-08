@@ -154,6 +154,18 @@ apps/web                  = 极薄的 bootstrap 引导页
 （用 AI 代理从零创建一个完整前端；能力清单见 [CAPABILITY-MATRIX.md](docs/frontend/CAPABILITY-MATRIX.md)）。
 官方前端 `frontends/default` 只是**语义/行为参照**，不是视觉模板。
 
+#### 仓库内的前端
+
+每个前端都有自己的 README（含**逐页截图**、路由一览、开发与构建方式）与原图目录 `docs/images/`：
+
+| 前端 | id | 说明 | README | 截图 |
+|---|---|---|---|---|
+| `frontends/default` | `default` | **官方完整前端**，随平台发布、注册表标记 `protected`、不可卸载，也是 `?frontend=default` 破窗的落点 | [frontends/default/README.md](frontends/default/README.md) | [docs/images](frontends/default/docs/images) |
+| `frontends/floatctf-frontend-xzmu` | `xzmu` | **西藏民族大学主题前端**（「民大红 · 鎏金」），独立仓库、零组件库、自研路由与 CSS 设计系统，覆盖全部 89 项 `required` 能力 | [frontends/floatctf-frontend-xzmu/README.md](frontends/floatctf-frontend-xzmu/README.md) | [docs/images](frontends/floatctf-frontend-xzmu/docs/images) |
+
+> 新前端请放在 `frontends/<名字>/`（`pnpm-workspace.yaml` 已 glob `frontends/*`），
+> 并照上面两位的样子带上 README 与 `docs/images/`。
+
 ## 环境要求
 
 生产和完整开发环境都需要 Linux、systemd、Docker + Compose、nftables、WireGuard、iproute2、conntrack、iptables，以及 IPv4 转发和 `br_netfilter`。自动安装路径当前验证于 Arch Linux。
@@ -327,6 +339,15 @@ mise run db:gen
 | :----------------------------: | :-----------------------------: |
 | ![赛题管理](docs/images/event_detail.png) | ![管理后台](docs/images/score.png) |
 
+> 以上是官方 **Default** 前端的截图。
+> 其它前端有自己的视觉语言 —— 例如 `xzmu`（西藏民族大学「民大红 · 鎏金」主题）：
+
+|                登录                 |                 选手总览                  |               控制台总览                |
+| :---------------------------------: | :---------------------------------------: | :-------------------------------------: |
+| ![登录](frontends/floatctf-frontend-xzmu/docs/images/login.png) | ![选手总览](frontends/floatctf-frontend-xzmu/docs/images/dashboard.png) | ![控制台总览](frontends/floatctf-frontend-xzmu/docs/images/admin-dashboard.png) |
+
+完整逐页截图见 [frontends/floatctf-frontend-xzmu/README.md](frontends/floatctf-frontend-xzmu/README.md#3-界面截图)。
+
 ## 核心功能
 
 ### 用户端
@@ -380,7 +401,8 @@ floatctf/
 │   ├── api/                    # Rust / Actix Web API
 │   └── web/                    # Web bootstrap 引导页（无 React / 无 UI）
 ├── frontends/
-│   └── default/                # 官方前端：当前完整 UI（React + TanStack Router + Primer）
+│   ├── default/                # 官方前端：当前完整 UI（React + TanStack Router + Primer）
+│   └── floatctf-frontend-xzmu/ # 西藏民族大学主题前端（独立仓库，见其 README）
 ├── packages/                   # 可插拔前端平台（sdk / react / frontend-runtime）
 ├── crates/
 │   ├── fcmc/                   # 容器管理 / 出题工具

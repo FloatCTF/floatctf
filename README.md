@@ -157,13 +157,25 @@ apps/web                  = 极薄的 bootstrap 引导页
 #### 前端实现
 
 每个前端都有自己的 README（含**逐页截图**、路由一览、开发与构建方式）与原图目录 `docs/images/`。
-官方前端随本仓库发布；第三方前端是**独立仓库**，通过前端管理器安装：
+官方前端随本仓库发布；第三方前端住在自己的仓库里，本仓库以 **git submodule** 固定到某个提交：
 
 | 前端 | id | 位置 | 说明 | README | 截图 |
 |---|---|---|---|---|---|
 | Default | `default` | 本仓库 `frontends/default` | **官方完整前端**，随平台发布、注册表标记 `protected`、不可卸载，也是 `?frontend=default` 破窗的落点 | [README](frontends/default/README.md) | [docs/images](frontends/default/docs/images) |
-| XZMU | `xzmu` | [FloatCTF/floatctf-frontend-xzmu](https://github.com/FloatCTF/floatctf-frontend-xzmu) | **西藏民族大学主题前端**（「民大红 · 鎏金」），零组件库、自研路由与 CSS 设计系统，覆盖全部 89 项 `required` 能力 | [README](https://github.com/FloatCTF/floatctf-frontend-xzmu/blob/main/README.md) | [docs/images](https://github.com/FloatCTF/floatctf-frontend-xzmu/tree/main/docs/images) |
+| XZMU | `xzmu` | submodule → [FloatCTF/floatctf-frontend-xzmu](https://github.com/FloatCTF/floatctf-frontend-xzmu) | **西藏民族大学主题前端**（「民大红 · 鎏金」），零组件库、自研路由与 CSS 设计系统，覆盖全部 89 项 `required` 能力 | [README](https://github.com/FloatCTF/floatctf-frontend-xzmu/blob/main/README.md) | [docs/images](https://github.com/FloatCTF/floatctf-frontend-xzmu/tree/main/docs/images) |
 
+克隆本仓库时如果要把第三方前端一起取下来：
+
+```bash
+git clone --recurse-submodules git@github.com:FloatCTF/floatctf.git
+# 已经克隆过：
+git submodule update --init --recursive
+```
+
+> submodule 只记录**提交指针**：GitHub 上 `frontends/floatctf-frontend-xzmu` 是一个指向它自己
+> 仓库的条目，**文件不在本仓库的树里**，因此上表的链接与截图一律用绝对 URL（submodule 内的
+> 图片不会被 GitHub 渲染）。要改第三方前端，先进它的目录提交推送，再回本仓库更新指针。
+>
 > 新前端放在**自己的仓库**里，按 [ARTIFACT.md](docs/frontend/ARTIFACT.md) 打成制品后由
 > `frontend.sh install` 安装（本仓库内的前端则放 `frontends/<名字>/`）。
 > 两者都建议带上 README 与 `docs/images/`，方便使用者先看图再决定装不装。
@@ -404,8 +416,8 @@ floatctf/
 │   ├── api/                    # Rust / Actix Web API
 │   └── web/                    # Web bootstrap 引导页（无 React / 无 UI）
 ├── frontends/
-│   └── default/                # 官方前端：当前完整 UI（React + TanStack Router + Primer）
-│                               # 第三方前端（如 xzmu）在自己的仓库里，不随本仓库发布
+│   ├── default/                # 官方前端：当前完整 UI（React + TanStack Router + Primer）
+│   └── floatctf-frontend-xzmu/ # submodule → github.com/FloatCTF/floatctf-frontend-xzmu
 ├── packages/                   # 可插拔前端平台（sdk / react / frontend-runtime）
 ├── crates/
 │   ├── fcmc/                   # 容器管理 / 出题工具

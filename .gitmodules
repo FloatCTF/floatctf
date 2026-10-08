@@ -1,0 +1,3 @@
+[submodule "frontends/floatctf-frontend-xzmu"]
+	path = frontends/floatctf-frontend-xzmu
+	url = https://github.com/FloatCTF/floatctf-frontend-xzmu.git

@@ -184,6 +184,49 @@ importers:
         specifier: ^4.2.4
         version: 4.2.4
 
+  frontends/floatctf-frontend-xzmu:
+    dependencies:
+      '@floatctf/frontend-runtime':
+        specifier: workspace:*
+        version: link:../../packages/frontend-runtime
+      '@floatctf/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@floatctf/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@tanstack/react-query':
+        specifier: ^5.66.5
+        version: 5.100.10(react@19.2.6)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.14)(react@19.2.6)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.1.7(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0))
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.2
+      vite:
+        specifier: ^6.3.5
+        version: 6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)
+
   packages/frontend-runtime:
     devDependencies:
       '@biomejs/biome':
@@ -4663,7 +4706,7 @@ snapshots:
 
   estree-walker@3.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
 
   eventemitter3@5.0.1: {}
 

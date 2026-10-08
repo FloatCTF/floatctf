@@ -190,6 +190,13 @@ check "install.sh 按数值 UID chown runtime" \
     grep -q -F 'chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/runtime"' "$INSTALL_SH"
 check "install.sh 没有 chown 到 floatctf 用户名（该用户不存在）" \
     no_user_chown
+# Debian/Ubuntu 是受支持的生产宿主（包名与 Arch 不同）。
+check "install.sh 有 install_debian_pkgs" grep -q -F 'install_debian_pkgs() {' "$INSTALL_SH"
+check "install.sh Debian 包名正确（docker.io/conntrack/procps）" \
+    grep -q -F 'DEBIAN_PKGS=(docker.io nftables wireguard-tools iproute2 conntrack iptables procps openssl curl tar python3)' "$INSTALL_SH"
+check "install.sh run_init 走 debian 分支" grep -q -F 'install_debian_pkgs' "$INSTALL_SH"
+check "install.sh 缺 docker compose v2 插件时 fail closed" \
+    grep -q -F '缺少 docker compose v2 插件' "$INSTALL_SH"
 
 # ── 7. R3：Python tomllib 能力探测 ───────────────────────────────────────────
 check "install.sh 有 check_python_tomllib 能力探测（import tomllib）" \

@@ -222,6 +222,28 @@ detect_distro() {
 # frontend.json / registry.json 的 JSON 解析与原子注册表更新（见 docs/frontend/ARTIFACT.md）。
 ARCH_PKGS=(docker docker-compose nftables wireguard-tools iproute2 conntrack-tools iptables procps-ng openssl curl tar postgresql python3)
 
+# Debian/Ubuntu 的包名与 Arch 不同：procps（非 procps-ng）、conntrack（非
+# conntrack-tools）、docker.io（发行版打包的 Docker）。
+#   - 不装 postgresql-*：宿主运维一律经容器（docker exec），宿主 psql 非必需；
+#     在 Debian 上装它会牵入 PGDG 源，反而把 apt 绑到第三方仓库。
+#   - docker compose v2 插件不由 Debian 仓库提供（见 check_docker 的显式提示）。
+DEBIAN_PKGS=(docker.io nftables wireguard-tools iproute2 conntrack iptables procps openssl curl tar python3)
+
+install_debian_pkgs() {
+    local missing=() p
+    for p in "${DEBIAN_PKGS[@]}"; do
+        dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing+=("$p")
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        ok "主机包齐全（dpkg）"
+        return
+    fi
+    info "安装缺失主机包: ${missing[*]}（apt-get install）"
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+    ok "主机包安装完成"
+}
+
 install_arch_pkgs() {
     local missing=() p
     for p in "${ARCH_PKGS[@]}"; do
@@ -284,6 +306,10 @@ check_docker() {
             || die "Docker daemon 启动失败"
     fi
     docker info >/dev/null 2>&1 || die "docker daemon 不可用（docker info 失败）"
+    # systemd 单元用 `docker compose`（v2 语法）管理生产栈，缺插件会在启动平台时
+    # 才暴露；Debian/Ubuntu 仓库不提供 docker-compose-plugin，必须显式 fail closed。
+    docker compose version >/dev/null 2>&1 \
+        || die "缺少 docker compose v2 插件（生产栈由 \`docker compose\` 管理）。Debian/Ubuntu 请放置 v2 静态二进制：install -m 0755 docker-compose /usr/local/lib/docker/cli-plugins/docker-compose，然后重试"
     info "Docker daemon: $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?')"
     info "Docker storage driver: $(docker info --format '{{.Driver}}' 2>/dev/null || echo '?')"
     TMP_DOCKER_NET="fctf-init-$$-$(date +%s)"
@@ -453,8 +479,11 @@ run_init() {
         arch)
             install_arch_pkgs
             ;;
-        debian|fedora)
-            die "发行版 $DISTRO 尚未实现安装路径（包名未确认）；请手动安装 docker/nftables/wireguard-tools/iproute2/procps 后重试。已支持：Arch Linux（pacman）"
+        debian)
+            install_debian_pkgs
+            ;;
+        fedora)
+            die "发行版 $DISTRO 尚未实现安装路径（包名未确认）；请手动安装 docker/nftables/wireguard-tools/iproute2/procps 后重试。已支持：Arch Linux、Debian/Ubuntu"
             ;;
         unknown)
             die "无法识别的发行版；不支持盲装"

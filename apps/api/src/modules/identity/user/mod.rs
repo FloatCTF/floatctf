@@ -2,7 +2,7 @@
 
 use crate::core::permission::guards::{UsersManageGuard, UsersReadGuard};
 pub mod dto;
-pub use dto::UsersDto;
+pub use dto::{MeDto, UsersDto};
 
 use std::str::FromStr;
 
@@ -29,10 +29,23 @@ pub struct PatchMeRequest {
 
 /// GET /api/users/me
 #[get("/me")]
-pub async fn get_me(user: UserJwtGuard) -> UniResult<UsersDto> {
+pub async fn get_me(user: UserJwtGuard, ctx: ReqCtx) -> UniResult<MeDto> {
     // `UsersDto` 不含 password 字段，因此无需再做手工清空（旧实现是
     // `user.password = "".to_string()` 的补丁式脱敏，已随 DTO 修复移除）。
-    UniResponse::ok(Some(user.into_inner().into())).into()
+    let model = user.into_inner();
+
+    // 每请求从 DB 解析有效权限（不做缓存）：管理员调整权限后下一次请求即生效。
+    let auth_ctx =
+        crate::api::extractor::auth::resolve_auth_context(ctx.db.get_ref(), model.clone())
+            .await
+            .map_err(|e| AppError::Internal(format!("解析权限失败: {e}")))?;
+
+    UniResponse::ok(Some(MeDto {
+        account: model.into(),
+        permissions: auth_ctx.permission_strings(),
+        grants_all: auth_ctx.grants_all,
+    }))
+    .into()
 }
 
 /// PATCH /api/users/me

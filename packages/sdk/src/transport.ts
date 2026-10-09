@@ -50,6 +50,20 @@ export interface UnauthorizedContext {
 }
 
 /**
+ * 403 的上下文。
+ *
+ * 与 [`UnauthorizedContext`] **刻意分开**：403 的处理方式与 401 相反 ——
+ * 401 要清 token 重新登录；403 必须**保留**会话，只提示「无权限」。
+ * 把两者塞进同一个回调用一个 status 字段区分，正是前端容易写错成
+ * 「403 也跳登录页」的地方。
+ */
+export interface ForbiddenContext {
+	scope: FloatCTFAuthScope;
+	status: number;
+	error: FloatCTFError;
+}
+
+/**
  * 两个 axios 实例共用的默认配置。
  *
  * 刻意**不允许** `baseURL`：客户端自己的 `baseUrl` / `adminBaseUrl` 是唯一权威来源，
@@ -71,6 +85,12 @@ export interface FloatCTFClientOptions {
 	 * SDK 自身不跳转、不写 localStorage。
 	 */
 	onUnauthorized?: (context: UnauthorizedContext) => void;
+	/**
+	 * 收到 403 时调用。前端在此展示「无权限」提示，**不要**清理 token、
+	 * **不要**跳转登录页 —— 403 的语义是「已认证但不允许」，
+	 * 重新登录不会改变结果。
+	 */
+	onForbidden?: (context: ForbiddenContext) => void;
 	/** 每次请求失败时调用（已归一化的错误）。 */
 	onError?: (error: FloatCTFError, scope: FloatCTFAuthScope) => void;
 	/** 附加到两个 axios 实例的默认配置（如 `withCredentials`、`timeout`）。 */
@@ -158,6 +178,16 @@ function attachInterceptors(
 				options.onUnauthorized?.({
 					scope,
 					status: 401,
+					error: normalized,
+				});
+			} else if (normalized.httpStatus === 403) {
+				// ★ 403 **绝不**走 onUnauthorized。
+				// v1 把「无权限」也返回 401，于是前端只有一条「清 token 跳登录」的
+				// 路径；v2 明确分开，这里必须保持分开，否则用户会因为「没权限」
+				// 被反复踢出登录。
+				options.onForbidden?.({
+					scope,
+					status: 403,
 					error: normalized,
 				});
 			}

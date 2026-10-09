@@ -1,10 +1,10 @@
 import type { FloatCTFHttpClient } from "../../transport.js";
 import type { UniResponse } from "../../transport.js";
-import type { UserDto, UserWriteRequest } from "../../types/account.js";
+import type { MeDto, UserDto, UserWriteRequest } from "../../types/account.js";
 
 export function createUserServiceApi(http: FloatCTFHttpClient) {
 	return {
-	    getMe: async (): Promise<UniResponse<UserDto>> => {
+	    getMe: async (): Promise<UniResponse<MeDto>> => {
 	        const response = await http.get("/users/me");
 	        return response.data;
 	    },
@@ -19,7 +19,9 @@ export function createUserServiceApi(http: FloatCTFHttpClient) {
 	        username: string;
 	        password: string;
 	    }): Promise<UniResponse<string>> => {
-	        const response = await http.post("/users/session", {
+	        // v2 统一登录入口。`/users/session` 仍作为别名存在到 Wave 10，
+	        // 但新代码一律走 `/session`（一个账号既能参赛也能管理，无需区分入口）。
+	        const response = await http.post("/session", {
 	            username,
 	            password,
 	        });

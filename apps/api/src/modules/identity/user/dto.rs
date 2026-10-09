@@ -37,3 +37,25 @@ impl From<users::Model> for UsersDto {
         }
     }
 }
+
+/// `GET /api/users/me` 的响应体。
+///
+/// 在账号字段之上补两项**授权**信息，供前端做权限感知导航：
+/// - `permissions`：本次请求解析出的**有效权限**（多角色并集；`grants_all` 下为全集）；
+/// - `grants_all`：是否持有全权角色（内置 `super-admin`）。
+///
+/// 用 `#[serde(flatten)]` 内联 `UsersDto`，因此**旧前端读 `id` / `username` /
+/// `avatar` 的代码完全不受影响** —— 这是一次加法式变更，不是破坏性变更。
+///
+/// 注意：这里回传权限**不代表**前端可以据此做授权判定。它只用于隐藏/显示入口，
+/// 真正的判定永远在服务端每个请求上（`RequirePermission<P>`）。前端拿到
+/// `permissions` 就以为「有权限」而跳过错误处理，是错误用法。
+#[derive(Debug, Serialize)]
+pub struct MeDto {
+    #[serde(flatten)]
+    pub account: UsersDto,
+    /// 有效权限的稳定字符串（顺序确定）。
+    pub permissions: Vec<String>,
+    /// 是否持有全权角色（`grants_all`）。
+    pub grants_all: bool,
+}

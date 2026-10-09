@@ -3143,7 +3143,7 @@ mise run db:migration:verify
 | 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PASS** | 13 JWT 单元 + 22 认证契约测试；`jwt_guard_isolation_matrix_v2` 与 `terminal_session_authz_matrix` **实跑通过**（进程内 `init_service`，未绑定端口） |
 | 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PASS** | `AuthContext`、`RequirePermission<P>`/`RequireAny`、9 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试含 2 项真并发）、授权契约 11 项。**handler 迁移完成**：156 个 handler 已用 `RequirePermission<P>`（31 文件），仅剩 5 个 `/api/admin/super_admin` CRUD 按表保留旧守卫（Wave 10 随表删除）；29 条权限守卫**全部**被真实使用。新增 `authorization_route_coverage.rs` 4 项源码守卫锁定不回归 |
 | 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PASS** | M5 已 apply（dev 库 33348 行日志中 82 行带主体，回填后 0 条非法引用）；`add_log`/`AuditService::record` 收敛为单一 `actor_user_id`，109 处调用点全部编译期校验；`audit_actor_unification_contract.rs` 10 项；三个前端的日志页同步迁移 |
-| 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
+| 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PASS** | transport 新增 `onForbidden` 且 403 **绝不**触发 `onUnauthorized`；`FloatCTFError.isUnauthorized` / `isForbidden` / `forbidden`；`MeDto`（后端 `/me` 每请求解析权限 + SDK 类型）；SDK 登录改走 `/api/session`；SDK 测试 69 项全绿（新增 8 项含「403 后同一客户端仍带 token」） |
 | 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
 | 9 | 两个外部 Frontend（shadcn / xzmu）+ 子模块 gitlink | **PENDING** | — |
 | 10 | M6 删除 `super_admin` 表 + legacy 别名移除 + `API_CONTRACT_VERSION="2"` | **PENDING** | — |
@@ -3275,6 +3275,20 @@ Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
    选手动作」。合并后该信息由 `category` 表达（现有调用点已在用
    `SUPER_ADMIN` / `ROLES` / `AUTH` / `ANNOUNCEMENTS` 等 category）。
    xzmu 的日志页正是按此改写：徽标从 `category` 推导，而不是从主体列猜身份。
+
+### 29.11 Wave 7 的实现要点（与 §29.9 的预研一致）
+
+1. **SSE 无需改动**：`connectSse.ts` 本来就对 `401 || 403` 停止重连（§29.9 已核对）。
+   本 Wave 实际要动的是**非 SSE** 的 transport —— 那里原本只判断 401。
+2. **`onForbidden` 与 `onUnauthorized` 是两个回调**，不是一个回调加 status 判断。
+   分开是为了让「403 也跳登录页」这个错误写法在类型层面就不顺手。
+3. **`MeDto` 用 `#[serde(flatten)]` 内联账号字段**：这是加法式变更，
+   旧前端读 `id` / `username` / `avatar` 的代码完全不受影响。
+   若改成嵌套（`{account: {...}, permissions: [...]}`）就是破坏性变更，需要前端同步改。
+4. **`permissions` 是展示用信息，不是授权依据**：后端在每个请求上独立判定；
+   前端拿到 `permissions` 就跳过错误处理是错误用法。这一点写进了 `MeDto` 的文档注释。
+5. **SDK 登录改走 `/api/session`**：与 `/api/users/session` 是同一个后端 handler，
+   切换只是让新代码走 v2 名义入口；旧端点作为别名保留到 Wave 10。
 
 ### 29.4 必须诚实记录的环境限制
 

@@ -91,3 +91,36 @@ describe("floatCTFErrorFromEnvelope", () => {
 		expect(floatCTFErrorFromEnvelope("text")).toBeNull();
 	});
 });
+
+describe("401 / 403 语义分流（v2）", () => {
+	it("401 是凭据问题：isUnauthorized", () => {
+		const error = new FloatCTFError({ message: "401", kind: "http", httpStatus: 401 });
+		expect(error.isUnauthorized).toBe(true);
+		expect(error.isForbidden).toBe(false);
+	});
+
+	it("403 不是凭据问题：isForbidden（且 isUnauthorized 必须为 false）", () => {
+		const error = new FloatCTFError({
+			message: "403",
+			kind: "http",
+			httpStatus: 403,
+		});
+		expect(error.isForbidden).toBe(true);
+		expect(
+			error.isUnauthorized,
+			"403 若被判成 unauthorized，前端会清 token 跳登录 —— 而重新登录解决不了权限问题",
+		).toBe(false);
+	});
+
+	it("toJSON 同时暴露两个标记，便于日志区分", () => {
+		const json = new FloatCTFError({ message: "x", kind: "http", httpStatus: 403 }).toJSON();
+		expect(json.forbidden).toBe(true);
+		expect(json.unauthorized).toBe(false);
+	});
+
+	it("网络错误两个标记都为 false", () => {
+		const error = new FloatCTFError({ message: "Network Error", kind: "network" });
+		expect(error.isUnauthorized).toBe(false);
+		expect(error.isForbidden).toBe(false);
+	});
+});

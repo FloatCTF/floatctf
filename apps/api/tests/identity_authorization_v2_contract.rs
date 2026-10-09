@@ -617,3 +617,81 @@ async fn only_super_admin_role_is_builtin() {
 
     txn.rollback().await.expect("rollback");
 }
+
+// ============================================================================
+// Wave 7：/me 必须暴露有效权限（供权限感知导航），且保持**加法式**
+// ============================================================================
+
+/// `GET /api/users/me` 必须返回带 `permissions` / `grants_all` 的 `MeDto`，
+/// 并且**内联**账号字段（`#[serde(flatten)]`）——否则旧前端读 `id`/`username`/`avatar`
+/// 会立刻坏掉，而这是一次本应无感的加法式变更。
+#[test]
+fn me_endpoint_exposes_permissions_additively() {
+    let handler = include_str!("../src/modules/identity/user/mod.rs");
+    let get_me = handler
+        .split("pub async fn get_me(")
+        .nth(1)
+        .expect("get_me 必须存在")
+        .split("pub async fn patch_me(")
+        .next()
+        .expect("get_me 函数体");
+    assert!(
+        get_me.contains("UniResult<MeDto>"),
+        "get_me 必须返回 MeDto（含权限），而不是裸 UsersDto"
+    );
+    assert!(
+        get_me.contains("resolve_auth_context"),
+        "get_me 必须**每请求**从 DB 解析权限（不缓存），否则撤权限不会立刻生效"
+    );
+    assert!(
+        get_me.contains("permission_strings()") && get_me.contains("grants_all"),
+        "MeDto 必须同时给出 permissions 与 grants_all"
+    );
+
+    let dto = include_str!("../src/modules/identity/user/dto.rs");
+    assert!(dto.contains("pub struct MeDto"), "MeDto 必须存在");
+    assert!(
+        dto.contains("#[serde(flatten)]"),
+        "MeDto 必须 flatten 账号字段，保证只是加法式变更"
+    );
+    // 安全不变量 #1：任何响应 DTO 都不得含 password
+    let me_dto = dto
+        .split("pub struct MeDto {")
+        .nth(1)
+        .expect("MeDto 定义")
+        .split('}')
+        .next()
+        .expect("MeDto 字段");
+    assert!(
+        !me_dto.contains("password"),
+        "MeDto 不得包含 password（安全不变量 #1）"
+    );
+}
+
+/// SDK 的登录入口必须指向 v2 统一端点 `/session`。
+#[test]
+fn sdk_login_uses_unified_session_endpoint() {
+    let users_api = include_str!("../../../packages/sdk/src/api/service/users.ts");
+    let login = users_api
+        .split("login: async (")
+        .nth(1)
+        .expect("login 必须存在")
+        .split("register: async (")
+        .next()
+        .expect("login 函数体");
+    assert!(
+        login.contains(r#"http.post("/session""#),
+        "SDK 登录必须走 /api/session（v2 统一入口）"
+    );
+    // 只看**非注释行**：文件里会解释「/users/session 作为别名保留到 Wave 10」，
+    // 直接对全文 contains 会匹配到自己的说明文字（此前踩过这个坑）。
+    let code: String = login
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code.contains("/users/session"),
+        "SDK 登录不得再走 /users/session（那是 Wave 10 前的过渡别名）"
+    );
+}

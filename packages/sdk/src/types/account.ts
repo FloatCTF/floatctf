@@ -28,6 +28,20 @@ export type UserDto = {
 };
 
 /**
+ * `GET /api/users/me` 的响应体：账号字段 + 有效权限。
+ *
+ * `permissions` 是**展示用**信息（用于隐藏/显示导航入口），**不是**授权依据：
+ * 真正的判定永远在服务端每个请求上。前端不应因为 `permissions` 里有某项
+ * 就跳过错误处理 —— 权限随时可能被撤销（后端每请求重解析）。
+ */
+export type MeDto = UserDto & {
+	/** 有效权限的稳定字符串（多角色并集；全权角色下为全部权限）。 */
+	permissions: string[];
+	/** 是否持有全权角色（内置 `super-admin`）。 */
+	grants_all: boolean;
+};
+
+/**
  * 管理员账号响应体（**临时**，Wave 10 删除 `super_admin` 端点后一并移除）。
  *
  * 与后端 `administrator/dto.rs::SuperAdminDto` 对应，刻意**不含** `password`。

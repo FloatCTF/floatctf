@@ -41,6 +41,7 @@ export type {
 	ImportChallengeResponse,
 } from "./adminChallenge.js";
 export type {
+	MeDto,
 	SuperAdminDto,
 	SuperAdminWriteRequest,
 	UserDto,

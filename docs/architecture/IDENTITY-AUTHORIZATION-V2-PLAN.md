@@ -3211,6 +3211,33 @@ Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
 | `/me` 响应 | `packages/sdk/src/api/service/users.ts`（Wave 0 已迁到 `UserDto`） | 增加 `permissions: string[]` 与 `grants_all`（计划的 `MeDto`），供权限感知导航 |
 | 契约版本 | `apps/api/src/core/contract.rs` + `packages/frontend-runtime/src/version.ts` | 同时升 `"2"`（`scripts/check-architecture.sh:174` 断言一致） |
 
+### 29.8 Wave 6（M5 `logs` 审计主体统一）已核对的精确形态
+
+源码核对结果（供 Wave 6 直接使用，避免重新摸索）：
+
+- 现状：`logs` 表有**两列**主体 —— `user_id`（→ `users(id)`，SET NULL）与
+  `superadmin_id`（→ `super_admin(id)`，SET NULL）。M4 有意**跳过**了
+  `superadmin_id`（`repoint-admin-actor-fks-to-users` 的自检断言里显式豁免了
+  `logs_superadmin_id_fkey`）。
+- 调用点：`LogService::add_log(level, category, action, message, details,
+  user_id: Option<Uuid>, superadmin_id: Option<Uuid>, request)` 位于
+  `apps/api/src/infrastructure/logging.rs:40`，共 **109 处**调用。
+- M5 步骤：
+  1. `ALTER TABLE logs ADD COLUMN IF NOT EXISTS actor_user_id uuid NULL
+     REFERENCES users(id) ON DELETE SET NULL;`
+  2. 回填：`UPDATE logs SET actor_user_id = COALESCE(superadmin_id, user_id)
+     WHERE actor_user_id IS NULL;`
+  3. 建索引（管理端按主体筛选是高频路径）。
+  4. 删除 `logs_superadmin_id_fkey` 与 `logs_user_id_fkey`，再 DROP 两列。
+  5. `db:gen`（`logs` 实体 + TS 类型会变）。
+- `add_log` 签名改为单个 `actor_user_id: Option<Uuid>`；调用点只需把
+  「两者之一非空」合并为一个表达式。**编译器会逐处报 arity 错误**，因此
+  漏改不可能静默通过 —— 这也是选择「改签名」而不是「加新方法」的原因。
+- 语义损失与补偿：`user_id` / `superadmin_id` 的**分列**本身承载了
+  「这次动作是选手行为还是平台管理行为」的信息。合并后该信息应从
+  `category` + `action` 恢复（现有调用点已分别使用 `AUTH` / `SUPER_ADMIN` /
+  `ROLES` 等 category）。**不得**为了保留分列而破坏统一主体约束。
+
 ### 29.4 必须诚实记录的环境限制
 
 - **所有 live-API 测试软跳过**（`http_auth_contract.rs` 的 3 项 live 断言、

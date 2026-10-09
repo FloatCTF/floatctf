@@ -13,6 +13,7 @@ import {
 	MegaphoneIcon,
 	PackageIcon,
 	PasskeyFillIcon,
+	ShieldLockIcon,
 	TasklistIcon,
 	TerminalIcon,
 	TrophyIcon,
@@ -85,6 +86,10 @@ export const adminNavigation: NavigationSection[] = [
 			item("access.users", "Users", "/admin/users", {
 				permission: "users.read",
 				icon: <PasskeyFillIcon />,
+			}),
+			item("access.roles", "Roles", "/admin/roles", {
+				permission: "roles.read",
+				icon: <ShieldLockIcon />,
 			}),
 		],
 	},

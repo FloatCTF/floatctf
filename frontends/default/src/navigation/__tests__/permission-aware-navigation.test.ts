@@ -52,6 +52,7 @@ describe("管理端导航的权限声明", () => {
 		const cases: Array<[string, string]> = [
 			["dashboard", "system.read"],
 			["access.users", "users.read"],
+			["access.roles", "roles.read"],
 			["events.all", "events.read"],
 			["content.weapons", "weapons.read"],
 			["community.discussions", "discussions.moderate"],

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
-import type { Users } from "@floatctf/sdk/entity";
+import type { UserWriteRequest } from "@floatctf/sdk";
 import { diffToPatch } from "@/util";
 
 export const Route = createFileRoute("/service/profile")({
@@ -27,7 +27,7 @@ function RouteComponent() {
 		select: (res) => res.data,
 	});
 
-	const [originalProfile, setOriginalProfile] = useState<Partial<Users>>({});
+	const [originalProfile, setOriginalProfile] = useState<UserWriteRequest>({});
 	const banner = useMsgBanner();
 
 	// 头像上传状态
@@ -35,7 +35,7 @@ function RouteComponent() {
 	const [previewUrl, setPreviewUrl] = useState<string>("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	const mutationProfile = useReactive<Partial<Users>>({
+	const mutationProfile = useReactive<UserWriteRequest>({
 		username: "",
 		nickname: "",
 		email: "",

@@ -40,3 +40,9 @@ export type {
 	ChallengeScanItem,
 	ImportChallengeResponse,
 } from "./adminChallenge.js";
+export type {
+	SuperAdminDto,
+	SuperAdminWriteRequest,
+	UserDto,
+	UserWriteRequest,
+} from "./account.js";

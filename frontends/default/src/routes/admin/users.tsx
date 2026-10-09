@@ -4,7 +4,7 @@ import { useReactive } from "ahooks";
 
 import { adminApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { Users } from "@floatctf/sdk/entity";
+import type { UserWriteRequest } from "@floatctf/sdk";
 import { AdminRouteGuard } from "@/routes/admin/route";
 
 export const Route = createFileRoute("/admin/users")({
@@ -30,7 +30,7 @@ function RouteComponent() {
 		{ accessorKey: "email", header: "邮箱", field: "email", sortBy: true },
 	];
 
-	const mutationUser = useReactive<Partial<Users>>({
+	const mutationUser = useReactive<UserWriteRequest>({
 		username: "",
 		email: "",
 		password: "",

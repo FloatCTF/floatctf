@@ -13,7 +13,7 @@ import { useState } from "react";
 
 import { adminApi } from "@/api";
 import { GenericTable } from "@/components";
-import type { SuperAdmin } from "@floatctf/sdk/entity/super_admin";
+import type { SuperAdminDto, SuperAdminWriteRequest } from "@floatctf/sdk";
 import { AdminRouteGuard } from "@/routes/admin/route";
 
 export const Route = createFileRoute("/admin/super_admins")({
@@ -101,7 +101,7 @@ function RouteComponent() {
         },
     ];
 
-    const columnActions = (row: SuperAdmin) => (
+    const columnActions = (row: SuperAdminDto) => (
         <ActionList>
             <ActionList.Item
                 onClick={() => setDialogState({ isOpen: true, id: row.id })}
@@ -111,7 +111,7 @@ function RouteComponent() {
         </ActionList>
     );
 
-    const mutationData = useReactive<Partial<SuperAdmin>>({
+    const mutationData = useReactive<SuperAdminWriteRequest>({
         username: "",
         password: "",
         email: "",

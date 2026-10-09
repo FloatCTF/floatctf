@@ -1,14 +1,14 @@
-import type { Users } from "../../entity/index.js";
 import type { FloatCTFHttpClient } from "../../transport.js";
 import type { UniResponse } from "../../transport.js";
+import type { UserDto, UserWriteRequest } from "../../types/account.js";
 
 export function createUserServiceApi(http: FloatCTFHttpClient) {
 	return {
-	    getMe: async (): Promise<UniResponse<Users>> => {
+	    getMe: async (): Promise<UniResponse<UserDto>> => {
 	        const response = await http.get("/users/me");
 	        return response.data;
 	    },
-	    patchMe: async (data: Partial<Users>): Promise<UniResponse<Users>> => {
+	    patchMe: async (data: UserWriteRequest): Promise<UniResponse<UserDto>> => {
 	        const response = await http.patch("/users/me", data);
 	        return response.data;
 	    },

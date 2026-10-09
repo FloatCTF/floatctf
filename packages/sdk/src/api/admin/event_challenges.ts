@@ -51,7 +51,6 @@ export function createEventChallengeAdminApi(http: FloatCTFHttpClient) {
 	    },
 	    remove: (event_id: string) => {
 	        return async (id_list: string[]): Promise<UniResponse<number>> => {
-	            console.log(id_list);
 	            const res = await http.delete(
 	                `/events/${event_id}/challenges`,
 	                {

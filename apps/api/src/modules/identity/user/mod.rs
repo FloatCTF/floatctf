@@ -29,9 +29,9 @@ pub struct PatchMeRequest {
 /// GET /api/users/me
 #[get("/me")]
 pub async fn get_me(user: UserJwtGuard) -> UniResult<UsersDto> {
-    let mut user = user.into_inner();
-    user.password = "".to_string();
-    UniResponse::ok(Some(user.into())).into()
+    // `UsersDto` 不含 password 字段，因此无需再做手工清空（旧实现是
+    // `user.password = "".to_string()` 的补丁式脱敏，已随 DTO 修复移除）。
+    UniResponse::ok(Some(user.into_inner().into())).into()
 }
 
 /// PATCH /api/users/me

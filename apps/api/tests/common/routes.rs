@@ -435,6 +435,62 @@ pub fn service_routes() -> Vec<Route> {
 /// challenge_sets / events / AWD（平台级 + 赛事级）/ AWDP（赛事级）。
 pub fn admin_routes() -> Vec<Route> {
     vec![
+        // [identity/roles] Wave 5：权限目录与角色管理（RequirePermission）
+        Route {
+            method: Method::Get,
+            path: "/api/admin/permissions",
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Get,
+            path: "/api/admin/permissions/domains",
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Get,
+            path: "/api/admin/roles",
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Post,
+            path: "/api/admin/roles",
+            auth: Auth::PermissionRequired,
+            json_body: true,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/roles/{role_id}"),
+            auth: Auth::PermissionRequired,
+            json_body: true,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/roles/{role_id}"),
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles] 账号 ↔ 角色
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/users/{user_id}/roles"),
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles]
+        Route {
+            method: Method::Put,
+            path: p("/api/admin/users/{user_id}/roles"),
+            auth: Auth::PermissionRequired,
+            json_body: true,
+        },
         // [identity]
         Route {
             method: Method::Post,
@@ -1514,7 +1570,7 @@ pub fn admin_routes() -> Vec<Route> {
 /// **新增或删除 admin 路由时必须同步更新本常量与 [`admin_routes`]**。
 /// 用「精确钉住」而不是 `>= N`：后者对**删除**完全无感（历史脚本曾用
 /// `assert!(a.len() >= 60)`，而当时实际有 94 条且漏掉了整个 terminal / AWD / AWDP 面）。
-pub const ADMIN_ROUTE_COUNT: usize = 153;
+pub const ADMIN_ROUTE_COUNT: usize = 161;
 
 /// 各域条数：`(域, 条数, 最小要求)`。整块域消失会被 [`admin_route_domains_meet_minimums`] 抓到。
 pub fn admin_route_domains() -> Vec<(&'static str, usize, usize)> {
@@ -1581,6 +1637,11 @@ pub fn admin_route_domains_meet_minimums() -> Result<(), String> {
 /// 它们曾是历史盲区（`terminal` / `dashboard` / AWD / AWDP 完全不在目录里，
 /// 而目录只断言 `len >= 60`）。
 pub const HIGH_RISK_ADMIN_ROUTES: &[(&str, &str)] = &[
+    // roles.manage 是 5 条高危权限之一：它能改变「谁拥有什么」
+    ("POST", "/api/admin/roles"),
+    ("PATCH", "/api/admin/roles/"),
+    ("DELETE", "/api/admin/roles/"),
+    ("PUT", "/api/admin/users/"),
     ("POST", "/api/admin/terminal/session"),
     ("GET", "/api/admin/terminal/ws"),
     ("POST", "/api/admin/database/exec_sql"),

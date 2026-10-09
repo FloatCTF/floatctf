@@ -3128,7 +3128,7 @@ mise run db:migration:verify
 | Wave 1 提交 | `2a8ef0a feat(auth): 新增平台 RBAC 数据模型与权限目录` |
 | Wave 2 提交 | `28b7a73 feat(auth): 迁移管理员身份到统一 users 表` |
 | Wave 3 提交 | `2aaa092 feat(auth): 管理动作主体外键统一指向 users`（amend 后的最终 hash） |
-| Wave 4 提交 | 见 `git log`（`feat(auth): 认证 v2 —— 令牌只表达身份，授权每请求从 DB 解析`） |
+| Wave 4 提交 | `9d42f93 feat(auth): 认证 v2 —— 令牌只表达身份，授权每请求从 DB 解析` |
 | shadcn 子模块本地提交 | `6756a1d`（Wave 0）、`5e816b4`（Wave 3）——**均未 push** |
 | xzmu 子模块本地提交 | 无（Wave 9 起涉及） |
 
@@ -3141,7 +3141,7 @@ mise run db:migration:verify
 | 2 | M2 账号列与冲突预检 + M3 `super_admin → users` 迁移 | **PASS** | dev 库实测 hash/`created_at` 逐字节一致；9 项迁移契约测试 |
 | 3 | M4 管理动作主体外键重指向 `users`（含 `announcements` SET NULL） | **PASS** | 6 FK 全部 `users` + `confdeltype='n'`；7 项测试 |
 | 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PASS** | 13 JWT 单元 + 22 认证契约测试；`jwt_guard_isolation_matrix_v2` 与 `terminal_session_authz_matrix` **实跑通过**（进程内 `init_service`，未绑定端口） |
-| 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PENDING** | — |
+| 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PARTIAL** | 机制+API+并发+反提权已完成并提交：`AuthContext`、`RequirePermission<P>`/`RequireAny`、8 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试，含 2 项真并发）、`identity_authorization_v2_contract.rs` 5 项。**待续**：171 处 handler 由 `SuperAdminJwtGuard` 迁移到 `RequirePermission<P>`（见 §29.6） |
 | 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PENDING** | — |
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
 | 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
@@ -3159,6 +3159,19 @@ mise run db:migration:verify
 | `20261009144648` | `repoint-admin-actor-fks-to-users` | 已 apply（dev 库） |
 
 `mise run db:migration:verify` 通过；`db:gen` 连续两次运行零差异。
+
+### 29.6 Wave 5 的剩余工作（171 处 handler 迁移）
+
+`AuthContext` / `RequirePermission<P>` / 角色权限 API / 反提权 / 最后超管并发
+**已完成并验证**。仍未完成的是把 36 个文件里的 **171 处** `SuperAdminJwtGuard`
+逐条替换为对应权限的 `RequirePermission<P>`。
+
+**当前中间状态是安全的（fail-closed）**：尚未迁移的端点仍由
+`SuperAdminJwtGuard` 把守，其判据是「持有 `grants_all` 角色」——这比任何单条权限都
+**更严格**，绝不会因为迁移未完成而放宽任何端点。因此可以逐文件推进，
+每一步都是「收紧或持平」，不存在「迁移到一半出现越权窗口」。
+
+逐文件映射以 [platform-permissions.md](./platform-permissions.md) 的路由→权限表为准。
 
 ### 29.4 必须诚实记录的环境限制
 

@@ -330,3 +330,215 @@ impl FromRequest for SuperAdminJwtGuard {
         })
     }
 }
+
+// ============================================================================
+// 授权 v2（Wave 5）：AuthContext + 声明式权限守卫
+// ============================================================================
+
+use crate::core::permission::{Permission, PermissionMarker};
+
+/// 认证 + 授权上下文。
+///
+/// 在「已确认身份」之上携带**本次请求从 DB 解析出的有效权限集合**
+/// （多角色并集；`grants_all` 短路为全集）。第一版**不做缓存**：
+/// 管理员调整权限后，下一次请求即刻生效。
+///
+/// 注意解析时机：只有真正需要做授权判断的端点才会解析权限
+/// （即用 [`RequirePermission`] / [`RequireAny`] 的 handler）。
+/// 参赛端 handler 用 [`AccountGuard`] 即可，不必为每次请求多花一次查询。
+pub struct AuthContext {
+    /// 已认证且状态可用的账号。
+    pub user: users::Model,
+    /// 有效权限集合。
+    pub permissions: PermissionSet,
+    /// 是否持有「全权」角色（`grants_all`，即内置 `super-admin`）。
+    pub grants_all: bool,
+}
+
+impl AuthContext {
+    pub fn id(&self) -> uuid::Uuid {
+        self.user.id
+    }
+
+    pub fn username(&self) -> &str {
+        &self.user.username
+    }
+
+    /// 是否拥有某条权限（`grants_all` 恒为真）。
+    pub fn has(&self, permission: Permission) -> bool {
+        self.grants_all || self.permissions.contains(permission)
+    }
+
+    /// 是否拥有**全部**给定权限。
+    pub fn has_all(&self, permissions: impl IntoIterator<Item = Permission>) -> bool {
+        permissions.into_iter().all(|p| self.has(p))
+    }
+
+    /// 权限集合的稳定字符串表示（用于 API 输出与审计）。
+    pub fn permission_strings(&self) -> Vec<String> {
+        if self.grants_all {
+            Permission::ALL
+                .iter()
+                .map(|p| p.as_str().to_string())
+                .collect()
+        } else {
+            self.permissions.to_strings()
+        }
+    }
+}
+
+/// 解析账号的授权上下文（一次 DB 往返取角色，再一次取权限）。
+pub async fn resolve_auth_context<C: ConnectionTrait>(
+    db: &C,
+    user: users::Model,
+) -> Result<AuthContext, sea_orm::DbErr> {
+    let grants_all = has_all_access(db, user.id).await?;
+    let permissions = if grants_all {
+        // 短路：全权角色直接是全集，不必读权限行
+        PermissionSet::all()
+    } else {
+        resolve_permissions(db, user.id).await?
+    };
+    Ok(AuthContext {
+        user,
+        permissions,
+        grants_all,
+    })
+}
+
+/// **声明式权限守卫**（Wave 5 的主防线）。
+///
+/// 把「这个 handler 需要哪条权限」写进**函数签名**，因此：
+/// - 忘记声明权限 → 编译期就没有可用的守卫类型，而不是变成「登录即可用」的静默漏洞；
+/// - 权限目录与守卫类型由同一个宏生成（`core::permission::define_permissions!`），
+///   不可能出现「有权限却没有守卫」；
+/// - 无所需权限 → **403**（已认证但不允许），而不是 401。
+///
+/// 用法：
+/// ```ignore
+/// #[get("")]
+/// pub async fn admin_get_users(_: RequirePermission<UsersReadGuard>, ctx: ReqCtx) -> ... { }
+/// ```
+pub struct RequirePermission<P: PermissionMarker>(pub AuthContext, std::marker::PhantomData<P>);
+
+impl<P: PermissionMarker> RequirePermission<P> {
+    /// 取出授权上下文（需要做对象级授权或反提权判断时使用）。
+    pub fn auth(&self) -> &AuthContext {
+        &self.0
+    }
+
+    pub fn into_auth(self) -> AuthContext {
+        self.0
+    }
+}
+
+impl<P: PermissionMarker> FromRequest for RequirePermission<P> {
+    type Error = actix_web::Error;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(
+        req: &actix_web::HttpRequest,
+        _payload: &mut actix_web::dev::Payload,
+    ) -> Self::Future {
+        let db = req.app_data::<WebDb>().cloned();
+        let req = req.clone();
+
+        Box::pin(async move {
+            let Some(db) = db else {
+                return Err(auth_error(AuthFailure::UnknownAccount));
+            };
+            let user = match resolve_session_account(db.get_ref(), &req).await {
+                Ok(user) => user,
+                Err(failure) => return Err(auth_error(failure)),
+            };
+            let ctx = resolve_auth_context(db.get_ref(), user)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "解析授权上下文失败");
+                    auth_internal_error()
+                })?;
+
+            if ctx.has(P::PERMISSION) {
+                Ok(RequirePermission(ctx, std::marker::PhantomData))
+            } else {
+                Err(forbidden_error(P::PERMISSION))
+            }
+        })
+    }
+}
+
+/// 「满足其中之一」的复合守卫（少量、显式）。
+///
+/// 只用于确实存在「A 或 B 都可执行该操作」语义的端点；
+/// 不要用它来回避把权限拆清楚。
+pub struct RequireAny<P1: PermissionMarker, P2: PermissionMarker>(
+    pub AuthContext,
+    std::marker::PhantomData<(P1, P2)>,
+);
+
+impl<P1: PermissionMarker, P2: PermissionMarker> RequireAny<P1, P2> {
+    pub fn auth(&self) -> &AuthContext {
+        &self.0
+    }
+
+    pub fn into_auth(self) -> AuthContext {
+        self.0
+    }
+}
+
+impl<P1: PermissionMarker, P2: PermissionMarker> FromRequest for RequireAny<P1, P2> {
+    type Error = actix_web::Error;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(
+        req: &actix_web::HttpRequest,
+        _payload: &mut actix_web::dev::Payload,
+    ) -> Self::Future {
+        let db = req.app_data::<WebDb>().cloned();
+        let req = req.clone();
+
+        Box::pin(async move {
+            let Some(db) = db else {
+                return Err(auth_error(AuthFailure::UnknownAccount));
+            };
+            let user = match resolve_session_account(db.get_ref(), &req).await {
+                Ok(user) => user,
+                Err(failure) => return Err(auth_error(failure)),
+            };
+            let ctx = resolve_auth_context(db.get_ref(), user)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "解析授权上下文失败");
+                    auth_internal_error()
+                })?;
+
+            if ctx.has(P1::PERMISSION) || ctx.has(P2::PERMISSION) {
+                Ok(RequireAny(ctx, std::marker::PhantomData))
+            } else {
+                // 报出两条中的第一条作为提示（不泄露另一条）
+                Err(forbidden_error(P1::PERMISSION))
+            }
+        })
+    }
+}
+
+/// 已认证但缺少所需权限 → **403**（不是 401：重新登录解决不了）。
+fn forbidden_error(permission: Permission) -> actix_web::Error {
+    actix_web::error::InternalError::from_response(
+        "forbidden",
+        AppError::Forbidden(format!(
+            "没有权限执行该操作（需要 {}）",
+            permission.as_str()
+        ))
+        .error_response(),
+    )
+    .into()
+}
+
+fn auth_internal_error() -> actix_web::Error {
+    actix_web::error::InternalError::from_response(
+        "internal",
+        AppError::Internal("权限校验失败".to_string()).error_response(),
+    )
+    .into()
+}

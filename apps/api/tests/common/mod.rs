@@ -94,7 +94,11 @@ pub enum Auth {
     None,
     /// Expect 401 without a token (or with garbage token).
     UserRequired,
+    /// v1 超管门禁（Wave 4 过渡期仍在用 `SuperAdminJwtGuard`）。
     SuperAdminRequired,
+    /// v2 权限门禁（`RequirePermission<P>`）：匿名挑战同样是 401，
+    /// 但「已认证无权限」是 **403** —— 与超管门禁的区别在授权而非认证。
+    PermissionRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

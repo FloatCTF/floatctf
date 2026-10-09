@@ -3,6 +3,7 @@
 pub mod administrator;
 pub mod authentication;
 pub mod authorization;
+pub mod roles;
 pub mod user;
 
 use actix_web::web::{self, ServiceConfig};
@@ -45,8 +46,14 @@ pub fn configure_session_routes(cfg: &mut ServiceConfig) {
 
 /// 管理端身份路由（`/api/admin` 下）：
 /// - `/users` CRUD
-/// - `/super_admin` CRUD
+/// - `/users/{user_id}/roles`（角色授予，Wave 5）
+/// - `/permissions`、`/roles*`（权限与角色管理，Wave 5）
+/// - `/super_admin` CRUD（**过渡期别名**，Wave 10 移除）
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
+    // 角色与权限管理（Wave 5）
+    cfg.service(web::scope("/roles").configure(roles::configure_role_routes));
+    cfg.service(web::scope("/permissions").configure(roles::configure_permission_routes));
+
     cfg.service(
         web::scope("/users")
             // POST /api/admin/users
@@ -58,7 +65,10 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             // GET /api/admin/users
             .service(user::admin_get_users)
             // GET /api/admin/users/{user_id}
-            .service(user::admin_get_user),
+            .service(user::admin_get_user)
+            // GET /api/admin/users/{user_id}/roles（Wave 5）
+            // PUT /api/admin/users/{user_id}/roles（Wave 5）
+            .configure(roles::configure_user_role_routes),
     );
 
     cfg.service(

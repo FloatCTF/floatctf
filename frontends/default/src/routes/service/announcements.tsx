@@ -4,7 +4,7 @@ import { useTitle } from "ahooks";
 import { serviceApi } from "@/api";
 import { GenericTable } from "@/components";
 import type { Announcements } from "@floatctf/sdk/entity";
-import { DatetimeToShow } from "@/util";
+import { DatetimeToShow, publisherLabel } from "@/util";
 
 export const Route = createFileRoute("/service/announcements")({
     component: RouteComponent,
@@ -20,6 +20,8 @@ function RouteComponent() {
             accessorKey: "publisher",
             header: "发布者",
             field: "publisher",
+            // 发布者账号被注销时仍显示当时的名字快照，并标注已注销
+            renderCell: (row: Announcements) => <span>{publisherLabel(row)}</span>,
         },
         {
             accessorKey: "title",

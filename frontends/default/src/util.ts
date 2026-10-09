@@ -75,3 +75,18 @@ export const diffToPatch = <T extends Record<string, any>>(
 export const useSelectedRowIds = () => {
     return useState<Set<string>>(new Set());
 };
+
+/**
+ * 公告发布者展示名。
+ *
+ * 后端 `publisher` 是**发布当时的展示名快照**（NOT NULL）；`publisher_id` 为
+ * `undefined`/`null` 表示该账号已被注销（`ON DELETE SET NULL`）。
+ * 此时仍展示快照（信息量更大），并标注账号已注销。
+ */
+export function publisherLabel(row: {
+	publisher?: string | null;
+	publisher_id?: string | null;
+}): string {
+	const name = (row.publisher ?? "").trim() || "已注销账号";
+	return row.publisher_id ? name : `${name}（已注销）`;
+}

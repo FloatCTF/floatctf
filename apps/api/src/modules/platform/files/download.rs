@@ -27,7 +27,7 @@ use std::time::Duration;
 use actix_web::{get, web::Query};
 use anyhow::Result;
 use aws_sdk_s3::presigning::PresigningConfig;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
@@ -155,7 +155,10 @@ fn report_key_event_id(key: &str) -> Option<Uuid> {
 ///    且 `events` 表存在该 `uuid` 时返回它。攻击者可以构造指向他人赛事的 key，
 ///    但随后仍要通过该赛事的读取权限——这正是应有的门槛。
 /// 3. 其余一律 `NotFound`（对外表现为 404，不泄露桶结构）。
-pub async fn resolve_private_artifact(db: &WebDb, key: &str) -> Result<Uuid, AppError> {
+pub async fn resolve_private_artifact<C: ConnectionTrait>(
+    db: &C,
+    key: &str,
+) -> Result<Uuid, AppError> {
     if !private_key_shape_ok(key) {
         return Err(AppError::NotFound("未找到该私有制品".into()));
     }
@@ -163,7 +166,7 @@ pub async fn resolve_private_artifact(db: &WebDb, key: &str) -> Result<Uuid, App
     // ── 族 A：event_writeup.file_url 唯一锚定 ──
     if let Some(writeup) = event_writeup::Entity::find()
         .filter(event_writeup::Column::FileUrl.eq(key))
-        .one(db.get_ref())
+        .one(db)
         .await?
     {
         return Ok(writeup.event_id);
@@ -172,7 +175,7 @@ pub async fn resolve_private_artifact(db: &WebDb, key: &str) -> Result<Uuid, App
     // ── 族 B：服务器生成的报告 zip key ──
     if let Some(event_id) = report_key_event_id(key) {
         if events::Entity::find_by_id(event_id)
-            .one(db.get_ref())
+            .one(db)
             .await?
             .is_some()
         {
@@ -204,7 +207,7 @@ pub async fn download(
     let super_admin = super_admin.into_inner();
 
     // 对象级授权：把 key 绑定到平台已知资源（event）。无法绑定 → 404。
-    let event_id = resolve_private_artifact(&ctx.db, &params.key).await?;
+    let event_id = resolve_private_artifact(ctx.db.get_ref(), &params.key).await?;
 
     let proxy_url = presign_private_download_url(ctx.rustfs, &params.key, 90)
         .await

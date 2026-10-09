@@ -2,8 +2,15 @@
 //!
 //! 验证 [`ensure_builtin_roles`] 的幂等性、结构字段校正、orphan 权限**只报告不删除**，
 //! 以及 [`permissions_of_roles`] 的并集 / `grants_all` 短路语义。
+//!
+//! cargo 为每个测试文件起独立进程，这些用例都会写 `platform_roles`，
+//! 因此用 Postgres 事务级 advisory lock 串行（与 `migrate.sh` 同一思路），
+//! 并在事务结束回滚，绝不污染数据库。
 
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    TransactionTrait,
+};
 use uuid::Uuid;
 
 use floatctf::core::permission::{Permission, PermissionSet};
@@ -12,6 +19,8 @@ use floatctf::entity::{platform_role_permissions, platform_roles};
 use floatctf::modules::identity::authorization::{
     BUILTIN_ROLES, ensure_builtin_roles, permissions_of_roles,
 };
+
+const RBAC_TEST_LOCK_KEY: i64 = 1179204949;
 
 async fn connect_or_skip() -> Option<DatabaseConnection> {
     let url = std::env::var("DATABASE_URL")
@@ -25,33 +34,64 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// 测试文件级串行：多个用例共享 dev 库里的同一批内置角色行。
-static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+async fn begin_exclusive(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
+    let txn = db.begin().await.expect("begin exclusive txn");
+    txn.execute_unprepared(&format!(
+        "SELECT pg_advisory_xact_lock({RBAC_TEST_LOCK_KEY})"
+    ))
+    .await
+    .expect("acquire advisory xact lock");
+    txn
+}
+
+/// 插入一个自定义角色（事务结束随回滚消失）。
+async fn insert_role<C: ConnectionTrait>(txn: &C, key: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    platform_roles::Entity::insert(platform_roles::ActiveModel {
+        id: Set(id),
+        key: Set(key.to_string()),
+        name: Set("Test Role".into()),
+        description: Set(String::new()),
+        protected: Set(false),
+        grants_all: Set(false),
+        ..Default::default()
+    })
+    .exec(txn)
+    .await
+    .unwrap_or_else(|e| panic!("insert role {key}: {e}"));
+    id
+}
+
+async fn grant<C: ConnectionTrait>(txn: &C, role_id: Uuid, permission: Permission) {
+    platform_role_permissions::Entity::insert(platform_role_permissions::ActiveModel {
+        role_id: Set(role_id),
+        permission: Set(permission.as_str().to_string()),
+    })
+    .exec(txn)
+    .await
+    .unwrap_or_else(|e| panic!("grant {permission}: {e}"));
+}
+
+// ============================================================================
+// 内置 super-admin
+// ============================================================================
 
 #[tokio::test]
 async fn ensure_builtin_roles_creates_super_admin_idempotently() {
-    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    // 与迁移/其它测试共存：先按 key 清掉非固定 id 的干扰行（不动固定 id 那行）
-    let _ = platform_roles::Entity::delete_many()
-        .filter(platform_roles::Column::Key.eq(PLATFORM_ROLE_SUPER_ADMIN_KEY))
-        .filter(platform_roles::Column::Id.ne(PLATFORM_ROLE_SUPER_ADMIN))
-        .exec(&db)
-        .await;
-
-    let first = ensure_builtin_roles(&db).await;
+    let first = ensure_builtin_roles(&txn).await;
     assert!(
         first.conflicts.is_empty(),
-        "首次 reconcile 不应有冲突: {:?}",
+        "reconcile 不应有冲突: {:?}",
         first.conflicts
     );
 
-    // 固定 id 的行必须存在且结构字段正确
     let role = platform_roles::Entity::find_by_id(PLATFORM_ROLE_SUPER_ADMIN)
-        .one(&db)
+        .one(&txn)
         .await
         .expect("query")
         .expect("super-admin 角色必须存在");
@@ -59,54 +99,56 @@ async fn ensure_builtin_roles_creates_super_admin_idempotently() {
     assert!(role.protected, "super-admin 必须 protected=true");
     assert!(role.grants_all, "super-admin 必须 grants_all=true");
 
-    // 幂等：第二次不应报 created / repaired
-    let second = ensure_builtin_roles(&db).await;
+    // 幂等：第二次不应再创建/修正
+    let second = ensure_builtin_roles(&txn).await;
     assert!(
         second.created.is_empty(),
-        "第二次 reconcile 不应再创建: {:?}",
+        "第二次不应再创建: {:?}",
         second.created
     );
     assert!(
         second.repaired.is_empty(),
-        "第二次 reconcile 不应再修正: {:?}",
+        "第二次不应再修正: {:?}",
         second.repaired
     );
     assert!(second.conflicts.is_empty(), "{:?}", second.conflicts);
+
+    txn.rollback().await.expect("rollback");
 }
 
 #[tokio::test]
 async fn ensure_builtin_roles_repairs_structural_drift_without_touching_name() {
-    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    // 先确保存在
-    let _ = ensure_builtin_roles(&db).await;
+    let _ = ensure_builtin_roles(&txn).await;
 
     // 人为破坏结构字段 + 改展示名（模拟手工改库 / 误操作）
+    use sea_orm::IntoActiveModel;
     let mut active = platform_roles::Entity::find_by_id(PLATFORM_ROLE_SUPER_ADMIN)
-        .one(&db)
+        .one(&txn)
         .await
         .expect("query")
         .expect("exists")
-        .into_active_model_for_test();
+        .into_active_model();
     active.protected = Set(false);
     active.grants_all = Set(false);
     active.name = Set("运维改过的名字".to_string());
     platform_roles::Entity::update(active)
-        .exec(&db)
+        .exec(&txn)
         .await
         .expect("drift the row");
 
-    let report = ensure_builtin_roles(&db).await;
+    let report = ensure_builtin_roles(&txn).await;
     assert!(
         report.repaired.contains(&PLATFORM_ROLE_SUPER_ADMIN_KEY),
         "结构字段被改动后必须被校正: {report:?}"
     );
 
     let after = platform_roles::Entity::find_by_id(PLATFORM_ROLE_SUPER_ADMIN)
-        .one(&db)
+        .one(&txn)
         .await
         .expect("query")
         .expect("exists");
@@ -116,48 +158,37 @@ async fn ensure_builtin_roles_repairs_structural_drift_without_touching_name() {
         after.name, "运维改过的名字",
         "name 是展示字段，启动时不得覆盖运维的修改"
     );
+    assert_ne!(
+        BUILTIN_ROLES[0].name, after.name,
+        "确认上面断言的确实是「被改过的名字」而不是内置默认值"
+    );
 
-    // 复原展示名，避免影响其它测试的日志可读性
-    let mut restore = after.into_active_model_for_test();
-    restore.name = Set(BUILTIN_ROLES[0].name.to_string());
-    platform_roles::Entity::update(restore)
-        .exec(&db)
-        .await
-        .expect("restore name");
+    txn.rollback().await.expect("rollback");
 }
+
+// ============================================================================
+// orphan 权限：只报告，不删除
+// ============================================================================
 
 #[tokio::test]
 async fn orphan_permissions_are_reported_but_not_deleted() {
-    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    let _ = ensure_builtin_roles(&db).await;
+    let _ = ensure_builtin_roles(&txn).await;
 
-    let role_id = Uuid::new_v4();
-    platform_roles::Entity::insert(platform_roles::ActiveModel {
-        id: Set(role_id),
-        key: Set(format!("orphan-test-{}", &role_id.to_string()[..8])),
-        name: Set("Orphan Test".into()),
-        description: Set(String::new()),
-        protected: Set(false),
-        grants_all: Set(false),
-        ..Default::default()
-    })
-    .exec(&db)
-    .await
-    .expect("insert temp role");
-
+    let role_id = insert_role(&txn, "orphan-test-role").await;
     platform_role_permissions::Entity::insert(platform_role_permissions::ActiveModel {
         role_id: Set(role_id),
         permission: Set("legacy.removed.permission".into()),
     })
-    .exec(&db)
+    .exec(&txn)
     .await
     .expect("insert orphan permission");
 
-    let report = ensure_builtin_roles(&db).await;
+    let report = ensure_builtin_roles(&txn).await;
     let found = report
         .orphan_permissions
         .iter()
@@ -168,63 +199,37 @@ async fn orphan_permissions_are_reported_but_not_deleted() {
         report.orphan_permissions
     );
 
-    // 关键：**没有被删除**
+    // 关键：**没有被静默删除**
     let still_there = platform_role_permissions::Entity::find()
         .filter(platform_role_permissions::Column::RoleId.eq(role_id))
-        .one(&db)
+        .one(&txn)
         .await
         .expect("query")
         .is_some();
     assert!(still_there, "orphan 权限不得被静默删除");
 
-    // 清理
-    let _ = platform_roles::Entity::delete_by_id(role_id)
-        .exec(&db)
-        .await;
+    txn.rollback().await.expect("rollback");
 }
+
+// ============================================================================
+// 权限解析：并集 + grants_all 短路
+// ============================================================================
 
 #[tokio::test]
 async fn permissions_of_roles_unions_and_short_circuits_on_grants_all() {
-    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    // 两个自定义角色：一个含 events.read，一个含 awd.read
-    let role_a = Uuid::new_v4();
-    let role_b = Uuid::new_v4();
-    for (id, key) in [
-        (role_a, format!("perm-a-{}", &role_a.to_string()[..8])),
-        (role_b, format!("perm-b-{}", &role_b.to_string()[..8])),
-    ] {
-        platform_roles::Entity::insert(platform_roles::ActiveModel {
-            id: Set(id),
-            key: Set(key),
-            name: Set("Perm Test".into()),
-            description: Set(String::new()),
-            protected: Set(false),
-            grants_all: Set(false),
-            ..Default::default()
-        })
-        .exec(&db)
-        .await
-        .expect("insert temp role");
-    }
-    for (id, permission) in [
-        (role_a, Permission::EventsRead.as_str()),
-        (role_b, Permission::AwdRead.as_str()),
-    ] {
-        platform_role_permissions::Entity::insert(platform_role_permissions::ActiveModel {
-            role_id: Set(id),
-            permission: Set(permission.to_string()),
-        })
-        .exec(&db)
-        .await
-        .expect("insert role permission");
-    }
+    let _ = ensure_builtin_roles(&txn).await;
 
-    // 并集
-    let (set, unknown) = permissions_of_roles(&db, &[role_a, role_b])
+    let role_a = insert_role(&txn, "perm-union-a").await;
+    let role_b = insert_role(&txn, "perm-union-b").await;
+    grant(&txn, role_a, Permission::EventsRead).await;
+    grant(&txn, role_b, Permission::AwdRead).await;
+
+    let (set, unknown) = permissions_of_roles(&txn, &[role_a, role_b])
         .await
         .expect("resolve");
     assert!(unknown.is_empty(), "unknown: {unknown:?}");
@@ -232,12 +237,12 @@ async fn permissions_of_roles_unions_and_short_circuits_on_grants_all() {
     assert!(set.contains(Permission::AwdRead));
     assert_eq!(set.len(), 2, "只应包含两个角色的并集");
 
-    // 空角色 → 空集合
-    let (empty, _) = permissions_of_roles(&db, &[]).await.expect("resolve empty");
+    let (empty, _) = permissions_of_roles(&txn, &[])
+        .await
+        .expect("resolve empty");
     assert!(empty.is_empty());
 
-    // grants_all 短路：并入 super-admin 后必须是全集
-    let (all, unknown) = permissions_of_roles(&db, &[role_a, PLATFORM_ROLE_SUPER_ADMIN])
+    let (all, unknown) = permissions_of_roles(&txn, &[role_a, PLATFORM_ROLE_SUPER_ADMIN])
         .await
         .expect("resolve with super-admin");
     assert!(unknown.is_empty());
@@ -248,20 +253,33 @@ async fn permissions_of_roles_unions_and_short_circuits_on_grants_all() {
     );
     assert_eq!(all, PermissionSet::all());
 
-    // 清理
-    for id in [role_a, role_b] {
-        let _ = platform_roles::Entity::delete_by_id(id).exec(&db).await;
-    }
+    txn.rollback().await.expect("rollback");
 }
 
-/// 让测试能改一行：`Model` → `ActiveModel`（避免为测试改业务代码可见性）。
-trait IntoActiveModelForTest {
-    fn into_active_model_for_test(self) -> platform_roles::ActiveModel;
-}
+/// orphan 权限进入第二个返回值，而**不**让整个解析失败。
+#[tokio::test]
+async fn permissions_of_roles_reports_unknown_without_failing() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let txn = begin_exclusive(&db).await;
 
-impl IntoActiveModelForTest for platform_roles::Model {
-    fn into_active_model_for_test(self) -> platform_roles::ActiveModel {
-        use sea_orm::IntoActiveModel;
-        self.into_active_model()
-    }
+    let role_id = insert_role(&txn, "perm-unknown-role").await;
+    grant(&txn, role_id, Permission::LogsRead).await;
+    platform_role_permissions::Entity::insert(platform_role_permissions::ActiveModel {
+        role_id: Set(role_id),
+        permission: Set("totally.unknown.permission".into()),
+    })
+    .exec(&txn)
+    .await
+    .expect("insert unknown permission");
+
+    let (set, unknown) = permissions_of_roles(&txn, &[role_id])
+        .await
+        .expect("解析不得因未知权限失败");
+    assert!(set.contains(Permission::LogsRead));
+    assert_eq!(set.len(), 1, "未知权限不得进入有效集合");
+    assert_eq!(unknown, vec!["totally.unknown.permission".to_string()]);
+
+    txn.rollback().await.expect("rollback");
 }

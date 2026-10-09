@@ -10,7 +10,7 @@ use crate::{
         FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
         sea_orm_utils::paginate_query,
     },
-    entity::{announcements, super_admin},
+    entity::announcements,
 };
 
 /// GET /api/announcements (player)
@@ -117,22 +117,15 @@ pub async fn create_announcement(
     let car = car.into_inner();
     let user = user.into_inner();
     let publisher_id = user.id;
+    // 发布者展示名快照直接取当前账号的用户名 —— 不再回查 super_admin：
+    // 统一账户后发布者就是 `users` 里的一行，且快照的意义正是「发布当时的名字」。
+    let publisher = user.username.clone();
     let admin_username = user.username.clone();
-
-    // Lookup superadmin username by publisher_id
-    let publisher = super_admin::Entity::find_by_id(publisher_id)
-        .one(ctx.db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound(format!(
-            "SuperAdmin {} 不存在",
-            publisher_id
-        )))?
-        .username;
 
     let announcement = announcements::ActiveModel {
         title: Set(car.title),
         content: Set(car.content),
-        publisher_id: Set(publisher_id),
+        publisher_id: Set(Some(publisher_id)),
         publisher: Set(publisher),
         ..Default::default()
     };

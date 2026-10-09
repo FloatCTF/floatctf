@@ -141,7 +141,8 @@ pub async fn run() -> Result<(), BootstrapError> {
     // 结构性字段（protected / grants_all）在每次启动时被校正回来，而不是只靠一次
     // migration 插入。orphan 权限（无法解析为 Permission 的 DB 字符串）只 WARN 并列出，
     // **不静默删除** —— 删除权限是安全相关动作，必须显式。
-    let role_sync = crate::modules::identity::authorization::ensure_builtin_roles(&db).await;
+    let role_sync =
+        crate::modules::identity::authorization::ensure_builtin_roles(db.get_ref()).await;
     if role_sync.has_conflicts() {
         error!("内置平台角色 reconcile 存在需要人工介入的问题（详见上方 error 日志）");
     }

@@ -25,13 +25,13 @@ pub enum Relation {
     )]
     AwdEvents,
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::RotatedBy",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SuperAdmin,
+    Users,
 }
 
 impl Related<super::awd_events::Entity> for Entity {
@@ -40,9 +40,9 @@ impl Related<super::awd_events::Entity> for Entity {
     }
 }
 
-impl Related<super::super_admin::Entity> for Entity {
+impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::SuperAdmin.def()
+        Relation::Users.def()
     }
 }
 

@@ -4,9 +4,20 @@
 //! 的**结构约束与引用行为**，而不是「表能建出来」这种弱断言。
 //!
 //! DB 不可达时软跳过（与仓库既有 DB-gated 测试一致）。
+//!
+//! # 并发与事务
+//!
+//! cargo 为每个测试文件起独立进程，`std::sync::Mutex` 只能串行单个二进制；
+//! 这些用例会在同一批表上开事务，跨文件并行会互相阻塞。因此用 Postgres
+//! **事务级 advisory lock** 串行（与 `migrate.sh` 同一思路），事务结束自动释放。
+//!
+//! 「预期失败」的断言必须用 `SAVEPOINT` 隔离：Postgres 事务一旦有语句报错就进入
+//! aborted 状态（25P02），后续语句全部被拒。
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
+
+const RBAC_TEST_LOCK_KEY: i64 = 1179204949;
 
 async fn connect_or_skip() -> Option<DatabaseConnection> {
     let url = std::env::var("DATABASE_URL")
@@ -20,7 +31,18 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
+/// 开一个持有跨进程排他锁的事务（结束即释放）。
+async fn begin_exclusive(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
+    let txn = db.begin().await.expect("begin exclusive txn");
+    txn.execute_unprepared(&format!(
+        "SELECT pg_advisory_xact_lock({RBAC_TEST_LOCK_KEY})"
+    ))
+    .await
+    .expect("acquire advisory xact lock");
+    txn
+}
+
+async fn scalar_i64<C: ConnectionTrait>(db: &C, sql: &str) -> i64 {
     let row = db
         .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
@@ -29,12 +51,43 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> i64 {
     row.try_get::<i64>("", "n").expect("column n")
 }
 
-async fn exec(db: &DatabaseConnection, sql: &str) -> Result<(), String> {
+async fn exec<C: ConnectionTrait>(db: &C, sql: &str) -> Result<(), String> {
     db.execute(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
+
+/// 断言一条语句被**拒绝**，并用 SAVEPOINT 保护外层事务不被 abort。
+async fn expect_rejected<C: ConnectionTrait>(txn: &C, sql: &str, why: &str) {
+    txn.execute_unprepared("SAVEPOINT expected_failure")
+        .await
+        .expect("create savepoint");
+    let result = exec(txn, sql).await;
+    txn.execute_unprepared("ROLLBACK TO SAVEPOINT expected_failure")
+        .await
+        .expect("rollback to savepoint");
+    assert!(result.is_err(), "{why}");
+}
+
+/// 断言一条语句被**接受**（同样用 SAVEPOINT 保护，便于后续继续断言）。
+async fn expect_accepted<C: ConnectionTrait>(txn: &C, sql: &str, why: &str) {
+    txn.execute_unprepared("SAVEPOINT expected_success")
+        .await
+        .expect("create savepoint");
+    match exec(txn, sql).await {
+        Ok(()) => {
+            txn.execute_unprepared("RELEASE SAVEPOINT expected_success")
+                .await
+                .expect("release savepoint");
+        }
+        Err(e) => panic!("{why}: {e}"),
+    }
+}
+
+// ============================================================================
+// 结构
+// ============================================================================
 
 #[tokio::test]
 async fn m1_tables_and_primary_keys_exist() {
@@ -42,7 +95,6 @@ async fn m1_tables_and_primary_keys_exist() {
         return;
     };
 
-    // 三张表都在
     let tables = scalar_i64(
         &db,
         "SELECT count(*)::bigint AS n FROM pg_tables
@@ -52,7 +104,6 @@ async fn m1_tables_and_primary_keys_exist() {
     .await;
     assert_eq!(tables, 3, "M1 必须建出三张 RBAC 表");
 
-    // 复合主键：两处必须是 (user_id, role_id) / (role_id, permission)
     let composite_pks = scalar_i64(
         &db,
         "SELECT count(*)::bigint AS n
@@ -65,7 +116,6 @@ async fn m1_tables_and_primary_keys_exist() {
     .await;
     assert_eq!(composite_pks, 2, "两张关联表必须是复合主键（天然去重）");
 
-    // platform_roles.key 唯一
     let unique_key = scalar_i64(
         &db,
         "SELECT count(*)::bigint AS n
@@ -76,96 +126,118 @@ async fn m1_tables_and_primary_keys_exist() {
     )
     .await;
     assert_eq!(unique_key, 1, "platform_roles.key 必须唯一");
+
+    let triggers = scalar_i64(
+        &db,
+        "SELECT count(*)::bigint AS n FROM pg_trigger
+          WHERE tgname = 'trg_platform_roles_updated_at' AND NOT tgisinternal",
+    )
+    .await;
+    assert_eq!(triggers, 1, "platform_roles 必须有 updated_at 触发器");
+
+    let nullable = scalar_i64(
+        &db,
+        "SELECT count(*)::bigint AS n FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='user_platform_roles'
+            AND column_name='granted_by' AND is_nullable='YES'",
+    )
+    .await;
+    assert_eq!(nullable, 1, "granted_by 必须可空（迁移授予无授予人）");
 }
+
+// ============================================================================
+// CHECK 约束
+// ============================================================================
 
 #[tokio::test]
 async fn m1_check_constraints_reject_invalid_values() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    // key 格式：大写 / 含空格 / 单字符 都必须被拒
     for bad in ["Super-Admin", "has space", "a", "9lead"] {
-        let sql = format!("INSERT INTO platform_roles (key, name) VALUES ('{bad}', 'x')");
-        assert!(
-            exec(&db, &sql).await.is_err(),
-            "platform_roles.key={bad:?} 必须被 CHECK 拒绝"
-        );
-    }
-
-    // name 不能为空白
-    assert!(
-        exec(
-            &db,
-            "INSERT INTO platform_roles (key, name) VALUES ('blank-name-test', '   ')"
+        expect_rejected(
+            &txn,
+            &format!("INSERT INTO platform_roles (key, name) VALUES ('{bad}', 'x')"),
+            &format!("platform_roles.key={bad:?} 必须被 CHECK 拒绝"),
         )
-        .await
-        .is_err(),
-        "空白 name 必须被 CHECK 拒绝"
-    );
-
-    // permission 格式
-    let role_id = Uuid::new_v4();
-    let setup = format!(
-        "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'fmt-check-role', 'Fmt')"
-    );
-    exec(&db, &setup).await.expect("insert temp role");
-
-    for bad in ["USERS.READ", "users", "users.", ".users", "users read"] {
-        let sql = format!(
-            "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', '{bad}')"
-        );
-        assert!(
-            exec(&db, &sql).await.is_err(),
-            "permission={bad:?} 必须被 CHECK 拒绝"
-        );
+        .await;
     }
 
-    // 合法值必须通过（含三段形态）
-    for good in ["users.read", "events.participants.manage", "terminal.open"] {
-        let sql = format!(
-            "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', '{good}')"
-        );
-        exec(&db, &sql)
-            .await
-            .unwrap_or_else(|e| panic!("permission={good:?} 必须通过 CHECK: {e}"));
-    }
-
-    // 同一 (role_id, permission) 重复插入必须被主键拒绝
-    assert!(
-        exec(
-            &db,
-            &format!(
-                "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', 'users.read')"
-            )
-        )
-        .await
-        .is_err(),
-        "重复 (role_id, permission) 必须被复合主键拒绝"
-    );
-
-    let _ = exec(
-        &db,
-        &format!("DELETE FROM platform_roles WHERE id = '{role_id}'"),
+    expect_rejected(
+        &txn,
+        "INSERT INTO platform_roles (key, name) VALUES ('blank-name-test', '   ')",
+        "空白 name 必须被 CHECK 拒绝",
     )
     .await;
+
+    let role_id = Uuid::new_v4();
+    expect_accepted(
+        &txn,
+        &format!(
+            "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'fmt-check-role', 'Fmt')"
+        ),
+        "临时角色必须可插入",
+    )
+    .await;
+
+    for bad in ["USERS.READ", "users", "users.", ".users", "users read"] {
+        expect_rejected(
+            &txn,
+            &format!(
+                "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', '{bad}')"
+            ),
+            &format!("permission={bad:?} 必须被 CHECK 拒绝"),
+        )
+        .await;
+    }
+
+    for good in ["users.read", "events.participants.manage", "terminal.open"] {
+        expect_accepted(
+            &txn,
+            &format!(
+                "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', '{good}')"
+            ),
+            &format!("permission={good:?} 必须通过 CHECK"),
+        )
+        .await;
+    }
+
+    expect_rejected(
+        &txn,
+        &format!(
+            "INSERT INTO platform_role_permissions (role_id, permission) VALUES ('{role_id}', 'users.read')"
+        ),
+        "重复 (role_id, permission) 必须被复合主键拒绝",
+    )
+    .await;
+
+    txn.rollback().await.expect("rollback");
 }
+
+// ============================================================================
+// 默认值 fail closed
+// ============================================================================
 
 #[tokio::test]
 async fn m1_defaults_are_fail_closed() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
     let role_id = Uuid::new_v4();
-    exec(
-        &db,
-        &format!("INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'defaults-test', 'Defaults')"),
+    expect_accepted(
+        &txn,
+        &format!(
+            "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'defaults-test', 'Defaults')"
+        ),
+        "临时角色必须可插入",
     )
-    .await
-    .expect("insert temp role");
+    .await;
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_string(
             DbBackend::Postgres,
             format!(
@@ -182,144 +254,166 @@ async fn m1_defaults_are_fail_closed() {
     );
     assert!(
         !row.try_get::<bool>("", "grants_all").unwrap(),
-        "自定义角色默认 grants_all=false（全权必须显式、只能由迁移/bootstrap 建立）"
+        "自定义角色默认 grants_all=false（全权只能由迁移/bootstrap 建立）"
     );
     assert_eq!(row.try_get::<String>("", "description").unwrap(), "");
 
-    let _ = exec(
-        &db,
-        &format!("DELETE FROM platform_roles WHERE id = '{role_id}'"),
-    )
-    .await;
+    txn.rollback().await.expect("rollback");
 }
+
+// ============================================================================
+// 外键引用行为
+// ============================================================================
 
 #[tokio::test]
 async fn m1_foreign_keys_cascade_as_designed() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    // 需要一个真实 users 行（user_platform_roles.user_id → users.id）
-    let user_row = db
+    let uniq = Uuid::new_v4().to_string();
+    txn.execute_unprepared(&format!(
+        "INSERT INTO users (username, nickname, password, email)
+         VALUES ('rbac-fk-{uniq}', 'rbac-fkn-{uniq}', 'hash', 'rbac-fk-{uniq}@example.invalid')"
+    ))
+    .await
+    .expect("insert temp user");
+    let user_id: Uuid = txn
         .query_one(Statement::from_string(
             DbBackend::Postgres,
-            // 建一个临时账号；nickname/email 唯一约束用随机后缀避开
-            "INSERT INTO users (username, nickname, password, email)
-             VALUES ('rbac-fk-' || substr(md5(random()::text), 1, 12),
-                     'rbac-fk-' || substr(md5(random()::text), 1, 12),
-                     '$argon2id$v=19$m=19456,t=2,p=1$fakesalt$fakehash',
-                     'rbac-fk-' || substr(md5(random()::text), 1, 12) || '@example.invalid')
-             RETURNING id"
-                .to_string(),
+            format!("SELECT id FROM users WHERE username = 'rbac-fk-{uniq}'"),
         ))
         .await
-        .expect("insert temp user")
-        .expect("returning row");
-    let user_id: Uuid = user_row.try_get("", "id").expect("id");
+        .expect("query user")
+        .expect("user row")
+        .try_get("", "id")
+        .expect("id");
 
     let role_id = Uuid::new_v4();
-    exec(
-        &db,
-        &format!("INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'cascade-test', 'Cascade')"),
-    )
+    txn.execute_unprepared(&format!(
+        "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'cascade-test', 'Cascade')"
+    ))
     .await
     .expect("insert temp role");
 
-    exec(
-        &db,
-        &format!(
-            "INSERT INTO user_platform_roles (user_id, role_id, granted_by)
-             VALUES ('{user_id}', '{role_id}', '{user_id}')"
-        ),
-    )
+    txn.execute_unprepared(&format!(
+        "INSERT INTO user_platform_roles (user_id, role_id, granted_by)
+         VALUES ('{user_id}', '{role_id}', '{user_id}')"
+    ))
     .await
     .expect("insert assignment");
 
-    // 删除角色 → 授予行级联删除
-    exec(
-        &db,
-        &format!("DELETE FROM platform_roles WHERE id = '{role_id}'"),
-    )
+    txn.execute_unprepared(&format!(
+        "DELETE FROM platform_roles WHERE id = '{role_id}'"
+    ))
     .await
     .expect("delete role");
-    let remaining = scalar_i64(
-        &db,
-        &format!(
-            "SELECT count(*)::bigint AS n FROM user_platform_roles WHERE user_id = '{user_id}'"
-        ),
-    )
-    .await;
-    assert_eq!(remaining, 0, "删除角色必须级联删除授予行");
+    assert_eq!(
+        scalar_i64(
+            &txn,
+            &format!(
+                "SELECT count(*)::bigint AS n FROM user_platform_roles WHERE user_id = '{user_id}'"
+            )
+        )
+        .await,
+        0,
+        "删除角色必须级联删除授予行"
+    );
 
-    // 再建一次授予，然后删除账号 → 授予行级联删除
-    exec(
-        &db,
-        &format!("INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'cascade-test2', 'Cascade2')"),
-    )
+    txn.execute_unprepared(&format!(
+        "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'cascade-test2', 'Cascade2')"
+    ))
     .await
     .expect("re-insert role");
-    exec(
-        &db,
-        &format!(
-            "INSERT INTO user_platform_roles (user_id, role_id, granted_by)
-             VALUES ('{user_id}', '{role_id}', '{user_id}')"
-        ),
-    )
+    txn.execute_unprepared(&format!(
+        "INSERT INTO user_platform_roles (user_id, role_id, granted_by)
+         VALUES ('{user_id}', '{role_id}', '{user_id}')"
+    ))
     .await
     .expect("re-insert assignment");
 
-    exec(&db, &format!("DELETE FROM users WHERE id = '{user_id}'"))
+    txn.execute_unprepared(&format!("DELETE FROM users WHERE id = '{user_id}'"))
         .await
         .expect("delete user");
-    let assignments = scalar_i64(
-        &db,
-        &format!(
-            "SELECT count(*)::bigint AS n FROM user_platform_roles WHERE role_id = '{role_id}'"
-        ),
-    )
-    .await;
-    assert_eq!(assignments, 0, "删除账号必须级联删除其角色授予");
+    assert_eq!(
+        scalar_i64(
+            &txn,
+            &format!(
+                "SELECT count(*)::bigint AS n FROM user_platform_roles WHERE role_id = '{role_id}'"
+            )
+        )
+        .await,
+        0,
+        "删除账号必须级联删除其角色授予"
+    );
 
-    let _ = exec(
-        &db,
-        &format!("DELETE FROM platform_roles WHERE id = '{role_id}'"),
-    )
-    .await;
+    txn.rollback().await.expect("rollback");
 }
 
+/// `granted_by` 在授予人被删除时**置空**（而不是级联删除整行授予）。
 #[tokio::test]
-async fn m1_updated_at_trigger_is_installed() {
+async fn m1_granted_by_set_null_on_grantor_delete() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
-    let triggers = scalar_i64(
-        &db,
-        "SELECT count(*)::bigint AS n
-           FROM pg_trigger
-          WHERE tgname = 'trg_platform_roles_updated_at'
-            AND NOT tgisinternal",
-    )
-    .await;
-    assert_eq!(triggers, 1, "platform_roles 必须有 updated_at 触发器");
-}
+    let uniq = Uuid::new_v4().to_string();
+    txn.execute_unprepared(&format!(
+        "INSERT INTO users (username, nickname, password, email)
+         VALUES ('grantor-{uniq}', 'grantorn-{uniq}', 'hash', 'grantor-{uniq}@example.invalid'),
+                ('grantee-{uniq}', 'granteen-{uniq}', 'hash', 'grantee-{uniq}@example.invalid')"
+    ))
+    .await
+    .expect("insert two users");
 
-/// `granted_by` 是**可空**的：迁移产生的内置授予没有人类授予人。
-#[tokio::test]
-async fn m1_granted_by_is_nullable() {
-    let Some(db) = connect_or_skip().await else {
-        return;
-    };
+    let ids: Vec<Uuid> = txn
+        .query_all(Statement::from_string(
+            DbBackend::Postgres,
+            format!("SELECT id FROM users WHERE username LIKE '%-{uniq}' ORDER BY username"),
+        ))
+        .await
+        .expect("query users")
+        .into_iter()
+        .map(|r| r.try_get::<Uuid>("", "id").unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    let (grantor, grantee) = (ids[0], ids[1]);
 
-    let nullable = scalar_i64(
-        &db,
-        "SELECT count(*)::bigint AS n
-           FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = 'user_platform_roles'
-            AND column_name = 'granted_by'
-            AND is_nullable = 'YES'",
-    )
-    .await;
-    assert_eq!(nullable, 1, "granted_by 必须可空（迁移授予无授予人）");
+    let role_id = Uuid::new_v4();
+    txn.execute_unprepared(&format!(
+        "INSERT INTO platform_roles (id, key, name) VALUES ('{role_id}', 'grantor-test', 'Grantor')"
+    ))
+    .await
+    .expect("insert role");
+    txn.execute_unprepared(&format!(
+        "INSERT INTO user_platform_roles (user_id, role_id, granted_by)
+         VALUES ('{grantee}', '{role_id}', '{grantor}')"
+    ))
+    .await
+    .expect("insert assignment");
+
+    txn.execute_unprepared(&format!("DELETE FROM users WHERE id = '{grantor}'"))
+        .await
+        .expect("delete grantor");
+
+    let row = txn
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            format!(
+                "SELECT granted_by FROM user_platform_roles WHERE user_id = '{grantee}' AND role_id = '{role_id}'"
+            ),
+        ))
+        .await
+        .expect("query assignment")
+        .expect("★ 删授予人不得删除授予行");
+    assert!(
+        row.try_get::<Option<Uuid>>("", "granted_by")
+            .unwrap()
+            .is_none(),
+        "granted_by 必须被置空而不是级联删除"
+    );
+
+    txn.rollback().await.expect("rollback");
 }

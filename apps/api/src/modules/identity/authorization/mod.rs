@@ -26,7 +26,8 @@ pub use crate::core::security::jwt::{AuthClaims, Role};
 
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ColumnTrait, Condition, DbConn, EntityTrait, PaginatorTrait, QueryFilter, Set, TryInsert,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
+    TryInsert,
 };
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -94,7 +95,7 @@ impl BuiltinRoleSync {
 /// 3. 存在且结构字段正确 → **完全不动**（连 `updated_at` 都不碰，避免每次启动都写库）；
 /// 4. 同 key 但不同 id → 记入 `conflicts`（**不**覆盖、不删除，交人工决策）；
 /// 5. `name` / `description` **从不**被覆盖（展示字段允许运维修改）。
-pub async fn ensure_builtin_roles(db: &DbConn) -> BuiltinRoleSync {
+pub async fn ensure_builtin_roles<C: ConnectionTrait>(db: &C) -> BuiltinRoleSync {
     let mut report = BuiltinRoleSync::default();
 
     for role in BUILTIN_ROLES {
@@ -223,7 +224,7 @@ pub async fn ensure_builtin_roles(db: &DbConn) -> BuiltinRoleSync {
 
 /// 扫描 `platform_role_permissions`，返回无法解析为 [`crate::core::permission::Permission`]
 /// 的 `(role_key, permission)` 列表（按 role_key 排序，输出确定性）。
-pub async fn detect_orphan_permissions(db: &DbConn) -> Vec<(String, String)> {
+pub async fn detect_orphan_permissions<C: ConnectionTrait>(db: &C) -> Vec<(String, String)> {
     let roles = match platform_roles::Entity::find().all(db).await {
         Ok(rows) => rows,
         Err(e) => {
@@ -264,8 +265,8 @@ pub async fn detect_orphan_permissions(db: &DbConn) -> Vec<(String, String)> {
 /// - 无法解析的字符串进入第二个返回值（调用方决定 WARN 还是拒绝）。
 ///
 /// 这是「权限每请求从 DB 解析」的唯一入口；第一版**不做缓存**。
-pub async fn permissions_of_roles(
-    db: &DbConn,
+pub async fn permissions_of_roles<C: ConnectionTrait>(
+    db: &C,
     role_ids: &[Uuid],
 ) -> Result<(PermissionSet, Vec<String>), sea_orm::DbErr> {
     if role_ids.is_empty() {
@@ -292,7 +293,10 @@ pub async fn permissions_of_roles(
 }
 
 /// 读取某账号的角色 id 列表（`user_platform_roles`）。
-pub async fn role_ids_of_user(db: &DbConn, user_id: Uuid) -> Result<Vec<Uuid>, sea_orm::DbErr> {
+pub async fn role_ids_of_user<C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+) -> Result<Vec<Uuid>, sea_orm::DbErr> {
     use crate::entity::user_platform_roles;
     let rows = user_platform_roles::Entity::find()
         .filter(user_platform_roles::Column::UserId.eq(user_id))

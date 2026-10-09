@@ -13,14 +13,14 @@ use std::path::Path;
 
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, QueryFilter, TransactionTrait,
 };
 use serde_json::json;
 use uuid::Uuid;
 
 use floatctf::api::AppError;
 use floatctf::entity::{event_writeup, events, users};
-use floatctf::infrastructure::WebDb;
 use floatctf::modules::identity::administrator::dto::SuperAdminDto;
 use floatctf::modules::identity::user::dto::UsersDto;
 use floatctf::modules::platform::files::download::resolve_private_artifact;
@@ -215,6 +215,25 @@ fn sdk_api_modules_do_not_log_responses() {
 // 3) /api/admin/download 对象级授权
 // ============================================================================
 
+/// 跨**进程**串行：cargo 会为每个测试文件启动独立进程，`std::sync::Mutex` 只能在
+/// 单个二进制内串行；而这些用例会在同一批表上开事务、甚至执行 DDL
+/// （`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 会取 AccessExclusiveLock），
+/// 跨文件并行会互相阻塞直至超时。
+///
+/// 用 Postgres 事务级 advisory lock 串行（与 `migrate.sh` 同一思路），
+/// 事务结束自动释放，无需手工 unlock。
+const RBAC_TEST_LOCK_KEY: i64 = 1179204949;
+
+async fn begin_exclusive(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
+    let txn = db.begin().await.expect("begin exclusive txn");
+    txn.execute_unprepared(&format!(
+        "SELECT pg_advisory_xact_lock({RBAC_TEST_LOCK_KEY})"
+    ))
+    .await
+    .expect("acquire advisory xact lock");
+    txn
+}
+
 async fn connect_or_skip() -> Option<DatabaseConnection> {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db".into());
@@ -227,9 +246,8 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-async fn resolve(db: &DatabaseConnection, key: &str) -> Result<Uuid, AppError> {
-    let web_db: WebDb = actix_web::web::Data::new(db.clone());
-    resolve_private_artifact(&web_db, key).await
+async fn resolve<C: sea_orm::ConnectionTrait>(db: &C, key: &str) -> Result<Uuid, AppError> {
+    resolve_private_artifact(db, key).await
 }
 
 #[tokio::test]
@@ -237,6 +255,7 @@ async fn download_rejects_path_traversal_and_unknown_prefixes() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
     // 形状闸门：这些在触库之前就应被拒
     for key in [
@@ -247,7 +266,7 @@ async fn download_rejects_path_traversal_and_unknown_prefixes() {
         "writeups//a.pdf",
         "",
     ] {
-        let err = resolve(&db, key).await.expect_err("must be rejected");
+        let err = resolve(&txn, key).await.expect_err("must be rejected");
         assert!(
             matches!(err, AppError::NotFound(_)),
             "key {key:?} must yield NotFound, got {err:?}"
@@ -262,7 +281,7 @@ async fn download_rejects_path_traversal_and_unknown_prefixes() {
         // AWDP source.tar.gz 前缀不属于本端点可达内容
         &format!("gameboxes/{}/awdp/deadbeef/source.tar.gz", Uuid::new_v4()),
     ] {
-        let err = resolve(&db, key).await.expect_err("must be rejected");
+        let err = resolve(&txn, key).await.expect_err("must be rejected");
         assert!(
             matches!(err, AppError::NotFound(_)),
             "key {key:?} must yield NotFound, got {err:?}"
@@ -275,13 +294,14 @@ async fn download_resolves_db_anchored_writeup_key() {
     let Some(db) = connect_or_skip().await else {
         return;
     };
+    let txn = begin_exclusive(&db).await;
 
     // 取任一既有赛事与用户作为锚点；没有就跳过（空库环境）。
-    let Some(event) = events::Entity::find().one(&db).await.ok().flatten() else {
+    let Some(event) = events::Entity::find().one(&txn).await.ok().flatten() else {
         eprintln!("skip download_resolves_db_anchored_writeup_key: no events in DB");
         return;
     };
-    let Some(user) = users::Entity::find().one(&db).await.ok().flatten() else {
+    let Some(user) = users::Entity::find().one(&txn).await.ok().flatten() else {
         eprintln!("skip download_resolves_db_anchored_writeup_key: no users in DB");
         return;
     };
@@ -292,7 +312,7 @@ async fn download_resolves_db_anchored_writeup_key() {
     // 清理可能的历史残留（同一 key 不会重复，但保持幂等）
     let _ = event_writeup::Entity::delete_many()
         .filter(event_writeup::Column::FileUrl.eq(key.clone()))
-        .exec(&db)
+        .exec(&txn)
         .await;
 
     event_writeup::ActiveModel {
@@ -302,11 +322,11 @@ async fn download_resolves_db_anchored_writeup_key() {
         file_url: Set(key.clone()),
         created_at: Set(Utc::now().into()),
     }
-    .insert(&db)
+    .insert(&txn)
     .await
     .expect("insert test writeup row");
 
-    let resolved = resolve(&db, &key).await.expect("known key must resolve");
+    let resolved = resolve(&txn, &key).await.expect("known key must resolve");
     assert_eq!(
         resolved, event.id,
         "DB-anchored key must resolve to its owning event"
@@ -315,12 +335,12 @@ async fn download_resolves_db_anchored_writeup_key() {
     // 清理
     event_writeup::Entity::delete_many()
         .filter(event_writeup::Column::FileUrl.eq(key.clone()))
-        .exec(&db)
+        .exec(&txn)
         .await
         .expect("cleanup test writeup row");
 
     // 清理后同一 key 必须重新变成 NotFound（证明锚点是 DB 行，而不是字符串形状）
-    let err = resolve(&db, &key)
+    let err = resolve(&txn, &key)
         .await
         .expect_err("deleted anchor must not resolve");
     assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");

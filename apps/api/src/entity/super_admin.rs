@@ -20,40 +20,8 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::announcements::Entity")]
-    Announcements,
-    #[sea_orm(has_many = "super::awd_internal_token_rotations::Entity")]
-    AwdInternalTokenRotations,
-    #[sea_orm(has_many = "super::awd_reset_records::Entity")]
-    AwdResetRecords,
-    #[sea_orm(has_many = "super::awd_score_events::Entity")]
-    AwdScoreEvents,
     #[sea_orm(has_many = "super::logs::Entity")]
     Logs,
-}
-
-impl Related<super::announcements::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Announcements.def()
-    }
-}
-
-impl Related<super::awd_internal_token_rotations::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdInternalTokenRotations.def()
-    }
-}
-
-impl Related<super::awd_reset_records::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdResetRecords.def()
-    }
-}
-
-impl Related<super::awd_score_events::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AwdScoreEvents.def()
-    }
 }
 
 impl Related<super::logs::Entity> for Entity {

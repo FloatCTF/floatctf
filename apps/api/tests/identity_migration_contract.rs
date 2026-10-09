@@ -36,6 +36,21 @@ fn serialize() -> std::sync::MutexGuard<'static, ()> {
 const ROLE_SUPER_ADMIN: &str = "00000000-0000-0000-0000-000000000000";
 const NIL_USER: &str = "00000000-0000-0000-0000-000000000000";
 
+const RBAC_TEST_LOCK_KEY: i64 = 1179204949;
+
+/// 跨**进程**串行：cargo 为每个测试文件起独立进程，而这些用例会在同一批表上
+/// 开事务（甚至执行 DDL，取 AccessExclusiveLock），跨文件并行会互相阻塞直至超时。
+/// 用 Postgres 事务级 advisory lock 串行（与 `migrate.sh` 同一思路），事务结束自动释放。
+async fn begin_exclusive(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
+    let txn = db.begin().await.expect("begin exclusive txn");
+    txn.execute_unprepared(&format!(
+        "SELECT pg_advisory_xact_lock({RBAC_TEST_LOCK_KEY})"
+    ))
+    .await
+    .expect("acquire advisory xact lock");
+    txn
+}
+
 async fn connect_or_skip() -> Option<DatabaseConnection> {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/floatctf_db".into());
@@ -51,7 +66,7 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 /// 在一个事务里构造「干净起点」：删除 M3 已复制的 nil-UUID 账号，
 /// 让 `super_admin` 与 `users` 在 id 上不相交，从而能命中后续检查。
 async fn begin_disjoint_txn(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
-    let txn = db.begin().await.expect("begin txn");
+    let txn = begin_exclusive(&db).await;
     txn.execute_unprepared(&format!("DELETE FROM users WHERE id = '{NIL_USER}'"))
         .await
         .expect("delete merged nil-uuid account inside txn");
@@ -182,7 +197,7 @@ async fn m2_columns_exist_with_fail_closed_defaults() {
     );
 
     // 新建账号的默认值必须是「可用」的 active / 0
-    let txn = db.begin().await.expect("begin");
+    let txn = begin_exclusive(&db).await;
     let uniq = Uuid::new_v4().to_string();
     txn.execute_unprepared(&format!(
         "INSERT INTO users (username, nickname, password, email)

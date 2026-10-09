@@ -59,13 +59,13 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::RequestedByAdmin",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SuperAdmin,
+    Users2,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::RequestedBy",
@@ -73,7 +73,7 @@ pub enum Relation {
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    Users,
+    Users1,
 }
 
 impl Related<super::awd_events::Entity> for Entity {
@@ -97,18 +97,6 @@ impl Related<super::event_gamebox_instances::Entity> for Entity {
 impl Related<super::event_teams::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EventTeams.def()
-    }
-}
-
-impl Related<super::super_admin::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::SuperAdmin.def()
-    }
-}
-
-impl Related<super::users::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Users.def()
     }
 }
 

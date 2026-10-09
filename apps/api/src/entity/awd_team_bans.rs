@@ -58,21 +58,21 @@ pub enum Relation {
     )]
     EventTeams,
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::BannedBy",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SuperAdmin2,
+    Users2,
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::UnbannedBy",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SuperAdmin1,
+    Users1,
 }
 
 impl Related<super::awd_events::Entity> for Entity {

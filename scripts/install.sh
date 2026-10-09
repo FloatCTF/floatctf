@@ -989,6 +989,15 @@ RUN chmod 0755 /usr/local/bin/floatctf \
     && mkdir -p /var/lib/floatctf/runtime \
     && chown 65532:65532 /var/lib/floatctf/runtime
 
+# 为容器的数值身份建一个命名用户：否则 Web 终端里的 shell 解析不到 uid，bash 会打印
+# "I have no name!"，且 HOME 缺失会让不少工具报错。gid/uid 与 compose 的
+# ${FLOATCTF_UID:-65532}:${FLOATCTF_GID} 对齐（宿主上仍只建 floatctf 组）。
+RUN groupadd --gid 65532 fctf \
+    && useradd --uid 65532 --gid 65532 --home-dir /var/lib/floatctf/runtime \
+               --shell /bin/bash --no-create-home fctf
+
+ENV HOME=/var/lib/floatctf/runtime
+
 WORKDIR /var/lib/floatctf/runtime
 USER 65532:65532
 

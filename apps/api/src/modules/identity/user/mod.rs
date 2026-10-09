@@ -1,5 +1,6 @@
 //! 用户资料（选手）与管理端用户 CRUD。
 
+use crate::core::permission::guards::{UsersManageGuard, UsersReadGuard};
 pub mod dto;
 pub use dto::UsersDto;
 
@@ -7,7 +8,7 @@ use std::str::FromStr;
 
 use crate::api::dto::map_dto_vec;
 
-use crate::api::extractor::auth::{SuperAdminJwtGuard, UserJwtGuard};
+use crate::api::extractor::auth::{RequirePermission, UserJwtGuard};
 use crate::api::prelude::*;
 use crate::api::{FilterMapping, dto::DeleteItemsRequest, sea_orm_utils::query_query};
 use crate::entity::users;
@@ -97,11 +98,11 @@ pub struct CreateUserRequest {
 /// POST /api/admin/users
 #[post("")]
 pub async fn admin_create_user(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<UsersManageGuard>,
     ctx: ReqCtx,
     cur: Json<CreateUserRequest>,
 ) -> UniResult<UsersDto> {
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let cur = cur.into_inner();
 
     super::validate_account_fields(&cur.username, &cur.password, &cur.email)?;
@@ -139,10 +140,10 @@ pub async fn admin_create_user(
             "INFO",
             "USERS",
             "CREATE",
-            format!("{} 创建用户: {}", admin.username, user.username).as_str(),
+            format!("{} 创建用户: {}", admin.username(), user.username).as_str(),
             json!({"username": user.username}),
             None,
-            admin.id.into(),
+            admin.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -161,12 +162,12 @@ pub struct PathUserRequest {
 /// PATCH /api/admin/users/{user_id}
 #[patch("/{user_id}")]
 pub async fn admin_patch_user(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<UsersManageGuard>,
     ctx: ReqCtx,
     pur: Json<PathUserRequest>,
     user_id: Path<Uuid>,
 ) -> UniResult<UsersDto> {
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let pur = pur.into_inner();
     let user_id = user_id.into_inner();
     let user = users::Entity::find_by_id(user_id)
@@ -231,10 +232,10 @@ pub async fn admin_patch_user(
             "INFO",
             "USERS",
             "UPDATE",
-            format!("{} 更新用户: {}", admin.username, user.username).as_str(),
+            format!("{} 更新用户: {}", admin.username(), user.username).as_str(),
             json!({"user_id": user.id}),
             None,
-            admin.id.into(),
+            admin.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -245,7 +246,7 @@ pub async fn admin_patch_user(
 /// GET /api/admin/users
 #[get("")]
 pub async fn admin_get_users(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<UsersReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<UsersDto>> {
@@ -291,7 +292,7 @@ pub async fn admin_get_users(
 /// GET /api/admin/users/{id}
 #[get("/{id}")]
 pub async fn admin_get_user(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<UsersReadGuard>,
     ctx: ReqCtx,
     user_id: Path<Uuid>,
 ) -> UniResult<UsersDto> {
@@ -307,11 +308,11 @@ pub async fn admin_get_user(
 /// DELETE /api/admin/users
 #[delete("")]
 pub async fn admin_delete_user(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<UsersManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let dir = dir.into_inner();
     let deleted_count = users::Entity::delete_many()
         .filter(users::Column::Id.is_in(dir.id_list))
@@ -324,10 +325,10 @@ pub async fn admin_delete_user(
             "INFO",
             "USERS",
             "DELETE",
-            format!("{} 删除 {} 个用户", admin.username, deleted_count).as_str(),
+            format!("{} 删除 {} 个用户", admin.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
             None,
-            admin.id.into(),
+            admin.id().into(),
             Some(&ctx.req),
         )
         .await;

@@ -2,7 +2,11 @@ use crate::api::dto::map_dto_vec;
 
 use super::scheduled_tasks_dto::ScheduledTasksDto;
 use crate::{
-    api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
+    api::{
+        FilterMapping, dto::DeleteItemsRequest, extractor::auth::RequirePermission, prelude::*,
+        sea_orm_utils::query_query,
+    },
+    core::permission::guards::SchedulerManageGuard,
     core::system_ids::scheduled_task_system_ids,
     entity::scheduled_tasks,
     scheduler::TaskKey,
@@ -82,11 +86,11 @@ fn validate_scheduled_task_fields(
 /// POST /api/admin/scheduled_tasks
 #[post("")]
 pub async fn create_scheduled_task(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     ctr: Json<CreateScheduledTaskRequest>,
 ) -> UniResult<ScheduledTasksDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let ctr = ctr.into_inner();
     validate_scheduled_task_fields(
         Some(&ctr.task_name),
@@ -124,10 +128,10 @@ pub async fn create_scheduled_task(
             "INFO",
             "SCHEDULED_TASKS",
             "CREATE",
-            format!("{} 创建定时任务: {}", user.username, task.task_name).as_str(),
+            format!("{} 创建定时任务: {}", user.username(), task.task_name).as_str(),
             json!({"task_name": task.task_name, "task_key": task.task_key}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -155,12 +159,12 @@ pub struct PatchScheduledTaskRequest {
 /// PATCH /api/admin/scheduled_tasks/{task_id}
 #[patch("/{task_id}")]
 pub async fn patch_scheduled_task(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     task_id: Path<Uuid>,
     ptr: Json<PatchScheduledTaskRequest>,
 ) -> UniResult<ScheduledTasksDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let task_id = task_id.into_inner();
     let ptr = ptr.into_inner();
 
@@ -249,7 +253,7 @@ pub async fn patch_scheduled_task(
 /// GET /api/admin/scheduled_tasks
 #[get("")]
 pub async fn get_scheduled_tasks(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<ScheduledTasksDto>> {
@@ -345,7 +349,7 @@ pub async fn get_scheduled_tasks(
 /// GET /api/admin/scheduled_tasks/{task_id}
 #[get("/{task_id}")]
 pub async fn get_scheduled_task(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     task_id: Path<Uuid>,
 ) -> UniResult<ScheduledTasksDto> {
@@ -361,11 +365,11 @@ pub async fn get_scheduled_task(
 /// POST /api/admin/scheduled_tasks/{task_id}/run
 #[post("/{task_id}/run")]
 pub async fn run_scheduled_task(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     task_id: Path<Uuid>,
 ) -> UniResult<ScheduledTasksDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let task_id = task_id.into_inner();
 
     let task = scheduled_tasks::Entity::find_by_id(task_id)
@@ -387,10 +391,10 @@ pub async fn run_scheduled_task(
             "INFO",
             "SCHEDULED_TASKS",
             "RUN",
-            format!("{} 手动执行定时任务: {}", user.username, task.task_name).as_str(),
+            format!("{} 手动执行定时任务: {}", user.username(), task.task_name).as_str(),
             json!({"task_id": task.id}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -401,11 +405,11 @@ pub async fn run_scheduled_task(
 /// DELETE /api/admin/scheduled_tasks
 #[delete("")]
 pub async fn delete_scheduled_task(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SchedulerManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
     let mut deleted_count = 0;
     for task_id in dir.id_list {
@@ -429,10 +433,10 @@ pub async fn delete_scheduled_task(
             "INFO",
             "SCHEDULED_TASKS",
             "DELETE",
-            format!("{} 删除 {} 个定时任务", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 个定时任务", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

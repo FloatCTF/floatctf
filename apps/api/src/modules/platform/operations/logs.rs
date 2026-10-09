@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::LogsReadGuard;
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -13,7 +15,7 @@ use crate::{
 /// GET /api/admin/logs
 #[get("")]
 pub async fn get_logs(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<LogsReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<LogsDto>> {
@@ -73,7 +75,7 @@ pub async fn get_logs(
 /// GET /api/admin/logs/{log_id}
 #[get("/{log_id}")]
 pub async fn get_log(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<LogsReadGuard>,
     ctx: ReqCtx,
     log_id: Path<Uuid>,
 ) -> UniResult<LogsDto> {

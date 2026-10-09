@@ -2,6 +2,8 @@
 //!
 //! 只读聚合运营人员一屏所需信息。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::SystemReadGuard;
 use std::collections::HashMap;
 
 use actix_web::get;
@@ -10,7 +12,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::api::{extractor::auth::SuperAdminJwtGuard, prelude::*};
+use crate::api::prelude::*;
 use crate::entity::{
     announcements, awd_events, challenges, discussions, event_instances, events, gameboxes,
     jeopardy_challenge_solves, logs, scheduled_tasks, sea_orm_active_enums::AwdEventStatus, users,
@@ -132,7 +134,7 @@ pub struct SignupActivityDto {
 /// GET /api/admin/dashboard/summary
 #[get("/summary")]
 pub async fn get_dashboard_summary(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<SystemReadGuard>,
     ctx: ReqCtx,
 ) -> UniResult<DashboardSummaryDto> {
     let db = ctx.db.get_ref();

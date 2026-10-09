@@ -6,6 +6,8 @@
 //! floatctf-content 完全相同的算法派生（此处没有包目录，故以 name 充当
 //! content id；绝不自动加后缀——身份歧义视为显式错误）。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{ChallengesManageGuard, ChallengesReadGuard};
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::{
     api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
@@ -25,11 +27,11 @@ pub struct CreateChallengeRequest {
 // POST /api/admin/challenges
 #[post("")]
 pub async fn create_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     ccr: Json<CreateChallengeRequest>,
 ) -> UniResult<ChallengesDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let ccr = ccr.into_inner();
 
     if ccr.name.trim().is_empty() {
@@ -74,10 +76,10 @@ pub async fn create_challenge(
             "INFO",
             "CHALLENGES",
             "CREATE",
-            format!("{} 创建题目: {}", user.username, challenge.name).as_str(),
+            format!("{} 创建题目: {}", user.username(), challenge.name).as_str(),
             json!({"name": challenge.name, "category": challenge.category, "safe_name": challenge.safe_name}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -114,12 +116,12 @@ pub struct PatchChallengeRequest {
 /// PATCH /api/admin/challenges/{challenge_id}
 #[patch("/{challenge_id}")]
 pub async fn patch_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     pcr: Json<PatchChallengeRequest>,
     challenge_id: Path<Uuid>,
 ) -> UniResult<ChallengesDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let pcr = pcr.into_inner();
     let challenge_id = challenge_id.into_inner();
     let challenge = Challenges::find_by_id(challenge_id)
@@ -199,10 +201,10 @@ pub async fn patch_challenge(
             "INFO",
             "CHALLENGES",
             "UPDATE",
-            format!("{} 更新题目: {}", user.username, challenge.name).as_str(),
+            format!("{} 更新题目: {}", user.username(), challenge.name).as_str(),
             json!({"challenge_id": challenge.id}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -215,7 +217,7 @@ pub async fn patch_challenge(
 /// GET /api/admin/challenges
 #[get("")]
 pub async fn get_challenges(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<ChallengesReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<ChallengesDto>> {
@@ -277,7 +279,7 @@ pub async fn get_challenges(
 /// GET /api/admin/challenges/{challenge_id}
 #[get("/{challenge_id}")]
 pub async fn get_challenge(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<ChallengesReadGuard>,
     ctx: ReqCtx,
     id: Path<Uuid>,
 ) -> UniResult<ChallengesDto> {
@@ -293,11 +295,11 @@ pub async fn get_challenge(
 /// DELETE /api/admin/challenges
 #[delete("")]
 pub async fn delete_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
 
     let mut deleted_count = 0;
@@ -327,10 +329,10 @@ pub async fn delete_challenge(
             "INFO",
             "CHALLENGES",
             "DELETE",
-            format!("{} 删除 {} 道题目", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

@@ -435,3 +435,185 @@ async fn permission_catalog_shape_is_pinned() {
         );
     }
 }
+
+// ============================================================================
+// 角色管理 API 的实现期契约
+// ============================================================================
+//
+// 这些 handler 依赖 `ReqCtx`（含 `WebDocker` / `WebRustfs`），因此**无法**在进程内
+// `init_service` 里构造 —— 那需要真实的 Docker 与 RustFS 连接。本机也禁止启动
+// 开发 API（会与生产争抢宿主资源），所以它们的 HTTP 级断言属于 Wave 11 的
+// live 测试，在本环境会如实记为 **SKIP**，而不是 PASS。
+//
+// 这里用**源码守卫**锁定那些无法用运行期断言表达、且一旦改错就会静默放开授权的
+// 结构性决定，并用 DB 断言锁定 DTO 的语义契约。
+
+/// protected 角色的**结构性**变更必须是 409 Conflict，不能是 403。
+///
+/// 403 会让前端显示「你没有权限」，但真实原因是「这个内置角色不能这样改」——
+/// 两者的用户引导完全不同。这条断言防止未来有人「顺手」改回 Forbidden。
+#[test]
+fn protected_role_mutation_is_conflict_not_forbidden() {
+    let src = include_str!("../src/modules/identity/roles/mod.rs");
+
+    let protected_permissions_branch = src
+        .split("内置角色的权限集不可修改")
+        .next()
+        .expect("anchor");
+    assert!(
+        protected_permissions_branch
+            .rsplit("return Err(")
+            .next()
+            .expect("branch")
+            .contains("AppError::Conflict"),
+        "protected 角色的权限集变更必须是 409 Conflict"
+    );
+
+    let protected_delete_branch = src.split("系统内置角色不可删除").next().expect("anchor");
+    assert!(
+        protected_delete_branch
+            .rsplit("return Err(")
+            .next()
+            .expect("branch")
+            .contains("AppError::Conflict"),
+        "protected 角色删除必须是 409 Conflict"
+    );
+
+    // 反向断言：这两处不得再用 Forbidden
+    for message in ["内置角色的权限集不可修改", "系统内置角色不可删除"] {
+        let before = src.split(message).next().expect("anchor");
+        let snippet = before.rsplit("return Err(").next().expect("branch");
+        assert!(
+            !snippet.contains("AppError::Forbidden"),
+            "{message} 不得使用 403：语义是「与内置不变式冲突」而非「你没权限」"
+        );
+    }
+}
+
+/// 账号角色读取必须用 `users.read` —— 与 `users.read` 的权限说明
+/// 「查看账号列表、详情**与其角色**」保持一致；用 `roles.read` 会自相矛盾。
+#[test]
+fn user_roles_read_uses_users_read() {
+    let src = include_str!("../src/modules/identity/roles/mod.rs");
+    let handler = src
+        .split("pub async fn get_user_roles(")
+        .nth(1)
+        .expect("get_user_roles")
+        .split("pub async fn set_user_roles(")
+        .next()
+        .expect("body");
+    assert!(
+        handler.contains("RequirePermission<UsersReadGuard>"),
+        "get_user_roles 必须用 users.read"
+    );
+    assert!(
+        !handler.contains("RequirePermission<RolesReadGuard>"),
+        "get_user_roles 不得用 roles.read（与权限说明冲突）"
+    );
+}
+
+/// 角色详情端点必须存在、按 `RolesReadGuard` 守卫、且真的被注册。
+#[test]
+fn role_detail_endpoint_is_registered() {
+    let src = include_str!("../src/modules/identity/roles/mod.rs");
+    let handler = src
+        .split("pub async fn get_role(")
+        .nth(1)
+        .expect("get_role 必须存在（platform-permissions.md 定义了该端点）");
+    assert!(
+        handler.contains("RequirePermission<RolesReadGuard>"),
+        "角色详情必须按 roles.read 守卫"
+    );
+    assert!(
+        src.contains("cfg.service(get_role);"),
+        "get_role 必须被 configure_role_routes 注册"
+    );
+}
+
+/// 角色编辑的三个变更端点都必须按 `roles.manage` 守卫（不能只读权限就放行写入）。
+#[test]
+fn role_mutations_require_roles_manage() {
+    let src = include_str!("../src/modules/identity/roles/mod.rs");
+    for handler in ["create_role", "patch_role", "delete_role", "set_user_roles"] {
+        let body = src
+            .split(&format!("pub async fn {handler}("))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{handler} 必须存在"))
+            .split("\n}")
+            .next()
+            .expect("body");
+        assert!(
+            body.contains("RequirePermission<RolesManageGuard>"),
+            "{handler} 必须按 roles.manage 守卫"
+        );
+    }
+}
+
+/// `grants_all` 角色**不枚举**权限（它的权限来自短路，不是行集合）。
+///
+/// 这是 DTO 的语义契约：如果 `permissions` 里列出了 29 条，UI 会误以为
+/// 「这个角色的权限是这 29 条」，从而在将来新增权限时显示错误的权限集。
+#[tokio::test]
+async fn grants_all_role_reports_no_explicit_permissions() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let txn = begin_exclusive(&db).await;
+    ensure_builtin_roles(&txn).await;
+
+    let role = platform_roles::Entity::find_by_id(PLATFORM_ROLE_SUPER_ADMIN)
+        .one(&txn)
+        .await
+        .expect("query")
+        .expect("builtin role");
+    assert!(role.grants_all, "内置 super-admin 必须是 grants_all");
+
+    let explicit = platform_role_permissions::Entity::find()
+        .filter(platform_role_permissions::Column::RoleId.eq(role.id))
+        .all(&txn)
+        .await
+        .expect("query permissions");
+    assert!(
+        explicit.is_empty(),
+        "★ grants_all 角色不得依赖权限行（否则新增权限时会漏掉、超管静默失去能力）"
+    );
+
+    // 而它的**有效权限**必须是全集
+    let (set, _) =
+        floatctf::modules::identity::authorization::permissions_of_roles(&txn, &[role.id])
+            .await
+            .expect("resolve");
+    assert_eq!(
+        set.len(),
+        Permission::ALL.len(),
+        "grants_all 必须短路为全集"
+    );
+
+    txn.rollback().await.expect("rollback");
+}
+
+/// 内置角色**恰好一个**，且其余四个域没有内置角色（其余为可编辑模板）。
+#[tokio::test]
+async fn only_super_admin_role_is_builtin() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let txn = begin_exclusive(&db).await;
+    ensure_builtin_roles(&txn).await;
+
+    let protected: Vec<String> = platform_roles::Entity::find()
+        .filter(platform_roles::Column::Protected.eq(true))
+        .all(&txn)
+        .await
+        .expect("query")
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    assert_eq!(
+        protected,
+        vec!["super-admin".to_string()],
+        "第一版只内置 super-admin（修订 1）：其余角色是 UI 模板，不 seed、不 protected"
+    );
+
+    txn.rollback().await.expect("rollback");
+}

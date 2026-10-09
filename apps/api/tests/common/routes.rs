@@ -458,6 +458,13 @@ pub fn admin_routes() -> Vec<Route> {
         },
         // [identity/roles]
         Route {
+            method: Method::Get,
+            path: p("/api/admin/roles/{role_id}"),
+            auth: Auth::PermissionRequired,
+            json_body: false,
+        },
+        // [identity/roles]
+        Route {
             method: Method::Post,
             path: "/api/admin/roles",
             auth: Auth::PermissionRequired,
@@ -1570,7 +1577,7 @@ pub fn admin_routes() -> Vec<Route> {
 /// **新增或删除 admin 路由时必须同步更新本常量与 [`admin_routes`]**。
 /// 用「精确钉住」而不是 `>= N`：后者对**删除**完全无感（历史脚本曾用
 /// `assert!(a.len() >= 60)`，而当时实际有 94 条且漏掉了整个 terminal / AWD / AWDP 面）。
-pub const ADMIN_ROUTE_COUNT: usize = 161;
+pub const ADMIN_ROUTE_COUNT: usize = 162;
 
 /// 各域条数：`(域, 条数, 最小要求)`。整块域消失会被 [`admin_route_domains_meet_minimums`] 抓到。
 pub fn admin_route_domains() -> Vec<(&'static str, usize, usize)> {

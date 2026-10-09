@@ -6,6 +6,8 @@
 //! 查看某赛事下的实例，不再提供全局实例列表。
 //! 刻意不返回 flag（管理端列表不再展示实例 flag）。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::EventsReadGuard;
 use std::{collections::HashMap, str::FromStr};
 
 use sea_orm::entity::prelude::DateTimeWithTimeZone;
@@ -75,7 +77,7 @@ fn uuid_or_nil(v: &str) -> Uuid {
 /// GET /api/admin/events/{event_id}/instances —— 某赛事的实例列表（admin 赛事 Instance Tab）。
 #[get("/{event_id}/instances")]
 pub async fn get_event_instances(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,

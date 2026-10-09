@@ -1,4 +1,6 @@
+use crate::api::extractor::auth::RequirePermission;
 use crate::api::prelude::*;
+use crate::core::permission::guards::SystemReadGuard;
 use actix_web::get;
 
 #[allow(deprecated)]
@@ -66,7 +68,10 @@ pub struct DockerInformation {
 }
 /// GET /api/admin/monitor
 #[get("/monitor")]
-pub async fn get_sys_info(_: SuperAdminJwtGuard, ctx: ReqCtx) -> UniResult<SystemInformation> {
+pub async fn get_sys_info(
+    _: RequirePermission<SystemReadGuard>,
+    ctx: ReqCtx,
+) -> UniResult<SystemInformation> {
     // ---------- 系统信息 ----------
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -227,6 +232,6 @@ pub async fn get_sys_info(_: SuperAdminJwtGuard, ctx: ReqCtx) -> UniResult<Syste
 
 /// 返回 API 自身的版本号（CARGO_PKG_VERSION），供管理端 Version 页展示。
 #[get("/version")]
-pub async fn get_version(_: SuperAdminJwtGuard) -> UniResult<String> {
+pub async fn get_version(_: RequirePermission<SystemReadGuard>) -> UniResult<String> {
     UniResponse::ok(Some(env!("CARGO_PKG_VERSION").to_string())).into()
 }

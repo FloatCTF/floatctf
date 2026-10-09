@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{SettingsManageGuard, SettingsReadGuard};
 use std::collections::HashMap;
 
 use super::dto::SettingsDto;
@@ -39,7 +41,10 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), AppError> {
 
 /// GET /api/admin/settings
 #[get("")]
-pub async fn get_settings(_user: SuperAdminJwtGuard, ctx: ReqCtx) -> UniResult<Vec<SettingsDto>> {
+pub async fn get_settings(
+    _user: RequirePermission<SettingsReadGuard>,
+    ctx: ReqCtx,
+) -> UniResult<Vec<SettingsDto>> {
     let db = ctx.db.get_ref();
     let rows = settings::Entity::find()
         .order_by_desc(settings::Column::UpdatedAt)
@@ -71,11 +76,11 @@ pub struct CreateSettingRequest {
 /// POST /api/admin/settings
 #[post("")]
 pub async fn create_setting(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SettingsManageGuard>,
     ctx: ReqCtx,
     csr: Json<CreateSettingRequest>,
 ) -> UniResult<SettingsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let csr = csr.into_inner();
     validate_setting_value(&csr.key, &csr.value)?;
 
@@ -97,10 +102,10 @@ pub async fn create_setting(
             "INFO",
             "SETTINGS",
             "CREATE",
-            format!("{} 创建设置: {}", user.username, setting.key).as_str(),
+            format!("{} 创建设置: {}", user.username(), setting.key).as_str(),
             json!({"key": setting.key}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -120,12 +125,12 @@ pub struct PatchSettingRequest {
 /// PATCH /api/admin/settings/{setting_id}
 #[patch("/{setting_id}")]
 pub async fn patch_setting(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SettingsManageGuard>,
     ctx: ReqCtx,
     setting_id: Path<Uuid>,
     psr: Json<PatchSettingRequest>,
 ) -> UniResult<SettingsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let setting_id = setting_id.into_inner();
     let psr = psr.into_inner();
     let setting = settings::Entity::find_by_id(setting_id)
@@ -165,10 +170,10 @@ pub async fn patch_setting(
             "INFO",
             "SETTINGS",
             "UPDATE",
-            format!("{} 更新设置: {}", user.username, setting.key).as_str(),
+            format!("{} 更新设置: {}", user.username(), setting.key).as_str(),
             json!({"key": setting.key}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -179,11 +184,11 @@ pub async fn patch_setting(
 /// DELETE /api/admin/settings
 #[delete("")]
 pub async fn delete_setting(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<SettingsManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
     let mut deleted_count = 0;
     for setting_id in dir.id_list {
@@ -207,10 +212,10 @@ pub async fn delete_setting(
             "INFO",
             "SETTINGS",
             "DELETE",
-            format!("{} 删除 {} 条设置", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 条设置", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

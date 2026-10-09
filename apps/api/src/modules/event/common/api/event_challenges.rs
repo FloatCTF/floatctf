@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{EventsManageGuard, EventsReadGuard};
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -38,12 +40,12 @@ fn validate_points(points: f64) -> Result<f64, AppError> {
 /// POST /api/admin/events/{event_id}/challenges
 #[post("")]
 pub async fn add_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     acr: Json<AddChallengeRequest>,
 ) -> UniResult<Vec<EventChallengesDto>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let acr = acr.into_inner();
     let event_id = event_id.into_inner();
 
@@ -108,14 +110,14 @@ pub async fn add_challenge(
             "ADD",
             format!(
                 "{} 为比赛 {} 添加 {} 道题目",
-                user.username,
+                user.username(),
                 event.title,
                 event_challenges_list.len()
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -126,12 +128,12 @@ pub async fn add_challenge(
 /// DELETE /api/admin/events/{event_id}/challenges
 #[delete("")]
 pub async fn remove_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let event_id = event_id.into_inner();
     let dir = dir.into_inner();
 
@@ -147,10 +149,10 @@ pub async fn remove_challenge(
             "INFO",
             "EVENT_CHALLENGES",
             "REMOVE",
-            format!("{} 从比赛移除 {} 道题目", user.username, deleted_count).as_str(),
+            format!("{} 从比赛移除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -173,7 +175,7 @@ pub struct EventChallengeResult {
 /// challenge ID 列表，再作为 is_in 约束加到主查询上。
 #[get("")]
 pub async fn get_challenges(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,
@@ -268,12 +270,12 @@ pub async fn get_challenges(
 /// PATCH /api/admin/events/{event_id}/challenges
 #[patch("")]
 pub async fn set_challenge_points(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     sdr: Json<SetChallengePointsRequest>,
 ) -> UniResult<Vec<EventChallengesDto>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let sdr = sdr.into_inner();
     let event_id = event_id.into_inner();
 
@@ -319,7 +321,7 @@ pub async fn set_challenge_points(
             "SET_POINTS",
             format!(
                 "{} 将比赛 {} 的 {} 道题目分值设为 {}",
-                user.username,
+                user.username(),
                 event.title,
                 event_challenges_list.len(),
                 points
@@ -327,7 +329,7 @@ pub async fn set_challenge_points(
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len(), "points": points}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -347,12 +349,12 @@ pub type HiddenChallengeRequest = AddChallengeRequest;
 /// POST /api/admin/events/{event_id}/challenges/hidden
 #[post("/hidden")]
 pub async fn hidden_challenges(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     hcr: Json<HiddenChallengeRequest>,
 ) -> UniResult<Vec<EventChallengesDto>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let hcr = hcr.into_inner();
     let event_id = event_id.into_inner();
     let event = events::Entity::find_by_id(event_id)
@@ -412,13 +414,13 @@ pub async fn hidden_challenges(
             "HIDE",
             format!(
                 "{} 隐藏 {} 道题目",
-                user.username,
+                user.username(),
                 event_challenges_list.len()
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -430,12 +432,12 @@ pub type OpenChallengeRequest = AddChallengeRequest;
 /// POST /api/admin/events/{event_id}/challenges/open
 #[post("/open")]
 pub async fn open_challenges(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     ocr: Json<OpenChallengeRequest>,
 ) -> UniResult<Vec<EventChallengesDto>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let ocr = ocr.into_inner();
     let event_id = event_id.into_inner();
 
@@ -496,13 +498,13 @@ pub async fn open_challenges(
             "OPEN",
             format!(
                 "{} 开放 {} 道题目",
-                user.username,
+                user.username(),
                 event_challenges_list.len()
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

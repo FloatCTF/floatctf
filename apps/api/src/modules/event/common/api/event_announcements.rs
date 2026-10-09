@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{EventsManageGuard, EventsReadGuard};
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -22,12 +24,12 @@ pub struct AddEventAnnouncementRequest {
 /// POST /api/admin/events/{event_id}/announcements
 #[post("")]
 pub async fn add_event_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     atr: Json<AddEventAnnouncementRequest>,
 ) -> UniResult<EventAnnouncementsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let atr = atr.into_inner();
     let event_id = event_id.into_inner();
 
@@ -52,12 +54,14 @@ pub async fn add_event_announcement(
             "CREATE",
             format!(
                 "{} 为比赛 {} 添加公告: {}",
-                user.username, event.title, event_announcement.title
+                user.username(),
+                event.title,
+                event_announcement.title
             )
             .as_str(),
             json!({"event_id": event.id, "title": event_announcement.title}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -73,12 +77,12 @@ pub struct PatchEventAnnouncementRequest {
 /// PATCH /api/admin/events/{event_id}/announcements/{announcement_id}
 #[patch("/{announcement_id}")]
 pub async fn patch_event_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
     atr: Json<PatchEventAnnouncementRequest>,
 ) -> UniResult<EventAnnouncementsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, announcement_id) = path.into_inner();
     let atr = atr.into_inner();
 
@@ -99,10 +103,10 @@ pub async fn patch_event_announcement(
             "INFO",
             "EVENT_ANNOUNCEMENTS",
             "UPDATE",
-            format!("{} 更新比赛公告", user.username).as_str(),
+            format!("{} 更新比赛公告", user.username()).as_str(),
             json!({"event_id": event_id, "announcement_id": announcement_id}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -113,12 +117,12 @@ pub async fn patch_event_announcement(
 /// DELETE /api/admin/events/{event_id}/announcements
 #[delete("")]
 pub async fn remove_event_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsManageGuard>,
     ctx: ReqCtx,
     path: Path<Uuid>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let event_id = path.into_inner();
     let dir = dir.into_inner();
 
@@ -135,12 +139,13 @@ pub async fn remove_event_announcement(
             "DELETE",
             format!(
                 "{} 删除 {} 条比赛公告",
-                user.username, deleted_count.rows_affected
+                user.username(),
+                deleted_count.rows_affected
             )
             .as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count.rows_affected}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -151,7 +156,7 @@ pub async fn remove_event_announcement(
 /// GET /api/admin/events/{event_id}/announcements/{announcement_id}
 #[get("/{announcement_id}")]
 pub async fn get_event_announcement(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<EventAnnouncementsDto> {
@@ -169,7 +174,7 @@ pub async fn get_event_announcement(
 /// GET /api/admin/events/{event_id}/announcements
 #[get("")]
 pub async fn list_event_announcements(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,

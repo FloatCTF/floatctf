@@ -1,6 +1,8 @@
 //! 评论管理端接口。
 
 use crate::api::dto::map_dto_vec;
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::DiscussionsModerateGuard;
 
 use crate::modules::community::comment::DiscussionCommentsDto;
 use crate::{
@@ -11,7 +13,7 @@ use crate::{
 /// GET /api/admin/discussions/{discussion_id}/comments
 #[get("/{discussion_id}/comments")]
 pub async fn get_discussion_comments(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<DiscussionsModerateGuard>,
     ctx: ReqCtx,
     path: Path<Uuid>,
     query_params: Query<QueryParams>,
@@ -39,11 +41,11 @@ pub async fn get_discussion_comments(
 /// DELETE /api/admin/discussions/{discussion_id}/comments/{comment_id}
 #[delete("/{discussion_id}/comments/{comment_id}")]
 pub async fn delete_comment(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DiscussionsModerateGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (discussion_id, comment_id) = path.into_inner();
 
     let comment = discussion_comments::Entity::find_by_id(comment_id)
@@ -63,10 +65,10 @@ pub async fn delete_comment(
             "INFO",
             "DISCUSSIONS",
             "DELETE_COMMENT",
-            format!("{} 删除评论", user.username).as_str(),
+            format!("{} 删除评论", user.username()).as_str(),
             json!({"comment_id": comment_id, "discussion_id": discussion_id}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

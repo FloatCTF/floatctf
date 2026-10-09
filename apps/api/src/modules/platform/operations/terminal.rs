@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::TerminalOpenGuard;
 use std::{
     collections::HashMap,
     process::Stdio,
@@ -167,20 +169,20 @@ impl TerminalTicketStore {
 /// 使用常规 SuperAdmin Authorization 签发 60 秒、单次使用的 HttpOnly ticket cookie。
 #[post("/session")]
 pub async fn create_terminal_session(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<TerminalOpenGuard>,
     ctx: ReqCtx,
 ) -> Result<HttpResponse, actix_web::Error> {
     if !ctx.config.features.enable_web_terminal {
         return Err(actix_web::error::ErrorNotFound("Web terminal is disabled"));
     }
 
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let ticket = ctx
         .req
         .app_data::<web::Data<crate::bootstrap::AppState>>()
         .expect("AppState 不存在")
         .terminal_tickets
-        .issue(admin.id)
+        .issue(admin.id())
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
     let secure = ctx.config.main_url.starts_with("https://")
@@ -201,7 +203,7 @@ pub async fn create_terminal_session(
             "Issued one-time web terminal ticket",
             json!({"ttl_secs": TERMINAL_TICKET_TTL.as_secs()}),
             None,
-            Some(admin.id),
+            Some(admin.id()),
             Some(&ctx.req),
         )
         .await;

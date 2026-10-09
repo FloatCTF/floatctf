@@ -20,6 +20,7 @@
 //! 本模块的 `permission` **不是** `PLATFORM_CAPABILITIES`（`GET /api/frontend` 的静态
 //! 平台能力）也**不是** `EventCapabilities`（赛制能力位）。三者语义完全不同，禁止互相复用。
 
+use crate::api::extractor::auth::RequirePermission;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;

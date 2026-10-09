@@ -43,6 +43,8 @@
 //! actor 不得通过任何一次操作移除**自己**的管理能力（撤销自己的最后一个
 //! `roles.manage` / 把自己从超管角色里摘掉）。否则一次误操作就能把平台锁在门外。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{RolesManageGuard, RolesReadGuard, UsersReadGuard};
 pub mod service;
 
 use std::str::FromStr;
@@ -53,9 +55,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::api::extractor::auth::RequirePermission;
 use crate::api::prelude::*;
-use crate::core::permission::guards::{RolesManageGuard, RolesReadGuard};
 use crate::core::permission::{Permission, PermissionDomain, PermissionSet};
 use crate::entity::{platform_role_permissions, platform_roles, user_platform_roles, users};
 
@@ -208,6 +208,52 @@ fn validate_role_key(key: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 由角色行构造 DTO（角色 + 权限集 + 持有账号数）。
+async fn build_role_dto<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    role: platform_roles::Model,
+) -> Result<RoleDto, AppError> {
+    let mut permissions: Vec<String> = platform_role_permissions::Entity::find()
+        .filter(platform_role_permissions::Column::RoleId.eq(role.id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|p| p.permission)
+        .collect();
+    permissions.sort();
+
+    let user_count = user_platform_roles::Entity::find()
+        .filter(user_platform_roles::Column::RoleId.eq(role.id))
+        .count(db)
+        .await? as i64;
+
+    Ok(RoleDto {
+        id: role.id,
+        key: role.key,
+        name: role.name,
+        description: role.description,
+        protected: role.protected,
+        grants_all: role.grants_all,
+        permissions,
+        user_count,
+    })
+}
+
+/// GET `/api/admin/roles/{role_id}` —— 角色详情 + 权限集 + 持有账号数。
+#[get("/{role_id}")]
+pub async fn get_role(
+    _: RequirePermission<RolesReadGuard>,
+    ctx: ReqCtx,
+    role_id: Path<Uuid>,
+) -> UniResult<RoleDto> {
+    let role_id = role_id.into_inner();
+    let role = platform_roles::Entity::find_by_id(role_id)
+        .one(ctx.db.get_ref())
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("角色 {role_id} 不存在")))?;
+    UniResponse::ok(Some(build_role_dto(ctx.db.get_ref(), role).await?)).into()
+}
+
 /// GET `/api/admin/roles`
 #[get("")]
 pub async fn list_roles(
@@ -221,31 +267,7 @@ pub async fn list_roles(
 
     let mut items = Vec::with_capacity(roles.len());
     for role in roles {
-        let permissions = platform_role_permissions::Entity::find()
-            .filter(platform_role_permissions::Column::RoleId.eq(role.id))
-            .all(ctx.db.get_ref())
-            .await?
-            .into_iter()
-            .map(|p| p.permission)
-            .collect::<Vec<_>>();
-        let mut permissions = permissions;
-        permissions.sort();
-
-        let user_count = user_platform_roles::Entity::find()
-            .filter(user_platform_roles::Column::RoleId.eq(role.id))
-            .count(ctx.db.get_ref())
-            .await? as i64;
-
-        items.push(RoleDto {
-            id: role.id,
-            key: role.key,
-            name: role.name,
-            description: role.description,
-            protected: role.protected,
-            grants_all: role.grants_all,
-            permissions,
-            user_count,
-        });
+        items.push(build_role_dto(ctx.db.get_ref(), role).await?);
     }
 
     UniResponse::ok(Some(items)).into()
@@ -371,7 +393,9 @@ pub async fn patch_role(
 
     if role.protected {
         if body.permissions.is_some() {
-            return Err(AppError::Forbidden(
+            // 409 而不是 403：请求本身没问题，是它与该资源的内置不变式**冲突**。
+            // 403 会让前端显示「你没权限」，而实际是「这个角色不能这样改」。
+            return Err(AppError::Conflict(
                 "内置角色的权限集不可修改（它是引导不变式的一部分）".into(),
             ));
         }
@@ -443,22 +467,9 @@ pub async fn patch_role(
         .one(ctx.db.get_ref())
         .await?
         .ok_or_else(|| AppError::NotFound(format!("角色 {role_id} 不存在")))?;
-    let user_count = user_platform_roles::Entity::find()
-        .filter(user_platform_roles::Column::RoleId.eq(role_id))
-        .count(ctx.db.get_ref())
-        .await? as i64;
+    let dto = build_role_dto(ctx.db.get_ref(), role).await?;
 
-    UniResponse::ok(Some(RoleDto {
-        id: role.id,
-        key: role.key,
-        name: role.name,
-        description: role.description,
-        protected: role.protected,
-        grants_all: role.grants_all,
-        permissions: after.to_strings(),
-        user_count,
-    }))
-    .into()
+    UniResponse::ok(Some(dto)).into()
 }
 
 /// DELETE `/api/admin/roles/{role_id}`
@@ -480,7 +491,11 @@ pub async fn delete_role(
         .ok_or_else(|| AppError::NotFound(format!("角色 {role_id} 不存在")))?;
 
     if role.protected {
-        return Err(AppError::Forbidden("系统内置角色不可删除".into()));
+        // 409 而不是 403：与上面的权限集变更同理 —— 是「与内置不变式冲突」，
+        // 不是「你的身份不允许」。
+        return Err(AppError::Conflict(
+            "系统内置角色不可删除（它是引导不变式的一部分）".into(),
+        ));
     }
 
     // 反提权：删除一个权限超出 actor 的角色同样是提权路径
@@ -538,9 +553,12 @@ pub async fn delete_role(
 // ============================================================================
 
 /// GET `/api/admin/users/{user_id}/roles`
+///
+/// 权限取 `users.read`（不是 `roles.read`）：`users.read` 的定义本就是
+/// 「查看账号列表、**详情与其角色**」，因此这里与权限说明保持一致。
 #[get("/{user_id}/roles")]
 pub async fn get_user_roles(
-    _: RequirePermission<RolesReadGuard>,
+    _: RequirePermission<UsersReadGuard>,
     ctx: ReqCtx,
     user_id: Path<Uuid>,
 ) -> UniResult<UserRolesDto> {
@@ -702,6 +720,7 @@ pub async fn set_user_roles(
 /// 挂在 `/api/admin/roles` 下。
 pub fn configure_role_routes(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(list_roles);
+    cfg.service(get_role);
     cfg.service(create_role);
     cfg.service(patch_role);
     cfg.service(delete_role);

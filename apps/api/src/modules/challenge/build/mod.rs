@@ -1,5 +1,7 @@
 //! 题目镜像/包构建相关能力。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::ChallengesManageGuard;
 pub mod import_service;
 
 use crate::api::prelude::*;
@@ -20,11 +22,11 @@ struct UploadForm {
 /// POST /api/admin/challenges/import —— package zip 导入（单版本：同步 build + pin digest）
 #[post("/import")]
 pub async fn web_import_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     MultipartForm(form): MultipartForm<UploadForm>,
 ) -> UniResult<ImportChallengeResponse> {
-    let user = user.into_inner();
+    let user = user.into_auth();
 
     let result = import_service::import_challenge_package(
         ctx.db.get_ref(),
@@ -43,14 +45,19 @@ pub async fn web_import_challenge(
             "INFO",
             "CHALLENGES",
             "IMPORT",
-            format!("{} 导入题目包: {}", user.username, response.challenge.name).as_str(),
+            format!(
+                "{} 导入题目包: {}",
+                user.username(),
+                response.challenge.name
+            )
+            .as_str(),
             json!({
                 "challenge_id": response.challenge.id,
                 "version": response.challenge.version,
                 "build_status": response.challenge.build_status,
             }),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -66,7 +73,7 @@ pub struct ImportChallengeResponse {
 /// POST /api/admin/challenges/scan —— 扫描 CHALLENGES_DIR 登记未入库 package
 #[post("/scan")]
 pub async fn scan_challenges(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
 ) -> UniResult<Vec<ChallengeScanItem>> {
     let items = import_service::scan_challenges_dir(
@@ -98,7 +105,7 @@ pub struct ChallengeCheckRequest {
 
 #[post("/check")]
 pub async fn check_challenges(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     ccr: Json<ChallengeCheckRequest>,
 ) -> UniResult<Vec<ChallengeCheckResult>> {
@@ -213,11 +220,11 @@ pub struct BuildChallengeResult {
 
 #[post("/build")]
 pub async fn build_challenge(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     bcr: Json<BuildChallengeRequest>,
 ) -> UniResult<Vec<BuildChallengeResult>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let bcr = bcr.into_inner();
     let mut challenge_id_list = Vec::new();
     if let Some(c) = bcr.challenge_id {
@@ -271,10 +278,10 @@ pub async fn build_challenge(
                 "INFO",
                 "CHALLENGES",
                 "BUILD",
-                format!("{} 确保题目镜像: {}", user.username, challenge.name).as_str(),
+                format!("{} 确保题目镜像: {}", user.username(), challenge.name).as_str(),
                 json!({"challenge_name": challenge.name, "success": is_ok}),
                 None,
-                user.id.into(),
+                user.id().into(),
                 Some(&ctx.req),
             )
             .await;

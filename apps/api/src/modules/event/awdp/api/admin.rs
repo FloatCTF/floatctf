@@ -8,7 +8,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::{
-    api::{AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*},
+    api::{AppError, UniResponse, UniResult, extractor::auth::RequirePermission, prelude::*},
+    core::permission::guards::{AwdpManageGuard, AwdpReadGuard, EventsLifecycleManageGuard},
     entity::sea_orm_active_enums::{AwdpPhase, EventFamily},
     modules::event::awdp::{
         api::dto::*,
@@ -42,7 +43,7 @@ async fn require_active_run(
 /// GET /api/admin/events/{event_id}/awdp —— 配置 + 阶段（运行态来自 active run）。
 #[get("{event_id}/awdp")]
 pub async fn get_awdp_config(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<AwdpEventConfigDto> {
@@ -58,7 +59,7 @@ pub async fn get_awdp_config(
 /// PATCH /api/admin/events/{event_id}/awdp —— 配置更新（无 active run 可改，乐观锁）。
 #[patch("{event_id}/awdp")]
 pub async fn patch_awdp_config(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpManageGuard>,
     ctx: ReqCtx,
     state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
@@ -90,7 +91,7 @@ pub async fn patch_awdp_config(
 /// POST /api/admin/events/{event_id}/awdp/start —— 手动开始（create_competition_run + 立即 Break）。
 #[post("{event_id}/awdp/start")]
 pub async fn start_awdp_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
@@ -145,7 +146,7 @@ pub async fn start_awdp_event(
 /// POST /api/admin/events/{event_id}/awdp/break-to-fix —— Break 到期 → Fix（重置全部实例 pristine）。
 #[post("{event_id}/awdp/break-to-fix")]
 pub async fn break_to_fix(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
@@ -167,7 +168,7 @@ pub async fn break_to_fix(
 /// POST /api/admin/events/{event_id}/awdp/finish —— 手动结束（Fix → Ended）。
 #[post("{event_id}/awdp/finish")]
 pub async fn finish_awdp_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     state: web::Data<crate::bootstrap::AppState>,
     path: web::Path<Uuid>,
@@ -212,7 +213,7 @@ pub async fn finish_awdp_event(
 /// GET /api/admin/events/{event_id}/awdp/runs —— run 历史汇总（inspect）。
 #[get("{event_id}/awdp/runs")]
 pub async fn list_runs(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<AwdpAdminRunDto>> {
@@ -246,7 +247,7 @@ pub async fn list_runs(
 /// 比赛进行中（Break/Fix）新挂载 → 自动为全部参与者启动该 gamebox 实例（幂等）。
 #[post("{event_id}/awdp/gameboxes")]
 pub async fn attach_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpManageGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
     body: Json<AttachGameBoxRequest>,
@@ -295,7 +296,7 @@ pub async fn attach_gamebox(
 /// DELETE /api/admin/events/{event_id}/awdp/gameboxes/{eg_id} —— detach。
 #[delete("{event_id}/awdp/gameboxes/{eg_id}")]
 pub async fn detach_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpManageGuard>,
     ctx: ReqCtx,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
@@ -307,7 +308,7 @@ pub async fn detach_gamebox(
 /// GET /api/admin/events/{event_id}/awdp/gameboxes —— 已挂载列表。
 #[get("{event_id}/awdp/gameboxes")]
 pub async fn list_event_gameboxes(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<AwdpAdminEventGameBoxDto>> {
@@ -325,7 +326,7 @@ pub async fn list_event_gameboxes(
 /// GET /api/admin/events/{event_id}/awdp/instances —— 实例 inspect（经 run 聚合）。
 #[get("{event_id}/awdp/instances")]
 pub async fn list_instances(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<AwdpAdminInstanceDto>> {
@@ -364,7 +365,7 @@ pub async fn list_instances(
 /// GET /api/admin/events/{event_id}/awdp/data —— 管理端大屏数据聚合。
 #[get("{event_id}/awdp/data")]
 pub async fn get_data(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<data::AwdpDataPresent> {
@@ -383,7 +384,7 @@ pub async fn get_data(
 /// GET /api/admin/events/{event_id}/awdp/scores —— 管理端积分榜（同 player 服务）。
 #[get("{event_id}/awdp/scores")]
 pub async fn get_scores(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdpReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<crate::modules::event::awdp::service::scoreboard::AwdpScoreRow>> {

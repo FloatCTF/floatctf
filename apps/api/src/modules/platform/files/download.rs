@@ -22,6 +22,8 @@
 //!
 //! **禁止**为了让新前缀「能用」而把这里放宽成 `starts_with("writeups/")`。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::EventsReadGuard;
 use std::time::Duration;
 
 use actix_web::{get, web::Query};
@@ -34,7 +36,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    api::{AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*},
+    api::{AppError, UniResponse, UniResult, prelude::*},
     entity::{event_writeup, events},
     infrastructure::{WebDb, WebRustfs},
 };
@@ -193,18 +195,18 @@ struct DownloadParams {
 
 /// GET /api/admin/download?key=event_writeup/123.pdf
 ///
-/// 授权模型（Wave 0 起）：
-/// 1. 静态权限：`events.read`（Wave 5 起由 `RequirePermission<EventsRead>` 承担；
-///    Wave 0 仍由 `SuperAdminJwtGuard` 承担）；
+/// 授权模型（v2 最终形态）：
+/// 1. 静态权限：`events.read`，由 `RequirePermission<EventsReadGuard>` 承担
+///    （Wave 0 先做对象级绑定、守卫暂用 `SuperAdminJwtGuard`；Wave 5 已切换）；
 /// 2. **对象级绑定**：[`resolve_private_artifact`] 必须能把 key 解析为平台已知资源，
 ///    否则 404。二者缺一不可。
 #[get("/download")]
 pub async fn download(
     ctx: ReqCtx,
-    super_admin: SuperAdminJwtGuard,
+    super_admin: RequirePermission<EventsReadGuard>,
     params: Query<DownloadParams>,
 ) -> UniResult<String> {
-    let super_admin = super_admin.into_inner();
+    let super_admin = super_admin.into_auth();
 
     // 对象级授权：把 key 绑定到平台已知资源（event）。无法绑定 → 404。
     let event_id = resolve_private_artifact(ctx.db.get_ref(), &params.key).await?;
@@ -215,7 +217,9 @@ pub async fn download(
 
     let message = format!(
         "[ADMIN] {} downloading {} (event {})",
-        super_admin.username, params.key, event_id
+        super_admin.username(),
+        params.key,
+        event_id
     );
 
     info!(message);
@@ -228,7 +232,7 @@ pub async fn download(
             &message,
             json!({"event_id": event_id}),
             None,
-            Some(super_admin.id),
+            Some(super_admin.id()),
             Some(&ctx.req),
         )
         .await;

@@ -3141,7 +3141,7 @@ mise run db:migration:verify
 | 2 | M2 账号列与冲突预检 + M3 `super_admin → users` 迁移 | **PASS** | dev 库实测 hash/`created_at` 逐字节一致；9 项迁移契约测试 |
 | 3 | M4 管理动作主体外键重指向 `users`（含 `announcements` SET NULL） | **PASS** | 6 FK 全部 `users` + `confdeltype='n'`；7 项测试 |
 | 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PASS** | 13 JWT 单元 + 22 认证契约测试；`jwt_guard_isolation_matrix_v2` 与 `terminal_session_authz_matrix` **实跑通过**（进程内 `init_service`，未绑定端口） |
-| 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PARTIAL** | 机制+API+并发+反提权已完成并提交：`AuthContext`、`RequirePermission<P>`/`RequireAny`、8 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试，含 2 项真并发）、`identity_authorization_v2_contract.rs` 5 项。**待续**：171 处 handler 由 `SuperAdminJwtGuard` 迁移到 `RequirePermission<P>`（见 §29.6） |
+| 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PASS** | `AuthContext`、`RequirePermission<P>`/`RequireAny`、9 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试含 2 项真并发）、授权契约 11 项。**handler 迁移完成**：156 个 handler 已用 `RequirePermission<P>`（31 文件），仅剩 5 个 `/api/admin/super_admin` CRUD 按表保留旧守卫（Wave 10 随表删除）；29 条权限守卫**全部**被真实使用。新增 `authorization_route_coverage.rs` 4 项源码守卫锁定不回归 |
 | 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PENDING** | — |
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
 | 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
@@ -3176,18 +3176,29 @@ mise run db:migration:verify
    `is_last_super_admin` 标记与 `granted_by`/`granted_at` 明细**尚未**实现
    （见 §29.6 后续项）。
 
-### 29.6 Wave 5 的剩余工作（171 处 handler 迁移）
+### 29.6 Wave 5 的 handler 迁移（已完成）
 
-`AuthContext` / `RequirePermission<P>` / 角色权限 API / 反提权 / 最后超管并发
-**已完成并验证**。仍未完成的是把 36 个文件里的 **171 处** `SuperAdminJwtGuard`
-逐条替换为对应权限的 `RequirePermission<P>`。
+**结果**：156 个 handler 使用 `RequirePermission<P>`（31 个文件）；
+每一条 admin 路由都声明了所需权限，映射以
+[platform-permissions.md](./platform-permissions.md) 的路由→权限表为唯一权威。
 
-**当前中间状态是安全的（fail-closed）**：尚未迁移的端点仍由
-`SuperAdminJwtGuard` 把守，其判据是「持有 `grants_all` 角色」——这比任何单条权限都
-**更严格**，绝不会因为迁移未完成而放宽任何端点。因此可以逐文件推进，
-每一步都是「收紧或持平」，不存在「迁移到一半出现越权窗口」。
+**唯一保留旧守卫的位置**：`/api/admin/super_admin` CRUD 的 5 个 handler。
+表里这 5 行明确标注为「旧 `SuperAdminJwtGuard`」，它们随 `super_admin` 表在
+Wave 10 一起删除，因此**不**迁移（迁移了反而要在 Wave 10 再改一次）。
 
-逐文件映射以 [platform-permissions.md](./platform-permissions.md) 的路由→权限表为准。
+**29 条权限守卫全部被真实使用** —— 没有一条是纸面权限。这也是「29 条」这个
+数字合理性的一个侧面证据。
+
+**为什么迁移过程中不存在越权窗口**：未迁移端点由 `SuperAdminJwtGuard` 把守，
+其判据是「持有 `grants_all` 角色」，比任何单条权限都**更严格**。因此逐文件推进的
+每一步都是「收紧或持平」，不存在「迁移到一半出现放宽」。
+
+**回归防护**：`apps/api/tests/authorization_route_coverage.rs` 用 4 项源码守卫锁定
+（无需 DB / 网络，本机真实执行）：
+1. `SuperAdminJwtGuard` 作为**参数类型**只允许出现在遗留白名单里；
+2. 白名单不得变成死条目（Wave 10 删除 CRUD 时该测试会红，提醒同步清理）；
+3. `RequirePermission` 参数数量与文件覆盖面不得回退；
+4. 所有守卫类型必须来自权限目录（禁止自造守卫绕过目录）。
 
 Wave 5 尚未完成的小项（除 handler 迁移外）：
 

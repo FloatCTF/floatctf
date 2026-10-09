@@ -20,6 +20,7 @@
 
 use crate::api::AppError;
 use crate::core::permission::PermissionSet;
+use crate::core::permission::guards::UsersReadGuard;
 use crate::core::security::jwt::{TokenPurpose, validate_jwt};
 use crate::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
 use crate::entity::sea_orm_active_enums::AccountStatus;

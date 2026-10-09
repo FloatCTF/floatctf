@@ -1,10 +1,11 @@
 //! 平台级 AWD 网络管理 API。
 
+use crate::core::permission::guards::{AwdManageGuard, AwdReadGuard};
 use actix_web::{get, patch, web};
 use serde::{Deserialize, Deserializer};
 
 use crate::api::{
-    AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*,
+    AppError, UniResponse, UniResult, extractor::auth::RequirePermission, prelude::*,
 };
 use crate::modules::event::awd::{
     repo::network_settings_repo::NetworkSettingsPatch, service::platform_network_service,
@@ -36,7 +37,7 @@ pub struct PlatformNetworkSettingsUpdateRequest {
 /// GET /api/admin/awd/network
 #[get("/awd/network")]
 pub async fn get_platform_network(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
 ) -> UniResult<serde_json::Value> {
     let settings = platform_network_service::get_settings(ctx.db.get_ref())
@@ -88,7 +89,7 @@ pub async fn get_platform_network(
 /// PATCH /api/admin/awd/network
 #[patch("/awd/network")]
 pub async fn update_platform_network(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     body: web::Json<PlatformNetworkSettingsUpdateRequest>,
 ) -> UniResult<serde_json::Value> {
@@ -134,7 +135,7 @@ pub async fn update_platform_network(
 /// GET /api/admin/awd/network/health（§4.1 Host Status：纯观测）
 #[get("/awd/network/health")]
 pub async fn get_platform_network_health(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
 ) -> UniResult<platform_network_service::PlatformHostStatus> {
     let status = platform_network_service::host_status(ctx.db.get_ref())
@@ -146,7 +147,7 @@ pub async fn get_platform_network_health(
 /// GET /api/admin/awd/network/allocations（§7/§66 可见性）
 #[get("/awd/network/allocations")]
 pub async fn get_platform_network_allocations(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
 ) -> UniResult<Vec<platform_network_service::PlatformAllocation>> {
     let allocations = platform_network_service::allocations_view(ctx.db.get_ref())

@@ -554,14 +554,14 @@ mod tests {
     // 授权模型（Phase 7.2 — 分离认证域）：
     //
     // 选手路由 GET /api/events/{id}/awd/stream：
-    //   - 认证：UserJwtGuard（users 表）
+    //   - 认证：AccountGuard（users 表；每请求校验 status 与 token_version）
     //   - 授权：find_user_team_membership(event_id, user_id) → Some
     //   - 拒绝：其他用户 → 403
     //
     // 管理路由 GET /api/admin/events/{id}/awd/stream：
-    //   - 认证：SuperAdminJwtGuard（super_admin 表）
-    //   - 授权：所有 SuperAdmin 均可订阅任意赛事
-    //   - SuperAdmin 不需要 users 记录
+    //   - 认证：同一个 AccountGuard（v2 统一账户：管理员就是普通账号）
+    //   - 授权：RequirePermission<AwdReadGuard>（旧模型是「所有 SuperAdmin」）
+    //   - 管理员不再需要单独的 super_admin 记录
     //
     // HTTP 完整测试因 AppState 引导复杂度暂不可行（见
     // chore/awd-core-backend-http-acceptance-report.md）。
@@ -577,10 +577,10 @@ mod tests {
 
     #[test]
     fn sse_auth_separate_domains_contract() {
-        // 文档化授权决策（Phase 7.2）：
-        // - 选手路由：UserJwtGuard → 仅检查 event_team_members
-        // - 管理路由：SuperAdminJwtGuard → 无需额外检查
-        // - SuperAdmin 不需要 users 记录 — 使用独立的 admin token
+        // 文档化授权决策（v2）：
+        // - 选手路由：AccountGuard → 仅检查 event_team_members
+        // - 管理路由：AccountGuard + 具体权限（awd.read）→ 逐路由声明
+        // - 管理员不再是独立账号类型，也不再使用独立的 admin token
         let _admin_id = Uuid::nil();
         let _user_id = Uuid::nil();
     }

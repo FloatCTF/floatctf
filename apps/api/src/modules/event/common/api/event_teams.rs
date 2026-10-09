@@ -6,9 +6,10 @@ use crate::modules::event::common::api::EventTeamMembersDto;
 use crate::modules::event::common::api::EventTeamsDto;
 use crate::{
     api::{
-        FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
-        sea_orm_utils::paginate_query,
+        FilterMapping, apply_filters, dto::DeleteItemsRequest, extractor::auth::RequirePermission,
+        prelude::*, sea_orm_utils::paginate_query,
     },
+    core::permission::guards::{EventsParticipantsManageGuard, EventsReadGuard},
     entity::{
         event_team_members, event_teams, event_users, events,
         sea_orm_active_enums::EventTeamMemberRole, users,
@@ -23,12 +24,12 @@ pub struct AddTeamRequest {
 /// POST /api/admin/events/{event_id}/teams
 #[post("")]
 pub async fn add_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     atr: Json<AddTeamRequest>,
 ) -> UniResult<EventTeamsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let atr = atr.into_inner();
     let event_id = event_id.into_inner();
 
@@ -56,12 +57,14 @@ pub async fn add_team(
             "CREATE",
             format!(
                 "{} 为比赛 {} 创建队伍: {}",
-                user.username, event.title, event_team.name
+                user.username(),
+                event.title,
+                event_team.name
             )
             .as_str(),
             json!({"event_id": event.id, "team_name": event_team.name}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -72,12 +75,12 @@ pub async fn add_team(
 /// DELETE /api/admin/events/{event_id}/teams
 #[delete("")]
 pub async fn remove_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<Uuid>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let event_id = path.into_inner();
     let dir = dir.into_inner();
 
@@ -115,10 +118,10 @@ pub async fn remove_team(
             "INFO",
             "EVENT_TEAMS",
             "DELETE",
-            format!("{} 删除 {} 支队伍", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 支队伍", user.username(), deleted_count).as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count, "removed_enrollments": removed_enrollments}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -143,7 +146,7 @@ pub struct TeamResult {
 /// GET /api/admin/events/{event_id}/teams
 #[get("")]
 pub async fn get_teams(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,
@@ -218,7 +221,9 @@ pub async fn get_teams(
                     .ok_or(AppError::NotFound(format!("参赛用户 {} 不存在", user.id)))?;
 
                 team_members.push(TeamMemberResult {
-                    username: user.username,
+                    // 注意：这里的 `user` 是 `users::Model`（来自 find_also_related），
+                    // 不是守卫 —— 只有守卫（AuthContext）才有 username() 方法。
+                    username: user.username.clone(),
                     nickname: user.nickname,
                     role: member.role,
                     points: event_user.points,
@@ -246,7 +251,7 @@ pub struct GetTeamMembersResult {
 /// GET /api/admin/events/{event_id}/teams/{team_id}/members
 #[get("/{team_id}")]
 pub async fn get_team_members(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
     query_params: Query<QueryParams>,
@@ -300,12 +305,12 @@ pub struct AddUserToTeamRequest {
 /// POST /api/admin/events/{event_id}/teams/{team_id}/users
 #[post("/{team_id}/users")]
 pub async fn add_user_to_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
     utt: Json<AddUserToTeamRequest>,
 ) -> UniResult<EventTeamMembersDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, team_id) = path.into_inner();
     let user_id = utt.into_inner().user_id;
 
@@ -371,12 +376,14 @@ pub async fn add_user_to_team(
             "ADD_MEMBER",
             format!(
                 "{} 将用户 {} 加入队伍 {}",
-                user.username, user_model.username, event_team.name
+                user.username(),
+                user_model.username,
+                event_team.name
             )
             .as_str(),
             json!({"team_id": team_id, "user_id": user_id}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -387,12 +394,12 @@ pub async fn add_user_to_team(
 /// DELETE /api/admin/events/{event_id}/teams/{team_id}/users
 #[delete("/{team_id}/users")]
 pub async fn remove_user_from_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, team_id) = path.into_inner();
     let dir = dir.into_inner();
     let txn = ctx.db.get_ref().begin().await?;
@@ -432,10 +439,10 @@ pub async fn remove_user_from_team(
             "INFO",
             "EVENT_TEAMS",
             "REMOVE_MEMBER",
-            format!("{} 从队伍移除 {} 名成员", user.username, deleted_count).as_str(),
+            format!("{} 从队伍移除 {} 名成员", user.username(), deleted_count).as_str(),
             json!({"team_id": team_id, "deleted_count": deleted_count}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -446,11 +453,11 @@ pub async fn remove_user_from_team(
 /// POST /api/admin/events/{event_id}/teams/{team_id}/banned
 #[post("/{team_id}/banned")]
 pub async fn ban_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, team_id) = path.into_inner();
 
     let event_team = event_teams::Entity::find_by_id(team_id)
@@ -469,10 +476,10 @@ pub async fn ban_team(
             "INFO",
             "EVENT_TEAMS",
             "BAN",
-            format!("{} 封禁队伍: {}", user.username, event_team.name).as_str(),
+            format!("{} 封禁队伍: {}", user.username(), event_team.name).as_str(),
             json!({"team_id": team_id, "team_name": event_team.name}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -483,11 +490,11 @@ pub async fn ban_team(
 /// POST /api/admin/events/{event_id}/teams/{team_id}/unbanned
 #[post("/{team_id}/unbanned")]
 pub async fn unbanned_team(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, team_id) = path.into_inner();
 
     let event_team = event_teams::Entity::find_by_id(team_id)
@@ -506,10 +513,10 @@ pub async fn unbanned_team(
             "INFO",
             "EVENT_TEAMS",
             "UNBAN",
-            format!("{} 解禁队伍: {}", user.username, event_team.name).as_str(),
+            format!("{} 解禁队伍: {}", user.username(), event_team.name).as_str(),
             json!({"team_id": team_id, "team_name": event_team.name}),
             None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

@@ -13,14 +13,17 @@ import {
 	MegaphoneIcon,
 	PackageIcon,
 	PasskeyFillIcon,
-	ShieldLockIcon,
 	TasklistIcon,
 	TerminalIcon,
 	TrophyIcon,
 	ZapIcon,
 } from "@primer/octicons-react";
 
-import type { NavigationItem, NavigationSection } from "./sidebar-types";
+import type {
+	NavigationItem,
+	NavigationSection,
+	NavigationVisibilityContext,
+} from "./sidebar-types";
 
 const item = (
 	id: string,
@@ -29,6 +32,12 @@ const item = (
 	options: {
 		icon?: React.ReactNode;
 		match?: NavigationItem["match"];
+		/**
+		 * 该入口所需权限（v2）。仅用于**界面显隐**，不是授权依据 ——
+		 * 真正的判定在服务端每个请求上（`RequirePermission<P>`）。
+		 * 若只靠隐藏入口来"保护"页面，直接输入 URL 就能绕过。
+		 */
+		permission?: string;
 	} = {},
 ): NavigationItem => ({
 	type: "item",
@@ -37,6 +46,12 @@ const item = (
 	href,
 	icon: options.icon,
 	match: options.match ?? { mode: "exact" },
+	...(options.permission
+		? {
+				isVisible: ({ permissions }: NavigationVisibilityContext) =>
+					permissions.has(options.permission as string),
+			}
+		: {}),
 });
 
 /**
@@ -54,6 +69,7 @@ export const adminNavigation: NavigationSection[] = [
 		id: "overview",
 		children: [
 			item("dashboard", "Dashboard", "/admin/dashboard", {
+				permission: "system.read",
 				icon: <GoalIcon />,
 				match: { mode: "exact" },
 			}),
@@ -63,10 +79,11 @@ export const adminNavigation: NavigationSection[] = [
 		id: "access",
 		label: "Access",
 		children: [
-			item("access.super-admins", "Super Admins", "/admin/super_admins", {
-				icon: <ShieldLockIcon />,
-			}),
+			// v2：不再有「Super Admins」这个入口 —— 管理员不是独立账号类型，
+			// 而是持有 super-admin 角色的账号（见 Users）。旧页面在 Wave 10 随
+			// super_admin 表一起删除，期间仍可由 URL 直接访问（它由 legacy 守卫把守）。
 			item("access.users", "Users", "/admin/users", {
+				permission: "users.read",
 				icon: <PasskeyFillIcon />,
 			}),
 		],
@@ -76,6 +93,7 @@ export const adminNavigation: NavigationSection[] = [
 		label: "Events",
 		children: [
 			item("events.all", "All Events", "/admin/events", {
+				permission: "events.read",
 				icon: <CalendarIcon />,
 				match: {
 					mode: "pattern",
@@ -99,6 +117,7 @@ export const adminNavigation: NavigationSection[] = [
 						"All Challenges",
 						"/admin/challenges",
 						{
+							permission: "challenges.read",
 							icon: <ListUnorderedIcon />,
 						},
 					),
@@ -106,14 +125,19 @@ export const adminNavigation: NavigationSection[] = [
 						"content.challenges.sets",
 						"Challenge Sets",
 						"/admin/challenge_sets",
-						{ match: { mode: "segment-prefix" } },
+						{
+							permission: "challenges.read",
+							match: { mode: "segment-prefix" },
+						},
 					),
 				],
 			},
 			item("content.gameboxes", "GameBoxes", "/admin/awd/gameboxes", {
+				permission: "gameboxes.read",
 				icon: <PackageIcon />,
 			}),
 			item("content.weapons", "Weapons", "/admin/weapons", {
+				permission: "weapons.read",
 				icon: <GiftIcon />,
 			}),
 		],
@@ -123,9 +147,11 @@ export const adminNavigation: NavigationSection[] = [
 		label: "Community",
 		children: [
 			item("community.announcements", "Announcements", "/admin/announcements", {
+				permission: "announcements.manage",
 				icon: <MegaphoneIcon />,
 			}),
 			item("community.discussions", "Discussions", "/admin/discussions", {
+				permission: "discussions.moderate",
 				icon: <CommentDiscussionIcon />,
 			}),
 		],
@@ -138,16 +164,22 @@ export const adminNavigation: NavigationSection[] = [
 				"infrastructure.networking",
 				"AWD Networking",
 				"/admin/awd/network",
-				{ icon: <KeyIcon /> },
+				{
+					permission: "awd.read",
+					icon: <KeyIcon />,
+				},
 			),
 			item("infrastructure.terminal", "Terminal", "/admin/terminal", {
+				permission: "terminal.open",
 				icon: <TerminalIcon />,
 			}),
 			item("infrastructure.docker", "Docker", "/admin/docker", {
+				permission: "docker.read",
 				icon: <ContainerIcon />,
 				match: { mode: "segment-prefix" },
 			}),
 			item("infrastructure.database", "Database", "/admin/database", {
+				permission: "database.execute",
 				icon: <DatabaseIcon />,
 			}),
 		],
@@ -157,13 +189,17 @@ export const adminNavigation: NavigationSection[] = [
 		label: "Operations",
 		children: [
 			item("operations.logs", "Logs", "/admin/logs", {
+				permission: "logs.read",
 				icon: <LogIcon />,
 			}),
 			item(
 				"operations.scheduled-tasks",
 				"Scheduled Tasks",
 				"/admin/scheduled_tasks",
-				{ icon: <ClockIcon /> },
+				{
+					permission: "scheduler.manage",
+					icon: <ClockIcon />,
+				},
 			),
 		],
 	},
@@ -172,9 +208,11 @@ export const adminNavigation: NavigationSection[] = [
 		label: "System",
 		children: [
 			item("system.settings", "Settings", "/admin/settings", {
+				permission: "settings.read",
 				icon: <GearIcon />,
 			}),
 			item("system.version", "Version", "/admin/version", {
+				permission: "system.read",
 				icon: <ZapIcon />,
 			}),
 		],

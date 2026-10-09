@@ -3144,7 +3144,7 @@ mise run db:migration:verify
 | 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PASS** | `AuthContext`、`RequirePermission<P>`/`RequireAny`、9 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试含 2 项真并发）、授权契约 11 项。**handler 迁移完成**：156 个 handler 已用 `RequirePermission<P>`（31 文件），仅剩 5 个 `/api/admin/super_admin` CRUD 按表保留旧守卫（Wave 10 随表删除）；29 条权限守卫**全部**被真实使用。新增 `authorization_route_coverage.rs` 4 项源码守卫锁定不回归 |
 | 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PASS** | M5 已 apply（dev 库 33348 行日志中 82 行带主体，回填后 0 条非法引用）；`add_log`/`AuditService::record` 收敛为单一 `actor_user_id`，109 处调用点全部编译期校验；`audit_actor_unification_contract.rs` 10 项；三个前端的日志页同步迁移 |
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PASS** | transport 新增 `onForbidden` 且 403 **绝不**触发 `onUnauthorized`；`FloatCTFError.isUnauthorized` / `isForbidden` / `forbidden`；`MeDto`（后端 `/me` 每请求解析权限 + SDK 类型）；SDK 登录改走 `/api/session`；SDK 测试 69 项全绿（新增 8 项含「403 后同一客户端仍带 token」） |
-| 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
+| 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PARTIAL** | AuthStore `version:2` + `migrate` 清空 v1 令牌（v1 JWT 会被后端拒绝，保留只会造成「以为已登录却处处 401」）；`permissions`/`grantsAll` 状态；管理端导航 17 项**全部**声明权限谓词（移除 legacy「Super Admins」入口）；`/me` 权限回填 store；管理端登录一次覆盖两个域并区分 401/403 文案。Default 测试 **185 项全绿**。**待续**：Roles 管理 UI、Users 页角色授予 UI |
 | 9 | 两个外部 Frontend（shadcn / xzmu）+ 子模块 gitlink | **PENDING** | — |
 | 10 | M6 删除 `super_admin` 表 + legacy 别名移除 + `API_CONTRACT_VERSION="2"` | **PENDING** | — |
 | 11 | 全量回归：fresh DB / upgrade / rollback / Jeopardy / AWD / AWDP | **PENDING** | — |
@@ -3289,6 +3289,28 @@ Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
    前端拿到 `permissions` 就跳过错误处理是错误用法。这一点写进了 `MeDto` 的文档注释。
 5. **SDK 登录改走 `/api/session`**：与 `/api/users/session` 是同一个后端 handler，
    切换只是让新代码走 v2 名义入口；旧端点作为别名保留到 Wave 10。
+
+### 29.12 环境限制：`mise run check` 在 Wave 8 期间因**宿主 AWDP 网络池耗尽**而红
+
+**事实**（Wave 8 提交时的实测证据）：
+
+| 观测 | 值 |
+|---|---|
+| `docker network ls` 中 AWD/AWDP 网络数 | **257**（`10.43.0.0/16` 的 /24 槽位基本占满） |
+| 生产 AWDP 容器数 | **298** |
+| 20 秒内网络数变化 | 257 → 257（稳态，不是瞬时抖动） |
+| 失败用例 | `awdp_fix_patch.rs` 的 3 项，报错 `Internal("awdp event network pool exhausted")` |
+| Wave 8 改动范围 | **0 个 Rust 文件**（仅 Default 前端 5 个文件 + 1 个新测试） |
+| 对照 | 同一批测试在约 15 分钟前的 Wave 7 全量门禁中**通过**（该次 `mise run check` exit 0） |
+
+**结论**：这 3 项失败由**生产** AWDP 练习判题占满 `10.43.0.0/16` 子网池导致，
+与 Wave 8 的代码改动无因果关系（Wave 8 完全没有触碰 Rust）。
+这正是 `HANDOFF.md` 记载的「开发测试与生产争抢宿主资源」这一风险的实际发生。
+
+**处理**：**不得**把这次运行记为 PASS。池子被生产占用期间，任何需要分配
+AWDP 事件网络的用例都无法通过。Wave 11 的回归必须在池子空闲时运行；
+否则这 3 项须如实记为 `SKIP (env)`。**不允许**为了跑测试而删除生产的
+AWDP 网络/容器（那会直接破坏生产练习环境）。
 
 ### 29.4 必须诚实记录的环境限制
 

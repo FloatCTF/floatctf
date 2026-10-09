@@ -36,7 +36,13 @@ function RouteComponent() {
       form.buttonMessage = "Signing in...";
     },
     onSuccess: (data) => {
-      authStore.setAdminToken(data.data!);
+      const token = data.data!;
+      // v2 统一账户：一次登录同时覆盖两个域。
+      // 后端 `/api/admin/session` 与 `/api/session` 是同一个会话，
+      // 因此管理端登录后选手端请求不需要再登录一次（Case A：
+      // 一个账号既能参赛也能管理）。
+      authStore.setAdminToken(token);
+      authStore.setToken(token);
       banner.showBanner("success", "Login successful");
       form.buttonDisabled = true;
       form.buttonMessage = "Redirecting...";
@@ -47,7 +53,13 @@ function RouteComponent() {
       console.log(error);
       banner.showBanner(
         "critical",
-        formatApiError(error, { 401: "用户名或密码错误" }),
+        // v2 起两类失败要分开提示：
+        // - 401：凭据错误（重新输入即可）
+        // - 403：凭据正确但该账号没有平台管理权限（重新输入也没用）
+        formatApiError(error, {
+          401: "用户名或密码错误",
+          403: "该账号没有平台管理权限",
+        }),
       );
 
       form.buttonDisabled = false;

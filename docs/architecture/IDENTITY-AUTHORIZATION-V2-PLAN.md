@@ -3351,10 +3351,31 @@ M6 之前该断言必须仍是绿的）。
 `apps/api/src/core/contract.rs` 的 `API_CONTRACT_VERSION` 与
 `packages/frontend-runtime/src/version.ts` 的 `API_CONTRACT_VERSION` 同时 `"1"` → `"2"`。
 
-**Wave 9 的现状（已核对）**：两个外部前端的 `tsc --noEmit` **当前都是干净的**；
-Wave 6 已顺带修掉 xzmu 因 Wave 0 的 `UserDto` 迁移遗留的类型不匹配。
-因此 Wave 9 剩下的实质工作是：外部前端的 `onForbidden` / 权限感知导航接线 +
-子模块 gitlink 更新（会一并吸收先于本工作存在的上游提交）。
+**Wave 9 的现状（已逐一核对源码，不是推测）**：
+
+1. **两个外部前端的 `tsc --noEmit` 当前都干净**。Wave 6 已顺带修掉 xzmu 因
+   Wave 0 的 `UserDto` 迁移遗留的类型不匹配（xzmu 不在 `mise run web:typecheck`
+   的 6 个包内，因此那个破坏此前无人捕获 —— 每次改动都需单独跑它的 tsc）。
+2. **错误处理无需改动（已核对，属"计划假设比实际更重"的一例）**：
+   - xzmu `src/api/errors.ts` 的 `toErrorView` 已有独立 `httpStatus === 403` 分支，
+     且 `unauthorized: false`；
+   - shadcn `src/api/errors.ts` 已有 `isForbidden()`、`errorText` 的 403 文案，
+     甚至已有 `409 → 「当前状态与该操作冲突」` —— 正是 roles API 对内置角色返回的码。
+   - 因此**不建议**再全局接 `onForbidden`：这两个前端的错误是在**调用点**呈现的，
+     全局回调只会造成重复报错。SDK 提供机制、前端按自己的方式呈现，边界保持清晰。
+3. **真正剩下的只有权限感知导航**：
+   | 前端 | 位置 | 静态 admin 入口数 |
+   |---|---|---|
+   | shadcn | `src/app/nav.ts` 的 `adminNav` | **23** |
+   | xzmu | `src/app/nav.ts` | **22** |
+   两处都是纯静态列表（无任何可见性谓词），所以任何能进管理端的账号都会看到全部入口，
+   点进去才吃 403。改造方式可直接照搬 Default 的做法
+   （`frontends/default/src/navigation/admin-navigation.tsx` 的 `item(..., {permission})`
+   + `frontends/default/src/navigation/__tests__/permission-aware-navigation.test.ts` 的
+   断言形态：每项都必须有谓词、空权限看不到任何入口、单条权限只放出自己的入口）。
+   注意每个前端用它**自己的**导航类型与渲染方式实现（§铁律 11：不为新前端改 Default，
+   也不把 Default 的形态强加给它们）。
+4. **子模块 gitlink 更新**（会一并吸收先于本工作存在的上游提交，须向用户明确说明）。
 
 ### 29.4 必须诚实记录的环境限制
 

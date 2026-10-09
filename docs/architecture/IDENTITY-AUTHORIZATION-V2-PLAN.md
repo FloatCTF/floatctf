@@ -3238,6 +3238,20 @@ Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
   `category` + `action` 恢复（现有调用点已分别使用 `AUTH` / `SUPER_ADMIN` /
   `ROLES` 等 category）。**不得**为了保留分列而破坏统一主体约束。
 
+### 29.9 Wave 7（SDK v2）已核对的现状 —— 比计划假设的**更小**
+
+源码核对结果（修正计划里「SSE 401/403 分流」这项的表述）：
+
+| 计划项 | 现状 | Wave 7 实际要做的 |
+|---|---|---|
+| SSE 401/403 分流 | **已经做了**：`packages/sdk/src/sse/connectSse.ts:164` 对 `401 \|\| 403` 一视同仁地停止重连；`errors.ts:108` 已把 `httpStatus` 带进 `FloatCTFError` | 无需改动；只需把「403 不该触发清 token 跳登录」的规则落到**非 SSE** 的 transport 层 |
+| `getToken` | 已存在（`client.ts:66`、`sse/connectSse.ts:58`、`transport.ts`） | 复用；SSE 与 HTTP 必须共用同一个 token 源 |
+| SDK 不碰 localStorage | 已满足（`transport.ts:13` 明确「SDK 绝不 import router / Zustand / localStorage」） | 保持不变 |
+| `FloatCTFError.forbidden` | 无；只有 `kind: "http" \| "network" \| ...` + `httpStatus` | 新增便捷判定（如 `isUnauthorized` / `isForbidden`），并**在 transport 里区分处理**：401 → 触发「凭据失效」回调；403 → 触发 `onForbidden`，**绝不清 token** |
+| `onForbidden` 回调 | 无 | 新增；Default/两个外部前端的职责是「403 展示无权限提示」，而不是跳登录页 |
+| `MeDto`（含 permissions） | `service/users.ts` 的 `getMe` 返回 `UserDto`（Wave 0 已去掉 password） | 增 `permissions: string[]` + `grants_all: boolean`，供权限感知导航 |
+| 登录端点 | `service/users.ts:22` → `POST /users/session`；`admin/auth.ts:12` → `POST /session`（base `/api/admin`） | 增加 `POST /api/session` 的客户端入口；两条旧路径作为过渡别名保留到 Wave 10 |
+
 ### 29.4 必须诚实记录的环境限制
 
 - **所有 live-API 测试软跳过**（`http_auth_contract.rs` 的 3 项 live 断言、

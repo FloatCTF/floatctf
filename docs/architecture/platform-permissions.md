@@ -3,6 +3,15 @@
 > 本文是 [IDENTITY-AUTHORIZATION-V2-PLAN.md](./IDENTITY-AUTHORIZATION-V2-PLAN.md) §7 / §12 / §24 的
 > 配套**实现清单**：把当前源码里的**每一条** HTTP 路由映射到「认证级别 + 所需权限」。
 >
+> **实现状态：数据层已落地，路由守卫尚未切换（PENDING Wave 5）。**
+> 分支 `feat/identity-authorization-v2` @ `2aaa092`；本表描述的是 **v2 目标态**。
+> 现状：Wave 0–3 已完成（权限目录 `core::permission` 的 29 条权限、RBAC 三表、
+> 内置 `super-admin`、账号统一与 actor 外键重指向）。**admin 路由当前仍以
+> `SuperAdminJwtGuard` 做粗粒度门禁**，逐路由的 `RequirePermission<P>` 在 Wave 5
+> 落地；因此本表的「所需权限」列现在起是**待实现的契约**，且其正确性由
+> `apps/api/tests/http_auth_contract.rs` 的目录守卫（153 条 admin 路由、5 项断言）
+> 先行锁定。
+>
 > 核验基线：`main` @ `7c382e6b35a39148cbf6ecb581a6611ac61c673d`。
 > 路由来源：`apps/api/src/bootstrap/routes.rs` + 各模块 `configure_*_routes` /
 > `admin_events_routes` / `admin_platform_routes` 的注册顺序 + handler 上的

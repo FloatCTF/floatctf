@@ -1,6 +1,8 @@
 # 身份与授权 v2 实施计划（IDENTITY-AUTHORIZATION-V2-PLAN.md）
 
-> **状态：PLAN ONLY（未实现）**。本文只做规划，不含任何代码改动、不含新增 migration。
+> **状态：IMPLEMENTED / VALIDATED（部分 Wave）** —— 见文末 §29 Implementation Status。
+> 分支 `feat/identity-authorization-v2`，当前 HEAD `2aaa092`；**未 push / 未 merge / 未 tag**。
+> 已完成的 Wave 均为**本地提交**且 `mise run check` 全绿。
 > 目标：把「管理员账号」从一种**独立账号类型**降级为「持有平台角色的普通账号」，让
 > **身份（Authentication）** 与 **授权（Authorization）** 彻底分离，并把平台管理能力
 > 收敛到可审计的 RBAC 模型。
@@ -3098,3 +3100,88 @@ grep -rn "API_CONTRACT_VERSION" apps/api/src/core/contract.rs \
 mise run db:migration:status      # 期望 Applied 48 / Pending 0
 mise run db:migration:verify
 ```
+
+---
+
+## 29. Implementation Status
+
+> 本节是实现期的**唯一权威进度表**，随每个 Wave 的本地提交更新。
+> 判定规则：
+> - `PASS` = 实现完成 + Gate 满足 + `mise run check` 全绿 + **已本地提交**；
+> - `PENDING` = 尚未开始或未完成；
+> - `SKIP (env)` = 因环境限制未能执行（**绝不记为 PASS**）。
+>
+> 全局约束（全程遵守）：不 push / 不 merge / 不 tag / 不 release / 不发布 npm /
+> 不 push GHCR（含两个前端子模块，可本地提交不可 push）；不动生产
+> （`127.0.0.1:5433` 的 `floatctf-postgres` 与全部生产容器）；不启动开发 API
+> （HANDOFF 记载开发 API 会与生产争抢宿主资源并在约 8 秒内删除重建生产 AWDP
+> 练习判题容器）；迁移只新增文件，绝不改写既有迁移。
+
+### 29.1 分支与提交
+
+| 项 | 值 |
+|---|---|
+| 分支 | `feat/identity-authorization-v2` |
+| 起始 HEAD（`main`） | `7c382e6b35a39148cbf6ecb581a6611ac61c673d` |
+| 计划修订提交 | `20bc592 docs(auth): 修订身份与授权 v2 计划并固化产品决策` |
+| Wave 0 提交 | `0f2544b fix(security): 加固身份响应与下载对象级授权基线` |
+| Wave 1 提交 | `2a8ef0a feat(auth): 新增平台 RBAC 数据模型与权限目录` |
+| Wave 2 提交 | `28b7a73 feat(auth): 迁移管理员身份到统一 users 表` |
+| Wave 3 提交 | `2aaa092 feat(auth): 管理动作主体外键统一指向 users`（amend 后的最终 hash） |
+| shadcn 子模块本地提交 | `6756a1d`（Wave 0）、`5e816b4`（Wave 3）——**均未 push** |
+| xzmu 子模块本地提交 | 无（Wave 9 起涉及） |
+
+### 29.2 Wave 进度
+
+| Wave | 内容 | 状态 | 关键证据 |
+|---|---|---|---|
+| 0 | 计划修订 + 安全基线（身份响应去 password、`/api/admin/download` 对象级授权、SDK 去 `console.log`） | **PASS** | 19 文件 +1628/−145；`identity_wave0_security.rs` 6 项测试 |
+| 1 | M1 RBAC schema + 权限目录 + 内置角色 reconcile | **PASS** | M1 已 apply；15 单元 + 6 schema + 6 角色/解析测试 |
+| 2 | M2 账号列与冲突预检 + M3 `super_admin → users` 迁移 | **PASS** | dev 库实测 hash/`created_at` 逐字节一致；9 项迁移契约测试 |
+| 3 | M4 管理动作主体外键重指向 `users`（含 `announcements` SET NULL） | **PASS** | 6 FK 全部 `users` + `confdeltype='n'`；7 项测试 |
+| 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PENDING** | — |
+| 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PENDING** | — |
+| 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PENDING** | — |
+| 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
+| 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
+| 9 | 两个外部 Frontend（shadcn / xzmu）+ 子模块 gitlink | **PENDING** | — |
+| 10 | M6 删除 `super_admin` 表 + legacy 别名移除 + `API_CONTRACT_VERSION="2"` | **PENDING** | — |
+| 11 | 全量回归：fresh DB / upgrade / rollback / Jeopardy / AWD / AWDP | **PENDING** | — |
+
+### 29.3 已完成的 migration
+
+| 版本 | 名称 | 状态 |
+|---|---|---|
+| `20261009142559` | `add-platform-rbac` | 已 apply（dev 库） |
+| `20261009143746` | `identity-account-columns-and-preflight` | 已 apply（dev 库） |
+| `20261009143806` | `migrate-super-admin-to-users` | 已 apply（dev 库） |
+| `20261009144648` | `repoint-admin-actor-fks-to-users` | 已 apply（dev 库） |
+
+`mise run db:migration:verify` 通过；`db:gen` 连续两次运行零差异。
+
+### 29.4 必须诚实记录的环境限制
+
+- **所有 live-API 测试软跳过**（`http_auth_contract.rs` 的 3 项 live 断言、
+  `tests/common` 的 API 依赖用例）：本机禁止启动开发 API（见上），
+  因此这些用例以软跳过方式结束。**这不是 PASS**，最终报告中按 SKIP 如实标注。
+- Rust 集成测试由 `scripts/test-rust.sh` 建**一次性数据库**运行
+  （`[rust-test] PASS: disposable database ... removed`），DB-gated 测试因此
+  确实执行而非跳过；但 `SKIP (env)` 仍适用于上面那条。
+- 子模块既有 gitlink 漂移（父仓库记录 shadcn `719de86c` / xzmu `c3f3479f`，
+  实际检出 shadcn `4ed19ed2`(+2) / xzmu `ec26a842`）是**先于本工作存在**的。
+  Wave 9 的 gitlink 更新会一并吸收这些上游提交，届时必须向用户明确说明。
+
+### 29.5 实现期对计划的修正（与 §27 并列）
+
+1. **M3 的「幂等」语义精确化**（§13）：DDL 可重复执行；M3 在未复制状态下可重复
+   执行且不重复写入；**M3 成功后重跑会被其自身 preflight 拒绝（fail closed）**，
+   而不是静默双写。`migrate.sh` 以 `schema_migrations` 为门禁，永不重跑已应用迁移，
+   故实践无影响。该行为由 `identity_migration_contract.rs` 可执行断言锁定。
+2. **测试并发模型**：cargo 为每个测试文件起独立进程，`std::sync::Mutex` 不能跨进程
+   串行。DB 契约测试改用 Postgres **事务级 advisory lock**（key `1179204949`，
+   与 `migrate.sh` 的 `1179204948` 区分）；「预期失败」断言用 `SAVEPOINT` 隔离，
+   避免事务进入 aborted（25P02）后拒绝后续语句。此前未这样做会导致
+   `mise run check` 因跨进程 DDL 锁竞争被 SIGTERM（退出码 143）而**假失败**。
+3. **`publisher` 展示快照保留**：`announcements.publisher`（NOT NULL）作为发布当时的
+   展示名快照保留；`publisher_id` 为空时前端展示快照 + 「已注销」标注，
+   而不是只显示「已注销账号」。

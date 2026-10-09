@@ -3312,6 +3312,50 @@ AWDP 事件网络的用例都无法通过。Wave 11 的回归必须在池子空�
 否则这 3 项须如实记为 `SKIP (env)`。**不允许**为了跑测试而删除生产的
 AWDP 网络/容器（那会直接破坏生产练习环境）。
 
+### 29.13 Wave 9 / Wave 10 的 legacy 移除清单（已核对源码，供直接执行）
+
+`super_admin` 的一切遗留物必须在 Wave 10 一起消失。以下是**已核对**的完整清单，
+避免下一轮重新摸索或漏项（漏一项就会出现「表删了但端点还在」的编译/运行错误）。
+
+**后端（`apps/api/src`）**
+
+| 位置 | 内容 |
+|---|---|
+| `modules/identity/administrator/mod.rs` | 6 个 handler：`super_admin_login`、`create_super_admin`、`patch_super_admin`、`get_super_admins`、`get_super_admin`、`delete_super_admin` |
+| `modules/identity/mod.rs:44` | `cfg.service(administrator::super_admin_login)`（`/api/admin/session` 别名） |
+| `modules/identity/mod.rs:51,75-88` | `web::scope("/super_admin")` 的 5 条 CRUD 注册 |
+| `modules/identity/administrator/dto.rs` | `SuperAdminDto`（Wave 0 已去 password；整体随端点删除） |
+| `api/extractor/auth.rs` | `SuperAdminJwtGuard` 定义（Wave 5 迁移后只剩这 5 个 legacy handler 在用） |
+| `api/extractor/mod.rs` / `api/mod.rs` / `api/prelude.rs` | 三处 `SuperAdminJwtGuard` 再导出 |
+| `apps/api/tests/common/routes.rs` | 目录里 5 条 `/api/admin/super_admin*` + `/api/admin/session`，以及 `ADMIN_ROUTE_COUNT = 162` 需相应下调 |
+
+**Migration M6**：`DROP TABLE super_admin`（M4/M5 之后已无外键指向它 ——
+`rbac_actor_fk_contract.rs` 的 `no_fk_targets_super_admin_anymore` 会持续保证这一点，
+M6 之前该断言必须仍是绿的）。
+
+**SDK（`packages/sdk`）**
+
+- `api/admin/super_admin.ts` → 删除
+- `api/admin/index.ts` / `api/index.ts` 的 `createSuperAdminApi` 导出与组装
+- `types/account.ts` 的 `SuperAdminDto` / `SuperAdminWriteRequest` 与 `types/index.ts` 的再导出
+
+**三个前端**
+
+| 前端 | 待删文件/引用 |
+|---|---|
+| Default | `src/routes/admin/super_admins.tsx`、`src/api/**` 里的 `super_admin` 门面、`navigation/admin-navigation.tsx`（入口已在 Wave 8 移除，仅需确认无残留） |
+| shadcn | `src/features/admin/platform/super-admins.tsx`、`src/api/keys.ts` 的 `superAdmins` query key |
+| xzmu | `src/features/admin/core/superAdmins.tsx`、`src/features/admin/core/shared.tsx`、`src/features/admin/routes-core.tsx`、`src/api/keys.ts` 的 query key |
+
+**契约版本（必须两处同改，否则 `scripts/check-architecture.sh:174` 必红）**：
+`apps/api/src/core/contract.rs` 的 `API_CONTRACT_VERSION` 与
+`packages/frontend-runtime/src/version.ts` 的 `API_CONTRACT_VERSION` 同时 `"1"` → `"2"`。
+
+**Wave 9 的现状（已核对）**：两个外部前端的 `tsc --noEmit` **当前都是干净的**；
+Wave 6 已顺带修掉 xzmu 因 Wave 0 的 `UserDto` 迁移遗留的类型不匹配。
+因此 Wave 9 剩下的实质工作是：外部前端的 `onForbidden` / 权限感知导航接线 +
+子模块 gitlink 更新（会一并吸收先于本工作存在的上游提交）。
+
 ### 29.4 必须诚实记录的环境限制
 
 - **所有 live-API 测试软跳过**（`http_auth_contract.rs` 的 3 项 live 断言、

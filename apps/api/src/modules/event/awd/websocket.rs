@@ -44,12 +44,20 @@ impl AwdEvent {
 }
 
 /// 发布攻击成功事件。
+///
+/// payload 同时给出**双方队伍**与一血标记：前端战报需要「谁攻破了谁、扣了多少、
+/// 是否首杀」，只有 `score.changed` 时受害者信息是缺失的（见 P3-7 后的战报需求）。
+#[allow(clippy::too_many_arguments)]
 pub fn attack_success(
     event_id: Uuid,
     attacker_team_id: Uuid,
     victim_team_id: Uuid,
     event_gamebox_id: Uuid,
+    round_id: Uuid,
     points: i64,
+    victim_loss: i64,
+    first_blood: bool,
+    first_bonus: i64,
 ) -> AwdEvent {
     AwdEvent::new(
         "attack.success",
@@ -58,7 +66,11 @@ pub fn attack_success(
             "attacker_team_id": attacker_team_id,
             "victim_team_id": victim_team_id,
             "event_gamebox_id": event_gamebox_id,
+            "round_id": round_id,
             "points": points,
+            "victim_loss": victim_loss,
+            "first_blood": first_blood,
+            "first_bonus": first_bonus,
         }),
     )
 }

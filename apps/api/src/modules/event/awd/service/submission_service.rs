@@ -194,5 +194,25 @@ pub async fn process_submission(
         )
         .await;
 
+    // 战报事件：攻击成功同时给出双方队伍、受害者失分与一血标记。
+    // 此前 `attack.success` 只有构造器没有发布点，前端只能从 score.changed 的 delta
+    // 正负推断「有人被攻破」，拿不到受害者是谁。
+    let _ = publisher
+        .publish(
+            crate::modules::event::awd::websocket::attack_success(
+                event_id,
+                attacker_team_id,
+                victim_team_id,
+                event_gamebox_id,
+                round_id,
+                attack_score,
+                result.victim_loss_delta,
+                result.was_first_blood,
+                result.first_bonus_delta,
+            )
+            .into_realtime(),
+        )
+        .await;
+
     Ok(result)
 }

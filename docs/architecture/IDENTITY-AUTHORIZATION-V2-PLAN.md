@@ -3160,6 +3160,22 @@ mise run db:migration:verify
 
 `mise run db:migration:verify` 通过；`db:gen` 连续两次运行零差异。
 
+6. **角色管理 API 的具体形态在实现期做了三处修正**（Wave 5）：
+   - **角色以 UUID 寻址**（`/api/admin/roles/{role_id}`）而不是 `{key}`。
+     `key` 虽然按约定不可改，但用 UUID 与**其余全部** admin 端点
+     （`{user_id}` / `{event_id}` / `{super_user_id}`…）保持一致，
+     也避免把「展示/审计里人类可读的 key」与「URL 里的寻址标识」混为一谈。
+   - **`protected` 角色的结构性变更返回 409 Conflict**，不是 403。
+     403 表示「你的身份不允许」，而这里的语义是「请求本身没问题，
+     但与该资源的内置不变式冲突」——409 更准确，也让前端能区分
+     「我没权限」与「这个角色不能改」。
+   - **`GET /api/admin/users/{id}/roles` 的权限取 `users.read`**（与
+     platform-permissions.md 一致），因为 `users.read` 的定义本就是
+     「查看账号列表、**详情与其角色**」；用 `roles.read` 会与权限说明自相矛盾。
+   此外，账号角色授予的响应体提供了 `roles[]` 与**有效权限** `permissions[]`；
+   `is_last_super_admin` 标记与 `granted_by`/`granted_at` 明细**尚未**实现
+   （见 §29.6 后续项）。
+
 ### 29.6 Wave 5 的剩余工作（171 处 handler 迁移）
 
 `AuthContext` / `RequirePermission<P>` / 角色权限 API / 反提权 / 最后超管并发
@@ -3172,6 +3188,28 @@ mise run db:migration:verify
 每一步都是「收紧或持平」，不存在「迁移到一半出现越权窗口」。
 
 逐文件映射以 [platform-permissions.md](./platform-permissions.md) 的路由→权限表为准。
+
+Wave 5 尚未完成的小项（除 handler 迁移外）：
+
+| 项 | 说明 |
+|---|---|
+| `GET /api/admin/roles/{role_id}` | 角色详情 + 权限集（表里已定义，handler 未实现） |
+| `is_last_super_admin` 标记 | 账号角色响应里应给出「这是最后一个全权账号」提示，供 UI 在移除前警告 |
+| `granted_by` / `granted_at` 明细 | 账号角色响应里展示授予人与时间（可审计性） |
+| `API_CONTRACT_VERSION` `"1"` → `"2"` | **必须同时改两处**：`apps/api/src/core/contract.rs` 与 `packages/frontend-runtime/src/version.ts`；`scripts/check-architecture.sh:174` 会断言二者一致，只改一处必然红。触发理由：JWT 结构变更（强制重新登录）、`Role` 移除、部分 admin 端点 401→403、`AnnouncementDto.publisher_id` 变可空 —— 都是「旧前端会坏」的破坏性变更 |
+| `RequirePermission` 的 live 覆盖 | 目前 8 条角色/权限路由已有契约测试；迁移后的其余端点需在 Wave 11 补 live 断言（受限于本机不能起 API，将如实记为 SKIP） |
+
+### 29.7 已定位的 SDK / 前端触点（供 Wave 7–9 直接使用）
+
+Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
+
+| 触点 | 位置 | v2 需要做什么 |
+|---|---|---|
+| 选手登录 | `packages/sdk/src/api/service/users.ts:22` → `POST /users/session` | 改为 `POST /session`（`/users/session` 作为过渡别名保留到 Wave 10） |
+| 管理端登录 | `packages/sdk/src/api/admin/auth.ts:12` → `POST /session`（base `/api/admin`） | 保留或改指 `/api/session`；需处理 **403**（已认证但无管理能力），不再只有 401 |
+| 终端会话 | shadcn `features/admin/infra/terminal.tsx:138`、xzmu `features/admin/infra/TerminalPage.tsx:332` → `client.adminHttp.post("/terminal/session")` | v2 下非管理员会拿到 **403**（v1 是 401）；错误提示文案需区分 |
+| `/me` 响应 | `packages/sdk/src/api/service/users.ts`（Wave 0 已迁到 `UserDto`） | 增加 `permissions: string[]` 与 `grants_all`（计划的 `MeDto`），供权限感知导航 |
+| 契约版本 | `apps/api/src/core/contract.rs` + `packages/frontend-runtime/src/version.ts` | 同时升 `"2"`（`scripts/check-architecture.sh:174` 断言一致） |
 
 ### 29.4 必须诚实记录的环境限制
 

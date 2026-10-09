@@ -51,14 +51,14 @@
 | `POST` | `/api/admin/users` | `perm:users.manage` | 建账号 |
 | `PATCH` | `/api/admin/users/{user_id}` | `perm:users.manage` | 改资料 / 改密（改密同时 `token_version += 1`）/ 启用禁用 |
 | `DELETE` | `/api/admin/users` | `perm:users.manage` | 批量删账号（受 §20.1 最后超管保护 + §20.3 自我锁定保护） |
-| `GET` | `/api/admin/users/{user_id}/roles` | `perm:users.read` | **新增**：某账号的角色授予（含 `granted_by`/`granted_at`/`is_last_super_admin`） |
+| `GET` | `/api/admin/users/{user_id}/roles` | `perm:users.read` | **新增**：某账号的角色授予（含 `roles[]` 与**有效权限** `permissions[]`；`is_last_super_admin` 见计划 §29.5-6） |
 | `PUT` | `/api/admin/users/{user_id}/roles` | `perm:roles.manage` | **新增**：整体替换角色集合（受 §20.2 反提权约束） |
-| `GET` | `/api/admin/permissions` | `perm:roles.read` | **新增**：只读权限目录（enum 派生：`key`/`domain`/`name`/`description`/`high_risk`） |
+| `GET` | `/api/admin/permissions` | `perm:roles.read` | **新增**：只读权限目录（enum 派生：`key`/`domain`/`description`/`high_risk`） |
 | `GET` | `/api/admin/roles` | `perm:roles.read` | **新增**：角色列表（含 `protected`/`grants_all`/已授予账号数） |
-| `GET` | `/api/admin/roles/{key}` | `perm:roles.read` | **新增**：角色详情 + 权限集 |
+| `GET` | `/api/admin/roles/{role_id}` | `perm:roles.read` | **新增**：角色详情 + 权限集（实现期改为按 UUID 寻址，见计划 §29.5-6） |
 | `POST` | `/api/admin/roles` | `perm:roles.manage` | **新增**：建自定义角色（不可创建 `grants_all`；权限集 ⊆ actor） |
-| `PATCH` | `/api/admin/roles/{key}` | `perm:roles.manage` | **新增**：改 name/description/权限集（`protected` → 409） |
-| `DELETE` | `/api/admin/roles/{key}` | `perm:roles.manage` | **新增**：删角色（`protected` → 409） |
+| `PATCH` | `/api/admin/roles/{role_id}` | `perm:roles.manage` | **新增**：改 name/description/权限集（`protected` 的权限集 → **409 Conflict**） |
+| `DELETE` | `/api/admin/roles/{role_id}` | `perm:roles.manage` | **新增**：删角色（`protected` → **409 Conflict**） |
 
 **Wave 10 删除**（现状存在，统一后由上面取代）：
 

@@ -679,7 +679,7 @@ function RouteComponent() {
 
 						<Section
 							title="当前网络分配"
-							description="平台已分配给各赛事的独占网段。网段随赛事生命周期释放，本页不提供删除操作。"
+							description="平台已分配给各赛事的独占网段"
 						>
 							<GenericTable
 								subject={ALLOCATIONS_KEY}
@@ -697,7 +697,7 @@ function RouteComponent() {
 
 						<Section
 							title="宿主网络状态"
-							description="宿主机防火墙、WireGuard 与容器网络的只读检测结果。本页不提供修改宿主网络的操作；如状态异常，请按卡片说明在宿主机处理。"
+							description="宿主机防火墙、WireGuard 与容器网络的只读检测结果。如状态异常，请按卡片说明在宿主机处理"
 						>
 							{health.isLoading ? (
 								<Spinner size="small" />

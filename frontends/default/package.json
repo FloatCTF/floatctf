@@ -1,6 +1,6 @@
 {
   "name": "@floatctf/frontend-default",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The official FloatCTF frontend: the complete current UI (React + TanStack Router + Primer)",
   "license": "AGPL-3.0-only",
   "private": true,

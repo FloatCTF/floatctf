@@ -1,6 +1,7 @@
 import type { FloatCTFHttpClient } from "../../transport.js";
 import type { QueryParams, UniResponse } from "../../transport.js";
 import type { UserDto, UserWriteRequest } from "../../types/account.js";
+import type { UserRolesDto } from "../../types/roles.js";
 
 export function createUserAdminApi(http: FloatCTFHttpClient) {
 	return {
@@ -26,6 +27,26 @@ export function createUserAdminApi(http: FloatCTFHttpClient) {
 	    },
 	    remove: async (id_list: string[]): Promise<UniResponse<number>> => {
 	        const res = await http.delete("/users", { data: { id_list } });
+	        return res.data;
+	    },
+	    /** 某账号的角色与有效权限（`users.read`）。 */
+	    getRoles: async (userId: string): Promise<UniResponse<UserRolesDto>> => {
+	        const res = await http.get(`/users/${userId}/roles`);
+	        return res.data;
+	    },
+	    /**
+	     * **整体替换**某账号的角色集合（`roles.manage`）。
+	     *
+	     * 不是增量：增量语义下「先加后删」与「先删后加」结果不同，
+	     * 会造出短暂的权限空洞或超额授权窗口。
+	     */
+	    setRoles: async (
+	        userId: string,
+	        roleIds: string[],
+	    ): Promise<UniResponse<UserRolesDto>> => {
+	        const res = await http.put(`/users/${userId}/roles`, {
+	            role_ids: roleIds,
+	        });
 	        return res.data;
 	    },
 };

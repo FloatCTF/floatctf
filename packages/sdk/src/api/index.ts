@@ -30,6 +30,7 @@ export {
 	createSettingAdminApi,
 	createSuperAdminApi,
 	createSystemAdminApi,
+	createRoleAdminApi,
 	createUserAdminApi,
 	createWeaponsAdminApi,
 } from "./admin/index.js";
@@ -84,6 +85,7 @@ import {
 	createScheduledTaskAdminApi,
 	createSettingAdminApi,
 	createSuperAdminApi,
+	createRoleAdminApi,
 	createSystemAdminApi,
 	createUserAdminApi,
 	createWeaponsAdminApi,
@@ -118,6 +120,7 @@ export function createAdminApi(http: FloatCTFHttpClient) {
 		challenges: createChallengeAdminApi(http),
 		discussions: createDiscussionAdminApi(http),
 		users: createUserAdminApi(http),
+		roles: createRoleAdminApi(http),
 		events: createEventAdminApi(http),
 		instances: createInstanceAdminApi(http),
 		event_challenges: createEventChallengeAdminApi(http),

@@ -47,3 +47,11 @@ export type {
 	UserDto,
 	UserWriteRequest,
 } from "./account.js";
+export type {
+	CreateRoleRequest,
+	PermissionDto,
+	RoleDto,
+	RoleSummaryDto,
+	UpdateRoleRequest,
+	UserRolesDto,
+} from "./roles.js";

@@ -24,6 +24,7 @@ export {
 	type ChallengeAdminApi,
 } from "./challenges.js";
 export { createUserAdminApi, type UserAdminApi } from "./users.js";
+export { createRoleAdminApi, type RoleAdminApi } from "./roles.js";
 export { createEventAdminApi, type EventAdminApi } from "./events.js";
 export {
 	createInstanceAdminApi,

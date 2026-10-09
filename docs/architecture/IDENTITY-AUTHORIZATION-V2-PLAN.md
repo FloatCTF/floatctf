@@ -1380,6 +1380,19 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 **保留 `super_admin` 表**：M3 只复制，不删。因此 M3 之后系统行为**完全不变**
 （守卫仍读 `super_admin`），这是一个可独立验证的**加法 Wave**。
 
+**M3 的「幂等」语义必须精确理解**（实现期修正）：
+
+| 场景 | 行为 | 说明 |
+|---|---|---|
+| DDL 层（M1/M2） | 可重复执行 | `CREATE/ADD COLUMN IF NOT EXISTS` + `DO` 判存 |
+| M3 在**未复制**状态下重复执行 | 成功且不重复写入 | `INSERT ... WHERE NOT EXISTS` + `ON CONFLICT DO NOTHING` |
+| M3 失败后重跑 | 成功 | 事务回滚使身份空间回到未合并状态，前置条件重新成立 |
+| **M3 成功后重跑** | **被 preflight 拒绝**（fail closed） | 成功后 `super_admin` 与 `users` 身份空间已重叠，username/email/id 必然冲突 |
+
+最后一行是**有意设计**：选择「失败得响亮」而不是「静默双写」。
+实践中不构成问题——`migrate.sh` 以 `schema_migrations` 为门禁，**永不重跑已应用的迁移**。
+该行为由 `apps/api/tests/identity_migration_contract.rs` 的可执行断言锁定。
+
 **M3 之后的一个已知且接受的语义变化**（必须写入发布说明）：
 
 > 统一后，原本只能从 `/api/admin/session` 登录的管理员账号，也可以从

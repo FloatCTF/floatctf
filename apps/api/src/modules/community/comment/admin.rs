@@ -67,7 +67,6 @@ pub async fn delete_comment(
             "DELETE_COMMENT",
             format!("{} 删除评论", user.username()).as_str(),
             json!({"comment_id": comment_id, "discussion_id": discussion_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

@@ -169,7 +169,6 @@ pub async fn create_discussion(
             format!("创建讨论: {}", discussion_title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -217,7 +216,6 @@ pub async fn patch_discussion(
             format!("编辑讨论: {}", discussion.title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -253,7 +251,6 @@ pub async fn delete_discussion(user: UserJwtGuard, ctx: ReqCtx, path: Path<Uuid>
             format!("删除讨论: {}", discussion_title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

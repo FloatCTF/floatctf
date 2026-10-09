@@ -370,7 +370,6 @@ pub async fn ban_team(
             crate::infrastructure::audit::AuditAction::TeamBanned,
             &format!("AWD team {team_id} banned in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "team_id": team_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -409,7 +408,6 @@ pub async fn unban_team(
             crate::infrastructure::audit::AuditAction::TeamUnbanned,
             &format!("AWD team {team_id} unbanned in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "team_id": team_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -448,9 +446,7 @@ pub async fn adjust_score(
         .record(
             crate::infrastructure::audit::AuditAction::ScoreAdjusted,
             &format!("AWD score adjusted for team {} in event {}", body.team_id, event_id),
-            serde_json::json!({ "event_id": event_id, "team_id": body.team_id, "delta": body.delta }),
-            None,
-            Some(admin_id),
+            serde_json::json!({ "event_id": event_id, "team_id": body.team_id, "delta": body.delta }), Some(admin_id),
             Some(&ctx.req),
         )
         .await;
@@ -611,7 +607,6 @@ pub async fn admin_reset_gamebox(
             crate::infrastructure::audit::AuditAction::GameboxReset,
             &format!("admin reset gamebox {instance_id} in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "instance_id": instance_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -862,7 +857,6 @@ pub async fn rotate_tokens(
             crate::infrastructure::audit::AuditAction::TokenRotated,
             &format!("AWD internal tokens rotated for event {event_id}"),
             serde_json::json!({ "event_id": event_id, "key_version": new_key_version }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )

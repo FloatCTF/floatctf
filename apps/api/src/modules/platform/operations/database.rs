@@ -52,7 +52,6 @@ pub async fn exec_sql(
                 "sql_len": sql.len(),
                 "sql_prefix": sql.chars().take(32).collect::<String>(),
             }),
-            None,
             Some(user.id()),
             Some(&ctx.req),
         )
@@ -154,7 +153,6 @@ pub async fn exec_sql(
                             )
                             .as_str(),
                             json!({"rows": data.len(), "elapsed_ms": elapsed, "sql_type": "query"}),
-                            None,
                             user.id().into(),
                             Some(&ctx.req),
                         )
@@ -195,9 +193,7 @@ pub async fn exec_sql(
                             user.username(), rows_affected
                         )
                         .as_str(),
-                        json!({"rows_affected": rows_affected, "elapsed_ms": elapsed, "sql_type": "exec"}),
-                        None,
-                        user.id().into(),
+                        json!({"rows_affected": rows_affected, "elapsed_ms": elapsed, "sql_type": "exec"}), user.id().into(),
                         Some(&ctx.req),
                     )
                     .await;

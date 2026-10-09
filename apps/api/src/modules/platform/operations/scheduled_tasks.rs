@@ -130,7 +130,6 @@ pub async fn create_scheduled_task(
             "CREATE",
             format!("{} 创建定时任务: {}", user.username(), task.task_name).as_str(),
             json!({"task_name": task.task_name, "task_key": task.task_key}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -393,7 +392,6 @@ pub async fn run_scheduled_task(
             "RUN",
             format!("{} 手动执行定时任务: {}", user.username(), task.task_name).as_str(),
             json!({"task_id": task.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -435,7 +433,6 @@ pub async fn delete_scheduled_task(
             "DELETE",
             format!("{} 删除 {} 个定时任务", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

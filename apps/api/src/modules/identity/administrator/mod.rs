@@ -64,7 +64,6 @@ pub async fn super_admin_login(
                 "LOGIN",
                 format!("管理员 {} 登陆失败", user.username).as_str(),
                 json!([]),
-                None,
                 user.id.into(),
                 Some(&ctx.req),
             )
@@ -81,7 +80,6 @@ pub async fn super_admin_login(
                 "LOGIN_DISABLED",
                 format!("管理员 {} 账号已禁用，拒绝登录", user.username).as_str(),
                 json!([]),
-                None,
                 user.id.into(),
                 Some(&ctx.req),
             )
@@ -98,7 +96,6 @@ pub async fn super_admin_login(
                 "LOGIN_FORBIDDEN",
                 format!("{} 无平台管理权限，拒绝管理端登录", user.username).as_str(),
                 json!([]),
-                None,
                 user.id.into(),
                 Some(&ctx.req),
             )
@@ -113,7 +110,6 @@ pub async fn super_admin_login(
             "LOGIN",
             format!("管理员 {} 登陆成功", user.username).as_str(),
             json!([]),
-            None,
             user.id.into(),
             Some(&ctx.req),
         )
@@ -207,7 +203,6 @@ pub async fn create_super_admin(
             "CREATE",
             format!("{} 创建管理员: {}", user.username, super_admin.username).as_str(),
             json!({"username": super_admin.username}),
-            None,
             user.id.into(),
             Some(&ctx.req),
         )
@@ -300,7 +295,6 @@ pub async fn patch_super_admin(
             "UPDATE",
             format!("{} 更新管理员: {}", user.username, super_admin.username).as_str(),
             json!({"username": super_admin.username}),
-            None,
             user.id.into(),
             Some(&ctx.req),
         )
@@ -384,7 +378,6 @@ pub async fn delete_super_admin(
             "DELETE",
             format!("{} 删除 {} 个管理员", user.username, r.rows_affected).as_str(),
             json!({"deleted_count": r.rows_affected}),
-            None,
             user.id.into(),
             Some(&ctx.req),
         )

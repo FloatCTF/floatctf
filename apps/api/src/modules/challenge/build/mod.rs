@@ -56,7 +56,6 @@ pub async fn web_import_challenge(
                 "version": response.challenge.version,
                 "build_status": response.challenge.build_status,
             }),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -280,7 +279,6 @@ pub async fn build_challenge(
                 "BUILD",
                 format!("{} 确保题目镜像: {}", user.username(), challenge.name).as_str(),
                 json!({"challenge_name": challenge.name, "success": is_ok}),
-                None,
                 user.id().into(),
                 Some(&ctx.req),
             )

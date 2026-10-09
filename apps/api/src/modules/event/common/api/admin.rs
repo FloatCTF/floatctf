@@ -40,9 +40,7 @@ pub async fn create_event(
             "EVENTS",
             "CREATE",
             format!("{} 创建比赛: {}", user.username(), event.title).as_str(),
-            json!({"title": event.title, "family": event.family, "purpose": event.purpose, "participant_mode": event.participant_mode}),
-            None,
-            user.id().into(),
+            json!({"title": event.title, "family": event.family, "purpose": event.purpose, "participant_mode": event.participant_mode}), user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -83,7 +81,6 @@ pub async fn patch_event(
             "UPDATE",
             format!("{} 更新比赛: {}", user.username(), event.title).as_str(),
             json!({"event_id": event.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -279,7 +276,6 @@ pub async fn delete_event(
             "DELETE",
             format!("{} 删除 {} 场比赛", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -324,7 +320,6 @@ pub async fn get_report(
             "EXPORT",
             &message,
             json!([]),
-            None,
             admin.id().into(),
             Some(&ctx.req),
         )

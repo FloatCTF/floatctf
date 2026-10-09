@@ -76,7 +76,6 @@ pub async fn add_user(
                 )
                 .as_str(),
                 json!({"event_id": event.id, "count": added_count}),
-                None,
                 user.id().into(),
                 Some(&ctx.req),
             )
@@ -106,7 +105,6 @@ pub async fn add_user(
                 "ADD",
                 format!("{} 为比赛 {} 添加用户", user.username(), event.title).as_str(),
                 json!({"event_id": event.id, "user_id": user_id}),
-                None,
                 user.id().into(),
                 Some(&ctx.req),
             )
@@ -155,7 +153,6 @@ pub async fn remove_user(
             "REMOVE",
             format!("{} 从比赛移除 {} 名用户", user.username(), deleted_count).as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -303,7 +300,6 @@ pub async fn banned_user(
             "BAN",
             format!("{} 封禁用户: {}", user.username(), u.username).as_str(),
             json!({"event_id": event_id, "user_id": user_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -351,7 +347,6 @@ pub async fn unbanned_user(
             "UNBAN",
             format!("{} 解禁用户: {}", user.username(), u.username).as_str(),
             json!({"event_id": event_id, "user_id": user_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

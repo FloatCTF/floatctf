@@ -138,7 +138,6 @@ pub async fn delete_discussions(
             "DELETE",
             format!("{} 删除 {} 条讨论", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

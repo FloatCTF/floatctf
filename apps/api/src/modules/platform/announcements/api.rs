@@ -140,7 +140,6 @@ pub async fn create_announcement(
             "CREATE",
             format!("{} 创建公告: {}", admin_username, announcement.title).as_str(),
             json!({"title": announcement.title}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -188,7 +187,6 @@ pub async fn patch_announcement(
             "UPDATE",
             format!("{} 更新公告: {}", user.username(), announcement.title).as_str(),
             json!({"announcement_id": announcement.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -224,7 +222,6 @@ pub async fn delete_announcement(
             "DELETE",
             format!("{} 删除 {} 条公告", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

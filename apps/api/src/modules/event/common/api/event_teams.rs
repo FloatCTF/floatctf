@@ -63,7 +63,6 @@ pub async fn add_team(
             )
             .as_str(),
             json!({"event_id": event.id, "team_name": event_team.name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -119,9 +118,7 @@ pub async fn remove_team(
             "EVENT_TEAMS",
             "DELETE",
             format!("{} 删除 {} 支队伍", user.username(), deleted_count).as_str(),
-            json!({"event_id": event_id, "deleted_count": deleted_count, "removed_enrollments": removed_enrollments}),
-            None,
-            user.id().into(),
+            json!({"event_id": event_id, "deleted_count": deleted_count, "removed_enrollments": removed_enrollments}), user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -382,7 +379,6 @@ pub async fn add_user_to_team(
             )
             .as_str(),
             json!({"team_id": team_id, "user_id": user_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -441,7 +437,6 @@ pub async fn remove_user_from_team(
             "REMOVE_MEMBER",
             format!("{} 从队伍移除 {} 名成员", user.username(), deleted_count).as_str(),
             json!({"team_id": team_id, "deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -478,7 +473,6 @@ pub async fn ban_team(
             "BAN",
             format!("{} 封禁队伍: {}", user.username(), event_team.name).as_str(),
             json!({"team_id": team_id, "team_name": event_team.name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -515,7 +509,6 @@ pub async fn unbanned_team(
             "UNBAN",
             format!("{} 解禁队伍: {}", user.username(), event_team.name).as_str(),
             json!({"team_id": team_id, "team_name": event_team.name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

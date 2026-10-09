@@ -14,7 +14,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use floatctf::api::extractor::auth::{RequirePermission, resolve_auth_context};
-use floatctf::core::permission::guards::{EventsReadGuard, RolesManageGuard, UsersReadGuard};
+use floatctf::core::permission::guards::{EventsReadGuard, RolesManageGuard};
 use floatctf::core::permission::{Permission, PermissionSet};
 use floatctf::core::security::gen_session_token;
 use floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;

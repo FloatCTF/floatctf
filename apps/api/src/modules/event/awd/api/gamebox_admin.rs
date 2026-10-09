@@ -251,7 +251,6 @@ pub async fn build_gamebox(
                 "BUILD",
                 format!("{} 确保 gamebox 镜像: {}", user.username(), gb.name).as_str(),
                 json!({ "gamebox_name": gb.name, "success": is_ok }),
-                None,
                 user.id().into(),
                 Some(&ctx.req),
             )
@@ -383,7 +382,6 @@ pub async fn delete_gamebox_library(
             "DELETE",
             format!("{} 删除 {} 个 GameBox", user.username(), deleted_count).as_str(),
             json!({ "deleted_count": deleted_count }),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

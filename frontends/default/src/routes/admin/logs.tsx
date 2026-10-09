@@ -55,14 +55,11 @@ function RouteComponent() {
             field: "message",
         },
         {
-            accessorKey: "user_id",
-            header: "用户 ID",
-            field: "user_id",
-        },
-        {
-            accessorKey: "superadmin_id",
-            header: "管理员 ID",
-            field: "superadmin_id",
+            // Wave 6：v1 的「用户 ID / 管理员 ID」两列已合并为单一审计主体
+            // （统一账户后它们是同一个身份空间，分列会让按主体筛选漏掉一半记录）
+            accessorKey: "actor_user_id",
+            header: "操作主体 ID",
+            field: "actor_user_id",
         },
         {
             accessorKey: "ip_address",
@@ -89,8 +86,7 @@ function RouteComponent() {
 
     const filterKeys = [
         "id",
-        "user_id",
-        "superadmin_id",
+        "actor_user_id",
         "ip_address",
         "category",
         "action",

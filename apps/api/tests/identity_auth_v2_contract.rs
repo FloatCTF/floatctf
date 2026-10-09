@@ -19,8 +19,7 @@ use uuid::Uuid;
 use floatctf::api::extractor::auth::{
     AuthFailure, has_all_access, resolve_permissions, resolve_session_account,
 };
-use floatctf::core::security::jwt::TokenPurpose;
-use floatctf::core::security::{gen_jwt_token, gen_password_reset_token, gen_session_token};
+use floatctf::core::security::{gen_password_reset_token, gen_session_token};
 use floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
 use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::{platform_roles, user_platform_roles, users};

@@ -202,7 +202,6 @@ pub async fn create_terminal_session(
             "ISSUE_TICKET",
             "Issued one-time web terminal ticket",
             json!({"ttl_secs": TERMINAL_TICKET_TTL.as_secs()}),
-            None,
             Some(admin.id()),
             Some(&ctx.req),
         )

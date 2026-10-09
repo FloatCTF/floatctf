@@ -77,7 +77,6 @@ pub async fn patch_me(user: UserJwtGuard, ctx: ReqCtx, pmr: Json<PatchMeRequest>
             format!("{} 更新个人信息", username).as_str(),
             json!({}),
             user_id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -142,7 +141,6 @@ pub async fn admin_create_user(
             "CREATE",
             format!("{} 创建用户: {}", admin.username(), user.username).as_str(),
             json!({"username": user.username}),
-            None,
             admin.id().into(),
             Some(&ctx.req),
         )
@@ -234,7 +232,6 @@ pub async fn admin_patch_user(
             "UPDATE",
             format!("{} 更新用户: {}", admin.username(), user.username).as_str(),
             json!({"user_id": user.id}),
-            None,
             admin.id().into(),
             Some(&ctx.req),
         )
@@ -327,7 +324,6 @@ pub async fn admin_delete_user(
             "DELETE",
             format!("{} 删除 {} 个用户", admin.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             admin.id().into(),
             Some(&ctx.req),
         )

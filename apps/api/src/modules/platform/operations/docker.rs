@@ -140,7 +140,6 @@ pub async fn stop_container(
             "STOP_CONTAINER",
             format!("{} 停止容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -170,7 +169,6 @@ pub async fn start_container(
             "START_CONTAINER",
             format!("{} 启动容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -205,7 +203,6 @@ pub async fn delete_container(
             "DELETE_CONTAINER",
             format!("{} 删除容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -284,7 +281,6 @@ pub async fn delete_image(
             "DELETE_IMAGE",
             format!("{} 删除镜像: {}", user.username(), image_id).as_str(),
             json!({"image_id": image_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -392,7 +388,6 @@ pub async fn create_network(
             "CREATE_NETWORK",
             format!("{} 创建网络: {}", user.username(), body.name).as_str(),
             json!({"name": body.name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -429,7 +424,6 @@ pub async fn delete_network(
             "DELETE_NETWORK",
             format!("{} 删除网络: {}", user.username(), network_id).as_str(),
             json!({"network_id": network_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

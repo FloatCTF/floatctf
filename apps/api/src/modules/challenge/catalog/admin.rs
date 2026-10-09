@@ -77,9 +77,7 @@ pub async fn create_challenge(
             "CHALLENGES",
             "CREATE",
             format!("{} 创建题目: {}", user.username(), challenge.name).as_str(),
-            json!({"name": challenge.name, "category": challenge.category, "safe_name": challenge.safe_name}),
-            None,
-            user.id().into(),
+            json!({"name": challenge.name, "category": challenge.category, "safe_name": challenge.safe_name}), user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -203,7 +201,6 @@ pub async fn patch_challenge(
             "UPDATE",
             format!("{} 更新题目: {}", user.username(), challenge.name).as_str(),
             json!({"challenge_id": challenge.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -331,7 +328,6 @@ pub async fn delete_challenge(
             "DELETE",
             format!("{} 删除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

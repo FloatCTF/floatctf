@@ -320,7 +320,6 @@ pub async fn bulk_destroy_instances(
             format!("批量删除 {} 个练习实例", deleted).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -418,7 +417,6 @@ pub async fn launch_instance(
             format!("启动题目 {} 的实例", lir.challenge_id).as_str(),
             json!({"event_id": lir.event_id, "resolved_event_id": event_ctx.event.id}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -476,7 +474,6 @@ pub async fn destroy_instance(
             format!("销毁实例 {}", instance_id).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

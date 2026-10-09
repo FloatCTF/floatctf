@@ -60,7 +60,6 @@ pub async fn add_event_announcement(
             )
             .as_str(),
             json!({"event_id": event.id, "title": event_announcement.title}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -105,7 +104,6 @@ pub async fn patch_event_announcement(
             "UPDATE",
             format!("{} 更新比赛公告", user.username()).as_str(),
             json!({"event_id": event_id, "announcement_id": announcement_id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -144,7 +142,6 @@ pub async fn remove_event_announcement(
             )
             .as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count.rows_affected}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

@@ -109,7 +109,6 @@ pub async fn create_weapon(
             "CREATE",
             format!("{} 创建武器: {}", user.username(), weapon.name).as_str(),
             json!({"name": weapon.name, "category": weapon.category}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -139,7 +138,6 @@ pub async fn patch_weapon(
             "UPDATE",
             format!("{} 更新武器: {}", user.username(), weapon.name).as_str(),
             json!({"weapon_id": weapon.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -167,7 +165,6 @@ pub async fn delete_weapon(
             "DELETE",
             format!("{} 删除 {} 个武器", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -207,7 +204,6 @@ pub async fn upload_weapon(
             "UPLOAD",
             format!("{} 上传武器文件: {}", user.username(), file_name).as_str(),
             json!({"weapon_id": weapon_id, "file_name": file_name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

@@ -67,7 +67,6 @@ pub async fn create_challenge_writeup(
                     format!("更新题目 {} 的 Writeup", challenge_id).as_str(),
                     json!({}),
                     user.id.into(),
-                    None,
                     Some(&ctx.req),
                 )
                 .await;
@@ -89,7 +88,6 @@ pub async fn create_challenge_writeup(
                     format!("为题目 {} 创建 Writeup", challenge_id).as_str(),
                     json!({}),
                     user.id.into(),
-                    None,
                     Some(&ctx.req),
                 )
                 .await;

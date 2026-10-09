@@ -3142,7 +3142,7 @@ mise run db:migration:verify
 | 3 | M4 管理动作主体外键重指向 `users`（含 `announcements` SET NULL） | **PASS** | 6 FK 全部 `users` + `confdeltype='n'`；7 项测试 |
 | 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PASS** | 13 JWT 单元 + 22 认证契约测试；`jwt_guard_isolation_matrix_v2` 与 `terminal_session_authz_matrix` **实跑通过**（进程内 `init_service`，未绑定端口） |
 | 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PASS** | `AuthContext`、`RequirePermission<P>`/`RequireAny`、9 条角色/权限路由、`EscalationGuard`（6 单测）、最后超管并发（4 项 DB 测试含 2 项真并发）、授权契约 11 项。**handler 迁移完成**：156 个 handler 已用 `RequirePermission<P>`（31 文件），仅剩 5 个 `/api/admin/super_admin` CRUD 按表保留旧守卫（Wave 10 随表删除）；29 条权限守卫**全部**被真实使用。新增 `authorization_route_coverage.rs` 4 项源码守卫锁定不回归 |
-| 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PENDING** | — |
+| 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PASS** | M5 已 apply（dev 库 33348 行日志中 82 行带主体，回填后 0 条非法引用）；`add_log`/`AuditService::record` 收敛为单一 `actor_user_id`，109 处调用点全部编译期校验；`audit_actor_unification_contract.rs` 10 项；三个前端的日志页同步迁移 |
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
 | 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PENDING** | — |
 | 9 | 两个外部 Frontend（shadcn / xzmu）+ 子模块 gitlink | **PENDING** | — |
@@ -3207,6 +3207,7 @@ Wave 5 尚未完成的小项（除 handler 迁移外）：
 | `GET /api/admin/roles/{role_id}` | 角色详情 + 权限集（表里已定义，handler 未实现） |
 | `is_last_super_admin` 标记 | 账号角色响应里应给出「这是最后一个全权账号」提示，供 UI 在移除前警告 |
 | `granted_by` / `granted_at` 明细 | 账号角色响应里展示授予人与时间（可审计性） |
+| 审计日志 DTO | `LogsDto` 的 `user_id`/`superadmin_id` → 单一 `actor_user_id`；过滤器键同步 | **已在本 Wave 完成**（属破坏性变更，已计入 Wave 10 的 contract major 升版理由） |
 | `API_CONTRACT_VERSION` `"1"` → `"2"` | **必须同时改两处**：`apps/api/src/core/contract.rs` 与 `packages/frontend-runtime/src/version.ts`；`scripts/check-architecture.sh:174` 会断言二者一致，只改一处必然红。触发理由：JWT 结构变更（强制重新登录）、`Role` 移除、部分 admin 端点 401→403、`AnnouncementDto.publisher_id` 变可空 —— 都是「旧前端会坏」的破坏性变更 |
 | `RequirePermission` 的 live 覆盖 | 目前 8 条角色/权限路由已有契约测试；迁移后的其余端点需在 Wave 11 补 live 断言（受限于本机不能起 API，将如实记为 SKIP） |
 
@@ -3262,6 +3263,18 @@ Wave 4 已核对源码，得到精确触点（避免下一轮重新摸索）：
 | `onForbidden` 回调 | 无 | 新增；Default/两个外部前端的职责是「403 展示无权限提示」，而不是跳登录页 |
 | `MeDto`（含 permissions） | `service/users.ts` 的 `getMe` 返回 `UserDto`（Wave 0 已去掉 password） | 增 `permissions: string[]` + `grants_all: boolean`，供权限感知导航 |
 | 登录端点 | `service/users.ts:22` → `POST /users/session`；`admin/auth.ts:12` → `POST /session`（base `/api/admin`） | 增加 `POST /api/session` 的客户端入口；两条旧路径作为过渡别名保留到 Wave 10 |
+
+### 29.10 Wave 6 的两项范围说明（避免被误认为遗漏）
+
+1. **`event_logs` 不在统一范围内**（有意）。`event_logs` 是**赛事级参与审计**，
+   它的 `user_id` / `team_id` 表达的是「赛事参与主体」，与平台身份无关。
+   只有平台级 `logs` 的「选手列 / 管理员列」才需要合并。
+   源码守卫特意用「前一个字符不是标识符字符」来区分 `logs::Column::UserId`
+   与 `event_logs::Column::UserId` —— 否则会产生假阳性。
+2. **`logs` 的分列语义损失已有补偿**：v1 用「哪一列非空」隐含区分「管理动作 /
+   选手动作」。合并后该信息由 `category` 表达（现有调用点已在用
+   `SUPER_ADMIN` / `ROLES` / `AUTH` / `ANNOUNCEMENTS` 等 category）。
+   xzmu 的日志页正是按此改写：徽标从 `category` 推导，而不是从主体列猜身份。
 
 ### 29.4 必须诚实记录的环境限制
 

@@ -104,7 +104,6 @@ pub async fn create_setting(
             "CREATE",
             format!("{} 创建设置: {}", user.username(), setting.key).as_str(),
             json!({"key": setting.key}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -172,7 +171,6 @@ pub async fn patch_setting(
             "UPDATE",
             format!("{} 更新设置: {}", user.username(), setting.key).as_str(),
             json!({"key": setting.key}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -214,7 +212,6 @@ pub async fn delete_setting(
             "DELETE",
             format!("{} 删除 {} 条设置", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

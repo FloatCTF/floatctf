@@ -93,8 +93,17 @@ async fn actor_fks_point_at_users_with_set_null() {
     }
 }
 
+/// **终点不变式**：`super_admin` 表已不再是任何外键的目标。
+///
+/// 历史：M4（Wave 3）把 6 个 actor 外键指向 `users`，但**有意豁免**
+/// `logs.superadmin_id_fkey`（它由 M5 处理）。当时本测试断言「只剩 logs 一个」。
+/// M5（Wave 6）把 `logs` 的双主体列合并为 `actor_user_id` 之后，
+/// 该豁免随之消失 —— 因此断言升级为「一个都不剩」。
+///
+/// 这条断言的演进本身就是证据：它记录了「过渡态」到「终态」的切换，
+/// 而不是一句永不失效的空话。
 #[tokio::test]
-async fn no_actor_fk_still_targets_super_admin_except_logs() {
+async fn no_fk_targets_super_admin_anymore() {
     let _guard = serialize();
     let Some(db) = connect_or_skip().await else {
         return;
@@ -113,12 +122,18 @@ async fn no_actor_fk_still_targets_super_admin_except_logs() {
 
     let names: Vec<String> = remaining
         .into_iter()
-        .map(|r| r.try_get::<String>("", "conname").unwrap())
+        .map(|r| {
+            format!(
+                "{}.{}",
+                r.try_get::<String>("", "tbl").unwrap(),
+                r.try_get::<String>("", "conname").unwrap()
+            )
+        })
         .collect();
-    assert_eq!(
-        names,
-        vec!["logs_superadmin_id_fkey".to_string()],
-        "M4 之后只有 logs.superadmin_id 仍指向 super_admin（M5 处理）"
+    assert!(
+        names.is_empty(),
+        "★ M5 之后不应再有外键指向 super_admin（Wave 6 已把 logs 的主体列统一）。\
+         仍存在: {names:?}"
     );
 }
 

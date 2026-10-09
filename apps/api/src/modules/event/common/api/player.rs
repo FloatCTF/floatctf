@@ -171,7 +171,6 @@ pub async fn quit_team(user: UserJwtGuard, ctx: ReqCtx, id: Path<(Uuid, Uuid)>) 
             format!("退出赛事 {} 的团队 {}", event_id, team_id).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -194,7 +193,6 @@ pub async fn join_team(user: UserJwtGuard, ctx: ReqCtx, id: Path<(Uuid, Uuid)>) 
             format!("加入赛事 {} 的团队 {}", event_id, event_team.id).as_str(),
             json!({"team_name": event_team.name}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -217,7 +215,6 @@ pub async fn leave_team(user: UserJwtGuard, ctx: ReqCtx, id: Path<(Uuid, Uuid)>)
             format!("离开赛事 {} 的团队 {}", event_id, team_id).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

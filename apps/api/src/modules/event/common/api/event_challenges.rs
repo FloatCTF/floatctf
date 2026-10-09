@@ -116,7 +116,6 @@ pub async fn add_challenge(
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -151,7 +150,6 @@ pub async fn remove_challenge(
             "REMOVE",
             format!("{} 从比赛移除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -328,7 +326,6 @@ pub async fn set_challenge_points(
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len(), "points": points}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -419,7 +416,6 @@ pub async fn hidden_challenges(
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -503,7 +499,6 @@ pub async fn open_challenges(
             )
             .as_str(),
             json!({"event_id": event.id, "count": event_challenges_list.len()}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

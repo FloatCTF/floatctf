@@ -53,7 +53,6 @@ pub async fn user_login(ctx: ReqCtx, ulr: Json<UserLoginRequest>) -> UniResult<S
                         format!("{} 账号已禁用，拒绝登录", user.username).as_str(),
                         json!([]),
                         user.id.into(),
-                        None,
                         Some(&ctx.req),
                     )
                     .await;
@@ -69,7 +68,6 @@ pub async fn user_login(ctx: ReqCtx, ulr: Json<UserLoginRequest>) -> UniResult<S
                         format!("{} 登陆成功", user.username).as_str(),
                         json!([]),
                         user.id.into(),
-                        None,
                         Some(&ctx.req),
                     )
                     .await;
@@ -87,7 +85,6 @@ pub async fn user_login(ctx: ReqCtx, ulr: Json<UserLoginRequest>) -> UniResult<S
                         format!("{} 登陆失败", user.username).as_str(),
                         json!([]),
                         user.id.into(),
-                        None,
                         Some(&ctx.req),
                     )
                     .await;
@@ -148,7 +145,6 @@ pub async fn create_user(ctx: ReqCtx, cur: Json<CreateUserRequest>) -> UniResult
             format!("{} 注册成功", user.username).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -226,7 +222,6 @@ pub async fn send_reset_email(ctx: ReqCtx, rpr: Json<ResetPasswordRequest>) -> U
             format!("{} 请求重置密码", user.username).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -307,7 +302,6 @@ pub async fn reset_password(
             format!("{} 重置密码成功", username).as_str(),
             json!({}),
             user_id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

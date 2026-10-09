@@ -38,7 +38,7 @@ use uuid::Uuid;
 use crate::{
     api::{AppError, UniResponse, UniResult, prelude::*},
     entity::{event_writeup, events},
-    infrastructure::{WebDb, WebRustfs},
+    infrastructure::WebRustfs,
 };
 
 /// 私有制品 key 的最大长度（防超长 key 打爆签名与日志）。
@@ -231,7 +231,6 @@ pub async fn download(
             "DOWNLOAD",
             &message,
             json!({"event_id": event_id}),
-            None,
             Some(super_admin.id()),
             Some(&ctx.req),
         )

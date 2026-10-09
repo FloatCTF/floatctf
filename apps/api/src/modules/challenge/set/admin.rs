@@ -58,7 +58,6 @@ pub async fn create_challenge_set(
             "CREATE",
             format!("{} 创建题目集: {}", user.username(), challenge_set.name).as_str(),
             json!({"name": challenge_set.name}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -106,7 +105,6 @@ pub async fn patch_challenge_set(
             "UPDATE",
             format!("{} 更新题目集: {}", user.username(), challenge_set.name).as_str(),
             json!({"challenge_set_id": challenge_set.id}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -137,7 +135,6 @@ pub async fn delete_challenge_set(
             "DELETE",
             format!("{} 删除 {} 个题目集", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -259,7 +256,6 @@ pub async fn delete_challenge_from_set(
             "DELETE",
             format!("{} 从题目集移除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"challenge_set_id": challenge_set_id, "deleted_count": deleted_count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )
@@ -301,7 +297,6 @@ pub async fn add_challenge_to_set(
             "ADD_CHALLENGES",
             format!("{} 向题目集添加 {} 道题目", user.username(), count).as_str(),
             json!({"challenge_set_id": challenge_set_id, "count": count}),
-            None,
             user.id().into(),
             Some(&ctx.req),
         )

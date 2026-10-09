@@ -327,7 +327,6 @@ pub async fn create_role(
             "CREATE",
             format!("{} 创建角色: {}", actor.username(), body.key).as_str(),
             json!({"role_id": role_id, "permissions": requested.to_strings()}),
-            None,
             actor.id().into(),
             Some(&ctx.req),
         )
@@ -457,7 +456,6 @@ pub async fn patch_role(
             "UPDATE",
             format!("{} 更新角色: {}", actor.username(), role_id).as_str(),
             json!({"role_id": role_id, "permissions": after.to_strings()}),
-            None,
             actor.id().into(),
             Some(&ctx.req),
         )
@@ -539,7 +537,6 @@ pub async fn delete_role(
             "DELETE",
             format!("{} 删除角色: {}", actor.username(), role.key).as_str(),
             json!({"role_id": role_id, "role_key": role.key}),
-            None,
             actor.id().into(),
             Some(&ctx.req),
         )
@@ -684,7 +681,6 @@ pub async fn set_user_roles(
                 "permissions_before": before.to_strings(),
                 "permissions_after": after.to_strings(),
             }),
-            None,
             actor.id().into(),
             Some(&ctx.req),
         )

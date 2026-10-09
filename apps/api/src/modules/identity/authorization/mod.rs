@@ -22,7 +22,7 @@
 //! 本模块只 **WARN 并列出**，**不静默删除**：删除权限是安全相关动作，
 //! 静默做等于「升级后某个角色悄悄少了权限」。
 
-pub use crate::core::security::jwt::{AuthClaims, Role};
+pub use crate::core::security::jwt::{AuthClaims, TokenPurpose};
 
 use sea_orm::sea_query::Expr;
 use sea_orm::{

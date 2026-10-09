@@ -8,7 +8,7 @@ pub mod user;
 use actix_web::web::{self, ServiceConfig};
 
 /// 选手身份路由（`/api` 下）：
-/// - `/users/session`, `/users`, `/users/me`, reset flows
+/// - `/users/session`（过渡期别名）, `/users`, `/users/me`, reset flows
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/users")
@@ -27,8 +27,18 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     );
 }
 
+/// 统一会话路由（`/api` 下，v2 新增）：
+/// - POST `/session`
+///
+/// 与 `/api/users/session` 注册的是**同一个 handler**，因此两者行为不可能分叉。
+/// `/api/session` 是 v2 的唯一推荐登录入口（Case A：一个账号既能参赛也能管理）；
+/// `/api/users/session` 与 `/api/admin/session` 作为别名保留到 Wave 10 移除。
+pub fn configure_unified_session_routes(cfg: &mut ServiceConfig) {
+    cfg.service(authentication::user_login);
+}
+
 /// 超管会话路由（`/api` 下）：
-/// - POST `/admin/session`
+/// - POST `/admin/session`（**过渡期别名**，Wave 10 移除）
 pub fn configure_session_routes(cfg: &mut ServiceConfig) {
     cfg.service(administrator::super_admin_login);
 }

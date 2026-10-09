@@ -16,7 +16,7 @@ use chrono::{Duration, Utc};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
-use floatctf::core::security::jwt::{self, Role};
+use floatctf::core::security::jwt;
 use floatctf::entity::{
     event_team_members, event_teams, event_users, event_writeup, events,
     sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
@@ -330,7 +330,8 @@ macro_rules! post_writeup {
 }
 
 fn token_for(user_id: Uuid) -> String {
-    jwt::gen_jwt_token(user_id, Role::User, Some(30)).expect("jwt")
+    // v2：令牌只带身份与凭据版本；新账号 token_version 为 0
+    jwt::gen_session_token(user_id, 0).expect("jwt")
 }
 
 const VALID_PDF_MIN: &[u8] = b"%PDF-1.4\n minimal but valid magic";

@@ -316,7 +316,8 @@ impl Fixture {
 /// 管理端重置：真实端点 + 真实 SuperAdminJwtGuard。
 ///
 /// 断言 reset 记录由**管理员主体**产生，且管理员 ID 是数据库中真实存在的
-/// `super_admin.id`（内置系统管理员即 nil UUID，它不在 `users` 表）。
+/// `super_admin.id`。v2 起 `super_admin` 与 `users` 是**同一行**（M3 保留原主键复制），
+/// 因此这个 id 同样是 `users.id`，外键写入两边都成立。
 #[tokio::test]
 async fn admin_reset_records_real_super_admin_id() {
     let Some(db) = live().await else { return };

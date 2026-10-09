@@ -1,7 +1,7 @@
 //! 本批未提交修改的回归验证（DB-gated，无 Docker 依赖）。
 //!
 //! 覆盖：
-//! 1. JWT Role 隔离（User/SuperAdmin 守卫；越权 token 全部 401）
+//! 1. 会话令牌守卫隔离矩阵（v2）：重置令牌 401、无管理能力 403、统一身份可同时参赛与管理
 //! 2. Jeopardy 原子计分：并发不同题 / 并发同题重复 / 团队成员并发 / 动态分值 advisory lock
 //! 3. 实例生命周期：未过期保留 / 过期回收 / failed 重试 / 删除失败 → failed → completed
 //! 4. Orphan 容器补偿：launch 成功后 DB 持久化失败必须 stop_and_remove
@@ -14,18 +14,18 @@ use std::sync::Arc;
 use actix_web::{App, HttpResponse, test as actix_test, web};
 use chrono::{Duration, Utc};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder,
 };
 use uuid::Uuid;
 
 use floatctf::api::extractor::auth::{SuperAdminJwtGuard, UserJwtGuard};
-use floatctf::core::security::jwt::{self, Role};
+use floatctf::core::security::jwt;
 use floatctf::entity::{
     challenges, event_challenge_instance, event_instances, event_team_members, event_teams,
     event_users, events, jeopardy_challenge_solves, jeopardy_event_challenges, scheduled_tasks,
     sea_orm_active_enums::{EventFamily, EventPurpose, EventTeamMemberRole, ParticipantMode},
-    super_admin, users,
+    users,
 };
 use floatctf::infrastructure::{LogService, WebDb};
 use floatctf::modules::event::jeopardy::application::instance_service::InstanceService;
@@ -55,79 +55,98 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// §1 JWT Role 隔离
+// §1 会话令牌守卫隔离矩阵（v2）
 // ─────────────────────────────────────────────────────────────────
+//
+// v2 的鉴权语义与 v1 **根本不同**，因此本矩阵被有意重写而不是机械替换：
+//
+// | v1 | v2 |
+// |---|---|
+// | 角色编码在令牌里（`Role::User` / `Role::SuperAdmin`） | 令牌只有身份；角色来自 DB |
+// | 「admin token → 选手路由」必须 401 | 同账号**可以**同时参赛与管理（Case A） |
+// | 无权限 → 401 | 已认证但无权限 → **403**（401 只用于「重新认证能解决」的情况） |
+// | `Role::AwdJudger` 是令牌角色 | 已删除；赛制判题能力改由权限表达 |
+// | 同一 UUID 在 users / super_admin 各一行（双实体） | 单一身份行 + 角色授予 |
 
 async fn guard_user(_g: UserJwtGuard) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
+
 async fn guard_admin(_g: SuperAdminJwtGuard) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn token_for(sub: Uuid, role: Role) -> String {
-    jwt::gen_jwt_token(sub, role, Some(30)).expect("jwt")
+/// 签发**会话**令牌。`token_version = 0` 是新建账号的初始值。
+fn session_token(sub: Uuid) -> String {
+    jwt::gen_session_token(sub, 0).expect("jwt")
 }
 
+/// 签发**口令重置**令牌（用于证明它不能访问任何业务端点）。
+fn reset_token(sub: Uuid) -> String {
+    jwt::gen_password_reset_token(sub, 0).expect("jwt")
+}
+
+/// 种子：普通账号 + 持内置 super-admin 角色的账号 + 被禁用账号。
+///
+/// v1 需要「同一 UUID 在 users / super_admin 各一行」来制造歧义；
+/// v2 身份只有一行，「管理员」完全由**角色授予**表达。
 async fn seed_guard_rows(db: &DatabaseConnection) -> (Uuid, Uuid, Uuid) {
+    use floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
+    use floatctf::entity::user_platform_roles;
+
     let tag = Uuid::new_v4().simple().to_string();
-    let user_id = Uuid::new_v4();
-    let admin_id = Uuid::new_v4();
-    // 同 UUID 双实体：users 与 super_admins 各有一行 id=both_id。
-    let both_id = Uuid::new_v4();
-    users::ActiveModel {
-        id: Set(user_id),
-        username: Set(format!("ru-{tag}")),
-        nickname: Set(format!("rn-{tag}")),
-        password: Set("x".into()),
-        email: Set(format!("u-{tag}@example.test")),
+
+    let mut ids = Vec::new();
+    for label in ["plain", "admin", "disabled"] {
+        let model = users::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            username: Set(format!("{label}-{tag}")),
+            nickname: Set(format!("{label}n-{tag}")),
+            password: Set("x".into()),
+            email: Set(format!("{label}-{tag}@example.test")),
+            ..Default::default()
+        };
+        let id = model.id.clone().unwrap();
+        model
+            .insert(db)
+            .await
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        ids.push(id);
+    }
+    let (plain_id, admin_id, disabled_id) = (ids[0], ids[1], ids[2]);
+
+    // 禁用第三个账号：凭据有效但账号不可用 → 403
+    db.execute_unprepared(&format!(
+        "UPDATE users SET status = 'disabled' WHERE id = '{disabled_id}'"
+    ))
+    .await
+    .expect("disable account");
+
+    // v2 里「谁是管理员」的**唯一**来源：角色授予
+    user_platform_roles::ActiveModel {
+        user_id: Set(admin_id),
+        role_id: Set(PLATFORM_ROLE_SUPER_ADMIN),
+        granted_by: Set(None),
         ..Default::default()
     }
     .insert(db)
     .await
-    .expect("user");
-    users::ActiveModel {
-        id: Set(both_id),
-        username: Set(format!("bu-{tag}")),
-        nickname: Set(format!("bn-{tag}")),
-        password: Set("x".into()),
-        email: Set(format!("b-{tag}@example.test")),
-        ..Default::default()
-    }
-    .insert(db)
-    .await
-    .expect("both-user");
-    super_admin::ActiveModel {
-        id: Set(admin_id),
-        username: Set(format!("sa-{tag}")),
-        password: Set("x".into()),
-        email: Set(format!("a-{tag}@example.test")),
-        ..Default::default()
-    }
-    .insert(db)
-    .await
-    .expect("admin");
-    super_admin::ActiveModel {
-        id: Set(both_id),
-        username: Set(format!("bsa-{tag}")),
-        password: Set("x".into()),
-        email: Set(format!("ba-{tag}@example.test")),
-        ..Default::default()
-    }
-    .insert(db)
-    .await
-    .expect("both-admin");
-    (user_id, admin_id, both_id)
+    .expect("grant super-admin role");
+
+    (plain_id, admin_id, disabled_id)
 }
 
 #[tokio::test]
-async fn jwt_role_isolation_matrix() {
+async fn jwt_guard_isolation_matrix_v2() {
     let _serial = TEST_SERIAL.lock().unwrap();
     let Some(db) = connect_or_skip().await else {
         return;
     };
     jwt::configure_jwt_secret(floatctf::core::secret::Secret::new("regression-jwt-secret"));
-    let (user_id, admin_id, both_id) = seed_guard_rows(&db).await;
+
+    // 内置角色必须先存在（角色授予有 FK）；迁移已插入，这里幂等兜底
+    floatctf::modules::identity::authorization::ensure_builtin_roles(&db).await;
+    let (plain_id, admin_id, disabled_id) = seed_guard_rows(&db).await;
 
     let app = actix_test::init_service(
         App::new()
@@ -137,117 +156,95 @@ async fn jwt_role_isolation_matrix() {
     )
     .await;
 
-    // (name, token, route, expect_ok)
-    let cases: Vec<(&str, String, &str, bool)> = vec![
+    // (名称, 令牌, 路由, 期望状态码)
+    //
+    // 期望值的变化是本 Wave 的核心契约：v1 把「无权限」也返回 401，
+    // v2 明确区分 401（重新认证能解决）与 403（已认证但不允许）。
+    let cases: Vec<(&str, String, &str, u16)> = vec![
         (
-            "user token → user route",
-            token_for(user_id, Role::User),
+            "普通账号会话令牌 → 选手路由",
+            session_token(plain_id),
             "/user",
-            true,
+            200,
         ),
         (
-            "admin token → admin route",
-            token_for(admin_id, Role::SuperAdmin),
+            "普通账号会话令牌 → admin 路由：已认证但无管理能力 → 403（不是 401）",
+            session_token(plain_id),
             "/admin",
-            true,
+            403,
         ),
         (
-            "admin token → user route (must 401)",
-            token_for(admin_id, Role::SuperAdmin),
+            "超管账号会话令牌 → admin 路由",
+            session_token(admin_id),
+            "/admin",
+            200,
+        ),
+        (
+            "超管账号会话令牌 → 选手路由：统一身份后**允许**（v1 曾要求 401）",
+            session_token(admin_id),
             "/user",
-            false,
+            200,
         ),
         (
-            "user token → admin route (must 401)",
-            token_for(user_id, Role::User),
-            "/admin",
-            false,
-        ),
-        (
-            "reset token → user route (must 401)",
-            token_for(user_id, Role::ResetAccount),
+            "重置令牌 → 选手路由（必须 401）",
+            reset_token(plain_id),
             "/user",
-            false,
+            401,
         ),
         (
-            "reset token → admin route (must 401)",
-            token_for(user_id, Role::ResetAccount),
+            "重置令牌 → admin 路由（必须 401）",
+            reset_token(admin_id),
             "/admin",
-            false,
+            401,
         ),
         (
-            "awd judger token → user route (must 401)",
-            token_for(user_id, Role::AwdJudger),
+            "未知主体会话令牌 → 选手路由",
+            session_token(Uuid::new_v4()),
             "/user",
-            false,
+            401,
         ),
         (
-            "awd judger token → admin route (must 401)",
-            token_for(user_id, Role::AwdJudger),
+            "未知主体会话令牌 → admin 路由",
+            session_token(Uuid::new_v4()),
             "/admin",
-            false,
+            401,
         ),
         (
-            "user-role token with both-entity uuid → admin route (must 401)",
-            token_for(both_id, Role::User),
-            "/admin",
-            false,
-        ),
-        (
-            "admin-role token with both-entity uuid → user route (must 401)",
-            token_for(both_id, Role::SuperAdmin),
+            "被禁用账号 → 选手路由（403，不是 401）",
+            session_token(disabled_id),
             "/user",
-            false,
+            403,
         ),
         (
-            "user-role token with both-entity uuid → user route (users row exists)",
-            token_for(both_id, Role::User),
+            "凭据版本已过期 → 选手路由（401）",
+            jwt::gen_session_token(plain_id, 7).expect("jwt"),
             "/user",
-            true,
-        ),
-        (
-            "admin-role token with both-entity uuid → admin route (super_admin row exists)",
-            token_for(both_id, Role::SuperAdmin),
-            "/admin",
-            true,
-        ),
-        (
-            "valid signature but unknown subject → user route",
-            token_for(Uuid::new_v4(), Role::User),
-            "/user",
-            false,
-        ),
-        (
-            "valid signature but unknown subject → admin route",
-            token_for(Uuid::new_v4(), Role::SuperAdmin),
-            "/admin",
-            false,
+            401,
         ),
     ];
 
-    for (name, token, route, expect_ok) in cases {
+    for (name, token, route, expected) in cases {
         let req = actix_test::TestRequest::post()
             .uri(route)
             .insert_header(("Authorization", format!("Bearer {token}")))
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
         let status = resp.status().as_u16();
-        if expect_ok {
-            assert_eq!(status, 200, "{name}: expected 200, got {status}");
-        } else {
-            assert_eq!(status, 401, "{name}: expected 401, got {status}");
-        }
+        assert_eq!(
+            status, expected,
+            "{name}: expected {expected}, got {status}"
+        );
     }
 
-    // 无 Authorization 头
+    // 无 Authorization 头 → 401
     for route in ["/user", "/admin"] {
         let req = actix_test::TestRequest::post().uri(route).to_request();
         let resp = actix_test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 401, "no-token {route} must 401");
     }
 
-    // 篡改 token（签名无效）
-    let mut tampered = token_for(user_id, Role::User);
+    // 篡改签名 → 401
+    let mut tampered = session_token(plain_id);
     tampered.push('x');
     let req = actix_test::TestRequest::post()
         .uri("/user")
@@ -256,9 +253,29 @@ async fn jwt_role_isolation_matrix() {
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 401, "tampered token must 401");
 
-    for id in [user_id, admin_id, both_id] {
+    // **撤销角色必须立刻生效**：v1 做不到（角色在令牌里，只能等过期）
+    floatctf::entity::user_platform_roles::Entity::delete_many()
+        .filter(floatctf::entity::user_platform_roles::Column::UserId.eq(admin_id))
+        .exec(&db)
+        .await
+        .expect("revoke super-admin role");
+    let req = actix_test::TestRequest::post()
+        .uri("/admin")
+        .insert_header((
+            "Authorization",
+            format!("Bearer {}", session_token(admin_id)),
+        ))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "撤销角色后，同一令牌必须立刻失去管理能力（403）"
+    );
+
+    // 清理：删 users 会级联清掉角色授予
+    for id in [plain_id, admin_id, disabled_id] {
         let _ = users::Entity::delete_by_id(id).exec(&db).await;
-        let _ = super_admin::Entity::delete_by_id(id).exec(&db).await;
     }
 }
 
@@ -274,8 +291,6 @@ struct SeedEvent {
     flag: String,
 }
 
-/// seed 1 个 Jeopardy 竞赛事件：`n_challenges` 题（points 100/200/…）+ `n_users` 用户
-///（individual 模式）；team 模式由调用方自行插 team。
 async fn seed_jeopardy_event(
     db: &DatabaseConnection,
     tag: &str,

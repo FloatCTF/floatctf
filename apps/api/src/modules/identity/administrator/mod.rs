@@ -6,14 +6,17 @@ pub use dto::SuperAdminDto;
 use crate::api::dto::DeleteItemsRequest;
 use crate::api::dto::map_dto_vec;
 
-use crate::api::extractor::auth::SuperAdminJwtGuard;
+use crate::api::extractor::auth::{SuperAdminJwtGuard, has_all_access};
 use crate::api::prelude::*;
-use crate::core::security::jwt::{Role, gen_jwt_token};
-use crate::entity::{prelude::SuperAdmin, super_admin};
+use crate::core::security::jwt::gen_session_token;
+use crate::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
+use crate::entity::sea_orm_active_enums::AccountStatus;
+use crate::entity::{prelude::Users, super_admin, user_platform_roles, users};
 use argon2::{
     Argon2, PasswordHash, PasswordVerifier,
     password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
 };
+use sea_orm::{ConnectionTrait, TransactionTrait};
 
 // ── Login (registered under /api, path /admin/session) ──────────────────────
 
@@ -23,7 +26,15 @@ pub struct SuperAdminLoginRequest {
     password: String,
 }
 
-/// POST /api/admin/session
+/// POST `/api/admin/session`（**过渡期别名**，Wave 10 起由 `/api/session` 取代）。
+///
+/// 统一账户后管理员不再是独立账号类型，因此认证走**同一张 `users` 表**
+/// （口令哈希由 M3 逐字节迁移，二者一致）。
+///
+/// 与 `/api/session` 的唯一差别：这里是**管理端**入口，因此额外要求账号确有平台管理能力。
+/// v1 的语义是「`super_admin` 表里有这个人」，v2 精确对应「持有全权（`grants_all`）角色」。
+/// 若不保留这个要求，`/api/admin/session` 就退化成 `/api/session` 的复制品，
+/// 且会让「管理入口」丧失它本来的语义。
 #[post("/admin/session")]
 pub async fn super_admin_login(
     ctx: ReqCtx,
@@ -31,56 +42,87 @@ pub async fn super_admin_login(
 ) -> UniResult<String> {
     let slr = slr.into_inner();
 
-    match SuperAdmin::find()
-        .filter(super_admin::Column::Username.eq(slr.username))
+    let user = Users::find()
+        .filter(users::Column::Username.eq(slr.username))
         .one(ctx.db.get_ref())
         .await?
-    {
-        Some(super_admin) => {
-            let verified = {
-                let parsed_hash = PasswordHash::new(&super_admin.password).map_err(|e| {
-                    AppError::Internal(format!("Failed to new the PasswordHash: {e}"))
-                })?;
-                Argon2::default()
-                    .verify_password(slr.password.as_bytes(), &parsed_hash)
-                    .is_ok()
-            };
+        .ok_or(AppError::Unauthorized)?;
 
-            if verified {
-                ctx.log
-                    .add_log(
-                        "INFO",
-                        "AUTH",
-                        "LOGIN",
-                        format!("管理员 {} 登陆成功", super_admin.username).as_str(),
-                        json!([]),
-                        None,
-                        super_admin.id.into(),
-                        Some(&ctx.req),
-                    )
-                    .await;
-                let jwt = gen_jwt_token(super_admin.id, Role::SuperAdmin, None)
-                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let verified = {
+        let parsed_hash = PasswordHash::new(&user.password)
+            .map_err(|e| AppError::Internal(format!("Failed to new the PasswordHash: {e}")))?;
+        Argon2::default()
+            .verify_password(slr.password.as_bytes(), &parsed_hash)
+            .is_ok()
+    };
 
-                UniResponse::ok(jwt.into()).into()
-            } else {
-                ctx.log
-                    .add_log(
-                        "ERROR",
-                        "AUTH",
-                        "LOGIN",
-                        format!("管理员 {} 登陆失败", super_admin.username).as_str(),
-                        json!([]),
-                        None,
-                        super_admin.id.into(),
-                        Some(&ctx.req),
-                    )
-                    .await;
-                AppError::Unauthorized.into()
-            }
-        }
-        None => AppError::Unauthorized.into(),
+    if !verified {
+        ctx.log
+            .add_log(
+                "ERROR",
+                "AUTH",
+                "LOGIN",
+                format!("管理员 {} 登陆失败", user.username).as_str(),
+                json!([]),
+                None,
+                user.id.into(),
+                Some(&ctx.req),
+            )
+            .await;
+        return AppError::Unauthorized.into();
     }
+
+    // 凭据正确但账号被禁用 → 403（而不是 401）
+    if user.status != AccountStatus::Active {
+        ctx.log
+            .add_log(
+                "ERROR",
+                "AUTH",
+                "LOGIN_DISABLED",
+                format!("管理员 {} 账号已禁用，拒绝登录", user.username).as_str(),
+                json!([]),
+                None,
+                user.id.into(),
+                Some(&ctx.req),
+            )
+            .await;
+        return AppError::Forbidden("账号已被禁用".to_string()).into();
+    }
+
+    // 已认证但不是管理员 → 403（令牌有效，只是这个账号没有管理能力）
+    if !has_all_access(ctx.db.get_ref(), user.id).await? {
+        ctx.log
+            .add_log(
+                "ERROR",
+                "AUTH",
+                "LOGIN_FORBIDDEN",
+                format!("{} 无平台管理权限，拒绝管理端登录", user.username).as_str(),
+                json!([]),
+                None,
+                user.id.into(),
+                Some(&ctx.req),
+            )
+            .await;
+        return AppError::Forbidden("需要平台管理权限".to_string()).into();
+    }
+
+    ctx.log
+        .add_log(
+            "INFO",
+            "AUTH",
+            "LOGIN",
+            format!("管理员 {} 登陆成功", user.username).as_str(),
+            json!([]),
+            None,
+            user.id.into(),
+            Some(&ctx.req),
+        )
+        .await;
+
+    let jwt = gen_session_token(user.id, user.token_version)
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    UniResponse::ok(jwt.into()).into()
 }
 
 // ── Super-admin CRUD (under /api/admin/super_admin) ─────────────────────────
@@ -114,14 +156,49 @@ pub async fn create_super_admin(
         password_hash
     };
 
+    // 统一账户过渡期：身份归 `users`，`super_admin` 表在 Wave 10 前只是管理端 CRUD 的对象。
+    // 因此新建管理员必须**同时**写入两张表并授予内置 super-admin 角色，
+    // 否则这个管理员能出现在列表里却**无法登录**（Wave 4 引入的真实回归）。
+    // 三步在同一事务内完成，避免出现「users 有、super_admin 没有」的半成品账号。
+    let txn = ctx.db.get_ref().begin().await?;
+
+    let id = Uuid::new_v4();
+    let nickname = nickname_for(&txn, &csr.username, id).await?;
+
+    users::Entity::insert(users::ActiveModel {
+        id: Set(id),
+        username: Set(csr.username.clone()),
+        nickname: Set(nickname),
+        password: Set(hashed_password.clone()),
+        email: Set(csr.email.clone()),
+        avatar: Set(None),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
+        ..Default::default()
+    })
+    .exec(&txn)
+    .await?;
+
     let new_super_admin = super_admin::ActiveModel {
+        id: Set(id),
         username: Set(csr.username),
         password: Set(hashed_password),
         email: Set(csr.email),
         ..Default::default()
     };
 
-    let super_admin = new_super_admin.insert(ctx.db.get_ref()).await?;
+    let super_admin = new_super_admin.insert(&txn).await?;
+
+    user_platform_roles::Entity::insert(user_platform_roles::ActiveModel {
+        user_id: Set(id),
+        role_id: Set(PLATFORM_ROLE_SUPER_ADMIN),
+        granted_by: Set(Some(user.id)),
+        ..Default::default()
+    })
+    .exec(&txn)
+    .await?;
+
+    txn.commit().await?;
 
     ctx.log
         .add_log(
@@ -188,7 +265,33 @@ pub async fn patch_super_admin(
         m_super_admin.email = Set(e);
     });
 
+    let password_changed = m_super_admin.password.is_set();
     let super_admin = m_super_admin.update(ctx.db.get_ref()).await?;
+
+    // 镜像到统一身份表：不镜像会让改名/改密的管理员**用新凭据登录失败**。
+    let txn = ctx.db.get_ref().begin().await?;
+    let mirror = Users::find_by_id(super_user_id)
+        .one(&txn)
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "统一账户 {} 不存在（super_admin 与 users 不一致，请人工核对）",
+                super_user_id
+            ))
+        })?;
+    let next_version = if password_changed {
+        // 改密即吊销：所有已签发会话令牌立即失效
+        mirror.token_version.saturating_add(1)
+    } else {
+        mirror.token_version
+    };
+    let mut m_mirror = mirror.into_active_model();
+    m_mirror.username = Set(super_admin.username.clone());
+    m_mirror.email = Set(super_admin.email.clone());
+    m_mirror.password = Set(super_admin.password.clone());
+    m_mirror.token_version = Set(next_version);
+    m_mirror.update(&txn).await?;
+    txn.commit().await?;
 
     ctx.log
         .add_log(
@@ -257,10 +360,22 @@ pub async fn delete_super_admin(
     let user = user.into_inner();
     let dir = dir.into_inner();
 
+    let txn = ctx.db.get_ref().begin().await?;
+
     let r = super_admin::Entity::delete_many()
-        .filter(super_admin::Column::Id.is_in(dir.id_list))
-        .exec(ctx.db.get_ref())
+        .filter(super_admin::Column::Id.is_in(dir.id_list.clone()))
+        .exec(&txn)
         .await?;
+
+    // 必须同时删除统一身份行：否则被「删除」的管理员仍持有有效凭据并**仍能登录**。
+    // 删 users 会级联清掉 user_platform_roles（ON DELETE CASCADE），
+    // 并把各审计列的 actor 置空（ON DELETE SET NULL）。
+    users::Entity::delete_many()
+        .filter(users::Column::Id.is_in(dir.id_list))
+        .exec(&txn)
+        .await?;
+
+    txn.commit().await?;
 
     ctx.log
         .add_log(
@@ -276,4 +391,26 @@ pub async fn delete_super_admin(
         .await;
 
     UniResponse::ok(r.rows_affected.into()).into()
+}
+
+/// `users.nickname` 唯一，而管理员没有昵称 —— 用用户名合成。
+///
+/// 若与既有昵称冲突（玩家可能恰好叫这个名字），追加基于 ID 的确定性短后缀。
+/// **不**自动改动既有玩家的昵称：改别人的展示名不是建号流程该做的事。
+async fn nickname_for<C: ConnectionTrait>(
+    db: &C,
+    username: &str,
+    id: Uuid,
+) -> Result<String, AppError> {
+    let base = username.trim().to_string();
+    let taken = Users::find()
+        .filter(users::Column::Nickname.eq(base.clone()))
+        .one(db)
+        .await?
+        .is_some();
+    if !taken {
+        return Ok(base);
+    }
+    let suffix = &id.to_string()[..8];
+    Ok(format!("{base}#{suffix}"))
 }

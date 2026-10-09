@@ -3128,6 +3128,7 @@ mise run db:migration:verify
 | Wave 1 提交 | `2a8ef0a feat(auth): 新增平台 RBAC 数据模型与权限目录` |
 | Wave 2 提交 | `28b7a73 feat(auth): 迁移管理员身份到统一 users 表` |
 | Wave 3 提交 | `2aaa092 feat(auth): 管理动作主体外键统一指向 users`（amend 后的最终 hash） |
+| Wave 4 提交 | 见 `git log`（`feat(auth): 认证 v2 —— 令牌只表达身份，授权每请求从 DB 解析`） |
 | shadcn 子模块本地提交 | `6756a1d`（Wave 0）、`5e816b4`（Wave 3）——**均未 push** |
 | xzmu 子模块本地提交 | 无（Wave 9 起涉及） |
 
@@ -3139,7 +3140,7 @@ mise run db:migration:verify
 | 1 | M1 RBAC schema + 权限目录 + 内置角色 reconcile | **PASS** | M1 已 apply；15 单元 + 6 schema + 6 角色/解析测试 |
 | 2 | M2 账号列与冲突预检 + M3 `super_admin → users` 迁移 | **PASS** | dev 库实测 hash/`created_at` 逐字节一致；9 项迁移契约测试 |
 | 3 | M4 管理动作主体外键重指向 `users`（含 `announcements` SET NULL） | **PASS** | 6 FK 全部 `users` + `confdeltype='n'`；7 项测试 |
-| 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PENDING** | — |
+| 4 | Auth v2：`TokenPurpose` / 身份-only JWT / `AccountGuard` / `/api/session` / `status`·`token_version` 强制 | **PASS** | 13 JWT 单元 + 22 认证契约测试；`jwt_guard_isolation_matrix_v2` 与 `terminal_session_authz_matrix` **实跑通过**（进程内 `init_service`，未绑定端口） |
 | 5 | 授权 v2：`AuthContext` / `RequirePermission<P>` / 角色与权限管理 API / 反提权 / 最后一个超管并发 / 自锁死防护 | **PENDING** | — |
 | 6 | M5 `logs.actor_user_id` 合并 + 109 处调用点 | **PENDING** | — |
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PENDING** | — |
@@ -3182,6 +3183,18 @@ mise run db:migration:verify
    与 `migrate.sh` 的 `1179204948` 区分）；「预期失败」断言用 `SAVEPOINT` 隔离，
    避免事务进入 aborted（25P02）后拒绝后续语句。此前未这样做会导致
    `mise run check` 因跨进程 DDL 锁竞争被 SIGTERM（退出码 143）而**假失败**。
-3. **`publisher` 展示快照保留**：`announcements.publisher`（NOT NULL）作为发布当时的
+3. **`jsonwebtoken` 的 `leeway` 默认 60 秒**（Wave 4 发现）：`Validation::new` 的 `leeway`
+   默认是 60，因此 `exp = now - 60` 的令牌**不会**被判过期。这在写作测试时会造成
+   「过期令牌必须被拒」的断言假通过/假失败。已改为**显式**声明
+   `CLOCK_SKEW_LEEWAY_SECONDS = 60` 并补充边界测试（超出 leeway 必须拒绝），
+   避免依赖未文档化的库默认值。
+4. **`mise run check` 的并行任务会互相掩盖失败**（Wave 4 发现，重要）：
+   `fmt` / `lint` / `test` 并行执行，任一任务失败时 mise 会终止兄弟任务。
+   这在日志里表现为 `[test] FAIL: tests exited with 143`（SIGTERM）——
+   看起来像测试死锁/超时，**真实原因却是 `cargo fmt --check` 未通过**。
+   同类现象还有：test 任务在 `migrate.sh` 写临时 SQL 时被杀，导致
+   `psql: error: .../.apply.XXXX.sql: No such file or directory`。
+   排查顺序应为：**先看是否有别的任务先失败**，再看 143。
+5. **`publisher` 展示快照保留**：`announcements.publisher`（NOT NULL）作为发布当时的
    展示名快照保留；`publisher_id` 为空时前端展示快照 + 「已注销」标注，
    而不是只显示「已注销账号」。

@@ -5,12 +5,19 @@
 >
 > **实现状态：数据层已落地，路由守卫尚未切换（PENDING Wave 5）。**
 > 分支 `feat/identity-authorization-v2` @ `2aaa092`；本表描述的是 **v2 目标态**。
-> 现状：Wave 0–3 已完成（权限目录 `core::permission` 的 29 条权限、RBAC 三表、
-> 内置 `super-admin`、账号统一与 actor 外键重指向）。**admin 路由当前仍以
-> `SuperAdminJwtGuard` 做粗粒度门禁**，逐路由的 `RequirePermission<P>` 在 Wave 5
-> 落地；因此本表的「所需权限」列现在起是**待实现的契约**，且其正确性由
-> `apps/api/tests/http_auth_contract.rs` 的目录守卫（153 条 admin 路由、5 项断言）
-> 先行锁定。
+> 现状：Wave 0–4 已完成（权限目录 `core::permission` 的 29 条权限、RBAC 三表、
+> 内置 `super-admin`、账号统一与 actor 外键重指向、认证 v2：身份-only JWT +
+> `AccountGuard` + `/api/session` + `status`/`token_version` 每请求强制）。
+> **admin 路由当前仍以 `SuperAdminJwtGuard` 做粗粒度门禁**（判据 = 持有 `grants_all`
+> 角色，且**来自 DB 而非令牌**，故撤销角色立刻生效）；逐路由的
+> `RequirePermission<P>` 在 Wave 5 落地；因此本表的「所需权限」列现在起是
+> **待实现的契约**，其正确性由 `apps/api/tests/http_auth_contract.rs` 的目录守卫
+> （153 条 admin 路由、5 项断言）先行锁定。
+>
+> **401 / 403 契约（v2 起固定）**：401 = 未认证 / 令牌无效 / 凭据已吊销 /
+> 用途不符；403 = 已认证但不允许（账号禁用 / 缺权限 / 对象级授权失败）。
+> 注意这与 v1 不同：v1 把「无权限」也返回 401，v2 分开——403 不该触发
+> 「清除令牌跳登录页」。
 >
 > 核验基线：`main` @ `7c382e6b35a39148cbf6ecb581a6611ac61c673d`。
 > 路由来源：`apps/api/src/bootstrap/routes.rs` + 各模块 `configure_*_routes` /

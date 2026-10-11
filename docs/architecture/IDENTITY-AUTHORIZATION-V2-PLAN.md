@@ -3123,7 +3123,8 @@ mise run db:migration:verify
 |---|---|
 | 分支 | `feat/identity-authorization-v2` |
 | 起始 HEAD | `7c382e6b35a39148cbf6ecb581a6611ac61c673d`（`main`） |
-| 最终 HEAD | `52fe663114733eb4219482b58b287b3f7731c4d1` |
+| 最终**代码** HEAD | `52fe663114733eb4219482b58b287b3f7731c4d1`（`fix(web): Default 的契约版本…`） |
+| 文档收尾提交 | 紧随其后的 `docs(authz): 两个架构文档的最终 Implementation Status`（本表不指向自身，避免自指） |
 | 本地提交数 | **25**（全部未 push） |
 | Wave 0–11 | **全部 PASS**（Wave 11 的活体 API 用例为 `SKIP (env)`） |
 | `mise run check` | **EXIT=0** |

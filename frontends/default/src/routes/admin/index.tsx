@@ -4,7 +4,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useReactive, useTitle } from "ahooks";
 import { useEffect, useRef } from "react";
 
-import { adminApi } from "@/api";
+import { adminApi, serviceApi } from "@/api";
 import { formatApiError, useMsgInlineBanner } from "@/components";
 import { AdminRouteGuardWithRedirect } from "@/routes/admin/route";
 import { useAuthStore } from "@/stores/AuthStore";
@@ -29,20 +29,41 @@ function RouteComponent() {
   });
 
   const mutation = useMutation({
-    mutationFn: adminApi.login,
+    // v2：`/api/session` 是唯一登录入口，它只回答「你是谁」，**不**回答
+    // 「你能不能进管理端」（认证与授权分离）。因此管理入口必须自己验证能力 ——
+    // 否则任何玩家都能从这个页面进入管理外壳，然后处处吃 403。
+    mutationFn: async ({
+      username,
+      password,
+    }: {
+      username: string;
+      password: string;
+    }) => {
+      const login = await adminApi.login({ username, password });
+      const token = login.data!;
+      // 先落 token：SDK 的 getUserToken 从 store 读，`/me` 必须带上它。
+      authStore.setToken(token);
+      authStore.setAdminToken(token);
+      const me = await serviceApi.users.getMe();
+      const account = me.data;
+      // 「有平台管理能力」= 持有至少一条权限（`grants_all` 蕴含全部权限）。
+      // 判定依据来自后端 /me，不在前端自造名单。
+      const canAdmin =
+        Boolean(account?.grants_all) || (account?.permissions?.length ?? 0) > 0;
+      if (!canAdmin) {
+        authStore.removeToken();
+        authStore.removeAdminToken();
+        throw new Error("该账号没有平台管理权限");
+      }
+      return token;
+    },
     onMutate: () => {
       banner.hideBanner();
       form.buttonDisabled = true;
       form.buttonMessage = "Signing in...";
     },
-    onSuccess: (data) => {
-      const token = data.data!;
-      // v2 统一账户：一次登录同时覆盖两个域。
-      // 后端 `/api/admin/session` 与 `/api/session` 是同一个会话，
-      // 因此管理端登录后选手端请求不需要再登录一次（Case A：
-      // 一个账号既能参赛也能管理）。
-      authStore.setAdminToken(token);
-      authStore.setToken(token);
+    onSuccess: () => {
+      // 两个 token 已在 mutationFn 里落好（`/me` 需要它）；这里只负责跳转。
       banner.showBanner("success", "Login successful");
       form.buttonDisabled = true;
       form.buttonMessage = "Redirecting...";
@@ -59,7 +80,10 @@ function RouteComponent() {
         formatApiError(error, {
           401: "用户名或密码错误",
           403: "该账号没有平台管理权限",
-        }),
+        }) ||
+          (error instanceof Error && error.message.includes("管理权限")
+            ? "该账号没有平台管理权限"
+            : "登录失败"),
       );
 
       form.buttonDisabled = false;

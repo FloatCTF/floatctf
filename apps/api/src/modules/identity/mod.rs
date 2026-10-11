@@ -1,6 +1,5 @@
 //! 身份域——认证、授权、用户、管理员。
 
-pub mod administrator;
 pub mod authentication;
 pub mod authorization;
 pub mod roles;
@@ -9,12 +8,13 @@ pub mod user;
 use actix_web::web::{self, ServiceConfig};
 
 /// 选手身份路由（`/api` 下）：
-/// - `/users/session`（过渡期别名）, `/users`, `/users/me`, reset flows
+/// - `/users`, `/users/me`, reset flows
+///
+/// **注意**：`/users/session` 与 `/admin/session` 这两个过渡别名已在 Wave 10 删除；
+/// `POST /api/session`（`configure_unified_session_routes`）是唯一登录入口。
 pub fn configure_player_routes(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/users")
-            // POST /api/users/session
-            .service(authentication::user_login)
             // POST /api/users
             .service(authentication::create_user)
             // GET /api/users/me
@@ -38,17 +38,10 @@ pub fn configure_unified_session_routes(cfg: &mut ServiceConfig) {
     cfg.service(authentication::user_login);
 }
 
-/// 超管会话路由（`/api` 下）：
-/// - POST `/admin/session`（**过渡期别名**，Wave 10 移除）
-pub fn configure_session_routes(cfg: &mut ServiceConfig) {
-    cfg.service(administrator::super_admin_login);
-}
-
 /// 管理端身份路由（`/api/admin` 下）：
 /// - `/users` CRUD
 /// - `/users/{user_id}/roles`（角色授予，Wave 5）
 /// - `/permissions`、`/roles*`（权限与角色管理，Wave 5）
-/// - `/super_admin` CRUD（**过渡期别名**，Wave 10 移除）
 pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
     // 角色与权限管理（Wave 5）
     cfg.service(web::scope("/roles").configure(roles::configure_role_routes));
@@ -69,20 +62,6 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
             // GET /api/admin/users/{user_id}/roles（Wave 5）
             // PUT /api/admin/users/{user_id}/roles（Wave 5）
             .configure(roles::configure_user_role_routes),
-    );
-
-    cfg.service(
-        web::scope("/super_admin")
-            // POST /api/admin/super_admin
-            .service(administrator::create_super_admin)
-            // DELETE /api/admin/super_admin
-            .service(administrator::delete_super_admin)
-            // PATCH/POST /api/admin/super_admin/{super_admin_id}
-            .service(administrator::patch_super_admin)
-            // GET /api/admin/super_admin
-            .service(administrator::get_super_admins)
-            // GET /api/admin/super_admin/{super_admin_id}
-            .service(administrator::get_super_admin),
     );
 }
 

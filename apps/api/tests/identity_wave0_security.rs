@@ -21,7 +21,6 @@ use uuid::Uuid;
 
 use floatctf::api::AppError;
 use floatctf::entity::{event_writeup, events, users};
-use floatctf::modules::identity::administrator::dto::SuperAdminDto;
 use floatctf::modules::identity::user::dto::UsersDto;
 use floatctf::modules::platform::files::download::resolve_private_artifact;
 
@@ -78,33 +77,6 @@ fn users_dto_serializes_without_password() {
             "UsersDto lost required field {key}"
         );
     }
-}
-
-#[test]
-fn super_admin_dto_serializes_without_password() {
-    let dto = SuperAdminDto {
-        id: Uuid::new_v4(),
-        username: "sysadmin".to_string(),
-        email: "sysadmin@system.com".to_string(),
-        created_at: Utc::now().into(),
-        updated_at: Utc::now().into(),
-    };
-
-    let value = serde_json::to_value(&dto).expect("serialize SuperAdminDto");
-    let encoded = value.to_string();
-
-    assert!(
-        value.get("password").is_none(),
-        "SuperAdminDto leaked password: {encoded}"
-    );
-    assert!(
-        value.get("password_hash").is_none(),
-        "SuperAdminDto leaked password_hash: {encoded}"
-    );
-    assert!(
-        !encoded.contains("$argon2"),
-        "SuperAdminDto carried a hash: {encoded}"
-    );
 }
 
 /// 源码守卫：identity 域**任何**响应 DTO 都不得声明 `password` 字段。

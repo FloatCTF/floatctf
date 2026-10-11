@@ -12,7 +12,7 @@ function versionEntry(overrides: Record<string, unknown> = {}) {
 	return {
 		version: "1.0.0",
 		name: "Default Frontend",
-		compatibility: { frontendRuntime: "1", apiContract: "1" },
+		compatibility: { frontendRuntime: "1", apiContract: "2" },
 		entry: "assets/frontend.js",
 		styles: ["assets/frontend.css"],
 		installedAt: "2026-10-07T00:00:00.000Z",
@@ -240,7 +240,7 @@ describe("resolveFrontend", () => {
 		const registry = parsed();
 		registry.frontends.cyberpunk.versions["1.2.0"].compatibility = {
 			frontendRuntime: "2",
-			apiContract: "1",
+			apiContract: "2",
 		};
 		const result = resolveFrontend(registry, {
 			requestedId: "cyberpunk",

@@ -30,7 +30,6 @@ fn configure_player_routes(cfg: &mut ServiceConfig) {
     // （与 /api/users/session 是同一个 handler，行为不可能分叉）
     cfg.configure(crate::modules::identity::configure_unified_session_routes);
     // POST /api/admin/session（过渡期别名，Wave 10 移除）
-    cfg.configure(crate::modules::identity::configure_session_routes);
     // Player identity: /api/users/*
     cfg.configure(crate::modules::identity::configure_player_routes);
     // GET /api/weapons
@@ -77,7 +76,7 @@ fn configure_admin_routes(cfg: &mut ServiceConfig) {
 
     cfg.service(scope("weapons").configure(crate::modules::weapon::configure_admin_routes));
 
-    // /api/admin/users + /api/admin/super_admin
+    // /api/admin/users（+ Wave 5 起的 /roles、/permissions）
     cfg.configure(crate::modules::identity::configure_admin_routes);
 
     // Challenge catalog admin

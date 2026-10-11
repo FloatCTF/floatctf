@@ -8,7 +8,7 @@ function validManifest(overrides: Record<string, unknown> = {}) {
 		id: "cyberpunk",
 		name: "Cyberpunk Frontend",
 		version: "1.2.0",
-		compatibility: { frontendRuntime: "1", apiContract: "1" },
+		compatibility: { frontendRuntime: "1", apiContract: "2" },
 		entry: "assets/frontend.js",
 		styles: ["assets/frontend.css"],
 		...overrides,
@@ -102,7 +102,7 @@ describe("parseFrontendManifest", () => {
 	it("rejects an incompatible frontend runtime major", () => {
 		const result = parseFrontendManifest(
 			validManifest({
-				compatibility: { frontendRuntime: "2", apiContract: "1" },
+				compatibility: { frontendRuntime: "2", apiContract: "2" },
 			}),
 		);
 		expect(result.ok).toBe(false);
@@ -124,7 +124,7 @@ describe("parseFrontendManifest", () => {
 	it("rejects semver-range style compatibility constraints (v1 is integer major only)", () => {
 		const result = parseFrontendManifest(
 			validManifest({
-				compatibility: { frontendRuntime: ">=1 <2", apiContract: "1" },
+				compatibility: { frontendRuntime: ">=1 <2", apiContract: "2" },
 			}),
 		);
 		expect(result.ok).toBe(false);
@@ -140,7 +140,7 @@ describe("parseFrontendManifest", () => {
 	it("treats compatibility.sdk as informational", () => {
 		const result = parseFrontendManifest(
 			validManifest({
-				compatibility: { frontendRuntime: "1", apiContract: "1", sdk: "1.0.0" },
+				compatibility: { frontendRuntime: "1", apiContract: "2", sdk: "1.0.0" },
 			}),
 		);
 		expect(result.ok).toBe(true);

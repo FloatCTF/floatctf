@@ -19,7 +19,8 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use floatctf::api::extractor::auth::{SuperAdminJwtGuard, UserJwtGuard};
+use floatctf::api::extractor::auth::{RequirePermission, UserJwtGuard};
+use floatctf::core::permission::guards::EventsReadGuard;
 use floatctf::core::security::jwt;
 use floatctf::entity::{
     challenges, event_challenge_instance, event_instances, event_team_members, event_teams,
@@ -67,12 +68,15 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 // | 无权限 → 401 | 已认证但无权限 → **403**（401 只用于「重新认证能解决」的情况） |
 // | `Role::AwdJudger` 是令牌角色 | 已删除；赛制判题能力改由权限表达 |
 // | 同一 UUID 在 users / super_admin 各一行（双实体） | 单一身份行 + 角色授予 |
+// | 超管守卫 `SuperAdminJwtGuard` | Wave 10 已删除；一律 `RequirePermission<P>` |
 
 async fn guard_user(_g: UserJwtGuard) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-async fn guard_admin(_g: SuperAdminJwtGuard) -> HttpResponse {
+/// admin 路由的守卫（Wave 10 起用**权限**表达，取代已删除的超管守卫）。
+/// 保留这条路由是为了继续锁住 401/403 的分流：无权限的**有效**会话必须是 403。
+async fn guard_admin(_g: RequirePermission<EventsReadGuard>) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 

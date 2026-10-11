@@ -14,7 +14,7 @@
 export const FRONTEND_RUNTIME_VERSION = "1";
 
 /** 对外 HTTP API 契约 major；前端 `compatibility.apiContract` 必须与之相等。 */
-export const API_CONTRACT_VERSION = "1";
+export const API_CONTRACT_VERSION = "2";
 
 /** 本地前端注册表 `registry.json` 的 schema 版本。 */
 export const FRONTEND_REGISTRY_SCHEMA_VERSION = 1;

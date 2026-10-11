@@ -500,13 +500,6 @@ pub fn admin_routes() -> Vec<Route> {
         },
         // [identity]
         Route {
-            method: Method::Post,
-            path: "/api/admin/session",
-            auth: Auth::None,
-            json_body: true,
-        },
-        // [identity]
-        Route {
             method: Method::Get,
             path: "/api/admin/users",
             auth: Auth::SuperAdminRequired,
@@ -537,41 +530,6 @@ pub fn admin_routes() -> Vec<Route> {
         Route {
             method: Method::Patch,
             path: p("/api/admin/users/{user_id}"),
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [identity]
-        Route {
-            method: Method::Get,
-            path: "/api/admin/super_admin",
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [identity]
-        Route {
-            method: Method::Get,
-            path: p("/api/admin/super_admin/{super_user_id}"),
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [identity]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/super_admin",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [identity]
-        Route {
-            method: Method::Post,
-            path: p("/api/admin/super_admin/{super_user_id}"),
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [identity]
-        Route {
-            method: Method::Delete,
-            path: "/api/admin/super_admin",
             auth: Auth::SuperAdminRequired,
             json_body: true,
         },
@@ -1577,7 +1535,7 @@ pub fn admin_routes() -> Vec<Route> {
 /// **新增或删除 admin 路由时必须同步更新本常量与 [`admin_routes`]**。
 /// 用「精确钉住」而不是 `>= N`：后者对**删除**完全无感（历史脚本曾用
 /// `assert!(a.len() >= 60)`，而当时实际有 94 条且漏掉了整个 terminal / AWD / AWDP 面）。
-pub const ADMIN_ROUTE_COUNT: usize = 162;
+pub const ADMIN_ROUTE_COUNT: usize = 156;
 
 /// 各域条数：`(域, 条数, 最小要求)`。整块域消失会被 [`admin_route_domains_meet_minimums`] 抓到。
 pub fn admin_route_domains() -> Vec<(&'static str, usize, usize)> {

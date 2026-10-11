@@ -82,10 +82,6 @@ export {
 	type DashboardSummary,
 } from "./dashboard.js";
 export {
-	createSuperAdminApi,
-	type SuperAdminApi,
-} from "./super_admin.js";
-export {
 	createDockerAdminApi,
 	type DockerAdminApi,
 	type FloatDockerContainer,

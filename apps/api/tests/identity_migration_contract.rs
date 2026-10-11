@@ -67,6 +67,28 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 /// 让 `super_admin` 与 `users` 在 id 上不相交，从而能命中后续检查。
 async fn begin_disjoint_txn(db: &DatabaseConnection) -> sea_orm::DatabaseTransaction {
     let txn = begin_exclusive(&db).await;
+
+    // M6 之后 `super_admin` 表已从真实 schema 中删除（Wave 10 的终态）。
+    // 但 M2/M3 的**历史语义**仍值得持续验证（幂等、冲突必须 fail closed）——
+    // 那是"当年这次数据迁移做对了"的证据，不能因为表被删就悄悄失去覆盖。
+    //
+    // 因此在**本事务内**重建 v1 形态的表作为 fixture：
+    // - 事务级作用域 ⇒ rollback 时自动消失，绝不污染真实 schema；
+    // - 只建 v1 的基线列（id/username/password/email/created_at/updated_at），
+    //   让 M2 去加 nickname/status/token_version —— 这才让"幂等"这条断言仍有意义。
+    txn.execute_unprepared(
+        "CREATE TABLE IF NOT EXISTS public.super_admin (
+             id           uuid PRIMARY KEY,
+             username     text NOT NULL UNIQUE,
+             password     text NOT NULL,
+             email        text NOT NULL,
+             created_at   timestamptz NOT NULL DEFAULT now(),
+             updated_at   timestamptz NOT NULL DEFAULT now()
+         )",
+    )
+    .await
+    .expect("create transaction-scoped super_admin fixture");
+
     txn.execute_unprepared(&format!("DELETE FROM users WHERE id = '{NIL_USER}'"))
         .await
         .expect("delete merged nil-uuid account inside txn");

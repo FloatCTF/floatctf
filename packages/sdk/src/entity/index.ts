@@ -57,7 +57,6 @@ export * from "./platform_role_permissions.js";
 export * from "./platform_roles.js";
 export * from "./scheduled_tasks.js";
 export * from "./settings.js";
-export * from "./super_admin.js";
 export * from "./user_platform_roles.js";
 export * from "./users.js";
 export * from "./weapons.js";

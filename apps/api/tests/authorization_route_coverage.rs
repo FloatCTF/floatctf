@@ -23,7 +23,12 @@ use std::path::{Path, PathBuf};
 ///
 /// 只有 `/api/admin/super_admin` CRUD —— `platform-permissions.md` 的表中这 5 条
 /// 明确标注为「旧 `SuperAdminJwtGuard`」，它们在 Wave 10 随 `super_admin` 表一起删除。
-const LEGACY_GUARD_ALLOWLIST: &[&str] = &["modules/identity/administrator/mod.rs"];
+/// Wave 10 起**为空**：最后一个使用粗粒度超管守卫的模块（`identity/administrator`）
+/// 已随 `super_admin` 表一起删除，全仓管理端点一律 `RequirePermission<P>`。
+///
+/// 特意保留这个常量（而不是删掉它和用它做过滤的断言）：它是一条"迁移已完成且不应回退"
+/// 的锚点 —— 将来若有人新写一个超管守卫，这里会立刻变红而不是静默通过。
+const LEGACY_GUARD_ALLOWLIST: &[&str] = &[];
 
 /// 迁移完成后的 `RequirePermission<..>` 参数出现次数下限。
 ///

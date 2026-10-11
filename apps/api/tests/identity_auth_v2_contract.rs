@@ -587,7 +587,7 @@ async fn resolve_permissions_unions_roles_and_short_circuits() {
 /// 这是「登录路径不可能行为分叉」的结构保证：如果将来有人复制出一个
 /// `unified_login`，这条断言会红。
 #[test]
-fn unified_and_legacy_login_share_one_handler() {
+fn only_unified_session_route_remains() {
     let module = include_str!("../src/modules/identity/mod.rs");
     assert!(
         module.contains("pub fn configure_unified_session_routes"),
@@ -605,6 +605,8 @@ fn unified_and_legacy_login_share_one_handler() {
         unified.contains("authentication::user_login"),
         "/api/session 必须复用 authentication::user_login"
     );
+    // Wave 10：`/users/session` 与 `/admin/session` 两个别名已删除，
+    // 因此选手路由里**不应**再注册登录端点；只剩 `/api/session`。
     let player = module
         .split("pub fn configure_player_routes")
         .nth(1)
@@ -612,9 +614,18 @@ fn unified_and_legacy_login_share_one_handler() {
         .split("pub fn configure_unified_session_routes")
         .next()
         .expect("player body end");
+    let player_code: String = player
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        player.contains("authentication::user_login"),
-        "/api/users/session 必须复用同一个 authentication::user_login"
+        !player_code.contains("user_login"),
+        "Wave 10 后 /api/users/session 别名必须已删除（/api/session 是唯一登录入口）"
+    );
+    assert!(
+        !module.contains("configure_session_routes"),
+        "Wave 10 后 /api/admin/session 的注册函数必须已删除"
     );
     assert!(
         !module.contains("unified_login"),
@@ -684,16 +695,10 @@ fn legacy_role_enum_is_gone() {
 /// 登录与重置都不得再使用 `Role::`。
 #[test]
 fn login_paths_do_not_reference_legacy_roles() {
-    for (label, src) in [
-        (
-            "authentication",
-            include_str!("../src/modules/identity/authentication/mod.rs"),
-        ),
-        (
-            "administrator",
-            include_str!("../src/modules/identity/administrator/mod.rs"),
-        ),
-    ] {
+    for (label, src) in [(
+        "authentication",
+        include_str!("../src/modules/identity/authentication/mod.rs"),
+    )] {
         assert!(
             !src.contains("Role::SuperAdmin")
                 && !src.contains("Role::User")
@@ -729,42 +734,57 @@ fn disabled_account_cannot_log_in() {
         src.contains("user.status != AccountStatus::Active"),
         "登录必须检查账号状态"
     );
-    let admin = include_str!("../src/modules/identity/administrator/mod.rs");
+    // Wave 10：`/api/admin/session` 与整个 administrator 模块已删除，
+    // 「能不能进管理端」不再由登录端点回答（认证与授权分离）：
+    // 登录只回答"你是谁"（上面已断言），授权由每个管理端点上的
+    // `RequirePermission<P>` 回答。因此这里改为断言**旧路径确已消失**。
     assert!(
-        admin.contains("has_all_access"),
-        "管理端登录必须要求平台管理能力"
+        !include_str!("../src/modules/identity/mod.rs").contains("administrator"),
+        "Wave 10 后 identity 模块不得再引用 administrator（超管入口已删除）"
     );
+    let routes = include_str!("../src/bootstrap/routes.rs");
     assert!(
-        admin.contains("user.status != AccountStatus::Active"),
-        "管理端登录必须检查账号状态"
+        !routes.contains("configure_session_routes") && !routes.contains("super_admin"),
+        "Wave 10 后不得再注册 /api/admin/session 或 /super_admin"
     );
 }
 
-/// `super_admin` CRUD 必须镜像到统一身份表，否则会造出「无法登录的管理员」。
+/// **Wave 10 终态**：`super_admin` 的整套 legacy 面已删除。
+///
+/// 这条断言取代了 Wave 3 的「CRUD 必须镜像到统一身份表」—— 那个不变式在
+/// 过渡期是必要的（两个表各有一行会造成"无法登录的管理员"），
+/// 但它之所以必要，正是因为存在第二张表。表删除后，镜像问题从根上消失，
+/// 断言也随之升级为「它们确实都不在了」。
 #[test]
-fn super_admin_crud_mirrors_into_users() {
-    let src = include_str!("../src/modules/identity/administrator/mod.rs");
-    // 创建：写 users + 授角色 + 事务
+fn legacy_super_admin_surface_is_gone() {
+    let identity = include_str!("../src/modules/identity/mod.rs");
     assert!(
-        src.contains("users::Entity::insert"),
-        "create_super_admin 必须写统一身份表"
+        !identity.contains("administrator"),
+        "identity 模块不得再引用 administrator"
     );
     assert!(
-        src.contains("user_platform_roles::Entity::insert"),
-        "create_super_admin 必须授予内置 super-admin 角色"
+        !identity.contains("super_admin"),
+        "identity 模块不得再注册 /super_admin 路由"
     );
-    // 更新：镜像 username/email/password，并自增版本
+    // 只看**非注释行**：模块文档会解释「两个别名已在 Wave 10 删除」，
+    // 直接对全文 contains 会匹配到自己的说明文字（这是本会话第三次踩同一个坑）。
+    let identity_code: String = identity
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        src.contains("m_mirror.token_version = Set(next_version)"),
-        "改密必须镜像并自增 token_version（吊销旧会话）"
+        !identity_code.contains("/users/session"),
+        "`/users/session` 过渡别名必须已删除（/api/session 是唯一入口）"
     );
-    // 删除：同时删 users
+
+    // 实体目录里也不应再有 super_admin（M6 + db:gen 之后）
     assert!(
-        src.contains("users::Entity::delete_many"),
-        "delete_super_admin 必须同时删除统一身份行（否则被删的管理员仍能登录）"
-    );
-    assert!(
-        src.contains("txn.commit()"),
-        "两个表的写必须同事务，避免半成品账号"
+        !std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/entity/super_admin.rs"
+        ))
+        .exists(),
+        "M6 之后生成实体 super_admin.rs 必须消失（db:gen 的兜底作用）"
     );
 }

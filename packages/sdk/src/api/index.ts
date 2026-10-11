@@ -28,7 +28,6 @@ export {
 	createLogsAdminApi,
 	createScheduledTaskAdminApi,
 	createSettingAdminApi,
-	createSuperAdminApi,
 	createSystemAdminApi,
 	createRoleAdminApi,
 	createUserAdminApi,
@@ -84,7 +83,6 @@ import {
 	createLogsAdminApi,
 	createScheduledTaskAdminApi,
 	createSettingAdminApi,
-	createSuperAdminApi,
 	createRoleAdminApi,
 	createSystemAdminApi,
 	createUserAdminApi,
@@ -110,10 +108,13 @@ import {
  * 管理端 API 门面。
  *
  * @param http 该客户端**自己的**管理端 HTTP handle（见 `createFloatCTFTransport`）。
+ * @param serviceHttp 该客户端**自己的**选手端 handle；**仅**用于 `login`
+ *   —— Wave 10 起 `/api/session` 是唯一登录入口，它挂在 service base 上。
+ *   其余管理端端点一律走 `http`（admin base），这个边界不要混。
  */
-export function createAdminApi(http: FloatCTFHttpClient) {
+export function createAdminApi(http: FloatCTFHttpClient, serviceHttp: FloatCTFHttpClient) {
 	return {
-		login: createAdminLoginFn(http),
+		login: createAdminLoginFn(serviceHttp),
 		system: createSystemAdminApi(http),
 		settings: createSettingAdminApi(http),
 		announcements: createAnnouncementAdminApi(http),
@@ -136,7 +137,6 @@ export function createAdminApi(http: FloatCTFHttpClient) {
 		download: createDownloadAdminApi(http),
 		docker: createDockerAdminApi(http),
 		dashboard: createDashboardAdminApi(http),
-		super_admin: createSuperAdminApi(http),
 		awd: createAwdAdminApi(http),
 	};
 }

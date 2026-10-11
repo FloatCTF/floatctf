@@ -27,7 +27,7 @@ REGISTRY_LOCK="$FRONTENDS_ROOT/.registry.lock"
 DEFAULT_FRONTEND_ID="default"
 # 与 packages/frontend-runtime/src/version.ts 保持一致（契约 major）。
 FRONTEND_RUNTIME_CONTRACT="1"
-API_CONTRACT="1"
+API_CONTRACT="2"
 # **两个独立契约**（见 docs/frontend/ARTIFACT.md）：
 #   - REGISTRY_SCHEMA_VERSION: registry.json 的结构版本
 #   - MANIFEST_SCHEMA_VERSION:  frontend.json 的结构版本
@@ -154,7 +154,7 @@ from pathlib import Path
 REGISTRY_SCHEMA_VERSION = int(os.environ.get("FCTF_REGISTRY_SCHEMA_VERSION", "1"))
 MANIFEST_SCHEMA_VERSION = int(os.environ.get("FCTF_MANIFEST_SCHEMA_VERSION", "1"))
 FRONTEND_RUNTIME_CONTRACT = os.environ.get("FCTF_FRONTEND_RUNTIME_CONTRACT", "1")
-API_CONTRACT = os.environ.get("FCTF_API_CONTRACT", "1")
+API_CONTRACT = os.environ.get("FCTF_API_CONTRACT", "2")
 
 # 公开注册表的**允许字段**（$FLOATCTF_HOME/frontends 是公开静态树，见 ARCHITECTURE §5）。
 ROOT_KEYS = {"schemaVersion", "updatedAt", "frontends"}

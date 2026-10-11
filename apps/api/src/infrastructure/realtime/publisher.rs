@@ -561,7 +561,7 @@ mod tests {
     // 管理路由 GET /api/admin/events/{id}/awd/stream：
     //   - 认证：同一个 AccountGuard（v2 统一账户：管理员就是普通账号）
     //   - 授权：RequirePermission<AwdReadGuard>（旧模型是「所有 SuperAdmin」）
-    //   - 管理员不再需要单独的 super_admin 记录
+    //   - 管理员不再需要单独的账号记录（Wave 10 已删除 super_admin 表）
     //
     // HTTP 完整测试因 AppState 引导复杂度暂不可行（见
     // chore/awd-core-backend-http-acceptance-report.md）。
@@ -570,8 +570,10 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires database — verify entity lookups compile"]
     async fn entity_lookups_compile() {
-        // 验证 super_admin 和 event_team_members 实体可正常引用
-        let _ = crate::entity::super_admin::Entity::find();
+        // 验证统一账号与赛事成员实体可正常引用。
+        // Wave 10 起 super_admin 表（及其生成实体）已删除，因此不再断言它 ——
+        // 这条测试的价值在于"实体层能编过并能查询"，不在于钉住某张具体表。
+        let _ = crate::entity::users::Entity::find();
         let _ = crate::entity::event_team_members::Entity::find();
     }
 

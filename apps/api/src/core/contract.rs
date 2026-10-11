@@ -15,7 +15,7 @@
 //! 断言两边一致，防止漂移）。
 
 /// 前端可见的 HTTP API 契约 major（`GET /api/frontend` 的 `api_contract_version`）。
-pub const API_CONTRACT_VERSION: &str = "1";
+pub const API_CONTRACT_VERSION: &str = "2";
 
 /// 前端运行时契约 major（`GET /api/frontend` 的 `frontend_runtime_version`）。
 pub const FRONTEND_RUNTIME_CONTRACT_VERSION: &str = "1";

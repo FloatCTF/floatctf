@@ -61,7 +61,6 @@ pub mod platform_roles;
 pub mod scheduled_tasks;
 pub mod sea_orm_active_enums;
 pub mod settings;
-pub mod super_admin;
 pub mod user_platform_roles;
 pub mod users;
 pub mod weapons;

@@ -2,7 +2,7 @@ pub use crate::{
     api::{
         AppError, QueryParams, UniResponse, UniResult,
         extractor::ReqCtx,
-        extractor::auth::{SuperAdminJwtGuard, UserJwtGuard},
+        extractor::auth::UserJwtGuard,
         util::{none_if_empty, send_email},
     },
     infrastructure::{WebDb, WebDocker, WebLog, WebRustfs, get_setting},

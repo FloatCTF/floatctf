@@ -80,9 +80,9 @@ export const adminNavigation: NavigationSection[] = [
 		id: "access",
 		label: "Access",
 		children: [
-			// v2：不再有「Super Admins」这个入口 —— 管理员不是独立账号类型，
-			// 而是持有 super-admin 角色的账号（见 Users）。旧页面在 Wave 10 随
-			// super_admin 表一起删除，期间仍可由 URL 直接访问（它由 legacy 守卫把守）。
+			// v2：不再有「Super Admins」入口 —— 管理员不是独立账号类型，
+			// 而是持有 super-admin 角色的账号（见 Users / Roles）。
+			// Wave 10 已随 super_admin 表一起删除该页面与它的 legacy 端点。
 			item("access.users", "Users", "/admin/users", {
 				permission: "users.read",
 				icon: <PasskeyFillIcon />,

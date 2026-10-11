@@ -58,7 +58,6 @@ pub use super::platform_role_permissions::Entity as PlatformRolePermissions;
 pub use super::platform_roles::Entity as PlatformRoles;
 pub use super::scheduled_tasks::Entity as ScheduledTasks;
 pub use super::settings::Entity as Settings;
-pub use super::super_admin::Entity as SuperAdmin;
 pub use super::user_platform_roles::Entity as UserPlatformRoles;
 pub use super::users::Entity as Users;
 pub use super::weapons::Entity as Weapons;

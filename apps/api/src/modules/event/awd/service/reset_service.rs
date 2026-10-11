@@ -23,7 +23,7 @@ use crate::modules::event::awd::{
 
 /// 重置发起方（保留身份类型，不塌缩成单一 UUID）。
 ///
-/// 玩家主体与管理员主体属于**两个不同的身份空间**（`users` / `super_admin`），
+/// 玩家主体与管理员主体**同属一个身份空间**（`users`）；Wave 10 起不再有 `super_admin` 表，
 /// 持久化时必须分别落到 `awd_reset_records.requested_by` 与 `requested_by_admin`。
 #[derive(Debug, Clone)]
 pub enum ResetActor {

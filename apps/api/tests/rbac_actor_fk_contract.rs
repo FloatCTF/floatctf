@@ -100,7 +100,11 @@ async fn actor_fks_point_at_users_with_set_null() {
 /// M5（Wave 6）把 `logs` 的双主体列合并为 `actor_user_id` 之后，
 /// 该豁免随之消失 —— 因此断言升级为「一个都不剩」。
 ///
-/// 这条断言的演进本身就是证据：它记录了「过渡态」到「终态」的切换，
+/// M6（Wave 10）删除了表本身，于是「没有外键指向它」被更强的「它根本不存在」取代 ——
+/// 后者蕴含前者。这里**保留**外键查询（表若因故复活则继续生效），
+/// 但先断言表已不存在，这也是 M6 的终点校验在测试侧的对应物。
+///
+/// 这条断言的演进本身就是证据：它记录了「过渡态」→「终态」→「物证消失」三步，
 /// 而不是一句永不失效的空话。
 #[tokio::test]
 async fn no_fk_targets_super_admin_anymore() {
@@ -109,12 +113,26 @@ async fn no_fk_targets_super_admin_anymore() {
         return;
     };
 
+    let exists = db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT to_regclass('public.super_admin') IS NOT NULL AS present".to_string(),
+        ))
+        .await
+        .expect("check super_admin presence")
+        .expect("one row");
+    assert!(
+        !exists.try_get::<bool>("", "present").unwrap(),
+        "★ Wave 10（M6）之后 public.super_admin 必须已不存在"
+    );
+
     let remaining = db
         .query_all(Statement::from_string(
             DbBackend::Postgres,
             "SELECT c.conname, c.conrelid::regclass::text AS tbl
                FROM pg_constraint c
-              WHERE c.contype = 'f' AND c.confrelid = 'public.super_admin'::regclass"
+              WHERE c.contype = 'f'
+                AND c.confrelid = to_regclass('public.super_admin')"
                 .to_string(),
         ))
         .await

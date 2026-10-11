@@ -509,7 +509,7 @@ pub async fn get_wireguard_config(
 /// 认证：UserJwtGuard（Bearer token，users 表）。
 /// 授权：用户必须属于该赛事的战队（event_team_members）。
 ///
-/// 管理员应使用 `/api/admin/events/{event_id}/awd/stream`（SuperAdminJwtGuard）。
+/// 管理员应使用 `/api/admin/events/{event_id}/awd/stream`（`awd.read` 权限）。
 #[get("{event_id}/awd/stream")]
 pub async fn event_stream(
     user: UserJwtGuard,

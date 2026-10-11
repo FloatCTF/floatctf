@@ -197,7 +197,7 @@ struct DownloadParams {
 ///
 /// 授权模型（v2 最终形态）：
 /// 1. 静态权限：`events.read`，由 `RequirePermission<EventsReadGuard>` 承担
-///    （Wave 0 先做对象级绑定、守卫暂用 `SuperAdminJwtGuard`；Wave 5 已切换）；
+///    （Wave 0 先做对象级绑定、守卫曾暂用超管守卫；Wave 5 已切换，Wave 10 已删除旧守卫）；
 /// 2. **对象级绑定**：[`resolve_private_artifact`] 必须能把 key 解析为平台已知资源，
 ///    否则 404。二者缺一不可。
 #[get("/download")]

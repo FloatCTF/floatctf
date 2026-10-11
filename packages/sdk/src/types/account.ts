@@ -42,19 +42,6 @@ export type MeDto = UserDto & {
 };
 
 /**
- * 管理员账号响应体（**临时**，Wave 10 删除 `super_admin` 端点后一并移除）。
- *
- * 与后端 `administrator/dto.rs::SuperAdminDto` 对应，刻意**不含** `password`。
- */
-export type SuperAdminDto = {
-	created_at: string;
-	email: string;
-	id: string;
-	updated_at: string;
-	username: string;
-};
-
-/**
  * 建号 / 改号请求体。
  *
  * `password` **只允许出现在请求里**；响应永远不回显它。
@@ -63,7 +50,3 @@ export type UserWriteRequest = Partial<UserDto> & {
 	password?: string;
 };
 
-/** 管理员建号 / 改号请求体（同样是请求专用）。 */
-export type SuperAdminWriteRequest = Partial<SuperAdminDto> & {
-	password?: string;
-};

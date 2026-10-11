@@ -42,8 +42,6 @@ export type {
 } from "./adminChallenge.js";
 export type {
 	MeDto,
-	SuperAdminDto,
-	SuperAdminWriteRequest,
 	UserDto,
 	UserWriteRequest,
 } from "./account.js";

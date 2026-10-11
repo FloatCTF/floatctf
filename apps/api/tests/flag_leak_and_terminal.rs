@@ -394,7 +394,7 @@ mod terminal_security {
 
     /// v2：管理员 = `users` 行 + 内置 super-admin **角色授予**。
     ///
-    /// `super_admin` 表在 Wave 10 前被双写以兼容尚未迁移的读写路径。
+    /// Wave 10 起不再有 `super_admin` 表（也不再把身份双写到两张表）。
     async fn seed_admin(db: &sea_orm::DatabaseConnection) -> Uuid {
         use floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
         use floatctf::entity::user_platform_roles;
@@ -403,17 +403,6 @@ mod terminal_security {
 
         let id = Uuid::new_v4();
         let tag = Uuid::new_v4().simple().to_string();
-        floatctf::entity::super_admin::ActiveModel {
-            id: Set(id),
-            username: Set(format!("tsa-{tag}")),
-            password: Set("x".into()),
-            email: Set(format!("tsa-{tag}@example.test")),
-            ..Default::default()
-        }
-        .insert(db)
-        .await
-        .expect("admin mirror row");
-
         users::ActiveModel {
             id: Set(id),
             username: Set(format!("tsa-{tag}")),
@@ -478,9 +467,6 @@ mod terminal_security {
             .unwrap_or_default();
         assert!(body.is_empty(), "204 响应不得有 body");
 
-        let _ = floatctf::entity::super_admin::Entity::delete_by_id(admin)
-            .exec(&db)
-            .await;
         let _ = users::Entity::delete_by_id(admin).exec(&db).await;
     }
 
@@ -550,9 +536,6 @@ mod terminal_security {
         );
 
         let _ = users::Entity::delete_by_id(user_id).exec(&db).await;
-        let _ = floatctf::entity::super_admin::Entity::delete_by_id(admin)
-            .exec(&db)
-            .await;
         let _ = users::Entity::delete_by_id(admin).exec(&db).await;
     }
 

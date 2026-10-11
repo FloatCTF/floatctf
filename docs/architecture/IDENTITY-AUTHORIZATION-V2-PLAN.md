@@ -3377,6 +3377,62 @@ M6 之前该断言必须仍是绿的）。
    也不把 Default 的形态强加给它们）。
 4. **子模块 gitlink 更新**（会一并吸收先于本工作存在的上游提交，须向用户明确说明）。
 
+### 29.15 Wave 10 的顺序依赖（动手前必须知道，否则会做出半坏状态）
+
+在清理 legacy 之前先核对了引用面，发现一个**清单之外的顺序依赖**：
+删除 `/api/admin/session` 不是「删一个路由」，它会连带打破管理端登录。
+
+**依赖链（逐环节已核对源码）**
+
+1. `configure_session_routes`（`identity/mod.rs:43`）注册 `administrator::super_admin_login`，
+   即 `POST /api/admin/session`；`bootstrap/routes.rs:33` 调用它。
+2. SDK 的管理端登录在 **admin base** 上：`createAdminLoginFn(http)`（`api/admin/auth.ts`）
+   → `POST /api/admin/session`。因此删掉端点后，**Default 的管理端登录页会直接 404**。
+3. 计划 §（路线图）要求「选手登录页成为**唯一**登录页，改调 `POST /api/session`」，
+   也就是 Wave 10 还得**删掉 Default 的 `/admin` 登录页**，并把 `/admin` 路由守卫
+   从「要求 `adminToken`」改成「要求会话 + 具备平台管理能力」。
+4. `administrator/` 整个模块（409 行）是**自包含**的：全仓除 `identity/mod.rs` 的注册之外
+   无人引用（已 grep 确认），`nickname_for` 也只在该模块内使用 ⇒ 可以整目录删除，
+   但必须与步骤 2/3 **同批**完成。
+
+**因此 Wave 10 的正确批次是**（不可只做其中一半）：
+
+1. 删 `identity/administrator/`（含 `dto.rs` 的 `SuperAdminDto`）；
+2. 删 `configure_session_routes` + `bootstrap/routes.rs:33` 的调用；
+3. 删 `/super_admin` scope 与 `/users/session` 别名（保留 `/api/session` 为唯一入口）；
+4. 删 `SuperAdminJwtGuard` 及其 4 处定义/再导出（`api/extractor/auth.rs`、`api/extractor/mod.rs`、
+   `api/prelude.rs`、`api/mod.rs`）；注意 `event/awd/api/player.rs:512` 与
+   `platform/files/download.rs:200` 里的引用**只是注释**，改注释即可；
+5. SD​K：删 `api/admin/super_admin.ts` 与 `createSuperAdminApi` 组装、`SuperAdminDto`/`SuperAdminWriteRequest`；
+   并把管理端登录改为走 **service base** 的 `/session`；
+6. Default：删 `/admin` 登录页，`/admin` 守卫改为权限/能力判定；
+   shadcn `super-admins.tsx` + `api/keys.ts`；xzmu `superAdmins.tsx` + `shared.tsx` +
+   `routes-core.tsx` + `api/keys.ts`；
+7. `apps/api/tests/common/routes.rs`：删 5 条 `/api/admin/super_admin*` 与 `/api/admin/session`，
+   并按实际条数下调 `ADMIN_ROUTE_COUNT`（当前 162）；
+8. 迁移 **M6** `DROP TABLE super_admin` → `mise run db:gen`（生成实体消失，作为"还有没有漏引用"的编译器兜底）；
+9. `API_CONTRACT_VERSION` `"1"` → `"2"`，**两处同改**（`core/contract.rs` 与
+   `packages/frontend-runtime/src/version.ts`）。
+
+**M6 的前置条件**：`rbac_actor_fk_contract.rs` 的 `no_fk_targets_super_admin_anymore`
+在 M6 之前必须始终为绿 —— 它保证 drop 不会因残留外键而失败或级联删数据。
+
+### 29.16 Wave 8–9 之后的全量门禁首次转绿（2026-10-11）
+
+`mise run check` **EXIT=0**（一次性库创建→迁移→全部测试→清理，全绿）。
+此前三轮的红**完全**是环境造成，与代码无关，现已证实：
+
+| 观测 | 值 |
+|---|---|
+| `fmt` / `lint` / `web:typecheck` / `web:architecture` | 全部 Finished，无错 |
+| rust-test | 一次性库 `floatctf_test_1791729890_455829` 创建、迁移、**全部通过**、已清理 |
+| 未运行 dev API | 是（按用户选择只起 dev 基础设施，避免动生产的 `fctf-awdp-practice-judge`） |
+
+结论：先前 `awdp_fix_patch` 的 2 项与 AWD 计分 21 项的失败，是 (a) 生产占满
+`10.43.0.0/16` 子网池 与 (b) dev 基础设施被移除 两个环境原因，
+代码侧从未有问题。**但**：本轮的全绿是在 **dev API 未启动** 的前提下取得的，
+所以「需要真实 API 端口」的活体用例仍是 `SKIP (env)`，不得记为 PASS。
+
 ### 29.14 子模块 gitlink：**有意不 bump**，记为 `PENDING EXPLICIT PUSH AUTHORIZATION`
 
 Wave 9 的四个前端改动全部在子模块内**本地提交**完成（见下表），

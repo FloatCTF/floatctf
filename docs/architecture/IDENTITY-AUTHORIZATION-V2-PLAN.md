@@ -3117,6 +3117,29 @@ mise run db:migration:verify
 > （HANDOFF 记载开发 API 会与生产争抢宿主资源并在约 8 秒内删除重建生产 AWDP
 > 练习判题容器）；迁移只新增文件，绝不改写既有迁移。
 
+### 29.0 最终状态（2026-10-11 收官）
+
+| 项 | 值 |
+|---|---|
+| 分支 | `feat/identity-authorization-v2` |
+| 起始 HEAD | `7c382e6b35a39148cbf6ecb581a6611ac61c673d`（`main`） |
+| 最终 HEAD | `52fe663114733eb4219482b58b287b3f7731c4d1` |
+| 本地提交数 | **25**（全部未 push） |
+| Wave 0–11 | **全部 PASS**（Wave 11 的活体 API 用例为 `SKIP (env)`） |
+| `mise run check` | **EXIT=0** |
+| `mise run build` | **EXIT=0** |
+| dev `schema_migrations` | **54** = 基线 48 + M1–M6 |
+| 权限数 / 内置角色 | **29** / 仅 `super-admin` |
+| 计划修订 | **6/6**（§29.4 记录）；Open Questions = **0** |
+| 生产 | **未触碰**（判题器/迁移/容器均无变更；且本任务期间生产已因外部原因下线，见 §29.12） |
+
+**最终判定**：
+`IMPLEMENTATION COMPLETE LOCALLY — PENDING EXPLICIT SUBMODULE PUSH AUTHORIZATION`
+
+原因：两个前端子模块的提交只存在于本机（shadcn `d2ff9d2`、xzmu `ef5a4c7`），
+父仓库 gitlink 因而**有意不 bump** —— 否则父仓库会指向无法 fetch 的对象。
+授权后需执行的确切命令见 §29.14。
+
 ### 29.1 分支与提交
 
 | 项 | 值 |

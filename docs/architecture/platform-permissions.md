@@ -3,16 +3,19 @@
 > 本文是 [IDENTITY-AUTHORIZATION-V2-PLAN.md](./IDENTITY-AUTHORIZATION-V2-PLAN.md) §7 / §12 / §24 的
 > 配套**实现清单**：把当前源码里的**每一条** HTTP 路由映射到「认证级别 + 所需权限」。
 >
-> **实现状态：数据层已落地，路由守卫尚未切换（PENDING Wave 5）。**
-> 分支 `feat/identity-authorization-v2` @ `2aaa092`；本表描述的是 **v2 目标态**。
-> 现状：Wave 0–4 已完成（权限目录 `core::permission` 的 29 条权限、RBAC 三表、
-> 内置 `super-admin`、账号统一与 actor 外键重指向、认证 v2：身份-only JWT +
-> `AccountGuard` + `/api/session` + `status`/`token_version` 每请求强制）。
-> **admin 路由当前仍以 `SuperAdminJwtGuard` 做粗粒度门禁**（判据 = 持有 `grants_all`
-> 角色，且**来自 DB 而非令牌**，故撤销角色立刻生效）；逐路由的
-> `RequirePermission<P>` 在 Wave 5 落地；因此本表的「所需权限」列现在起是
-> **待实现的契约**，其正确性由 `apps/api/tests/http_auth_contract.rs` 的目录守卫
-> （153 条 admin 路由、5 项断言）先行锁定。
+> **实现状态：全部落地（Wave 0–11 完成）。**
+> 分支 `feat/identity-authorization-v2` @ `52fe663`。本表描述的就是**当前实现**，
+> 不再是目标态：逐路由的 `RequirePermission<P>` 已全部切换（156 个 handler），
+> 粗粒度 `SuperAdminJwtGuard` 与 `LEGACY_GUARD_ALLOWLIST` 均已删除/清空。
+>
+> 落地内容：权限目录 `core::permission` 的 **29 条**权限；RBAC 三表
+> （`platform_roles` / `user_platform_roles` / `platform_role_permissions`）；
+> **仅内置 `super-admin`**（`protected` + `grants_all`，权限来自短路）；账号统一到
+> `users`（v1 的 `super_admin` 表已由 M6 删除）；认证 v2：身份-only JWT
+> （`sub`/`purpose`/`token_version`/`exp`）+ `AccountGuard` + `/api/session` 为**唯一**
+> 登录入口 + `status`/`token_version` 每请求强制；授权每请求从 DB 解析（不缓存）。
+> 守卫的**完整性**由 `apps/api/tests/authorization_route_coverage.rs` 与
+> `http_auth_contract.rs` 的目录守卫锁定（**156** 条 admin 路由）。
 >
 > **401 / 403 契约（v2 起固定）**：401 = 未认证 / 令牌无效 / 凭据已吊销 /
 > 用途不符；403 = 已认证但不允许（账号禁用 / 缺权限 / 对象级授权失败）。

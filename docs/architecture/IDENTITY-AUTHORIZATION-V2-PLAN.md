@@ -3377,6 +3377,55 @@ M6 之前该断言必须仍是绿的）。
    也不把 Default 的形态强加给它们）。
 4. **子模块 gitlink 更新**（会一并吸收先于本工作存在的上游提交，须向用户明确说明）。
 
+### 29.14 子模块 gitlink：**有意不 bump**，记为 `PENDING EXPLICIT PUSH AUTHORIZATION`
+
+Wave 9 的四个前端改动全部在子模块内**本地提交**完成（见下表），
+但父仓库的 gitlink **有意保持不动**。理由与后果如下，全部可核对。
+
+**本次在子模块内的本地提交（均未 push）**
+
+| 子模块 | 提交 | 内容 |
+|---|---|---|
+| shadcn | `6756a1d` | Wave 0：`/me` 响应类型改用无 password 的 `UserDto` |
+| shadcn | `5e816b4` | Wave 3：发布者账号注销后标注「已注销」 |
+| shadcn | `6e03a7f` | Wave 6：审计主体改用单一 `actor_user_id` |
+| shadcn | `fe77501` | Wave 9：管理端导航权限感知 + 移除「超管」入口（版本 0.1.2） |
+| xzmu | `8a72c7a` | Wave 6：迁到无 password 的响应类型 + 审计主体单列 |
+| xzmu | `c08c65a` | Wave 9：管理端导航权限感知 + 移除「管理员」入口（版本 0.1.9） |
+
+**为什么不 bump 父仓库的 gitlink**
+
+1. **父仓库会指向只存在于本机的提交**。这些子模块提交**未 push**，
+   一旦 bump，父仓库记录的 gitlink 对其他人就是**无法 fetch** 的对象 ——
+   clone 出来的仓库在子模块处直接失败。这正是 prompt 预设的
+   「需要远端可 fetch 的 submodule commit」情形，因此按规则记为
+   `PENDING EXPLICIT SUBMODULE PUSH AUTHORIZATION`，而不是悄悄 bump。
+2. **bump 会一并吸收大量与本任务无关的上游提交**（实测）：
+   - shadcn：从父仓库记录的 `719de86c` 到 `fe77501` 共 **6 个**提交，
+     其中 **4 个是本任务**，另 **2 个是先前就存在的上游提交**
+     （`c17ffed`「课程」入口、`4ed19ed` 文案清理）；
+   - xzmu：从 `c3f3479f` 到 `c08c65a` 共 **11 个**提交，
+     其中 **2 个是本任务**，另 **9 个是先前的上游提交**
+     （含 `6230eda` AWD 数据大屏、`024d27d`/`203d1b2` 战报、`955a0e4`/`1fea45b` 校徽与
+     favicon、以及若干文案/版本提交）。
+   - 这些上游提交**先于本工作存在**（初始 `git status` 即显示两个子模块为 modified）。
+     把它们记进父仓库是一次**超出本任务范围的记录变更**，应由用户明确决定。
+
+**因此**：最终判定为
+`IMPLEMENTATION COMPLETE LOCALLY — PENDING EXPLICIT SUBMODULE PUSH AUTHORIZATION`
+（若其余 Wave 全部通过）；bump 与 push 属同一步，须由用户显式授权后执行。
+
+**若用户授权**，需要执行的是（**先 push 子模块，再在父仓库 bump**）：
+
+```bash
+# 1) 推子模块（两个仓库各自）
+git -C frontends/floatctf-frontend-shadcn push origin HEAD
+git -C frontends/floatctf-frontend-xzmu    push origin HEAD
+# 2) 父仓库 bump gitlink（此时记录的是远端可 fetch 的提交）
+git add frontends/floatctf-frontend-shadcn frontends/floatctf-frontend-xzmu
+git commit -m "chore(frontend): 更新 shadcn / xzmu 子模块指针"
+```
+
 ### 29.4 必须诚实记录的环境限制
 
 - **所有 live-API 测试软跳过**（`http_auth_contract.rs` 的 3 项 live 断言、

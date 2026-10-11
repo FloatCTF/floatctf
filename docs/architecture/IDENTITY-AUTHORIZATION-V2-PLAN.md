@@ -3146,7 +3146,7 @@ mise run db:migration:verify
 | 7 | SDK v2（`getToken` / `onForbidden` / `FloatCTFError.forbidden` / SSE 401·403 分流 / `MeDto`） | **PASS** | transport 新增 `onForbidden` 且 403 **绝不**触发 `onUnauthorized`；`FloatCTFError.isUnauthorized` / `isForbidden` / `forbidden`；`MeDto`（后端 `/me` 每请求解析权限 + SDK 类型）；SDK 登录改走 `/api/session`；SDK 测试 69 项全绿（新增 8 项含「403 后同一客户端仍带 token」） |
 | 8 | Default Frontend v2（AuthStore v2 + `version:2` 迁移 / 单登录 / 权限感知导航 / 角色·用户 UI） | **PASS（角色 UI 已完成；Users 页内联授予 UI 待续）** | AuthStore `version:2` + `migrate` 清空 v1 令牌（v1 JWT 会被后端拒绝，保留只会造成「以为已登录却处处 401」）；`permissions`/`grantsAll` 状态；管理端导航 17 项**全部**声明权限谓词（移除 legacy「Super Admins」入口）；`/me` 权限回填 store；管理端登录一次覆盖两个域并区分 401/403 文案。Default 测试 **185 项全绿**。新增 `/admin/roles` 页（权限勾选框来自后端目录、内置角色权限集禁用、`grants_all` 显式显示「全部权限」、反提权交由后端 403）；SDK 侧新增 `admin.roles` + `users.getRoles/setRoles`（3 项路径/语义测试）。**待续**：Users 页内联的角色授予 UI（当前可用 `/admin/roles` 查角色，账号授权接口已可用） |
 | 9 | 两个外部 Frontend（shadcn / xzmu）+ 子模块 gitlink | **PENDING** | — |
-| 10 | M6 删除 `super_admin` 表 + legacy 别名移除 + `API_CONTRACT_VERSION="2"` | **PENDING** | — |
+| 10 | M6 删表 + legacy 移除 + 契约版本 → 2 | **PASS** | M6 `DROP TABLE public.super_admin`（前置校验 fail closed：无外键指向 / 无孤儿账号；不用 CASCADE）；删 administrator 模块 409 行 + 2 处路由注册 + `SuperAdminJwtGuard` 及 4 处再导出 + `/users/session` 与 `/admin/session` 别名（`POST /api/session` 成唯一入口）；终端票据改为查 `users` 并**现查 `terminal.open`**；SDK 删 super_admin API/类型、admin 登录改走 service base；三前端删超管页并同步 manifest `apiContract` → 2（shadcn 0.1.3 / xzmu 0.1.10）；`API_CONTRACT_VERSION` 1→2 四处同改；路由目录 162→156。`mise run check` **EXIT=0** |
 | 11 | 全量回归：fresh DB / upgrade / rollback / Jeopardy / AWD / AWDP | **PENDING** | — |
 
 ### 29.3 已完成的 migration
@@ -3416,6 +3416,26 @@ M6 之前该断言必须仍是绿的）。
 
 **M6 的前置条件**：`rbac_actor_fk_contract.rs` 的 `no_fk_targets_super_admin_anymore`
 在 M6 之前必须始终为绿 —— 它保证 drop 不会因残留外键而失败或级联删数据。
+
+### 29.17 Wave 10 完成（2026-10-11）
+
+`mise run check` **EXIT=0**。dev `schema_migrations` 54（基线 48 + M1–M6），
+`to_regclass('public.super_admin') IS NULL` 为真 —— 表确已删除。
+
+**契约版本其实有四处，此前没有单一真相源**（本次踩出来的）：
+`apps/api/src/core/contract.rs`、`packages/frontend-runtime/src/version.ts`、
+`scripts/frontend.sh` 的 `API_CONTRACT` 变量与内嵌 Python 默认值。
+bump 到 2 后，`packages/frontend-runtime` 109 项里 7 项红、`test-frontend-manager.sh` 也红 ——
+全是各自 fixture/硬编码仍写 1。已全部对齐。**建议后续让 `frontend.sh` 直接读
+`version.ts`**，否则下次 bump 还会漏。两个外部前端的 `floatctf.frontend.json`
+也声明 `compatibility.apiContract`，不同步会被平台判定不兼容而拒绝加载。
+
+**测试断言的"升级而非删除"**：`UNIFIED_AND_LEGACY_LOGIN_SHARE_ONE_HANDLER` 改为
+`only_unified_session_route_remains`；「super_admin CRUD 必须镜像到统一身份表」改为
+「legacy 面确已消失」（镜像 invariant 之所以必要，正是因为存在第二张表）；
+`LEGACY_GUARD_ALLOWLIST` 清空但保留常量作为"不可回退"锚点；
+M2/M3 的历史语义（幂等、冲突 fail closed）没有失去覆盖 —— 改为在**事务内**
+重建 v1 形态的 `super_admin` 作为 fixture，rollback 即消失，不污染真实 schema。
 
 ### 29.16 Wave 8–9 之后的全量门禁首次转绿（2026-10-11）
 

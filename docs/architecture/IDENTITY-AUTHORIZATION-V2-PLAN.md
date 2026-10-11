@@ -605,7 +605,7 @@ effective_permissions(user) = ⋃ { permissions(r) | r ∈ roles(user) }
 | 8 | `gameboxes.manage` | GameBox 导入/构建/扫描/检查/改/隐藏/删 | `POST/PATCH/DELETE /api/admin/awd/gameboxes*` | challenge-manager |
 | 9 | `weapons.read` | 查看武器库 | `GET /api/admin/weapons` | ops-manager |
 | 10 | `weapons.manage` | 武器增删改/上传 | `POST/PATCH/DELETE /api/admin/weapons*` | ops-manager |
-| 11 | `events.read` | 查看赛事、数据、报表、参与记录、日志、Writeup、**私有制品下载** | `GET /api/admin/events*`（含 `/data` `/report` `/instances` `/logs` `/writeups` `/users` `/teams`）、`GET /api/admin/download`（对象级授权，见 §7.6） | event-manager, auditor |
+| 11 | 全量回归（fresh DB / upgrade / rollback / Jeopardy·AWD·AWDP） | **PASS（活体 API 用例为 SKIP(env)）** | fresh DB：一次性库从 48 基线起应用全部 54 个迁移并跑完测试；upgrade：M6 场景 A/B 实测；rollback：敌意 fixture 下前置校验中止事务、表与数据原样保留；幂等：M6 重跑无错；`db:migration:verify` OK（54 applied / 0 modified）；Jeopardy·AWD·AWDP 由全量 cargo test 覆盖 |
 | 12 | `events.manage` | 赛事倒角 + 赛题挂载 + 赛事公告 | `POST/PATCH/DELETE /api/admin/events*`, `.../challenges*`, `.../announcements*` | event-manager |
 | 13 | `events.participants.manage` | 参赛用户/队伍增删 + 赛事级封禁 | `.../users*`, `.../teams*` | event-manager |
 | 14 | `events.lifecycle.manage` | **推动比赛**：开始/暂停/恢复/结束/归档/部署/预检/重置靶机/调分/轮换令牌/网络生效/AWD 封队 | `.../awd/{start,pause,resume,finish,archive,deploy,precheck}`, `.../awd/{teams/*/ban,score/adjust,tokens/rotate,gameboxes/*/reset,network*}`, `.../awdp/{start,finish,break-to-fix}` | event-manager, ops-manager |
@@ -3416,6 +3416,39 @@ M6 之前该断言必须仍是绿的）。
 
 **M6 的前置条件**：`rbac_actor_fk_contract.rs` 的 `no_fk_targets_super_admin_anymore`
 在 M6 之前必须始终为绿 —— 它保证 drop 不会因残留外键而失败或级联删数据。
+
+### 29.18 Wave 11 回归验证（2026-10-11）—— 逐条给证据
+
+**1) fresh DB**：`mise run check` 每次创建一次性库，从 48 个基线迁移起依次应用
+M1–M6（共 54）→ 灌入 bootstrap 默认值 → 跑完全部测试 → 删除。EXIT=0。
+
+**2) 迁移历史完整性**：`db:migration:verify` → `OK`；
+`db:migration:status` → `Applied: 54 / Pending: 0`（无 MODIFIED / MISSING LOCAL）。
+这一条同时是"从未改动过既有迁移"的机器证据（checksum 未被改写）。
+
+**3) upgrade（v1 → head）**：在临时库里搭 v1 形态后实测 M6 两个场景 ——
+- **场景 B（正常升级）**：`super_admin` 有账号且 `users` 已有同一主键行（M3 已迁移）
+  → M6 成功，表消失，**账号仍在 `users`**（`table_gone=t, account_kept=1`）；
+- **重跑幂等**：再次执行 M6 → 0 个错误（`to_regclass IS NULL` 时提前返回）。
+
+**4) rollback（事务原子性）**：两种敌意 fixture，均以
+`psql -1 -v ON_ERROR_STOP=1`（**与 migrate.sh 的"每个迁移独立事务"同构**）运行：
+
+| 场景 | 前置校验行为 | 回滚后状态 |
+|---|---|---|
+| **A** 孤儿账号：`super_admin` 有行、`users` 无同名行 | 报错并点名账号：`super_admin 中有 1 个账号在 users 里没有同名行（例如：orphan-admin）` | 表仍在（`t`）、1 行未丢、`users` 1 行未动 |
+| **C** 残留外键：另建表带 `REFERENCES super_admin(id)` | 报错并点名约束：`仍有外键指向 public.super_admin（tmp_dependent.tmp_dependent_admin_id_fkey）`，并明确提示**不要用 CASCADE** | 表仍在、依赖行未动 |
+
+两条都证明：**前置校验先于 DDL 触发，事务中止后没有任何半成品状态**。
+（场景 C 若用 psql 的 autocommit 跑，`DROP TABLE` 会再触发一次 PG 自身的依赖错误；
+这正是 migrate.sh 用事务包裹的原因，也是我特意用 `-1` 复现其语义的理由。）
+
+**5) Jeopardy / AWD / AWDP 回归**：由 `mise run check` 的全量 cargo test 覆盖（EXIT=0），
+含 AWD 计分、AWDP 事件/租约/重置、赛事成员等用例。
+
+**6) 如实标注的限制**：本环境**未启动 dev API**（按用户选择，只起 dev 基础设施），
+因此需要真实监听端口的**活体 API 用例仍是 `SKIP (env)`**，不计入 PASS。
+进程内 `actix_web::test::init_service` 的守卫契约测试**确实运行并通过**。
 
 ### 29.17 Wave 10 完成（2026-10-11）
 

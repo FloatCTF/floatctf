@@ -27,13 +27,14 @@ fn env() -> &'static Environment<'static> {
 
 /// 渲染页面并附带安全响应头。
 ///
-/// `form_target_origin`：表单提交后可能 302 去往的 RP origin。Chrome 对 `form-action`
-/// 也校验重定向目标，因此必须把该 origin 加入白名单，否则授权完成后的跳转会被拦截。
+/// `form_action_origins`：表单提交后可能 302 去往的所有 RP origin。Chrome 对
+/// `form-action` 也校验重定向目标，因此必须把每个可能落点加入白名单，否则授权完成后的
+/// 跳转会被拦截。Supabase 等中间层会先回到自己的 callback，再跳转到应用，故需要两个 origin。
 pub fn html(
     status: StatusCode,
     template: &str,
     ctx: impl Serialize,
-    form_target_origin: Option<&str>,
+    form_action_origins: &[String],
 ) -> HttpResponse {
     let body = match env().get_template(template).and_then(|t| t.render(ctx)) {
         Ok(body) => body,
@@ -44,10 +45,13 @@ pub fn html(
                 .body("internal error");
         }
     };
-    let form_action = match form_target_origin {
-        Some(origin) => format!("'self' {origin}"),
-        None => "'self'".to_string(),
-    };
+    let mut sources = vec!["'self'".to_string()];
+    for origin in form_action_origins {
+        if !sources.iter().any(|existing| existing == origin) {
+            sources.push(origin.clone());
+        }
+    }
+    let form_action = sources.join(" ");
     HttpResponse::build(status)
         .content_type("text/html; charset=utf-8")
         .insert_header((
@@ -72,7 +76,7 @@ pub fn error_page(status: u16, message: &str) -> HttpResponse {
         StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
         "error.html",
         minijinja::context! { message => message },
-        None,
+        &[],
     )
 }
 
@@ -113,6 +117,24 @@ pub fn scope_item(name: &str, previously_granted: bool) -> Option<ScopeItem> {
         }),
         _ => None,
     }
+}
+
+/// 允许表单重定向到的 RP origin 集合（去重，保持稳定顺序）。
+///
+/// `redirect_uri` 是 OAuth 直接回跳点；`homepage_url` 覆盖 Supabase 这类
+/// 「先回自己的 callback、再跳应用」的中间层，避免最终跳转被 CSP 拦截。
+pub fn form_action_origins(redirect_uri: Option<&str>, homepage_url: Option<&str>) -> Vec<String> {
+    let mut origins = Vec::new();
+    for origin in [redirect_uri, homepage_url]
+        .into_iter()
+        .flatten()
+        .filter_map(origin_of)
+    {
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
+    }
+    origins
 }
 
 /// 回调地址的 origin（用于 CSP form-action）与展示用主机名。
@@ -164,7 +186,7 @@ mod tests {
             StatusCode::OK,
             "error.html",
             minijinja::context! { message => "x" },
-            Some("https://rp.example.com"),
+            &["https://rp.example.com".to_string()],
         );
         let csp = resp
             .headers()
@@ -184,5 +206,29 @@ mod tests {
             origin_of("https://rp.example.com:8443/cb?x=1").unwrap(),
             "https://rp.example.com:8443"
         );
+    }
+
+    #[test]
+    fn csp_covers_callback_and_app_homepage_without_duplicates() {
+        let origins = form_action_origins(
+            Some("https://supabase.example.com/auth/v1/callback"),
+            Some("https://learn.example.com/account"),
+        );
+        assert_eq!(
+            origins,
+            vec![
+                "https://supabase.example.com".to_string(),
+                "https://learn.example.com".to_string()
+            ]
+        );
+
+        let same = form_action_origins(
+            Some("https://learn.example.com/auth/callback"),
+            Some("https://learn.example.com/"),
+        );
+        assert_eq!(same, vec!["https://learn.example.com".to_string()]);
+
+        let none = form_action_origins(None, None);
+        assert!(none.is_empty());
     }
 }

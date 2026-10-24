@@ -249,6 +249,10 @@ async fn render_login(
     let prompt = crate::modules::identity::oidc::domain::authorize::Prompt::from_values(
         &scope::from_json(&txn.prompt),
     );
+    let redirect_origin = pages::origin_of(&txn.redirect_uri);
+    let homepage_origin = client.homepage_url.as_deref().and_then(pages::origin_of);
+    let form_action_origins =
+        pages::form_action_origins(redirect_origin.as_deref(), homepage_origin.as_deref());
     pages::html(
         status,
         "login.html",
@@ -262,7 +266,7 @@ async fn render_login(
             error => error,
             reauth => prompt.login || txn.max_age.is_some(),
         },
-        pages::origin_of(&txn.redirect_uri).as_deref(),
+        &form_action_origins,
     )
 }
 
@@ -533,6 +537,10 @@ pub async fn consent_page(
         .iter()
         .filter_map(|s| pages::scope_item(s, previously.contains(s)))
         .collect();
+    let redirect_origin = pages::origin_of(&txn.redirect_uri);
+    let homepage_origin = client.homepage_url.as_deref().and_then(pages::origin_of);
+    let form_action_origins =
+        pages::form_action_origins(redirect_origin.as_deref(), homepage_origin.as_deref());
     pages::html(
         StatusCode::OK,
         "consent.html",
@@ -545,7 +553,7 @@ pub async fn consent_page(
             user_display => format!("{}（@{}）", user.nickname, user.username),
             scopes => items,
         },
-        pages::origin_of(&txn.redirect_uri).as_deref(),
+        &form_action_origins,
     )
 }
 

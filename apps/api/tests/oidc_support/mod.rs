@@ -71,6 +71,25 @@ pub fn test_config() -> OidcConfig {
         allow_loopback_redirect_uris: true,
         require_client_approval: true,
         account_chooser: true,
+        multi_account: false,
+        max_browser_accounts: 5,
+        browser_container_ttl_secs: 30 * 24 * 3600,
+        unified_web_session: false,
+        first_party_origins: Vec::new(),
+        backchannel_logout: false,
+        backchannel_trusted_hosts: Vec::new(),
+        backchannel_extra_ca_file: None,
+        backchannel_timeout_secs: 3,
+        logout_token_ttl_secs: 120,
+    }
+}
+
+/// 统一身份配置：浏览器账号容器 + 主站 Cookie 会话全部开启。
+pub fn unified_config() -> OidcConfig {
+    OidcConfig {
+        multi_account: true,
+        unified_web_session: true,
+        ..test_config()
     }
 }
 

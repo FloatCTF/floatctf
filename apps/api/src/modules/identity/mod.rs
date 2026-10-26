@@ -28,7 +28,14 @@ pub fn configure_player_routes(cfg: &mut ServiceConfig) {
             // POST /api/users/sso（平台 JWT → OIDC SSO Cookie）
             .service(oidc::api::session::bridge)
             // DELETE /api/users/sso（撤销 SSO 会话）
-            .service(oidc::api::session::sign_out),
+            .service(oidc::api::session::sign_out)
+            // /api/users/web-session/*（主站统一 Cookie 会话，[oidc].unified_web_session）
+            .service(oidc::api::web_session::status)
+            .service(oidc::api::web_session::login)
+            .service(oidc::api::web_session::restore)
+            .service(oidc::api::web_session::select)
+            .service(oidc::api::web_session::logout)
+            .service(oidc::api::web_session::migrate),
     );
     // /api/oidc/*：开发者中心 + 已授权应用
     cfg.service(web::scope("/oidc").configure(oidc::configure_developer_routes));

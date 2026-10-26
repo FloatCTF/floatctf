@@ -15,6 +15,7 @@ import { serviceApi } from "@/api";
 import { useMsgBanner } from "@/components";
 import {
 	ClientTextInputs,
+	LogoutUrisInputs,
 	type OidcClientFormState,
 	RedirectUrisInput,
 	ScopesInput,
@@ -84,6 +85,8 @@ function RouteComponent() {
 		form.description = client.data.description ?? "";
 		form.redirect_uris_text = client.data.redirect_uris.join("\n");
 		form.scopes = client.data.allowed_scopes;
+		form.post_logout_redirect_uris_text = (client.data.post_logout_redirect_uris ?? []).join("\n");
+		form.backchannel_logout_uri = client.data.backchannel_logout_uri ?? "";
 	}, [client.data, form]);
 
 	const refresh = () => {
@@ -235,6 +238,22 @@ function RouteComponent() {
 				<FormControl>
 					<FormControl.Label>应用主页</FormControl.Label>
 					<ClientTextInputs.Homepage form={form} />
+				</FormControl>
+				<FormControl>
+					<FormControl.Label>退出后回跳地址（每行一个，精确匹配）</FormControl.Label>
+					<LogoutUrisInputs.PostLogout form={form} />
+					<FormControl.Caption>
+						用于 OpenID Connect RP-Initiated Logout（end_session_endpoint 的 post_logout_redirect_uri）。
+					</FormControl.Caption>
+				</FormControl>
+				<FormControl>
+					<FormControl.Label>后端退出通知地址（Back-Channel Logout）</FormControl.Label>
+					<LogoutUrisInputs.Backchannel form={form} />
+					<FormControl.Caption>
+						{provider.data?.backchannel_logout_supported
+							? "仅当用户明确选择「退出所有关联应用」时，FloatCTF 才会向此 https 地址发送签名的 Logout Token；内网地址需运维在 TOML 中放行。"
+							: "当前部署未开启标准退出，此地址暂不会收到通知。"}
+					</FormControl.Caption>
 				</FormControl>
 				<FormControl>
 					<FormControl.Label>简介</FormControl.Label>

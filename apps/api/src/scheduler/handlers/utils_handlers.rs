@@ -68,6 +68,7 @@ impl TaskHandler for OidcCleanupHandler {
             codes = stats.codes,
             access_tokens = stats.access_tokens,
             sessions = stats.sessions,
+            containers = stats.containers,
             "OIDC expired data cleaned"
         );
         Ok(())

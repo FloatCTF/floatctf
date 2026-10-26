@@ -89,6 +89,7 @@ async fn seed_client(
             logo_url: None,
             redirect_uris: vec![redirect.clone()],
             scopes: vec!["openid".into(), "profile".into(), "email".into()],
+            ..ClientInput::default()
         },
     )
     .await

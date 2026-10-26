@@ -1,22 +1,25 @@
 {% extends "layout.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}登录{% endblock %}
 {% block content %}
-<h1>{% if switching %}使用其他账号登录{% else %}登录 FloatCTF{% endif %}</h1>
-<p class="muted">登录后将继续授权给以下应用：</p>
-<div class="app"><strong>{{ client_name }}<span class="badge">第三方应用</span></strong>{% if client_host %}<span class="muted">{{ client_host }}</span>{% endif %}</div>
-{% if switching %}<div class="notice">请登录你要使用的另一个 FloatCTF 账号。登录成功后，本浏览器中原来的 FloatCTF 登录状态会被替换，原账号之后需要重新输入密码。</div>{% endif %}
-{% if reauth %}<div class="notice">该应用要求你重新验证身份。</div>{% endif %}
-{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+<div class="header">
+  <h1>{% if switching %}使用其他账号登录{% else %}登录 FloatCTF{% endif %}</h1>
+  <p class="subtitle">继续访问 <strong>{{ client_name }}</strong></p>
+  {{ ui.origin(client_host) }}
+</div>
+{% if switching %}<div class="alert">请登录你要使用的另一个 FloatCTF 账号。{% if multi_account %}原来的账号仍保留在本浏览器中，之后可以在账号选择页切换。{% else %}登录成功后，本浏览器中原来的 FloatCTF 登录状态会被替换。{% endif %}</div>{% endif %}
+{% if reauth %}<div class="alert">该应用要求你重新验证身份。</div>{% endif %}
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 <form method="post" action="{{ action }}" autocomplete="on">
   <input type="hidden" name="txn" value="{{ txn }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label class="field" for="username">用户名</label>
-  <input id="username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required maxlength="64" value="{{ username }}" {% if not username %}autofocus{% endif %}>
+  <input id="username" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required maxlength="64" value="{{ username }}"{% if not username %} autofocus{% endif %}>
   <label class="field" for="password">密码</label>
-  <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256" {% if username %}autofocus{% endif %}>
-  <div class="actions">
-    <button type="submit" name="action" value="cancel" formnovalidate>取消</button>
-    <button type="submit" name="action" value="login" class="primary">登录</button>
+  <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256"{% if username %} autofocus{% endif %}>
+  <div class="buttons stack">
+    <button type="submit" name="action" value="login" class="btn primary">登录</button>
+    <button type="submit" name="action" value="cancel" class="btn ghost" formnovalidate>取消</button>
   </div>
 </form>
 {% endblock %}

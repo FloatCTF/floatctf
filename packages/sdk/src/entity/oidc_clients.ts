@@ -23,4 +23,6 @@ export type OidcClients = {
   reviewed_at?: string;
   created_at: string;
   updated_at: string;
+  post_logout_redirect_uris: string;
+  backchannel_logout_uri?: string;
 };

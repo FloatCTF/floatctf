@@ -86,6 +86,7 @@ async fn seed_client(db: &DatabaseConnection, config: &OidcConfig, owner: Uuid) 
             logo_url: None,
             redirect_uris: vec![redirect.clone()],
             scopes: vec!["openid".into(), "profile".into(), "email".into()],
+            ..ClientInput::default()
         },
     )
     .await
@@ -418,6 +419,7 @@ async fn chooser_is_shown_and_continue_needs_neither_password_nor_consent() {
     );
     let txn_id = txn_of(&loc);
 
+    let alice_session = session_of(&db, &alice).await;
     // GET 只渲染：可重复打开，从不发码、从不确认选择。
     for _ in 0..2 {
         let resp = get!(app, b, loc.clone());
@@ -440,13 +442,10 @@ async fn chooser_is_shown_and_continue_needs_neither_password_nor_consent() {
         assert!(html.contains("Chooser RP"));
         assert!(html.contains(&alice.nickname));
         assert!(html.contains(&format!("@{}", alice.username)));
-        // minijinja 对属性值做 HTML 转义（`/` → `&#x2f;`），浏览器解码后即同源相对路径。
-        assert!(
-            html.contains(
-                "<img class=\"avatar\" src=\"&#x2f;public&#x2f;avatars&#x2f;chooser.png\""
-            )
-        );
-        assert!(html.contains("继续使用此账号"));
+        // 整行账号即「以该账号继续」：提交的是会话 id（不是用户 ID、不是用户名）。
+        assert!(html.contains(&format!("name=\"account\" value=\"{}\"", alice_session.id)));
+        // 头像字段不是平台上传的 /public/images/… 时不直接引用（显示首字母，不出现破图）。
+        assert!(!html.contains("public&#x2f;avatars"));
         assert!(html.contains("使用其他账号"));
         assert!(html.contains("取消"));
         assert!(!html.contains(&alice.email), "选择页不展示邮箱");

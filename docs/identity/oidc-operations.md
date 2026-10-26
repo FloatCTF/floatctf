@@ -141,3 +141,83 @@ ID Token 默认 1 小时有效，JWKS 允许 RP 缓存 5 分钟。按下列步�
 | 登录页提示「服务暂时不可用」 | Redis 不可达（限流 fail-closed） |
 | 已登录 FloatCTF 仍要求输入密码 | 浏览器没有 SSO Cookie：确认平台与 `/oauth/*` 同源；旧会话在进入选手区时会自动桥接 |
 | 授权页提示「授权请求已过期或无效」 | 事务超过 10 分钟、已完成，或在另一个浏览器中继续 |
+
+## 11. 统一身份（主站 Cookie 会话、多账号、标准退出）
+
+设计见 [ADR-unified-identity.md](ADR-unified-identity.md)，审计与威胁模型见 [unified-identity-audit.md](unified-identity-audit.md)，
+测试证据见 [oidc-test-report.md](oidc-test-report.md) §9。三个开关默认全部关闭；**关闭任一开关即回到对应的旧行为，不删任何数据**。
+
+### 11.1 前提
+
+- **主站与 OP 同一主机**：主站 Cookie 会话就是 OP 身份会话，host-only Cookie 只在同主机间共享（端口不隔离 Cookie）。
+  主站 origin 与 issuer 完全相同时无需额外配置；同主机不同端口（例如主站 `https://10.66.66.7`、issuer `https://10.66.66.7:8443`）
+  时把主站 origin 写进 `first_party_origins`。不同主机名的入口之间登录态不共享——这是浏览器同源机制，不是缺陷。
+- **不改生产 issuer**。RP 以 `(iss, sub)` 识别外部账号；改 `iss` 会让 RP 把同一个人当成新用户。
+  推荐的长期形态是一个 canonical HTTPS 身份域名（内外网经分流 DNS / 反代访问**同一个** origin 与 issuer），
+  迁移到它需要 RP 侧先为每个用户补齐新 issuer 的关联，属于单独的变更，不在本轮。
+- **双 issuer 共用一个数据库**（两个 API 实例各自 issuer）时：两个实例都必须升级；每个实例只投递自己 issuer 的退出通知；
+  LearnOS 的 `FLOATCTF_OIDC_TRUSTED_ISSUERS` 列出它接受 Logout Token 的 issuer（缺省只信任 `FLOATCTF_OIDC_ISSUER`），
+  映射表按 `(iss, sid)` 区分，不会把两个 issuer 的会话混为一谈。
+- OP 页面（登录 / 选择 / 同意 / 退出）的 Logo、样式、脚本、头像都由 API 自己的 `/oauth/assets/*`、`/oauth/accounts/{id}/avatar`
+  提供，因此「issuer 站点把所有路径都反代给 API」的部署（无 `/public`、`/float.png`）也不会再出现破图。
+
+### 11.2 备份（上线前必做，必须能恢复）
+
+```bash
+sudo $FLOATCTF_HOME/backup.sh --out floatctf-before-unified-$(date +%F).tar.gz   # 安装器部署：库 + config（含 OIDC 私钥）+ RustFS
+# 手工部署至少：
+docker exec floatctf-postgres pg_dump -U postgres -d floatctf_db --format=custom > floatctf_db-$(date +%F).dump
+cp -a $FLOATCTF_HOME/config/oidc oidc-keys-$(date +%F)                               # 签名私钥（0640 root:floatctf）
+pg_dump "$LEARNOS_DB_URL" --format=custom > learnos-$(date +%F).dump                 # LearnOS
+```
+
+在一次性库上演练恢复：`createdb restore_check && pg_restore -d restore_check floatctf_db-*.dump`，确认 `users`、`oidc_*` 行数一致。
+
+### 11.3 上线顺序
+
+1. **数据库迁移**（只新增表/列，旧版 API 不受影响）：`migrate.sh apply`，包含
+   `20261025201938-unified-identity-sessions.sql`、`20261025211040-oidc-standard-logout.sql`；`migrate.sh status` 确认无 pending。
+2. **FloatCTF API**（OP + 主站接口）升级到新版本，三个开关保持关闭；共用库的每个实例都升级。
+3. **主站前端**（Default Frontend）升级。开关关闭时状态接口返回 `mode=legacy`，前端继续用平台 JWT。
+4. **LearnOS** 升级：Drizzle 迁移 `0001_floatctf_backchannel`（新表），Better Auth `disableProviderLogout: true`。
+   **必须在第 7 步之前完成**，否则 LearnOS 的普通「退出」会变成全局退出（ADR 附录 A，I11）。
+5. 开 `multi_account = true` → 重启 → 验证 11.4 的 1–2。旧的单会话 `__Host-fctf_sso` 会在下次访问时迁入账号容器。
+6. 开 `unified_web_session = true`（同主机不同端口的入口同时配置 `first_party_origins`）→ 重启 → 验证 11.4 的 3–4。
+   已登录用户的旧 localStorage JWT 在首次打开主站时换成服务端会话后删除，不需要重新登录。
+7. 在开发者中心为 LearnOS 登记 `post_logout_redirect_uris = ["<LearnOS>/auth/signed-out"]` 与
+   `backchannel_logout_uri = "<LearnOS>/api/oidc/backchannel-logout"`；RP 在内网时把 `host:port` 写进
+   `backchannel_trusted_hosts`，自签证书时配置 `backchannel_extra_ca_file`；开 `backchannel_logout = true` → 重启 → 验证 11.4 的 5–6。
+
+### 11.4 上线自检
+
+```bash
+ISS=https://ctf.example.com
+curl -s $ISS/api/users/web-session | jq '.data | {mode, authenticated, max_accounts, global_logout}'   # mode=cookie
+curl -s $ISS/.well-known/openid-configuration | jq '{end_session_endpoint, backchannel_logout_supported}'
+```
+
+1. 浏览器主站登录 → DevTools 只看到 HttpOnly 的 `__Host-fctf_accounts`，`localStorage["auth-storage"]` 没有 `token`。
+2. 主站「添加账号」登录第二个账号 → 账号菜单可切换；LearnOS「使用 FloatCTF 登录」→ 选择页列出这两个账号。
+3. 新浏览器先在 LearnOS 经 FloatCTF 输入密码 → 打开主站自动登录同一账号。
+4. 主站「退出当前账号」→ LearnOS 已有会话仍可用；LearnOS 再次 SSO 需要密码。
+5. 主站「退出所有关联应用…」→ 结果对话框显示 LearnOS「已确认退出」，LearnOS 页面刷新后回到登录页。
+6. 查看投递：`select status, attempts, last_error from oidc_backchannel_deliveries order by created_at desc limit 5;`
+
+### 11.5 回滚
+
+| 现象 / 目的 | 操作 | 结果 |
+|---|---|---|
+| 标准退出有问题 | `backchannel_logout = false`，重启 | Discovery 不再宣告 `end_session_endpoint`，ID Token 不带 `sid`，主站不显示「退出所有关联应用」；未投递的 outbox 行不再处理 |
+| 主站 Cookie 会话有问题 | `unified_web_session = false`，重启 | 状态接口 `mode=legacy`；主站回到密码登录 + 平台 JWT（用户需重新登录一次）；OIDC 不受影响 |
+| 多账号有问题 | `multi_account = false`（同时关闭上一项），重启 | 回到单会话 `__Host-fctf_sso`；容器 Cookie 被忽略，用户在 OIDC 页面重新登录一次 |
+| 回退代码 | 部署上一版本 API 与前端 | 新表/新列保留在库中，旧代码不读取；**不要**回滚或删除迁移 |
+| 数据损坏（最后手段） | `restore.sh` / `pg_restore` 到 11.2 的备份 | 备份之后的业务数据会丢失，需要单独评估 |
+
+LearnOS 回滚：部署上一版本即可（新表 `floatctf_oidc_sessions`、`floatctf_logout_jti` 闲置）；
+**OP 的 `backchannel_logout` 必须先关闭**，再回滚到没有 `disableProviderLogout` 的 LearnOS 版本。
+
+### 11.6 限流与测试环境
+
+主站 `/api/users/web-session/login` 与 OIDC 登录页共用限流：每用户名 5 分钟 `OIDC_LOGIN_RATE_PER_USER`（默认 10）次、
+每 IP `OIDC_LOGIN_RATE_PER_IP`（默认 50）次，Redis 不可达时拒绝登录（fail-closed）。
+跨应用 E2E 在同一 IP 上连续登录上百次，只在**隔离测试库**里调高这两个设置；生产保持默认。

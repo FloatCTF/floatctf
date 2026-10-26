@@ -137,10 +137,16 @@ export function createFloatCTFClient(
 			scope === "user"
 				? (): string | null => options.getUserToken?.() ?? null
 				: (): string | null => options.getAdminToken?.() ?? null;
+		const sessionHeaders =
+			scope === "user"
+				? (): Record<string, string> | null =>
+						options.getUserSessionHeaders?.() ?? null
+				: undefined;
 		return connectSse({
 			...sseOptions,
 			url: resolveSseUrl(transport.baseUrl, sseOptions.url),
 			getToken: sseOptions.getToken ?? defaultToken,
+			getHeaders: sseOptions.getHeaders ?? sessionHeaders,
 		});
 	};
 

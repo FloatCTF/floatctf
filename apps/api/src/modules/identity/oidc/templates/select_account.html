@@ -1,21 +1,85 @@
 {% extends "layout.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}选择账号{% endblock %}
 {% block content %}
-<h1>选择账号</h1>
-<p class="muted">以继续访问 <strong>{{ client_name }}</strong><span class="badge">第三方应用</span>{% if client_host %}<br>{{ client_host }}{% endif %}</p>
-{% if account_changed %}<div class="notice" role="alert">当前浏览器的 FloatCTF 登录账号已发生变化，请重新确认要使用的账号。</div>{% endif %}
-<form method="post" action="{{ action }}">
+<div class="header">
+  <h1>选择 FloatCTF 账号</h1>
+  <p class="subtitle">继续访问 <strong>{{ client_name }}</strong></p>
+  {{ ui.origin(client_host) }}
+</div>
+{% if account_changed %}<div class="alert" role="alert">本浏览器的 FloatCTF 登录账号已发生变化，请重新选择要使用的账号。</div>{% endif %}
+{% if signed_out %}<div class="alert success" role="status">已在本浏览器退出所选账号。{{ client_name }} 中已经登录的会话不受影响。</div>{% endif %}
+<form method="post" action="{{ action }}" class="inline-form">
   <input type="hidden" name="txn" value="{{ txn }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <div class="account" aria-label="当前已登录的 FloatCTF 账号">
-    {% if avatar %}<img class="avatar" src="{{ avatar }}" alt="" width="40" height="40">{% else %}<span class="avatar" aria-hidden="true">{{ initial }}</span>{% endif %}
-    <span class="who"><strong>{{ nickname }}</strong><span class="muted">@{{ username }}</span></span>
-  </div>
-  <div class="stack">
-    <button type="submit" name="action" value="continue" class="primary" autofocus>继续使用此账号</button>
-    <button type="submit" name="action" value="other">使用其他账号</button>
-    <button type="submit" name="action" value="cancel">取消</button>
-  </div>
+  <input type="hidden" name="action" value="continue">
+  <ul class="accounts" aria-label="本浏览器中已登录的 FloatCTF 账号">
+  {% for a in accounts %}
+    <li>
+      <button type="submit" name="account" value="{{ a.id }}" class="account">
+        {{ ui.avatar(a.initial, a.avatar_url) }}
+        <span class="who"><span class="name">{{ a.nickname }}</span><span class="handle">@{{ a.username }}</span></span>
+        <svg class="chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+      </button>
+    </li>
+  {% endfor %}
+  </ul>
 </form>
-<p class="muted" style="margin-top:14px">这是你在本浏览器中登录的 FloatCTF 账号。选择「使用其他账号」需要输入另一个账号的密码，并会替换本浏览器中当前的 FloatCTF 登录状态。退出第三方应用不会退出 FloatCTF；在共用电脑上使用后，请在 FloatCTF 中退出登录。</p>
+<hr class="separator">
+<div class="actions">
+  <form method="post" action="{{ action }}" class="inline-form">
+    <input type="hidden" name="txn" value="{{ txn }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" name="action" value="other" class="action">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="6.5" cy="5.5" r="2.7"/><path d="M1.8 13.6c.6-2.4 2.4-3.8 4.7-3.8 1.3 0 2.4.4 3.2 1.2M12.5 9.5v4.5M10.25 11.75h4.5"/></svg>
+      使用其他账号
+    </button>
+  </form>
+  <details>
+    <summary>
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6M10.5 11l3-3-3-3M13.5 8H6"/></svg>
+      退出账号
+    </summary>
+    <div class="details-body">
+      <ul class="signout-list">
+      {% for a in accounts %}
+        <li>
+          {{ ui.avatar(a.initial, a.avatar_url, "sm") }}
+          <span class="who"><span class="name">{{ a.nickname }}</span><span class="handle">@{{ a.username }}</span></span>
+          <form method="post" action="{{ action }}" class="inline-form">
+            <input type="hidden" name="txn" value="{{ txn }}">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="account" value="{{ a.id }}">
+            <button type="submit" name="action" value="logout" class="btn destructive" aria-label="在本浏览器退出 {{ a.nickname }}（@{{ a.username }}）">退出</button>
+          </form>
+        </li>
+      {% endfor %}
+      </ul>
+      {% if multi_account and accounts|length > 1 %}
+      <form method="post" action="{{ action }}" class="inline-form">
+        <input type="hidden" name="txn" value="{{ txn }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" name="action" value="logout_all" class="action muted">退出本浏览器中的全部账号</button>
+      </form>
+      {% endif %}
+      <p>只退出本浏览器中的 FloatCTF 登录（主站中的该账号也会退出），不会退出 {{ client_name }} 等已登录的应用。</p>
+    </div>
+  </details>
+  <form method="post" action="{{ action }}" class="inline-form">
+    <input type="hidden" name="txn" value="{{ txn }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" name="action" value="cancel" class="action muted">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      取消，返回 {{ client_name }}
+    </button>
+  </form>
+</div>
+<details>
+  <summary>关于账号与退出</summary>
+  <div class="details-body">
+    <p>这里只列出你在本浏览器中真实登录过、且仍然有效的 FloatCTF 账号。点选账号即以该账号继续，不需要再次输入密码；授权记录按账号分别保存。</p>
+    <p>「使用其他账号」需要输入另一个账号的密码{% if multi_account %}，原来的账号仍保留在本浏览器中{% endif %}。</p>
+    <p>退出 {{ client_name }} 不会退出 FloatCTF。在共用电脑上使用后，请在这里或 FloatCTF 主站退出账号。</p>
+  </div>
+</details>
 {% endblock %}

@@ -45,13 +45,28 @@ impl SessionOrigin {
     }
 }
 
-/// 新建会话，返回 Cookie 明文与行。
+/// 新建会话（旧版单会话 Cookie 模式），返回 Cookie 明文与行。
 pub async fn create_session(
     db: &DatabaseConnection,
     user_id: Uuid,
     auth_time: DateTime<FixedOffset>,
     ttl_secs: i64,
     origin: SessionOrigin,
+) -> Result<(String, oidc_browser_sessions::Model), AppError> {
+    create_session_in(db, user_id, auth_time, ttl_secs, origin, None).await
+}
+
+/// 新建会话并挂到浏览器账号容器（`container_id = None` 即旧版单会话）。
+///
+/// 返回的明文只在旧版模式下作为 `__Host-fctf_sso` 下发；容器模式下浏览器只持有容器 Cookie，
+/// 该明文随即丢弃（库内摘要仍保证 `session_hash` 唯一）。`sid` 是对外稳定标识，与明文无关。
+pub async fn create_session_in(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    auth_time: DateTime<FixedOffset>,
+    ttl_secs: i64,
+    origin: SessionOrigin,
+    container_id: Option<Uuid>,
 ) -> Result<(String, oidc_browser_sessions::Model), AppError> {
     let secret_value = secret::new_opaque_secret();
     let now = now();
@@ -65,6 +80,9 @@ pub async fn create_session(
         last_seen_at: Set(now),
         expires_at: Set(now + Duration::seconds(ttl_secs)),
         revoked_at: Set(None),
+        container_id: Set(container_id),
+        sid: Set(secret::random_token(16)),
+        revoked_reason: Set(None),
     }
     .insert(db)
     .await?;
@@ -115,18 +133,62 @@ pub async fn touch_session(db: &DatabaseConnection, id: Uuid) -> Result<(), AppE
     Ok(())
 }
 
-/// 撤销 Cookie 对应的会话（幂等）。
-pub async fn revoke_session(db: &DatabaseConnection, cookie_value: &str) -> Result<bool, AppError> {
+/// 撤销 Cookie 对应的会话（幂等）。`reason` 取值见表约束 `oidc_browser_sessions_revoked_reason_check`。
+pub async fn revoke_session(
+    db: &DatabaseConnection,
+    cookie_value: &str,
+    reason: &'static str,
+) -> Result<bool, AppError> {
     if !secret::is_plausible_token(cookie_value) {
         return Ok(false);
     }
     let res = oidc_browser_sessions::Entity::update_many()
         .col_expr(oidc_browser_sessions::Column::RevokedAt, Expr::value(now()))
+        .col_expr(
+            oidc_browser_sessions::Column::RevokedReason,
+            Expr::value(reason),
+        )
         .filter(oidc_browser_sessions::Column::SessionHash.eq(secret::sha256_hex(cookie_value)))
         .filter(oidc_browser_sessions::Column::RevokedAt.is_null())
         .exec(db)
         .await?;
     Ok(res.rows_affected > 0)
+}
+
+/// 记录身份会话向应用签发过令牌（幂等；重复签发只刷新时间）。
+pub async fn record_session_client(
+    db: &DatabaseConnection,
+    session_id: Uuid,
+    client_pk: Uuid,
+) -> Result<(), AppError> {
+    let now = now();
+    crate::entity::oidc_session_clients::Entity::insert(
+        crate::entity::oidc_session_clients::ActiveModel {
+            session_id: Set(session_id),
+            oidc_client_id: Set(client_pk),
+            first_issued_at: Set(now),
+            last_issued_at: Set(now),
+        },
+    )
+    .on_conflict(
+        OnConflict::columns([
+            crate::entity::oidc_session_clients::Column::SessionId,
+            crate::entity::oidc_session_clients::Column::OidcClientId,
+        ])
+        .update_column(crate::entity::oidc_session_clients::Column::LastIssuedAt)
+        .to_owned(),
+    )
+    .exec(db)
+    .await?;
+    Ok(())
+}
+
+/// 会话的对外 `sid`（会话行仍存在即可；ID Token 的 sid 与会话是否已撤销无关）。
+pub async fn session_sid(db: &DatabaseConnection, id: Uuid) -> Result<Option<String>, AppError> {
+    Ok(oidc_browser_sessions::Entity::find_by_id(id)
+        .one(db)
+        .await?
+        .map(|s| s.sid))
 }
 
 // ── 授权事务 ────────────────────────────────────────────────────────────────
@@ -322,6 +384,50 @@ pub async fn confirm_account_selection(
     Ok(rows.into_iter().next())
 }
 
+/// 多账号选择页「以该账号继续」：表单提交了明确的会话 id（调用方已校验它属于本浏览器且可用），
+/// 原子确认选择并作废本页 CSRF。与 [`confirm_account_selection`] 的区别只是不要求它等于
+/// 「渲染时展示的首个会话」——多账号页同时展示多个账号，用户点哪个就是哪个。
+pub async fn confirm_account_selection_explicit(
+    db: &DatabaseConnection,
+    txn_id: Uuid,
+    session_id: Uuid,
+    user_id: Uuid,
+    presented_csrf: &str,
+) -> Result<Option<oidc_auth_transactions::Model>, AppError> {
+    let rows = oidc_auth_transactions::Entity::update_many()
+        .col_expr(
+            oidc_auth_transactions::Column::AccountSelectedAt,
+            Expr::value(now()),
+        )
+        .col_expr(
+            oidc_auth_transactions::Column::AccountSelectedSessionId,
+            Expr::value(Some(session_id)),
+        )
+        .col_expr(
+            oidc_auth_transactions::Column::AccountChoiceSessionId,
+            Expr::value(Some(session_id)),
+        )
+        .col_expr(
+            oidc_auth_transactions::Column::UserId,
+            Expr::value(Some(user_id)),
+        )
+        .col_expr(
+            oidc_auth_transactions::Column::SessionId,
+            Expr::value(Some(session_id)),
+        )
+        .col_expr(
+            oidc_auth_transactions::Column::CsrfHash,
+            Expr::value(secret::sha256_hex(&secret::new_opaque_secret())),
+        )
+        .filter(live_txn_condition(txn_id))
+        .filter(oidc_auth_transactions::Column::AccountSwitchRequestedAt.is_null())
+        .filter(oidc_auth_transactions::Column::AccountSelectedAt.is_null())
+        .filter(oidc_auth_transactions::Column::CsrfHash.eq(secret::sha256_hex(presented_csrf)))
+        .exec_with_returning(db)
+        .await?;
+    Ok(rows.into_iter().next())
+}
+
 /// 「使用其他账号」：原子标记本事务要求切换账号，清空已有选择并作废本页 CSRF。
 ///
 /// 之后旧 SSO 会话在本事务内不可用，直到用户在登录页重新输入密码。返回 false 表示事务已失效。
@@ -402,6 +508,70 @@ pub async fn complete_transaction(db: &DatabaseConnection, id: Uuid) -> Result<b
         .exec(db)
         .await?;
     Ok(res.rows_affected == 1)
+}
+
+// ── RP-Initiated Logout 事务 ────────────────────────────────────────────────
+
+/// end_session 请求经校验后的待确认事务。
+pub struct NewLogoutRequest<'a> {
+    pub browser_binding: &'a str,
+    pub client_pk: Option<Uuid>,
+    pub hint_sub: Option<String>,
+    pub hint_sid: Option<String>,
+    pub post_logout_redirect_uri: Option<String>,
+    pub state: Option<String>,
+    pub ttl_secs: i64,
+}
+
+/// 创建退出确认事务，返回 (行, CSRF 明文)。
+pub async fn create_logout_request(
+    db: &DatabaseConnection,
+    new: NewLogoutRequest<'_>,
+) -> Result<(crate::entity::oidc_logout_requests::Model, String), AppError> {
+    let csrf = secret::new_opaque_secret();
+    let now = now();
+    let model = crate::entity::oidc_logout_requests::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        browser_binding_hash: Set(secret::sha256_hex(new.browser_binding)),
+        csrf_hash: Set(secret::sha256_hex(&csrf)),
+        oidc_client_id: Set(new.client_pk),
+        hint_sub: Set(new.hint_sub),
+        hint_sid: Set(new.hint_sid),
+        post_logout_redirect_uri: Set(new.post_logout_redirect_uri),
+        state: Set(new.state),
+        created_at: Set(now),
+        expires_at: Set(now + Duration::seconds(new.ttl_secs)),
+        completed_at: Set(None),
+    }
+    .insert(db)
+    .await?;
+    Ok((model, csrf))
+}
+
+/// 原子地完成退出事务：同一浏览器、CSRF 匹配、未过期、未完成；并发/重放只有一个成功。
+pub async fn complete_logout_request(
+    db: &DatabaseConnection,
+    id: Uuid,
+    browser_binding: Option<&str>,
+    presented_csrf: &str,
+) -> Result<Option<crate::entity::oidc_logout_requests::Model>, AppError> {
+    use crate::entity::oidc_logout_requests as lr;
+    let Some(binding) = browser_binding.filter(|b| secret::is_plausible_token(b)) else {
+        return Ok(None);
+    };
+    if !secret::is_plausible_token(presented_csrf) {
+        return Ok(None);
+    }
+    let rows = lr::Entity::update_many()
+        .col_expr(lr::Column::CompletedAt, Expr::value(Some(now())))
+        .filter(lr::Column::Id.eq(id))
+        .filter(lr::Column::CompletedAt.is_null())
+        .filter(lr::Column::ExpiresAt.gt(now()))
+        .filter(lr::Column::BrowserBindingHash.eq(secret::sha256_hex(binding)))
+        .filter(lr::Column::CsrfHash.eq(secret::sha256_hex(presented_csrf)))
+        .exec_with_returning(db)
+        .await?;
+    Ok(rows.into_iter().next())
 }
 
 // ── 授权码 ──────────────────────────────────────────────────────────────────
@@ -723,6 +893,7 @@ pub struct CleanupStats {
     pub codes: u64,
     pub access_tokens: u64,
     pub sessions: u64,
+    pub containers: u64,
 }
 
 /// 删除已过期的短期数据（保留 1 天以便排障；撤销/过期会话保留 7 天）。
@@ -753,10 +924,34 @@ pub async fn cleanup_expired(db: &DatabaseConnection) -> Result<CleanupStats, Ap
         .exec(db)
         .await?
         .rows_affected;
+    crate::entity::oidc_logout_requests::Entity::delete_many()
+        .filter(crate::entity::oidc_logout_requests::Column::ExpiresAt.lt(day_ago))
+        .exec(db)
+        .await?;
+    // Back-Channel 投递记录保留 30 天供审计。
+    crate::entity::oidc_backchannel_deliveries::Entity::delete_many()
+        .filter(
+            crate::entity::oidc_backchannel_deliveries::Column::CreatedAt
+                .lt(now() - Duration::days(30)),
+        )
+        .filter(crate::entity::oidc_backchannel_deliveries::Column::Status.ne("pending"))
+        .exec(db)
+        .await?;
+    // 账号容器：过期或撤销满 7 天后删除（其会话的 container_id 随外键置空，会话本身按上面的规则清理）。
+    let containers = crate::entity::oidc_browser_containers::Entity::delete_many()
+        .filter(
+            sea_orm::Condition::any()
+                .add(crate::entity::oidc_browser_containers::Column::ExpiresAt.lt(week_ago))
+                .add(crate::entity::oidc_browser_containers::Column::RevokedAt.lt(week_ago)),
+        )
+        .exec(db)
+        .await?
+        .rows_affected;
     Ok(CleanupStats {
         transactions,
         codes,
         access_tokens,
         sessions,
+        containers,
     })
 }

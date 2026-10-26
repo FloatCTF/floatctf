@@ -42,6 +42,10 @@ pub struct Model {
     pub reviewed_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(column_type = "JsonBinary")]
+    pub post_logout_redirect_uris: Json,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -52,8 +56,14 @@ pub enum Relation {
     OidcAuthTransactions,
     #[sea_orm(has_many = "super::oidc_authorization_codes::Entity")]
     OidcAuthorizationCodes,
+    #[sea_orm(has_many = "super::oidc_backchannel_deliveries::Entity")]
+    OidcBackchannelDeliveries,
     #[sea_orm(has_many = "super::oidc_consents::Entity")]
     OidcConsents,
+    #[sea_orm(has_many = "super::oidc_logout_requests::Entity")]
+    OidcLogoutRequests,
+    #[sea_orm(has_many = "super::oidc_session_clients::Entity")]
+    OidcSessionClients,
     #[sea_orm(
         belongs_to = "super::super_admin::Entity",
         from = "Column::ReviewedBy",
@@ -90,9 +100,27 @@ impl Related<super::oidc_authorization_codes::Entity> for Entity {
     }
 }
 
+impl Related<super::oidc_backchannel_deliveries::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcBackchannelDeliveries.def()
+    }
+}
+
 impl Related<super::oidc_consents::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OidcConsents.def()
+    }
+}
+
+impl Related<super::oidc_logout_requests::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcLogoutRequests.def()
+    }
+}
+
+impl Related<super::oidc_session_clients::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcSessionClients.def()
     }
 }
 
@@ -105,6 +133,19 @@ impl Related<super::super_admin::Entity> for Entity {
 impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Users.def()
+    }
+}
+
+impl Related<super::oidc_browser_sessions::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::oidc_session_clients::Relation::OidcBrowserSessions.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(
+            super::oidc_session_clients::Relation::OidcClients
+                .def()
+                .rev(),
+        )
     }
 }
 

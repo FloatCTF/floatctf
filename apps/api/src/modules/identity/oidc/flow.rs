@@ -77,7 +77,7 @@ pub async fn start(
     oidc: &OidcProvider,
     params: &RawParams,
     browser_binding: &str,
-    session: Option<SessionUser>,
+    accounts: &[SessionUser],
 ) -> Result<Next, AppError> {
     let (client_id, redirect) = match authorize::client_and_redirect(params) {
         Ok(v) => v,
@@ -133,7 +133,7 @@ pub async fn start(
         oidc.config.transaction_ttl_secs,
     )
     .await?;
-    advance(db, oidc, txn, &client, session).await
+    advance(db, oidc, txn, &client, accounts).await
 }
 
 fn txn_prompt(txn: &oidc_auth_transactions::Model) -> Prompt {
@@ -150,6 +150,7 @@ fn ts(t: &DateTime<FixedOffset>) -> i64 {
 ///
 /// 阶段顺序固定为「账号选择 → 认证 → 授权同意 → 发码」，三种交互页互相独立：
 /// `select_account` 只决定是否展示账号选择页，绝不会导向同意页。
+/// 浏览器里有多个可用账号且本事务尚未选定时，无论 prompt 为何都先选择账号（`prompt=none` → 标准错误）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     /// 输入密码：无可用 SSO，或 `prompt=login` / `max_age` 要求重新认证。
@@ -198,14 +199,25 @@ pub struct SessionFacts {
 }
 
 /// 纯决策：给定 prompt / max_age 与（经 [`usable_session`] 过滤后的）会话状态，返回下一步。
+///
+/// `ambiguous`：浏览器有多个可用账号、本事务尚未选定其中之一（此时 `session` 为 `None`）。
 pub fn decide(
     prompt: &Prompt,
     max_age: Option<i64>,
     account_chooser: bool,
     session: Option<SessionFacts>,
+    ambiguous: bool,
     now: i64,
 ) -> Step {
     let Some(s) = session else {
+        if ambiguous {
+            // 多个账号时绝不替用户挑选（不按最近使用、不按创建顺序）。
+            return if prompt.none {
+                Step::Required(Required::AccountSelection)
+            } else {
+                Step::SelectAccount
+            };
+        }
         // 没有可用 SSO：输入密码本身就是本次身份选择，不再额外弹选择页。
         return if prompt.none {
             Step::Required(Required::Login)
@@ -253,25 +265,79 @@ pub fn usable_session(
     txn: &oidc_auth_transactions::Model,
     session: Option<SessionUser>,
 ) -> Option<SessionUser> {
-    session.filter(|(s, user)| {
-        let hint_ok = txn
-            .id_token_hint_sub
-            .as_deref()
-            .is_none_or(|sub| sub == user.id.to_string());
-        let switch_ok = txn.account_switch_requested_at.is_none() || account_confirmed(txn, s.id);
-        hint_ok && switch_ok
-    })
+    session.filter(|s| is_usable(txn, s))
 }
 
-/// 收集决策所需事实并计算下一步。返回经过滤的可用会话，供调用方继续使用。
+fn is_usable(txn: &oidc_auth_transactions::Model, (s, user): &SessionUser) -> bool {
+    let hint_ok = txn
+        .id_token_hint_sub
+        .as_deref()
+        .is_none_or(|sub| sub == user.id.to_string());
+    let switch_ok = txn.account_switch_requested_at.is_none() || account_confirmed(txn, s.id);
+    hint_ok && switch_ok
+}
+
+/// 本浏览器账号中可用于本事务的候选（顺序与输入一致：最近使用在前）。
+pub fn candidates(
+    txn: &oidc_auth_transactions::Model,
+    accounts: &[SessionUser],
+) -> Vec<SessionUser> {
+    accounts
+        .iter()
+        .filter(|s| is_usable(txn, s))
+        .cloned()
+        .collect()
+}
+
+/// 从候选中确定本事务的会话：
+/// 1. 本事务内已确认 / 刚输入密码得到的会话优先；
+/// 2. 只有一个候选 → 就是它（单账号浏览器与旧版行为一致）；
+/// 3. 多个候选：`login_hint` 恰好等于其中一个用户名 → 它；否则无法确定（`ambiguous = true`）。
+pub fn resolve_session(
+    txn: &oidc_auth_transactions::Model,
+    candidates: &[SessionUser],
+) -> (Option<SessionUser>, bool) {
+    if let Some(bound) = candidates.iter().find(|(s, _)| {
+        account_confirmed(txn, s.id)
+            || (txn.authenticated_at.is_some() && txn.session_id == Some(s.id))
+    }) {
+        return (Some(bound.clone()), false);
+    }
+    match candidates {
+        [] => (None, false),
+        [only] => (Some(only.clone()), false),
+        many => {
+            let hinted: Vec<_> = txn
+                .login_hint
+                .as_deref()
+                .map(|hint| many.iter().filter(|(_, u)| u.username == hint).collect())
+                .unwrap_or_default();
+            match hinted.as_slice() {
+                [one] => (Some((*one).clone()), false),
+                _ => (None, true),
+            }
+        }
+    }
+}
+
+/// [`evaluate`] 的结果：下一步、本事务确定的会话、可供选择的候选账号。
+#[derive(Debug, Clone)]
+pub struct Evaluation {
+    pub step: Step,
+    pub session: Option<SessionUser>,
+    pub candidates: Vec<SessionUser>,
+}
+
+/// 收集决策所需事实并计算下一步。
 pub async fn evaluate(
     db: &DatabaseConnection,
     oidc: &OidcProvider,
     txn: &oidc_auth_transactions::Model,
     client: &oidc_clients::Model,
-    session: Option<SessionUser>,
-) -> Result<(Step, Option<SessionUser>), AppError> {
-    let session = usable_session(txn, session);
+    accounts: &[SessionUser],
+) -> Result<Evaluation, AppError> {
+    let candidates = candidates(txn, accounts);
+    let (session, ambiguous) = resolve_session(txn, &candidates);
     let facts = match &session {
         None => None,
         Some((s, user)) => {
@@ -292,9 +358,14 @@ pub async fn evaluate(
         txn.max_age.map(i64::from),
         oidc.config.account_chooser,
         facts,
+        ambiguous,
         Utc::now().timestamp(),
     );
-    Ok((step, session))
+    Ok(Evaluation {
+        step,
+        session,
+        candidates,
+    })
 }
 
 /// 推进事务：执行 [`decide`] 的结果。`prompt=none` 时不展示任何页面。
@@ -303,9 +374,9 @@ pub async fn advance(
     oidc: &OidcProvider,
     txn: oidc_auth_transactions::Model,
     client: &oidc_clients::Model,
-    session: Option<SessionUser>,
+    accounts: &[SessionUser],
 ) -> Result<Next, AppError> {
-    let (step, session) = evaluate(db, oidc, &txn, client, session).await?;
+    let Evaluation { step, session, .. } = evaluate(db, oidc, &txn, client, accounts).await?;
     match step {
         Step::Required(required) => finish_with_error(db, oidc, &txn, required.error()).await,
         Step::Login => Ok(Next::RedirectLocal(format!("{PATH_LOGIN}?txn={}", txn.id))),
@@ -342,9 +413,9 @@ pub async fn consent_ready(
     oidc: &OidcProvider,
     txn: &oidc_auth_transactions::Model,
     client: &oidc_clients::Model,
-    session: Option<SessionUser>,
+    accounts: &[SessionUser],
 ) -> Result<Option<SessionUser>, AppError> {
-    let (step, session) = evaluate(db, oidc, txn, client, session).await?;
+    let Evaluation { step, session, .. } = evaluate(db, oidc, txn, client, accounts).await?;
     Ok(session.filter(|(s, user)| {
         step == Step::Consent && txn.user_id == Some(user.id) && txn.session_id == Some(s.id)
     }))
@@ -598,6 +669,18 @@ pub async fn exchange_code(
         return Err(invalid_grant());
     };
 
+    // 记下「这个身份会话向这个应用签发过令牌」：用户明确「退出所有关联应用」时据此通知 RP。
+    // 记录失败不影响登录（只会让该次全局退出少通知一个应用，并在结果页如实显示）。
+    let mut sid = None;
+    if let Some(session_id) = code.session_id {
+        if let Err(e) = store::record_session_client(db, session_id, client.id).await {
+            tracing::warn!(error = %e, "failed to record session ↔ client binding");
+        }
+        if oidc.config.backchannel_logout {
+            sid = store::session_sid(db, session_id).await.unwrap_or(None);
+        }
+    }
+
     let now = Utc::now().timestamp();
     let id_claims = IdTokenClaims {
         iss: oidc.issuer().to_string(),
@@ -609,6 +692,7 @@ pub async fn exchange_code(
         auth_time: code.auth_time.timestamp(),
         nonce: code.nonce.clone(),
         at_hash: Some(claims::at_hash(&access_token)),
+        sid,
     };
     let id_token = oidc.keys.sign(&id_claims).map_err(|e| {
         tracing::error!(error = %e, "OIDC id_token signing failed");
@@ -720,7 +804,7 @@ mod tests {
     }
 
     fn step(raw: &str, session: Option<SessionFacts>) -> Step {
-        decide(&prompt(raw), None, true, session, NOW)
+        decide(&prompt(raw), None, true, session, false, NOW)
     }
 
     #[test]
@@ -807,14 +891,17 @@ mod tests {
         };
         let p = prompt("select_account");
         assert_eq!(
-            decide(&p, Some(60), true, Some(confirmed), NOW),
+            decide(&p, Some(60), true, Some(confirmed), false, NOW),
             Step::Login
         );
         assert_eq!(
-            decide(&p, Some(7200), true, Some(confirmed), NOW),
+            decide(&p, Some(7200), true, Some(confirmed), false, NOW),
             Step::Issue
         );
-        assert_eq!(decide(&p, Some(0), true, Some(confirmed), NOW), Step::Login);
+        assert_eq!(
+            decide(&p, Some(0), true, Some(confirmed), false, NOW),
+            Step::Login
+        );
     }
 
     #[test]
@@ -831,7 +918,7 @@ mod tests {
         );
         let p = prompt("none");
         assert_eq!(
-            decide(&p, Some(0), true, Some(sso()), NOW),
+            decide(&p, Some(0), true, Some(sso()), false, NOW),
             Step::Required(Required::Login)
         );
         // 防御：即使 none 与 select_account 被构造在一起，也只返回错误而不渲染选择页。
@@ -841,7 +928,7 @@ mod tests {
             ..Prompt::default()
         };
         assert_eq!(
-            decide(&forged, None, true, Some(sso()), NOW),
+            decide(&forged, None, true, Some(sso()), false, NOW),
             Step::Required(Required::AccountSelection)
         );
         assert_eq!(
@@ -853,8 +940,11 @@ mod tests {
     #[test]
     fn rollback_switch_restores_legacy_select_account_behaviour() {
         let p = prompt("select_account");
-        assert_eq!(decide(&p, None, false, Some(sso()), NOW), Step::Consent);
-        assert_eq!(decide(&p, None, false, None, NOW), Step::Login);
+        assert_eq!(
+            decide(&p, None, false, Some(sso()), false, NOW),
+            Step::Consent
+        );
+        assert_eq!(decide(&p, None, false, None, false, NOW), Step::Login);
     }
 
     fn txn_row() -> oidc_auth_transactions::Model {
@@ -900,6 +990,9 @@ mod tests {
                 last_seen_at: now,
                 expires_at: now,
                 revoked_at: None,
+                container_id: None,
+                sid: String::new(),
+                revoked_reason: None,
             },
             users::Model {
                 id: user_id,
@@ -933,6 +1026,73 @@ mod tests {
         assert!(usable_session(&txn, Some(bob.clone())).is_some());
         assert!(usable_session(&txn, Some(alice)).is_none());
         assert!(account_confirmed(&txn, bob.0.id));
+    }
+
+    #[test]
+    fn several_accounts_require_explicit_selection_for_every_prompt() {
+        // 多账号且未选定：任何交互 prompt 都先进选择页；prompt=none 只返回标准错误。
+        for raw in ["", "consent", "login", "select_account"] {
+            assert_eq!(
+                decide(&prompt(raw), None, true, None, true, NOW),
+                Step::SelectAccount,
+                "prompt={raw}"
+            );
+        }
+        assert_eq!(
+            decide(&prompt("none"), None, true, None, true, NOW),
+            Step::Required(Required::AccountSelection)
+        );
+        // 回滚开关只影响 select_account 的语义，不能让多账号被静默挑选。
+        assert_eq!(
+            decide(&prompt(""), None, false, None, true, NOW),
+            Step::SelectAccount
+        );
+    }
+
+    #[test]
+    fn resolve_session_never_guesses_between_accounts() {
+        let alice = session_user(Uuid::new_v4());
+        let mut bob = session_user(Uuid::new_v4());
+        bob.1.username = "bob".into();
+        let mut txn = txn_row();
+        txn.prompt = serde_json::json!([]);
+
+        assert_eq!(resolve_session(&txn, &[]).0, None);
+        let (one, ambiguous) = resolve_session(&txn, std::slice::from_ref(&alice));
+        assert_eq!(one.map(|s| s.0.id), Some(alice.0.id));
+        assert!(!ambiguous);
+
+        let both = vec![alice.clone(), bob.clone()];
+        let (none, ambiguous) = resolve_session(&txn, &both);
+        assert!(
+            none.is_none() && ambiguous,
+            "两个账号且无提示：必须让用户选"
+        );
+
+        // login_hint 恰好匹配一个已认证账号 → 采用（仍不跳过 select_account 的显式确认）。
+        txn.login_hint = Some("bob".into());
+        let (hinted, ambiguous) = resolve_session(&txn, &both);
+        assert_eq!(hinted.map(|s| s.0.id), Some(bob.0.id));
+        assert!(!ambiguous);
+
+        // 本事务内已确认的会话优先于任何提示。
+        txn.account_selected_at = Some(Utc::now().fixed_offset());
+        txn.account_selected_session_id = Some(alice.0.id);
+        assert_eq!(
+            resolve_session(&txn, &both).0.map(|s| s.0.id),
+            Some(alice.0.id)
+        );
+    }
+
+    #[test]
+    fn id_token_hint_filters_candidates_to_the_hinted_user() {
+        let alice = session_user(Uuid::new_v4());
+        let bob = session_user(Uuid::new_v4());
+        let mut txn = txn_row();
+        txn.id_token_hint_sub = Some(bob.1.id.to_string());
+        let found = candidates(&txn, &[alice, bob.clone()]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0.id, bob.0.id);
     }
 
     #[test]

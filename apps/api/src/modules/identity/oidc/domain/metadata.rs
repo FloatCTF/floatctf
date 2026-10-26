@@ -14,6 +14,14 @@ pub const PATH_SELECT_ACCOUNT: &str = "/oauth/select-account";
 pub const PATH_TOKEN: &str = "/oauth/token";
 pub const PATH_USERINFO: &str = "/oauth/userinfo";
 pub const PATH_LOGOUT: &str = "/oauth/logout";
+/// 本浏览器账号相关的第一方资源（头像），只对持有本浏览器容器 Cookie 的请求可见。
+pub const PATH_ACCOUNTS: &str = "/oauth/accounts";
+/// OP 页面的同源静态资源（品牌 Logo、渐进增强脚本）。
+pub const PATH_ASSETS: &str = "/oauth/assets";
+/// OpenID Connect RP-Initiated Logout 1.0 `end_session_endpoint`。
+pub const PATH_END_SESSION: &str = "/oauth/end-session";
+/// end_session 确认页的提交地址。
+pub const PATH_END_SESSION_CONFIRM: &str = "/oauth/end-session/confirm";
 
 /// 已支持的 claims（`sub` 与 ID Token 注册 claims + scope claims）。
 pub const CLAIMS_SUPPORTED: [&str; 16] = [
@@ -35,8 +43,34 @@ pub const CLAIMS_SUPPORTED: [&str; 16] = [
     "email_verified",
 ];
 
-/// OIDC Discovery 文档。
+/// OIDC Discovery 文档（未开启标准退出时的形态）。
 pub fn openid_configuration(issuer: &str) -> Value {
+    openid_configuration_with(issuer, false)
+}
+
+/// OIDC Discovery 文档；`standard_logout` 对应 `[oidc].backchannel_logout`：
+/// 开启后宣告 `end_session_endpoint`（RP-Initiated Logout 1.0）、Back-Channel Logout 1.0 与 `sid` claim。
+pub fn openid_configuration_with(issuer: &str, standard_logout: bool) -> Value {
+    let mut doc = base_configuration(issuer);
+    if standard_logout {
+        let map = doc.as_object_mut().expect("discovery is an object");
+        map.insert(
+            "end_session_endpoint".into(),
+            Value::from(format!("{issuer}{PATH_END_SESSION}")),
+        );
+        map.insert("backchannel_logout_supported".into(), Value::Bool(true));
+        map.insert(
+            "backchannel_logout_session_supported".into(),
+            Value::Bool(true),
+        );
+        if let Some(Value::Array(claims)) = map.get_mut("claims_supported") {
+            claims.push(Value::from("sid"));
+        }
+    }
+    doc
+}
+
+fn base_configuration(issuer: &str) -> Value {
     json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}{PATH_AUTHORIZE}"),
@@ -61,8 +95,8 @@ pub fn openid_configuration(issuer: &str) -> Value {
 }
 
 /// RFC 8414 授权服务器元数据（与 Discovery 同源同值）。
-pub fn oauth_authorization_server(issuer: &str) -> Value {
-    openid_configuration(issuer)
+pub fn oauth_authorization_server(issuer: &str, standard_logout: bool) -> Value {
+    openid_configuration_with(issuer, standard_logout)
 }
 
 #[cfg(test)]
@@ -87,6 +121,30 @@ mod tests {
             doc["jwks_uri"],
             "https://ctf.example.com/.well-known/jwks.json"
         );
+    }
+
+    #[test]
+    fn standard_logout_is_declared_only_when_enabled() {
+        let doc = openid_configuration_with("https://x.example", true);
+        assert_eq!(
+            doc["end_session_endpoint"],
+            "https://x.example/oauth/end-session"
+        );
+        assert_eq!(doc["backchannel_logout_supported"], true);
+        assert_eq!(doc["backchannel_logout_session_supported"], true);
+        assert!(
+            doc["claims_supported"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "sid")
+        );
+        // 仍不宣告未实现的能力
+        assert!(doc.get("frontchannel_logout_supported").is_none());
+        assert!(doc.get("check_session_iframe").is_none());
+        let off = openid_configuration_with("https://x.example", false);
+        assert!(off.get("end_session_endpoint").is_none());
+        assert!(off.get("backchannel_logout_supported").is_none());
     }
 
     #[test]

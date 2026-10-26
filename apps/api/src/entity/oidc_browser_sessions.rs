@@ -18,12 +18,27 @@ pub struct Model {
     pub last_seen_at: DateTimeWithTimeZone,
     pub expires_at: DateTimeWithTimeZone,
     pub revoked_at: Option<DateTimeWithTimeZone>,
+    pub container_id: Option<Uuid>,
+    #[sea_orm(column_type = "Text", unique)]
+    pub sid: String,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub revoked_reason: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(has_many = "super::oidc_authorization_codes::Entity")]
     OidcAuthorizationCodes,
+    #[sea_orm(
+        belongs_to = "super::oidc_browser_containers::Entity",
+        from = "Column::ContainerId",
+        to = "super::oidc_browser_containers::Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    OidcBrowserContainers,
+    #[sea_orm(has_many = "super::oidc_session_clients::Entity")]
+    OidcSessionClients,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::UserId",
@@ -40,9 +55,34 @@ impl Related<super::oidc_authorization_codes::Entity> for Entity {
     }
 }
 
+impl Related<super::oidc_browser_containers::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcBrowserContainers.def()
+    }
+}
+
+impl Related<super::oidc_session_clients::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcSessionClients.def()
+    }
+}
+
 impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Users.def()
+    }
+}
+
+impl Related<super::oidc_clients::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::oidc_session_clients::Relation::OidcClients.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(
+            super::oidc_session_clients::Relation::OidcBrowserSessions
+                .def()
+                .rev(),
+        )
     }
 }
 

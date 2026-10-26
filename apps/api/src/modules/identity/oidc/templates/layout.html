@@ -5,51 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="same-origin">
 <meta name="color-scheme" content="light dark">
-<title>{% block title %}FloatCTF{% endblock %} · FloatCTF</title>
-<style>
-:root{--bg:#f6f8fa;--card:#fff;--fg:#1f2328;--muted:#59636e;--border:#d1d9e0;--accent:#0969da;--accent-fg:#fff;--danger:#d1242f;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--chip:#eef1f4}
-@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#151b23;--fg:#f0f6fc;--muted:#9198a1;--border:#3d444d;--accent:#4493f8;--accent-fg:#0d1117;--danger:#f85149;--danger-bg:#3c1618;--warn-bg:#3a2f0b;--chip:#212830}}
-*{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC",sans-serif}
-main{max-width:420px;margin:0 auto;padding:40px 16px}
-.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:18px;margin-bottom:20px;justify-content:center}
-.brand .dot{width:22px;height:22px;border-radius:6px;background:var(--accent)}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
-h1{font-size:20px;margin:0 0 6px}
-p{margin:0 0 12px}
-.muted{color:var(--muted);font-size:13px}
-.app{display:flex;flex-direction:column;gap:2px;padding:12px;border:1px solid var(--border);border-radius:8px;margin:12px 0 16px;overflow-wrap:anywhere}
-.app strong{font-size:16px}
-.badge{display:inline-block;font-size:12px;padding:0 8px;border-radius:999px;background:var(--chip);color:var(--muted);margin-left:6px;vertical-align:middle}
-label.field{display:block;font-weight:600;margin:12px 0 4px}
-input[type=text],input[type=password]{width:100%;padding:9px 12px;font-size:15px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)}
-input:focus,button:focus{outline:2px solid var(--accent);outline-offset:1px}
-.actions{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
-button{flex:1 1 140px;padding:10px 14px;font-size:15px;font-weight:600;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg);cursor:pointer;min-height:44px}
-button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
-button.link{flex:0 0 auto;border:none;background:none;color:var(--accent);padding:0;min-height:0;font-weight:500;font-size:13px}
-.error{background:var(--danger-bg);color:var(--danger);border-radius:6px;padding:8px 12px;margin:12px 0}
-.notice{background:var(--warn-bg);border-radius:6px;padding:8px 12px;margin:12px 0;font-size:13px}
-ul.scopes{list-style:none;padding:0;margin:8px 0}
-ul.scopes li{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--border)}
-ul.scopes li:first-child{border-top:none}
-ul.scopes input{margin-top:4px;width:18px;height:18px;flex:none}
-ul.scopes .desc{color:var(--muted);font-size:13px}
-footer{text-align:center;margin-top:16px}
-.account{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin:12px 0 4px;overflow-wrap:anywhere}
-.avatar{flex:none;width:40px;height:40px;border-radius:50%;background:var(--chip);color:var(--fg);display:inline-flex;align-items:center;justify-content:center;font-weight:600;object-fit:cover}
-.who{display:flex;flex-direction:column;min-width:0}
-.stack{display:flex;flex-direction:column;gap:8px;margin-top:16px}
-.stack button{flex:none;width:100%}
-</style>
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}FloatCTF{% endblock %} · FloatCTF 账号</title>
+<link rel="icon" href="/oauth/assets/float.png">
+<link rel="stylesheet" href="/oauth/assets/ui.css">
+<script src="/oauth/assets/ui.js" defer></script>
 </head>
 <body>
-<main>
-<div class="brand"><span class="dot" aria-hidden="true"></span>FloatCTF</div>
-<div class="card">
+<main class="shell">
+  <div class="brand">
+    <span class="logo"><img src="/oauth/assets/float.png" alt="" width="30" height="30" data-fallback><span class="logo-fallback" aria-hidden="true">F</span></span>
+    <span>FloatCTF 账号</span>
+  </div>
+  <section class="card">
 {% block content %}{% endblock %}
-</div>
-<footer class="muted">FloatCTF 账号 · OpenID Connect</footer>
+  </section>
+  <p class="footer">{% block footer %}使用 FloatCTF 账号登录第三方应用 · OpenID Connect{% endblock %}</p>
 </main>
 </body>
 </html>

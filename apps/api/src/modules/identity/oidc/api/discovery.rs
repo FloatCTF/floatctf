@@ -16,7 +16,10 @@ pub async fn openid_configuration(oidc: Option<WebOidc>) -> HttpResponse {
     };
     HttpResponse::Ok()
         .insert_header((header::CACHE_CONTROL, METADATA_CACHE))
-        .json(metadata::openid_configuration(oidc.issuer()))
+        .json(metadata::openid_configuration_with(
+            oidc.issuer(),
+            oidc.config.backchannel_logout,
+        ))
 }
 
 /// GET /.well-known/oauth-authorization-server（RFC 8414）
@@ -27,7 +30,10 @@ pub async fn oauth_authorization_server(oidc: Option<WebOidc>) -> HttpResponse {
     };
     HttpResponse::Ok()
         .insert_header((header::CACHE_CONTROL, METADATA_CACHE))
-        .json(metadata::oauth_authorization_server(oidc.issuer()))
+        .json(metadata::oauth_authorization_server(
+            oidc.issuer(),
+            oidc.config.backchannel_logout,
+        ))
 }
 
 /// GET /.well-known/jwks.json

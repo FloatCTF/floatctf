@@ -75,12 +75,14 @@ pub async fn user_login(
                     ctx.db.get_ref(),
                     &oidc,
                     &ctx.req,
-                    user.id,
+                    &user,
                 )
                 .await
                 {
-                    Ok(cookie) => {
-                        response.cookie(cookie);
+                    Ok(cookies) => {
+                        for cookie in cookies {
+                            response.cookie(cookie);
+                        }
                     }
                     Err(e) => warn!(error = %e, "SSO session not established after login"),
                 }

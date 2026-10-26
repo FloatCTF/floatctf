@@ -46,6 +46,7 @@ export {
 	createUploadsServiceApi,
 	createUserServiceApi,
 	createWeaponsServiceApi,
+	createWebSessionServiceApi,
 } from "./service/index.js";
 
 export type {
@@ -106,6 +107,7 @@ import {
 	createUploadsServiceApi,
 	createUserServiceApi,
 	createWeaponsServiceApi,
+	createWebSessionServiceApi,
 } from "./service/index.js";
 
 /**
@@ -163,6 +165,7 @@ export function createServiceApi(http: FloatCTFHttpClient) {
 		discussions: createDiscussionServiceApi(http),
 		uploads: createUploadsServiceApi(http),
 		oidc: createOidcServiceApi(http),
+		webSession: createWebSessionServiceApi(http),
 		awd: createAwdPlayerApi(http),
 	};
 }

@@ -14,6 +14,7 @@ fn env() -> &'static Environment<'static> {
         let mut env = Environment::new();
         for (name, source) in [
             ("layout.html", include_str!("../templates/layout.html")),
+            ("_macros.html", include_str!("../templates/_macros.html")),
             ("login.html", include_str!("../templates/login.html")),
             ("consent.html", include_str!("../templates/consent.html")),
             (
@@ -21,6 +22,14 @@ fn env() -> &'static Environment<'static> {
                 include_str!("../templates/select_account.html"),
             ),
             ("error.html", include_str!("../templates/error.html")),
+            (
+                "end_session.html",
+                include_str!("../templates/end_session.html"),
+            ),
+            (
+                "logged_out.html",
+                include_str!("../templates/logged_out.html"),
+            ),
         ] {
             env.add_template(name, source)
                 .expect("OIDC page template must compile");
@@ -58,10 +67,11 @@ pub fn html(
     let form_action = sources.join(" ");
     HttpResponse::build(status)
         .content_type("text/html; charset=utf-8")
+        // 样式与脚本都是同源自托管文件（`/oauth/assets/*`），不需要 'unsafe-inline'。
         .insert_header((
             "Content-Security-Policy",
             format!(
-                "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; \
+                "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; \
                  form-action {form_action}; frame-ancestors 'none'; base-uri 'none'"
             ),
         ))
@@ -170,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn select_account_page_escapes_identity_and_offers_three_explicit_actions() {
+    fn select_account_page_escapes_identity_and_offers_explicit_actions() {
         let body = env()
             .get_template("select_account.html")
             .unwrap()
@@ -179,23 +189,63 @@ mod tests {
                 txn => "t",
                 csrf => "c",
                 client_name => "<b>RP</b>",
-                nickname => "<img src=x onerror=alert(1)>",
-                username => "alice\"><script>",
-                avatar => Option::<String>::None,
-                initial => "A",
+                client_host => "learn.example.com",
+                accounts => vec![minijinja::context! {
+                    id => "sess-1",
+                    nickname => "<img src=x onerror=alert(1)>",
+                    username => "alice\"><script>",
+                    initial => "A",
+                    avatar_url => "/oauth/accounts/sess-1/avatar",
+                }],
+                multi_account => true,
                 account_changed => true,
+                signed_out => false,
             })
             .unwrap();
         assert!(!body.contains("<img src=x"));
-        assert!(!body.contains("<script>"));
+        assert!(!body.contains("<script>alert"));
         assert!(!body.contains("<b>RP</b>"));
-        for action in ["continue", "other", "cancel"] {
-            assert!(body.contains(&format!(r#"name="action" value="{action}""#)));
+        assert!(body.contains(r#"name="account" value="sess-1""#));
+        for action in ["continue", "other", "logout", "cancel"] {
+            assert!(body.contains(&format!(r#"value="{action}""#)), "{action}");
         }
+        assert!(body.contains("选择 FloatCTF 账号"));
         assert!(body.contains("登录账号已发生变化"));
+        // 头像只走 OP 自己的同源头像端点，并带回退标记（加载失败显示首字母）。
+        assert!(body.contains("data-fallback"));
+        assert!(body.contains("&#x2f;oauth&#x2f;accounts&#x2f;sess-1&#x2f;avatar"));
+        // 官方 Logo，不再是 CSS 色块。
+        assert!(body.contains("/oauth/assets/float.png"));
+        assert!(!body.contains("class=\"dot\""));
         // 不展示用户输入框：选择页从不收集或信任表单里的身份。
         assert!(!body.contains("name=\"username\""));
         assert!(!body.contains("name=\"user_id\""));
+        // 页面不含内联脚本/样式（CSP 只放行同源文件）。
+        assert!(!body.contains("<style"));
+        assert!(!body.contains("style=\""));
+        assert!(!body.contains("<script>"));
+    }
+
+    #[test]
+    fn every_page_renders_without_inline_styles_or_scripts() {
+        let scopes = vec![scope_item("openid", false).unwrap()];
+        for (name, ctx) in [
+            (
+                "login.html",
+                minijinja::context! { action => "/oauth/login", txn => "t", csrf => "c", client_name => "RP", username => "" },
+            ),
+            (
+                "consent.html",
+                minijinja::context! { action => "/oauth/consent", txn => "t", csrf => "c", client_name => "RP", user_nickname => "A", user_username => "a", user_initial => "A", scopes => scopes },
+            ),
+            ("error.html", minijinja::context! { message => "x" }),
+        ] {
+            let body = env().get_template(name).unwrap().render(ctx).unwrap();
+            assert!(!body.contains("style=\""), "{name}");
+            assert!(!body.contains("<style"), "{name}");
+            assert!(!body.contains("<script>"), "{name}");
+            assert!(body.contains("/oauth/assets/ui.css"), "{name}");
+        }
     }
 
     #[test]
@@ -229,7 +279,10 @@ mod tests {
             .unwrap();
         assert!(csp.contains("form-action 'self' https://rp.example.com;"));
         assert!(csp.contains("frame-ancestors 'none'"));
-        assert!(!csp.contains("script-src"));
+        assert!(csp.contains("script-src 'self';"));
+        assert!(csp.contains("style-src 'self';"));
+        assert!(!csp.contains("unsafe-inline"), "不允许内联脚本/样式");
+        assert!(!csp.contains("data:"));
         // 回归：no-referrer 会让浏览器表单 POST 带 `Origin: null`，导致同源校验误拒。
         assert_eq!(
             resp.headers().get("Referrer-Policy").unwrap(),

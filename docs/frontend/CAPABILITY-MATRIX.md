@@ -53,11 +53,12 @@
 | Auth | 头像上传 | player | `client.service.uploads.upload_avatar` | `frontends/default/src/routes/service/profile.tsx` | — | optional — 展示性资料，缺省不影响赛程 |
 | Auth | 忘记密码（发送重置邮件） | player | `client.service.users.resetPassword` | `frontends/default/src/routes/reset_password.tsx`（`/reset_password`） | — | required — 账号自助恢复入口 |
 | Auth | 凭 token 重置密码 | player | `client.service.users.reset` | `frontends/default/src/routes/reset.tsx`（`/reset`） | — | required — 用户必须能用重置邮件中的 token 完成改密；页面与路由由前端自定 |
-| Auth | 选手登出 | player | 平台 JWT 无状态，前端自行清除 token；OIDC 启用时另调 `client.service.oidc.endSso()`（`DELETE /api/users/sso`）撤销服务端 SSO 会话 | `frontends/default/src/components/Header.tsx`（`endSso()` + `removeToken()`） | — | required — 选手必须能结束本地会话；启用 OIDC 的部署还必须撤销 SSO 会话，否则第三方应用仍可无密码登录 |
+| Auth | 选手登出 | player | 统一会话模式：`client.service.webSession.logout("account" \| "browser")`（撤销成功才 resolve）；旧版模式：先 `client.service.oidc.endSso()` 成功，再清除本地 token | `frontends/default/src/components/Header.tsx`（`signOutCurrentAccount`） | — | required — 必须等待服务端确认撤销再更新界面；失败必须如实提示「未完成退出」，不得吞错 |
+| Auth | 主站登录态（统一 Cookie 会话） | player | `client.service.webSession.status()` 是唯一依据（`mode = cookie \| legacy`）；`login` / `restore` / `select` / `migrate`；`FloatCTFClientOptions.getUserSessionHeaders` 注入 `X-CSRF-Token` 与 `X-FloatCTF-Account`（`WebSessionStatus`、`WebAccount`） | `frontends/default/src/session/index.ts`、`routes/service/route.tsx`、`routes/index.tsx` | — | required（部署开启 `[oidc].unified_web_session` 时）— 不得再把平台 JWT 写入 localStorage；旧 token 须经 `migrate` 平滑迁移后删除；`auto_restore` 为真时才可自动恢复，多账号时必须让用户选择；当前用户变化时清空本地缓存 |
 | Auth | 管理端登录 | admin | `client.admin.login` | `frontends/default/src/routes/admin/index.tsx`（`/admin/`） | — | required — 运维端必经入口 |
 | Auth | 管理端登出 | admin | 无服务端端点（JWT 无状态）；前端自行清除 admin token | `frontends/default/src/components/Header.tsx`（`removeAdminToken()`） | — | required — 运维必须能结束本地会话 |
 | Auth | 401 统一处理（清对应 token；重新登录的引导方式由前端决定） | both | `FloatCTFClientOptions.onUnauthorized`、`UnauthorizedContext`、`FloatCTFAuthScope` | `frontends/default/src/api/client.ts` | — | required — 令牌过期 / 失效后的统一行为（清对应用户端 token），不得静默失败 |
-| Auth | token 注入（选手 / 管理端两个来源） | both | `FloatCTFClientOptions.getUserToken`、`getAdminToken` | `frontends/default/src/api/client.ts` + `frontends/default/src/stores/AuthStore.ts` | — | required — SDK 不持有 token，必须由前端注入 |
+| Auth | token 注入（选手 / 管理端两个来源） | both | `FloatCTFClientOptions.getUserToken`、`getAdminToken`；统一会话模式下选手端改用 `getUserSessionHeaders`（返回非空时 SDK 不再附带 Bearer） | `frontends/default/src/api/client.ts` + `frontends/default/src/stores/AuthStore.ts` | — | required — SDK 不持有 token / Cookie，必须由前端注入 |
 | Auth | 非 401 错误回调 | both | `FloatCTFClientOptions.onError`、`requestConfig` | `frontends/default/src/api/client.ts` | — | optional — 统一日志 / 埋点，不影响功能 |
 
 ## FloatCTF 账号登录（OpenID Connect Provider）
@@ -68,9 +69,9 @@
 
 | Area | Capability | User/Admin | Public SDK surface | Default reference | Realtime | Required for complete frontend |
 |---|---|---|---|---|---|---|
-| OIDC | 平台登录后建立 SSO 会话 | player | 无需调用：`client.service.users.login` 成功时服务端随响应下发 HttpOnly Cookie（同源 fetch 自动保存） | `frontends/default/src/routes/index.tsx` | — | required（OIDC 启用时）— 已登录用户授权第三方时不再输密码 |
-| OIDC | 已持有 JWT 的会话补建 SSO（幂等） | player | `client.service.oidc.establishSso()`（`POST /api/users/sso`） | `frontends/default/src/routes/service/route.tsx`（`useSsoBridge`） | — | required（OIDC 启用时）— 覆盖功能上线前登录、JWT 仍有效的会话 |
-| OIDC | 登出时撤销 SSO 会话 | player | `client.service.oidc.endSso()` | `frontends/default/src/components/Header.tsx` | — | required（OIDC 启用时）|
+| OIDC | 平台登录后建立 SSO 会话 | player | 统一会话模式：主站会话本身就是身份会话，无需额外调用；旧版模式：`client.service.users.login` 成功时服务端随响应下发 HttpOnly Cookie | `frontends/default/src/routes/index.tsx` | — | required（OIDC 启用时）— 已登录用户授权第三方时不再输密码 |
+| OIDC | 已持有 JWT 的会话补建 SSO（幂等） | player | 旧版模式：`client.service.oidc.establishSso()`（`POST /api/users/sso`）；统一会话模式改用 `webSession.migrate` | `frontends/default/src/routes/service/route.tsx`（`useSsoBridge`）、`session/index.ts` | — | required（OIDC 启用时）— 覆盖功能上线前登录、JWT 仍有效的会话 |
+| OIDC | 登出时撤销 SSO 会话 | player | 旧版模式：`client.service.oidc.endSso()`；统一会话模式：`webSession.logout` 同时撤销 | `frontends/default/src/components/Header.tsx` | — | required（OIDC 启用时）|
 | OIDC | 已授权应用列表 / 撤销 | player | `client.service.oidc.listAuthorizations`、`revokeAuthorization`（`OidcAuthorizationDto`） | `frontends/default/src/routes/service/authorizations.tsx` | — | required（OIDC 启用时）— 用户必须能查看并撤回第三方访问；撤销不退出第三方本地会话，需如实告知 |
 | OIDC | 开发者中心：我的应用 CRUD、接入配置 | player | `client.service.oidc.provider`、`listClients`、`createClient`、`getClient`、`updateClient`、`disableClient`、`enableClient`、`deleteClient`（`OidcClientDto`、`OidcProviderInfo`） | `frontends/default/src/routes/service/developer/index.tsx`、`.../$clientId.tsx` | — | optional — 平台对公众开放应用登记时才需要 |
 | OIDC | 开发者中心：client secret 一次性展示 / 轮换（宽限期或立即作废） | player | `createClient` / `rotateSecret` 返回 `OidcClientWithSecretDto.client_secret`（只出现一次，之后无法再查） | `frontends/default/src/components/oidc/shared.tsx`（`OneTimeSecretDialog`） | — | optional（实现开发者中心时 required）— 不得缓存或再次展示 secret |

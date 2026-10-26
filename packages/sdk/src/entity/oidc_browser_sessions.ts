@@ -8,4 +8,7 @@ export type OidcBrowserSessions = {
   last_seen_at: string;
   expires_at: string;
   revoked_at?: string;
+  container_id?: string;
+  sid: string;
+  revoked_reason?: string;
 };

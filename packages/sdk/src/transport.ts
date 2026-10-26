@@ -67,6 +67,14 @@ export interface FloatCTFClientOptions {
 	/** 取当前管理员 token（同步、纯读）。默认恒为 `null`。 */
 	getAdminToken?: () => string | null | undefined;
 	/**
+	 * 选手端 **Cookie 会话模式**（服务端 `[oidc].unified_web_session`）：返回非空对象时，
+	 * 选手端请求**不再**注入 `Authorization: Bearer`，而是附加这些头
+	 * （`X-CSRF-Token`、`X-FloatCTF-Account`，由 `GET /api/users/web-session` 给出）。
+	 * 认证凭据是浏览器自动携带的 HttpOnly Cookie，SDK 不读写 Cookie。
+	 * 返回 `null`/`undefined` 时退回 `getUserToken` 的 Bearer 行为。
+	 */
+	getUserSessionHeaders?: () => Record<string, string> | null | undefined;
+	/**
 	 * 收到 401 时调用。前端在此决定清理 token / 跳转登录页 / 提示用户。
 	 * SDK 自身不跳转、不写 localStorage。
 	 */
@@ -141,6 +149,15 @@ function attachInterceptors(
 		scope === "user" ? options.getUserToken : options.getAdminToken;
 
 	instance.interceptors.request.use((config) => {
+		// Cookie 会话与 Bearer 互斥：会话头存在时绝不再附带 Bearer（服务端 Bearer 优先，混用会绕开 Cookie 通道）。
+		const sessionHeaders =
+			scope === "user" ? options.getUserSessionHeaders?.() : null;
+		if (sessionHeaders) {
+			for (const [name, value] of Object.entries(sessionHeaders)) {
+				config.headers.set(name, value);
+			}
+			return config;
+		}
 		const token = tokenGetter?.();
 		if (token) {
 			config.headers.Authorization = `Bearer ${token}`;

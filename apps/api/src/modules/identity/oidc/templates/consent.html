@@ -1,25 +1,39 @@
 {% extends "layout.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}授权确认{% endblock %}
 {% block content %}
-<h1>授权确认</h1>
-<div class="app"><strong>{{ client_name }}<span class="badge">第三方应用</span></strong>{% if client_host %}<span class="muted">{{ client_host }}</span>{% endif %}</div>
-<p>该应用请求以 <strong>{{ user_display }}</strong> 的身份登录，并读取以下信息：</p>
+<div class="header">
+  <h1>授权 {{ client_name }}</h1>
+  <p class="subtitle">该应用请求使用你的 FloatCTF 账号登录</p>
+  {{ ui.origin(client_host) }}
+</div>
+<div class="identity">
+  {{ ui.avatar(user_initial, user_avatar_url, "sm") }}
+  <span class="who"><span class="name">{{ user_nickname }}</span><span class="handle">@{{ user_username }}</span></span>
+</div>
 <form method="post" action="{{ action }}">
   <input type="hidden" name="txn" value="{{ txn }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <ul class="scopes">
+  <p class="small muted" id="scope-label">允许该应用读取：</p>
+  <ul class="scopes" aria-labelledby="scope-label">
   {% for s in scopes %}
     <li>
       <input type="checkbox" id="scope-{{ s.name }}" name="scope" value="{{ s.name }}"{% if s.checked %} checked{% endif %}{% if s.required %} disabled{% endif %}>
-      <label for="scope-{{ s.name }}"><strong>{{ s.title }}</strong>{% if s.required %}<span class="badge">必需</span>{% endif %}<br><span class="desc">{{ s.description }}</span></label>
+      <label for="scope-{{ s.name }}"><span class="title">{{ s.title }}</span>{% if s.required %}<span class="badge">必需</span>{% endif %}<span class="desc">{{ s.description }}</span></label>
     </li>
   {% endfor %}
   </ul>
-  <p class="muted">FloatCTF 不会向该应用提供你的密码、管理员权限、战队或比赛信息。你可以随时在「个人中心 → 已授权应用」撤销授权；撤销后应用将无法再读取你的资料，但不会自动退出你在该应用中的登录。</p>
-  <div class="actions">
-    <button type="submit" name="action" value="deny">拒绝</button>
-    <button type="submit" name="action" value="allow" class="primary">允许</button>
+  <div class="buttons">
+    <button type="submit" name="action" value="deny" class="btn">拒绝</button>
+    <button type="submit" name="action" value="allow" class="btn primary">允许</button>
   </div>
-  <p class="muted" style="margin-top:14px">不是 {{ user_display }}？<button type="submit" name="action" value="switch" class="link" formnovalidate>使用其他账号</button></p>
+  <p class="small muted center consent-switch">不是 {{ user_nickname }}？<button type="submit" name="action" value="switch" class="link-button" formnovalidate>使用其他账号</button></p>
 </form>
+<details>
+  <summary>FloatCTF 会分享什么</summary>
+  <div class="details-body">
+    <p>FloatCTF 不会向该应用提供你的密码、管理员权限、战队或比赛信息。</p>
+    <p>你可以随时在 FloatCTF「个人中心 → 已授权应用」撤销授权；撤销后应用无法再读取你的资料，但不会自动退出你在该应用中的登录。</p>
+  </div>
+</details>
 {% endblock %}

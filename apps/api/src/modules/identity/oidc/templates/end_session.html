@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}退出 FloatCTF{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>退出 FloatCTF 及关联应用？</h1>
+  <p class="subtitle">{% if client_name %}<strong>{{ client_name }}</strong> 请求退出你在本浏览器中的 FloatCTF 登录。{% else %}有应用请求退出你在本浏览器中的 FloatCTF 登录。{% endif %}</p>
+</div>
+<p class="small muted" id="accounts-label">{% if all_accounts %}将退出本浏览器中的全部 FloatCTF 账号：{% else %}将退出：{% endif %}</p>
+<ul class="accounts" aria-labelledby="accounts-label">
+{% for a in accounts %}
+  <li class="identity">
+    {{ ui.avatar(a.initial, None, "sm") }}
+    <span class="who"><span class="name">{{ a.nickname }}</span><span class="handle">@{{ a.username }}</span></span>
+  </li>
+{% endfor %}
+</ul>
+{% if notified %}
+<p class="small muted">同时通知以下已接入标准退出的应用结束你的会话：</p>
+<ul class="result-list">
+  {% for c in notified %}<li><span class="name">{{ c.name }}</span><span class="state ok">将通知</span></li>{% endfor %}
+</ul>
+{% endif %}
+{% if unsupported %}
+<div class="alert" role="note">以下应用不支持即时退出通知，你在其中的登录可能仍然有效，请在应用内手动退出：{% for c in unsupported %}{% if not loop.first %}、{% endif %}{{ c.name }}{% endfor %}。</div>
+{% endif %}
+<form method="post" action="{{ action }}">
+  <input type="hidden" name="request" value="{{ request }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="buttons">
+    <button type="submit" name="action" value="cancel" class="btn">取消，保持登录</button>
+    <button type="submit" name="action" value="logout" class="btn primary">退出</button>
+  </div>
+</form>
+<details>
+  <summary>这会做什么</summary>
+  <div class="details-body">
+    <p>退出只影响本浏览器：其他设备上的 FloatCTF 登录不受影响。</p>
+    <p>只有你在这里确认后，FloatCTF 才会撤销登录并通知已接入的应用；FloatCTF 会如实显示每个应用的通知结果。</p>
+  </div>
+</details>
+{% endblock %}

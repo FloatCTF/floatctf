@@ -2,6 +2,7 @@ import { TanstackDevtools } from "@tanstack/react-devtools";
 import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
+import { GlobalLogoutNotice } from "../components/AccountMenu";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import { NavigationProgress, NavigationProvider } from "../navigation";
 
@@ -17,6 +18,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 			<div className="h-screen">
 				<NavigationProgress />
 				<Outlet />
+				<GlobalLogoutNotice />
 				{showDevtools && (
 					<TanstackDevtools
 						config={{

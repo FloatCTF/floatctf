@@ -33,6 +33,14 @@ impl FromRequest for UserJwtGuard {
     ) -> Self::Future {
         let db = req.app_data::<WebDb>().cloned().unwrap();
         let auth_header = req.headers().get("Authorization").map(|h| h.clone());
+        // 主站统一 Cookie 会话（`[oidc].unified_web_session`）：仅当请求**没有** Authorization 头时启用。
+        // Bearer 与 Cookie 两种机制从不混用；Cookie 通道强制第一方来源 + CSRF，且只能得到普通用户身份。
+        let web_session = req
+            .app_data::<crate::modules::identity::oidc::WebOidc>()
+            .filter(|oidc| oidc.config.unified_web_session)
+            .cloned()
+            .filter(|_| auth_header.is_none())
+            .map(|oidc| (oidc, req.clone()));
 
         Box::pin(async move {
             if let Some(auth_header) = auth_header {
@@ -49,6 +57,20 @@ impl FromRequest for UserJwtGuard {
                             }
                         }
                     }
+                }
+            } else if let Some((oidc, req)) = web_session {
+                match crate::modules::identity::oidc::accounts::resolve_web_user(
+                    db.get_ref(),
+                    &oidc,
+                    &req,
+                )
+                .await
+                {
+                    Ok(Ok(user)) => return Ok(UserJwtGuard(user)),
+                    Ok(Err(reason)) => {
+                        tracing::debug!(?reason, path = %req.path(), "web session rejected")
+                    }
+                    Err(e) => tracing::error!(error = %e, "web session lookup failed"),
                 }
             }
 

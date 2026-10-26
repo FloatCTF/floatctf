@@ -13,12 +13,12 @@ use uuid::Uuid;
 use super::{not_enabled, pages};
 use crate::infrastructure::{LogService, WebDb, WebLog};
 use crate::modules::identity::oidc::{
-    OidcProvider, WebOidc,
+    OidcProvider, WebOidc, accounts,
     domain::{
         authorize::{Prompt, RawParams},
         client_auth,
         error::OAuthError,
-        metadata::{PATH_CONSENT, PATH_LOGIN, PATH_SELECT_ACCOUNT},
+        metadata::{PATH_ACCOUNTS, PATH_CONSENT, PATH_LOGIN, PATH_SELECT_ACCOUNT},
         scope, secret,
     },
     flow::{self, Next},
@@ -120,20 +120,22 @@ pub fn same_origin(req: &HttpRequest, oidc: &OidcProvider) -> bool {
     }
 }
 
-fn no_store(mut builder: actix_web::HttpResponseBuilder) -> actix_web::HttpResponseBuilder {
+pub(crate) fn no_store(
+    mut builder: actix_web::HttpResponseBuilder,
+) -> actix_web::HttpResponseBuilder {
     builder
         .insert_header((header::CACHE_CONTROL, "no-store"))
         .insert_header((header::PRAGMA, "no-cache"));
     builder
 }
 
-fn redirect(location: &str) -> actix_web::HttpResponseBuilder {
+pub(crate) fn redirect(location: &str) -> actix_web::HttpResponseBuilder {
     let mut builder = no_store(HttpResponse::Found());
     builder.insert_header((header::LOCATION, location.to_string()));
     builder
 }
 
-fn respond(next: Next, cookies: Vec<Cookie<'static>>) -> HttpResponse {
+pub(crate) fn respond(next: Next, cookies: Vec<Cookie<'static>>) -> HttpResponse {
     let mut resp = match next {
         Next::RedirectToClient(url) | Next::RedirectLocal(url) => redirect(&url).finish(),
         Next::ErrorPage { status, message } => pages::error_page(status, &message),
@@ -144,11 +146,11 @@ fn respond(next: Next, cookies: Vec<Cookie<'static>>) -> HttpResponse {
     resp
 }
 
-fn server_error_page() -> HttpResponse {
+pub(crate) fn server_error_page() -> HttpResponse {
     pages::error_page(500, "服务暂时不可用，请稍后重试。")
 }
 
-fn audit(
+pub(crate) fn audit(
     log: &WebLog,
     level: &str,
     action: &str,
@@ -218,12 +220,16 @@ pub async fn authorize(
         };
 
     let result = async {
-        let session = flow::current_session(&db, sso_cookie_value(&req, &oidc).as_deref()).await?;
-        flow::start(&db, &oidc, &params, &binding, session).await
+        let browser = accounts::load(&db, &oidc, &req).await?;
+        let next = flow::start(&db, &oidc, &params, &binding, &browser.accounts).await?;
+        Ok::<_, crate::api::AppError>((next, browser.cookies))
     }
     .await;
     match result {
-        Ok(next) => respond(next, new_binding.into_iter().collect()),
+        Ok((next, mut cookies)) => {
+            cookies.extend(new_binding);
+            respond(next, cookies)
+        }
         Err(e) => {
             tracing::error!(error = %e, "OIDC authorize failed");
             server_error_page()
@@ -240,6 +246,7 @@ pub struct TxnQuery {
 
 async fn render_login(
     db: &WebDb,
+    multi_account: bool,
     txn: &crate::entity::oidc_auth_transactions::Model,
     client: &crate::entity::oidc_clients::Model,
     username: &str,
@@ -265,6 +272,7 @@ async fn render_login(
             error => error,
             reauth => !switching && (prompt.login || txn.max_age.is_some()),
             switching => switching,
+            multi_account => multi_account,
         },
         &rp_form_action_origins(txn, client),
     )
@@ -317,7 +325,18 @@ pub async fn login_page(
     let binding = cookie_value(&req, binding_cookie_name(oidc.secure_cookies()));
     match store::find_live_transaction(&db, txn_id, binding.as_deref()).await {
         Ok(Some((txn, client))) => match login_prefill(&db, &txn).await {
-            Ok(hint) => render_login(&db, &txn, &client, &hint, None, StatusCode::OK).await,
+            Ok(hint) => {
+                render_login(
+                    &db,
+                    oidc.config.multi_account,
+                    &txn,
+                    &client,
+                    &hint,
+                    None,
+                    StatusCode::OK,
+                )
+                .await
+            }
             Err(_) => server_error_page(),
         },
         Ok(None) => pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
@@ -328,7 +347,7 @@ pub async fn login_page(
 /// 登录尝试限流（Redis 共享窗口，故障 fail-closed），5 分钟窗口：
 /// 同一用户名默认 10 次、同一来源 IP 默认 50 次；运维可在设置表调整
 /// `OIDC_LOGIN_RATE_PER_USER` / `OIDC_LOGIN_RATE_PER_IP`（缺省或非法时用默认值）。
-async fn login_rate_ok(
+pub(crate) async fn login_rate_ok(
     db: &sea_orm::DatabaseConnection,
     oidc: &OidcProvider,
     username: &str,
@@ -420,6 +439,7 @@ pub async fn login_submit(
     {
         return render_login(
             &db,
+            oidc.config.multi_account,
             &txn,
             &client,
             &username,
@@ -434,6 +454,7 @@ pub async fn login_submit(
         Ok(false) => {
             return render_login(
                 &db,
+                oidc.config.multi_account,
                 &txn,
                 &client,
                 &username,
@@ -466,6 +487,7 @@ pub async fn login_submit(
             );
             return render_login(
                 &db,
+                oidc.config.multi_account,
                 &txn,
                 &client,
                 &username,
@@ -495,6 +517,7 @@ pub async fn login_submit(
         );
         return render_login(
             &db,
+            oidc.config.multi_account,
             &txn,
             &client,
             "",
@@ -504,19 +527,40 @@ pub async fn login_submit(
         .await;
     }
 
-    // 新会话（auth_time=now）；同一浏览器旧会话（可能是另一个账号）一并撤销。
-    if let Some(old) = sso_cookie_value(&req, &oidc) {
-        let _ = store::revoke_session(&db, &old).await;
+    // 新会话（auth_time=now）。多账号模式：加入本浏览器容器，其他账号保留；
+    // 旧版单会话模式：同一浏览器旧会话（可能是另一个账号）一并撤销。
+    let established = async {
+        if oidc.config.multi_account {
+            let mut browser = accounts::load(&db, &oidc, &req).await?;
+            let entry = accounts::add_account(
+                &db,
+                &oidc,
+                &mut browser,
+                &user,
+                chrono::Utc::now().fixed_offset(),
+                oidc.config.session_ttl_secs,
+                store::SessionOrigin::OidcLogin,
+            )
+            .await?;
+            Ok::<_, crate::api::AppError>((entry.0, browser.accounts, browser.cookies))
+        } else {
+            if let Some(old) = sso_cookie_value(&req, &oidc) {
+                let _ = store::revoke_session(&db, &old, "replaced").await;
+            }
+            let (cookie, session) = store::create_session(
+                &db,
+                user.id,
+                chrono::Utc::now().fixed_offset(),
+                oidc.config.session_ttl_secs,
+                store::SessionOrigin::OidcLogin,
+            )
+            .await?;
+            let accounts = vec![(session.clone(), user.clone())];
+            Ok((session, accounts, vec![sso_cookie(&oidc, cookie)]))
+        }
     }
-    let (cookie, session) = match store::create_session(
-        &db,
-        user.id,
-        chrono::Utc::now().fixed_offset(),
-        oidc.config.session_ttl_secs,
-        store::SessionOrigin::OidcLogin,
-    )
-    .await
-    {
+    .await;
+    let (session, browser_accounts, cookies) = match established {
         Ok(v) => v,
         Err(_) => return server_error_page(),
     };
@@ -536,7 +580,7 @@ pub async fn login_submit(
     // 本事务内输入密码 = 已重新认证 + 已明确选择该账号。
     let next = async {
         match store::bind_password_login(&db, txn.id, user.id, session.id).await? {
-            Some(txn) => flow::advance(&db, &oidc, txn, &client, Some((session, user))).await,
+            Some(txn) => flow::advance(&db, &oidc, txn, &client, &browser_accounts).await,
             None => Ok(Next::ErrorPage {
                 status: 400,
                 message: flow::TXN_EXPIRED_MESSAGE.into(),
@@ -544,12 +588,14 @@ pub async fn login_submit(
         }
     }
     .await;
-    // 旧会话已撤销：无论事务能否继续，都要把新会话 Cookie 交给浏览器。
+    // 会话已建立（旧会话可能已撤销/容器秘密已轮换）：无论事务能否继续，都要把新 Cookie 交给浏览器。
     match next {
-        Ok(next) => respond(next, vec![sso_cookie(&oidc, cookie)]),
+        Ok(next) => respond(next, cookies),
         Err(_) => {
             let mut resp = server_error_page();
-            let _ = resp.add_cookie(&sso_cookie(&oidc, cookie));
+            for cookie in &cookies {
+                let _ = resp.add_cookie(cookie);
+            }
             resp
         }
     }
@@ -581,18 +627,25 @@ pub async fn consent_page(
                 message: flow::TXN_EXPIRED_MESSAGE.into(),
             }));
         };
-        let session = flow::current_session(&db, sso_cookie_value(&req, &oidc).as_deref()).await?;
-        match flow::consent_ready(&db, &oidc, &txn, &client, session.clone()).await? {
-            Some((_, user)) => {
+        let browser = accounts::load(&db, &oidc, &req).await?;
+        match flow::consent_ready(&db, &oidc, &txn, &client, &browser.accounts).await? {
+            Some((session, user)) => {
                 let previous = store::find_active_consent(&db, user.id, client.id).await?;
-                Ok(Ok((txn, client, user, previous)))
+                Ok(Ok((txn, client, (session, user), previous)))
             }
             // 会话变化（过期/另一个标签页切换了账号）、尚未选择账号、已要求切换账号 → 重新走决策。
-            None => Ok(Err(flow::advance(&db, &oidc, txn, &client, session).await?)),
+            None => Ok(Err(flow::advance(
+                &db,
+                &oidc,
+                txn,
+                &client,
+                &browser.accounts,
+            )
+            .await?)),
         }
     }
     .await;
-    let (txn, client, user, previous) = match result {
+    let (txn, client, account, previous) = match result {
         Ok(Ok(v)) => v,
         Ok(Err(next)) => return respond(next, vec![]),
         Err::<_, crate::api::AppError>(_) => return server_error_page(),
@@ -609,6 +662,7 @@ pub async fn consent_page(
         .filter_map(|s| pages::scope_item(s, previously.contains(s)))
         .collect();
     let form_action_origins = rp_form_action_origins(&txn, &client);
+    let view = account_view(&account);
     pages::html(
         StatusCode::OK,
         "consent.html",
@@ -618,7 +672,10 @@ pub async fn consent_page(
             csrf => csrf,
             client_name => client.name.clone(),
             client_host => pages::host_of(client.homepage_url.as_deref()),
-            user_display => format!("{}（@{}）", user.nickname, user.username),
+            user_nickname => view.nickname,
+            user_username => view.username,
+            user_initial => view.initial,
+            user_avatar_url => view.avatar_url,
             scopes => items,
         },
         &form_action_origins,
@@ -667,16 +724,16 @@ pub async fn consent_submit(
         return account_switch(&db, &log, &req, &txn, &client, &field("csrf")).await;
     }
 
-    let session = match flow::current_session(&db, sso_cookie_value(&req, &oidc).as_deref()).await {
-        Ok(s) => s,
+    let browser = match accounts::load(&db, &oidc, &req).await {
+        Ok(b) => b,
         Err(_) => return server_error_page(),
     };
     let (session, user) =
-        match flow::consent_ready(&db, &oidc, &txn, &client, session.clone()).await {
+        match flow::consent_ready(&db, &oidc, &txn, &client, &browser.accounts).await {
             Ok(Some(ready)) => ready,
             Ok(None) => {
-                return match flow::advance(&db, &oidc, txn, &client, session).await {
-                    Ok(next) => respond(next, vec![]),
+                return match flow::advance(&db, &oidc, txn, &client, &browser.accounts).await {
+                    Ok(next) => respond(next, browser.cookies),
                     Err(_) => server_error_page(),
                 };
             }
@@ -758,32 +815,80 @@ async fn account_switch(
     }
 }
 
-/// 账号选择页只展示同源相对路径头像（CSP `img-src 'self'`）；其余情况显示首字母。
-fn same_origin_avatar(avatar: Option<&str>) -> Option<String> {
-    avatar
-        .filter(|a| a.starts_with('/') && !a.starts_with("//") && !a.contains('\\'))
-        .map(str::to_string)
+/// 用户头像字段是否是平台头像上传接口写入的公开桶图片（`/public/images/<安全文件名>`）。
+///
+/// 只有这种头像才会经 OP 自己的头像端点展示；外站 URL、`javascript:`、`data:`、路径穿越、
+/// 其他目录一律不展示（显示首字母）。
+pub fn same_origin_avatar(avatar: Option<&str>) -> Option<String> {
+    let path = avatar?.strip_prefix("/public/")?;
+    let name = path.strip_prefix("images/")?;
+    let ok = !name.is_empty()
+        && name.len() <= 200
+        && !name.starts_with('.')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    ok.then(|| path.to_string())
 }
 
-async fn render_select_account(
-    db: &WebDb,
-    txn: &crate::entity::oidc_auth_transactions::Model,
-    client: &crate::entity::oidc_clients::Model,
-    current: &flow::SessionUser,
-    account_changed: bool,
-) -> HttpResponse {
-    let (session, user) = current;
-    let csrf = match store::issue_account_choice_csrf(db, txn.id, session.id).await {
-        Ok(c) => c,
-        Err(_) => return server_error_page(),
-    };
-    let initial = user
-        .nickname
+/// 选择页展示的一个账号（只含展示用字段；提交时只认会话 id）。
+#[derive(serde::Serialize)]
+struct AccountView {
+    id: String,
+    nickname: String,
+    username: String,
+    initial: String,
+    avatar_url: Option<String>,
+}
+
+fn initial_of(user: &crate::entity::users::Model) -> String {
+    user.nickname
+        .trim()
         .chars()
         .next()
         .or_else(|| user.username.chars().next())
         .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
+        .unwrap_or_else(|| "?".into())
+}
+
+fn account_view((session, user): &flow::SessionUser) -> AccountView {
+    AccountView {
+        id: session.id.to_string(),
+        nickname: user.nickname.clone(),
+        username: user.username.clone(),
+        initial: initial_of(user),
+        avatar_url: same_origin_avatar(user.avatar.as_deref())
+            .map(|_| format!("{}/{}/avatar", PATH_ACCOUNTS, session.id)),
+    }
+}
+
+/// 选择页提示。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChooserNotice {
+    None,
+    /// 渲染后浏览器的账号发生了变化（另一标签页登录/退出），需要重新确认。
+    AccountChanged,
+    /// 刚在本页退出了一个账号。
+    SignedOut,
+}
+
+async fn render_select_account(
+    db: &WebDb,
+    oidc: &OidcProvider,
+    txn: &crate::entity::oidc_auth_transactions::Model,
+    client: &crate::entity::oidc_clients::Model,
+    candidates: &[flow::SessionUser],
+    notice: ChooserNotice,
+) -> HttpResponse {
+    let Some((first, _)) = candidates.first() else {
+        return redirect(&format!("{PATH_LOGIN}?txn={}", txn.id)).finish();
+    };
+    // 记下展示的首个会话：兼容上线前渲染、表单里没有 account 字段的旧页面。
+    let csrf = match store::issue_account_choice_csrf(db, txn.id, first.id).await {
+        Ok(c) => c,
+        Err(_) => return server_error_page(),
+    };
+    let accounts: Vec<AccountView> = candidates.iter().map(account_view).collect();
     pages::html(
         StatusCode::OK,
         "select_account.html",
@@ -793,20 +898,27 @@ async fn render_select_account(
             csrf => csrf,
             client_name => client.name.clone(),
             client_host => pages::host_of(client.homepage_url.as_deref()),
-            nickname => user.nickname.clone(),
-            username => user.username.clone(),
-            avatar => same_origin_avatar(user.avatar.as_deref()),
-            initial => initial,
-            account_changed => account_changed,
+            accounts => accounts,
+            multi_account => oidc.config.multi_account,
+            account_changed => notice == ChooserNotice::AccountChanged,
+            signed_out => notice == ChooserNotice::SignedOut,
         },
         &rp_form_action_origins(txn, client),
     )
 }
 
+fn with_cookies(mut resp: HttpResponse, cookies: &[Cookie<'static>]) -> HttpResponse {
+    for cookie in cookies {
+        let _ = resp.add_cookie(cookie);
+    }
+    resp
+}
+
 /// GET /oauth/select-account?txn=…
 ///
 /// 纯渲染：从不改变选择、从不发码。状态机不在「等待选择」时，只会把浏览器带到当前应处的
-/// 登录/同意页，或显示失效页。
+/// 登录/同意页；已能直接发码（例如刚在本页退出了其他账号，只剩一个）时仍渲染选择页，
+/// 由用户明确点选——GET 永远不发码。
 #[get("/oauth/select-account")]
 pub async fn select_account_page(
     req: HttpRequest,
@@ -827,27 +939,44 @@ pub async fn select_account_page(
         else {
             return Ok(None);
         };
-        let session = flow::current_session(&db, sso_cookie_value(&req, &oidc).as_deref()).await?;
-        let (step, session) = flow::evaluate(&db, &oidc, &txn, &client, session).await?;
-        Ok::<_, crate::api::AppError>(Some((txn, client, step, session)))
+        let browser = accounts::load(&db, &oidc, &req).await?;
+        let eval = flow::evaluate(&db, &oidc, &txn, &client, &browser.accounts).await?;
+        Ok::<_, crate::api::AppError>(Some((txn, client, eval, browser.cookies)))
     }
     .await;
     match result {
-        Ok(Some((txn, client, flow::Step::SelectAccount, Some(current)))) => {
-            render_select_account(&db, &txn, &client, &current, false).await
+        Ok(Some((txn, client, eval, cookies))) => {
+            let resp = match eval.step {
+                flow::Step::SelectAccount | flow::Step::Issue if !eval.candidates.is_empty() => {
+                    render_select_account(
+                        &db,
+                        &oidc,
+                        &txn,
+                        &client,
+                        &eval.candidates,
+                        ChooserNotice::None,
+                    )
+                    .await
+                }
+                flow::Step::Login => redirect(&format!("{PATH_LOGIN}?txn={}", txn.id)).finish(),
+                flow::Step::Consent => redirect(&format!("{PATH_CONSENT}?txn={}", txn.id)).finish(),
+                _ => pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
+            };
+            with_cookies(resp, &cookies)
         }
-        Ok(Some((txn, _, flow::Step::Login, _))) => {
-            redirect(&format!("{PATH_LOGIN}?txn={}", txn.id)).finish()
-        }
-        Ok(Some((txn, _, flow::Step::Consent, _))) => {
-            redirect(&format!("{PATH_CONSENT}?txn={}", txn.id)).finish()
-        }
-        Ok(_) => pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
+        Ok(None) => pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
         Err(_) => server_error_page(),
     }
 }
 
-/// POST /oauth/select-account（action = continue | other | cancel）
+/// POST /oauth/select-account
+///
+/// `action`：
+/// - `continue` + `account=<会话 id>`：以该账号继续（服务端校验它属于本浏览器且仍有效）；
+/// - `other`：使用其他账号（强制输入密码）；
+/// - `logout` + `account=<会话 id>`：退出本浏览器中的这个 FloatCTF 账号（不通知第三方应用）；
+/// - `logout_all`：退出本浏览器中的全部 FloatCTF 账号；
+/// - `cancel`：只取消本次授权，回到应用（`access_denied`），不退出 FloatCTF。
 #[post("/oauth/select-account")]
 pub async fn select_account_submit(
     req: HttpRequest,
@@ -883,6 +1012,7 @@ pub async fn select_account_submit(
     if !store::csrf_matches(&txn, &csrf) {
         return pages::error_page(400, "页面已失效（CSRF 校验失败），请返回应用重新登录。");
     }
+    let posted_account = Uuid::parse_str(field("account").trim()).ok();
 
     match field("action").as_str() {
         "cancel" => {
@@ -909,47 +1039,161 @@ pub async fn select_account_submit(
         }
         "other" => account_switch(&db, &log, &req, &txn, &client, &csrf).await,
         "continue" => {
-            let session =
-                match flow::current_session(&db, sso_cookie_value(&req, &oidc).as_deref()).await {
-                    Ok(s) => flow::usable_session(&txn, s),
-                    Err(_) => return server_error_page(),
-                };
-            let Some((session, user)) = session else {
-                // 会话已过期/被撤销/用户被删除：不能免密继续，交给状态机（→ 登录页）。
-                return match flow::advance(&db, &oidc, txn, &client, None).await {
-                    Ok(next) => respond(next, vec![]),
-                    Err(_) => server_error_page(),
-                };
+            let mut browser = match accounts::load(&db, &oidc, &req).await {
+                Ok(b) => b,
+                Err(_) => return server_error_page(),
             };
-            if txn.account_choice_session_id != Some(session.id) {
-                // 展示后浏览器的登录账号变了（另一标签页切换/重新登录）：绝不悄悄选中新账号。
-                return render_select_account(&db, &txn, &client, &(session, user), true).await;
-            }
-            let confirmed =
-                match store::confirm_account_selection(&db, txn.id, session.id, user.id, &csrf)
+            let cookies = std::mem::take(&mut browser.cookies);
+            let candidates = flow::candidates(&txn, &browser.accounts);
+            // 新页面提交明确的会话 id；上线前渲染的旧页面没有 account 字段，沿用「展示时的会话」。
+            let target = posted_account.or(txn.account_choice_session_id);
+            let Some((session, user)) = target
+                .and_then(|id| candidates.iter().find(|(s, _)| s.id == id))
+                .cloned()
+            else {
+                if candidates.is_empty() {
+                    // 会话已过期/被撤销/用户被删除：不能免密继续，交给状态机（→ 登录页）。
+                    return match flow::advance(&db, &oidc, txn, &client, &[]).await {
+                        Ok(next) => respond(next, cookies),
+                        Err(_) => server_error_page(),
+                    };
+                }
+                // 展示后本浏览器的账号变了（另一标签页退出/切换）：绝不悄悄选中别的账号。
+                let resp = render_select_account(
+                    &db,
+                    &oidc,
+                    &txn,
+                    &client,
+                    &candidates,
+                    ChooserNotice::AccountChanged,
+                )
+                .await;
+                return with_cookies(resp, &cookies);
+            };
+            let confirmed = if posted_account.is_some() {
+                store::confirm_account_selection_explicit(&db, txn.id, session.id, user.id, &csrf)
                     .await
-                {
-                    Ok(Some(txn)) => txn,
-                    // 并发/重复提交中落败，或事务刚好失效。
-                    Ok(None) => return pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
-                    Err(_) => return server_error_page(),
-                };
+            } else {
+                store::confirm_account_selection(&db, txn.id, session.id, user.id, &csrf).await
+            };
+            let confirmed = match confirmed {
+                Ok(Some(txn)) => txn,
+                // 并发/重复提交中落败，或事务刚好失效。
+                Ok(None) => return pages::error_page(400, flow::TXN_EXPIRED_MESSAGE),
+                Err(_) => return server_error_page(),
+            };
             audit(
                 &log,
                 "INFO",
                 "OIDC_ACCOUNT_SELECTED",
-                format!("{} 确认以当前账号继续访问 {}", user.username, client.name),
-                json!({"client_id": client.client_id}),
+                format!("{} 确认以该账号继续访问 {}", user.username, client.name),
+                json!({"client_id": client.client_id, "accounts_in_browser": browser.accounts.len()}),
                 Some(user.id),
                 &req,
             );
-            match flow::advance(&db, &oidc, confirmed, &client, Some((session, user))).await {
-                Ok(next) => respond(next, vec![]),
+            match flow::advance(&db, &oidc, confirmed, &client, &browser.accounts).await {
+                Ok(next) => respond(next, cookies),
                 Err(_) => server_error_page(),
             }
         }
+        action @ ("logout" | "logout_all") => {
+            chooser_sign_out(
+                &db,
+                &oidc,
+                &log,
+                &req,
+                &txn,
+                &client,
+                action == "logout_all",
+                posted_account,
+            )
+            .await
+        }
         _ => pages::error_page(400, "无效的操作。"),
     }
+}
+
+/// 选择页上的「退出账号」：只撤销本浏览器的 FloatCTF 会话（同时退出主站中的该账号），
+/// **不**向第三方应用发送退出通知；随后本次授权继续：还有其他账号 → 重新选择，否则 → 登录页。
+#[allow(clippy::too_many_arguments)]
+async fn chooser_sign_out(
+    db: &WebDb,
+    oidc: &OidcProvider,
+    log: &WebLog,
+    req: &HttpRequest,
+    txn: &crate::entity::oidc_auth_transactions::Model,
+    client: &crate::entity::oidc_clients::Model,
+    everything: bool,
+    account: Option<Uuid>,
+) -> HttpResponse {
+    let result = async {
+        let mut browser = accounts::load(db, oidc, req).await?;
+        let mut signed_out: Vec<Uuid> = Vec::new();
+        if oidc.config.multi_account {
+            if everything {
+                let revoked = accounts::sign_out_browser(
+                    db,
+                    oidc,
+                    &mut browser,
+                    accounts::RevokeReason::LogoutBrowser,
+                )
+                .await?;
+                signed_out.extend(revoked.iter().map(|(_, u)| u.id));
+            } else if let Some(id) = account
+                && let Some((_, user)) = browser.find(id).cloned()
+                && accounts::sign_out_account(db, &mut browser, id, accounts::RevokeReason::Logout)
+                    .await?
+            {
+                signed_out.push(user.id);
+            }
+        } else {
+            // 旧版单会话：退出即撤销唯一的 SSO 会话并清除 Cookie。
+            let matches = everything
+                || browser
+                    .accounts
+                    .first()
+                    .is_some_and(|(s, _)| account.is_none_or(|id| id == s.id));
+            if matches
+                && let Some(value) = sso_cookie_value(req, oidc)
+                && store::revoke_session(db, &value, "logout").await?
+            {
+                signed_out.extend(browser.accounts.iter().map(|(_, u)| u.id));
+                browser.accounts.clear();
+            }
+            browser.cookies.push(removal_cookie(
+                sso_cookie_name(oidc.secure_cookies()),
+                oidc.secure_cookies(),
+            ));
+        }
+        Ok::<_, crate::api::AppError>((browser, signed_out))
+    }
+    .await;
+    let (browser, signed_out) = match result {
+        Ok(v) => v,
+        Err(_) => return server_error_page(),
+    };
+    for user_id in &signed_out {
+        audit(
+            log,
+            "INFO",
+            "OIDC_CHOOSER_SIGN_OUT",
+            format!("在应用 {} 的账号选择页退出 FloatCTF 账号", client.client_id),
+            json!({"client_id": client.client_id, "all": everything}),
+            Some(*user_id),
+            req,
+        );
+    }
+    let candidates = flow::candidates(txn, &browser.accounts);
+    let resp = if candidates.is_empty() {
+        // 作废本页 CSRF（登录页会签发新的）。
+        if store::issue_csrf(db, txn.id).await.is_err() {
+            return server_error_page();
+        }
+        redirect(&format!("{PATH_LOGIN}?txn={}", txn.id)).finish()
+    } else {
+        render_select_account(db, oidc, txn, client, &candidates, ChooserNotice::SignedOut).await
+    };
+    with_cookies(resp, &browser.cookies)
 }
 
 // ── Token 端点 ──────────────────────────────────────────────────────────────
@@ -1160,26 +1404,52 @@ pub async fn userinfo(
 
 // ── 登出（只清除 FloatCTF 本地 SSO 会话） ─────────────────────────────────────
 
-/// POST /oauth/logout
+/// POST /oauth/logout（非标准、保留兼容：清除本浏览器的 FloatCTF 登录，不通知第三方应用）。
+/// 标准 RP-Initiated Logout 见 `end_session`。
 #[post("/oauth/logout")]
 pub async fn logout(req: HttpRequest, oidc: Option<WebOidc>, db: WebDb) -> HttpResponse {
     let Some(oidc) = oidc else {
         return not_enabled();
     };
-    if !same_origin(&req, &oidc) {
+    if !accounts::first_party_request(&req, &oidc) {
         return HttpResponse::Forbidden().finish();
     }
-    if let Some(value) = sso_cookie_value(&req, &oidc)
-        && let Err(e) = store::revoke_session(&db, &value).await
-    {
-        tracing::error!(error = %e, "OIDC logout failed");
-        return HttpResponse::InternalServerError().finish();
-    }
+    let cookies = if oidc.config.multi_account {
+        let result = async {
+            let mut browser = accounts::load(&db, &oidc, &req).await?;
+            accounts::sign_out_browser(
+                &db,
+                &oidc,
+                &mut browser,
+                accounts::RevokeReason::LegacyLogout,
+            )
+            .await?;
+            Ok::<_, crate::api::AppError>(browser.cookies)
+        }
+        .await;
+        match result {
+            Ok(cookies) => cookies,
+            Err(e) => {
+                tracing::error!(error = %e, "OIDC logout failed");
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    } else {
+        if let Some(value) = sso_cookie_value(&req, &oidc)
+            && let Err(e) = store::revoke_session(&db, &value, "legacy_logout").await
+        {
+            tracing::error!(error = %e, "OIDC logout failed");
+            return HttpResponse::InternalServerError().finish();
+        }
+        vec![removal_cookie(
+            sso_cookie_name(oidc.secure_cookies()),
+            oidc.secure_cookies(),
+        )]
+    };
     let mut resp = no_store(HttpResponse::NoContent()).finish();
-    let _ = resp.add_cookie(&removal_cookie(
-        sso_cookie_name(oidc.secure_cookies()),
-        oidc.secure_cookies(),
-    ));
+    for cookie in &cookies {
+        let _ = resp.add_cookie(cookie);
+    }
     resp
 }
 
@@ -1188,12 +1458,17 @@ mod tests {
     use super::same_origin_avatar;
 
     #[test]
-    fn chooser_avatar_is_limited_to_same_origin_relative_paths() {
+    fn chooser_avatar_is_limited_to_uploaded_public_images() {
         assert_eq!(
-            same_origin_avatar(Some("/public/avatars/a.png")).as_deref(),
-            Some("/public/avatars/a.png")
+            same_origin_avatar(Some("/public/images/20261025_ab12cd.png")).as_deref(),
+            Some("images/20261025_ab12cd.png")
         );
         for rejected in [
+            "/public/avatars/a.png",
+            "/public/images/../private/a.png",
+            "/public/images/.hidden",
+            "/public/images/a%2Fb.png",
+            "/public/images/",
             "https://evil.example/a.png",
             "//evil.example/a.png",
             "/\\evil.example/a.png",

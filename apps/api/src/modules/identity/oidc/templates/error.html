@@ -1,8 +1,10 @@
 {% extends "layout.html" %}
-{% block title %}无法完成授权{% endblock %}
+{% block title %}无法完成{% endblock %}
 {% block content %}
-<h1>无法完成授权</h1>
-<div class="error" role="alert">{{ message }}</div>
-<p class="muted">出于安全考虑，FloatCTF 不会把你重定向回未经验证的地址。请返回原应用重新发起登录；若问题持续，请联系该应用的开发者。</p>
-{% if error_code %}<p class="muted">错误代码：{{ error_code }}</p>{% endif %}
+<div class="header">
+  <h1>{% if title %}{{ title }}{% else %}无法完成授权{% endif %}</h1>
+</div>
+<div class="alert error" role="alert">{{ message }}</div>
+<p class="small muted">出于安全考虑，FloatCTF 不会把你重定向回未经验证的地址。请返回原应用重新发起；若问题持续，请联系该应用的开发者。</p>
+{% if error_code %}<p class="small muted">错误代码：{{ error_code }}</p>{% endif %}
 {% endblock %}

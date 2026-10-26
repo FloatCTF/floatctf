@@ -53,3 +53,7 @@ export {
 	createOidcServiceApi,
 	type OidcServiceApi,
 } from "./oidc.js";
+export {
+	createWebSessionServiceApi,
+	type WebSessionServiceApi,
+} from "./webSession.js";

@@ -129,11 +129,17 @@ impl KeyRing {
 
     /// 用 active key 以 RS256 签名；header 带 `kid` 与 `typ=JWT`。
     pub fn sign<T: Serialize>(&self, claims: &T) -> Result<String, String> {
+        self.sign_typed(claims, "JWT")
+    }
+
+    /// 同 [`Self::sign`]，但指定 JWS `typ`（Back-Channel Logout 1.0 §2.4 推荐 `logout+jwt`，
+    /// 防止 Logout Token 与 ID Token 互相混用）。
+    pub fn sign_typed<T: Serialize>(&self, claims: &T, typ: &str) -> Result<String, String> {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(self.active_kid.clone());
-        header.typ = Some("JWT".into());
+        header.typ = Some(typ.into());
         jsonwebtoken::encode(&header, claims, &self.encoding)
-            .map_err(|e| format!("sign id_token: {e}"))
+            .map_err(|e| format!("sign {typ}: {e}"))
     }
 
     /// 校验本 OP 签发的 JWT（只接受 RS256 + key ring 内的 `kid` + `iss`）。

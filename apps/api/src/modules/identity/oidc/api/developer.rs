@@ -87,6 +87,10 @@ pub struct ClientDto {
     pub token_endpoint_auth_method: OidcTokenAuthMethod,
     pub redirect_uris: Vec<String>,
     pub allowed_scopes: Vec<String>,
+    /// RP-Initiated Logout 允许的退出后回跳地址。
+    pub post_logout_redirect_uris: Vec<String>,
+    /// Back-Channel Logout 接收地址（只在用户明确「退出所有关联应用」时投递）。
+    pub backchannel_logout_uri: Option<String>,
     pub require_pkce: bool,
     pub status: OidcClientStatus,
     pub status_reason: Option<String>,
@@ -108,6 +112,8 @@ impl ClientDto {
         Self {
             redirect_uris: clients::redirect_uris_of(&m),
             allowed_scopes: clients::scopes_of(&m),
+            post_logout_redirect_uris: clients::post_logout_redirect_uris_of(&m),
+            backchannel_logout_uri: m.backchannel_logout_uri.clone(),
             client_id: m.client_id,
             name: m.name,
             description: m.description,
@@ -166,6 +172,10 @@ pub struct ProviderInfoDto {
     pub scopes_supported: Vec<&'static str>,
     pub require_client_approval: bool,
     pub allow_loopback_redirect_uris: bool,
+    /// 部署开启标准退出时的 `end_session_endpoint`（否则为空）。
+    pub end_session_endpoint: Option<String>,
+    /// 部署是否支持 Back-Channel Logout。
+    pub backchannel_logout_supported: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +189,12 @@ pub struct ClientInputDto {
     pub logo_url: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scopes: Vec<String>,
+    /// 省略 = 保持原值（旧版前端的整体 PATCH 不会清空）。
+    #[serde(default)]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    /// 省略 = 保持原值；空字符串 = 清除。
+    #[serde(default)]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 impl From<ClientInputDto> for ClientInput {
@@ -190,6 +206,8 @@ impl From<ClientInputDto> for ClientInput {
             logo_url: d.logo_url,
             redirect_uris: d.redirect_uris,
             scopes: d.scopes,
+            post_logout_redirect_uris: d.post_logout_redirect_uris,
+            backchannel_logout_uri: d.backchannel_logout_uri,
         }
     }
 }
@@ -230,6 +248,11 @@ pub async fn provider_info(
         scopes_supported: scope::SUPPORTED.to_vec(),
         require_client_approval: oidc.config.require_client_approval,
         allow_loopback_redirect_uris: oidc.config.allow_loopback_redirect_uris,
+        end_session_endpoint: oidc
+            .config
+            .backchannel_logout
+            .then(|| format!("{issuer}{}", metadata::PATH_END_SESSION)),
+        backchannel_logout_supported: oidc.config.backchannel_logout,
     })))
 }
 

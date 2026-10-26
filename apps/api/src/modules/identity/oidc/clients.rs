@@ -21,7 +21,10 @@ pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_DESCRIPTION_CHARS: usize = 500;
 
 /// 所有者可编辑的字段。
-#[derive(Debug, Clone)]
+///
+/// 标准退出相关字段为 `Option`：`None` = 保持原值（旧版前端的整体 PATCH 不会把它们清空），
+/// `Some` = 替换；`backchannel_logout_uri = Some("")` 表示清除。
+#[derive(Debug, Clone, Default)]
 pub struct ClientInput {
     pub name: String,
     pub description: Option<String>,
@@ -29,6 +32,8 @@ pub struct ClientInput {
     pub logo_url: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scopes: Vec<String>,
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    pub backchannel_logout_uri: Option<String>,
 }
 
 /// 校验并规范化后的输入。
@@ -40,6 +45,10 @@ pub struct NormalizedInput {
     pub logo_url: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scopes: Vec<String>,
+    /// `None` = 保持原值。
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    /// `None` = 保持原值；`Some(None)` = 清除。
+    pub backchannel_logout_uri: Option<Option<String>>,
 }
 
 pub fn validate_input(
@@ -90,6 +99,37 @@ pub fn validate_input(
     }
     let scopes = scope::normalize_client_scopes(&input.scopes)?;
 
+    let post_logout_redirect_uris = match &input.post_logout_redirect_uris {
+        None => None,
+        Some(list) => {
+            let mut uris: Vec<String> = Vec::new();
+            for uri in list {
+                let uri = uri.trim();
+                redirect_uri::validate_registration(uri, allow_loopback)
+                    .map_err(|e| format!("退出后回跳地址：{e}"))?;
+                if !uris.iter().any(|u| u == uri) {
+                    uris.push(uri.to_string());
+                }
+            }
+            if uris.len() > redirect_uri::MAX_REDIRECT_URIS {
+                return Err(format!(
+                    "退出后回跳地址最多 {} 个",
+                    redirect_uri::MAX_REDIRECT_URIS
+                ));
+            }
+            Some(uris)
+        }
+    };
+    let backchannel_logout_uri = match input.backchannel_logout_uri.as_deref().map(str::trim) {
+        None => None,
+        Some("") => Some(None),
+        Some(uri) => {
+            validate_backchannel_uri(uri, allow_loopback)
+                .map_err(|e| format!("后端退出通知地址{e}"))?;
+            Some(Some(uri.to_string()))
+        }
+    };
+
     Ok(NormalizedInput {
         name: name.to_string(),
         description,
@@ -97,7 +137,30 @@ pub fn validate_input(
         logo_url,
         redirect_uris,
         scopes,
+        post_logout_redirect_uris,
+        backchannel_logout_uri,
     })
+}
+
+/// Back-Channel Logout 接收地址（登记期校验）：绝对 https URL，无 userinfo / fragment；
+/// http 只允许 loopback 且部署显式允许。目标地址的网段策略在**投递时**按解析结果再校验（防 DNS 重绑定）。
+pub fn validate_backchannel_uri(uri: &str, allow_loopback: bool) -> Result<(), String> {
+    if uri.len() > redirect_uri::MAX_REDIRECT_URI_LEN {
+        return Err("过长".into());
+    }
+    let parsed = url::Url::parse(uri).map_err(|_| "不是合法的绝对 URL".to_string())?;
+    let host = parsed.host_str().ok_or("缺少主机名")?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("不得包含用户名或密码".into());
+    }
+    if parsed.fragment().is_some() {
+        return Err("不得包含 #fragment".into());
+    }
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if allow_loopback && crate::core::config::is_loopback_host(host) => Ok(()),
+        _ => Err("必须使用 https".into()),
+    }
 }
 
 fn non_empty(value: &Option<String>) -> Option<String> {
@@ -213,6 +276,10 @@ pub fn scopes_of(client: &oidc_clients::Model) -> Vec<String> {
     scope::from_json(&client.allowed_scopes)
 }
 
+pub fn post_logout_redirect_uris_of(client: &oidc_clients::Model) -> Vec<String> {
+    scope::from_json(&client.post_logout_redirect_uris)
+}
+
 // ── 持久化 ──────────────────────────────────────────────────────────────────
 
 /// 创建应用；机密客户端返回仅此一次可见的 secret 明文。
@@ -253,6 +320,10 @@ pub async fn create(
         token_endpoint_auth_method: Set(auth_method),
         redirect_uris: Set(scope::to_json(&normalized.redirect_uris)),
         allowed_scopes: Set(scope::to_json(&normalized.scopes)),
+        post_logout_redirect_uris: Set(scope::to_json(
+            &normalized.post_logout_redirect_uris.unwrap_or_default(),
+        )),
+        backchannel_logout_uri: Set(normalized.backchannel_logout_uri.flatten()),
         require_pkce: Set(true),
         secret_hash: Set(secret_hash),
         previous_secret_hash: Set(None),
@@ -286,6 +357,12 @@ pub async fn update(
     active.logo_url = Set(normalized.logo_url);
     active.redirect_uris = Set(scope::to_json(&normalized.redirect_uris));
     active.allowed_scopes = Set(scope::to_json(&normalized.scopes));
+    if let Some(uris) = normalized.post_logout_redirect_uris {
+        active.post_logout_redirect_uris = Set(scope::to_json(&uris));
+    }
+    if let Some(uri) = normalized.backchannel_logout_uri {
+        active.backchannel_logout_uri = Set(uri);
+    }
     active.updated_at = Set(Utc::now().fixed_offset());
     Ok(active.update(db).await?)
 }
@@ -388,7 +465,69 @@ mod tests {
                 "https://learnos.example.com/auth/callback".into(),
             ],
             scopes: vec!["email".into(), "openid".into()],
+            ..ClientInput::default()
         }
+    }
+
+    #[test]
+    fn logout_fields_are_validated_and_absent_means_unchanged() {
+        let n = validate_input(&input(), false).unwrap();
+        assert_eq!(n.post_logout_redirect_uris, None, "未提供 = 保持原值");
+        assert_eq!(n.backchannel_logout_uri, None);
+
+        let with = ClientInput {
+            post_logout_redirect_uris: Some(vec![
+                "https://learnos.example.com/auth/signed-out".into(),
+                "https://learnos.example.com/auth/signed-out".into(),
+            ]),
+            backchannel_logout_uri: Some(
+                "https://learnos.example.com/api/oidc/backchannel-logout".into(),
+            ),
+            ..input()
+        };
+        let n = validate_input(&with, false).unwrap();
+        assert_eq!(
+            n.post_logout_redirect_uris.unwrap(),
+            vec!["https://learnos.example.com/auth/signed-out".to_string()]
+        );
+        assert_eq!(
+            n.backchannel_logout_uri,
+            Some(Some(
+                "https://learnos.example.com/api/oidc/backchannel-logout".into()
+            ))
+        );
+
+        let cleared = ClientInput {
+            backchannel_logout_uri: Some("  ".into()),
+            ..input()
+        };
+        assert_eq!(
+            validate_input(&cleared, false)
+                .unwrap()
+                .backchannel_logout_uri,
+            Some(None)
+        );
+
+        for bad in [
+            "http://learnos.example.com/bc",
+            "https://user:pw@learnos.example.com/bc",
+            "https://learnos.example.com/bc#x",
+            "javascript:alert(1)",
+            "/relative",
+        ] {
+            let i = ClientInput {
+                backchannel_logout_uri: Some(bad.into()),
+                ..input()
+            };
+            assert!(validate_input(&i, false).is_err(), "{bad}");
+        }
+        assert!(validate_backchannel_uri("http://127.0.0.1:3000/bc", true).is_ok());
+        assert!(validate_backchannel_uri("http://127.0.0.1:3000/bc", false).is_err());
+        let bad_post = ClientInput {
+            post_logout_redirect_uris: Some(vec!["https://*.example.com/x".into()]),
+            ..input()
+        };
+        assert!(validate_input(&bad_post, false).is_err());
     }
 
     #[test]
@@ -505,6 +644,8 @@ mod tests {
             reviewed_at: None,
             created_at: now,
             updated_at: now,
+            post_logout_redirect_uris: serde_json::json!([]),
+            backchannel_logout_uri: None,
         }
     }
 

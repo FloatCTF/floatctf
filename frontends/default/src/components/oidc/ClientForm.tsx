@@ -7,6 +7,9 @@ export type OidcClientFormState = {
 	description: string;
 	redirect_uris_text: string;
 	scopes: string[];
+	/** 标准退出（编辑页提供；创建表单不带时服务端保持为空）。 */
+	post_logout_redirect_uris_text?: string;
+	backchannel_logout_uri?: string;
 };
 
 export const emptyOidcClientForm = (): OidcClientFormState => ({
@@ -30,7 +33,42 @@ export const toOidcClientInput = (form: OidcClientFormState) => ({
 	description: form.description.trim() || null,
 	redirect_uris: redirectUrisOf(form.redirect_uris_text),
 	scopes: Array.from(new Set(["openid", ...form.scopes])),
+	...(form.post_logout_redirect_uris_text === undefined
+		? {}
+		: { post_logout_redirect_uris: redirectUrisOf(form.post_logout_redirect_uris_text) }),
+	...(form.backchannel_logout_uri === undefined
+		? {}
+		: { backchannel_logout_uri: form.backchannel_logout_uri.trim() }),
 });
+
+/** 标准退出：退出后回跳地址（每行一个）与后端退出通知地址。 */
+export const LogoutUrisInputs = {
+	PostLogout: ({
+		form,
+	}: {
+		form: Pick<OidcClientFormState, "post_logout_redirect_uris_text">;
+	}) => (
+		<Textarea
+			value={form.post_logout_redirect_uris_text ?? ""}
+			onChange={(e) => {
+				form.post_logout_redirect_uris_text = e.target.value;
+			}}
+			rows={2}
+			placeholder="https://app.example.com/auth/signed-out"
+			className="font-mono"
+		/>
+	),
+	Backchannel: ({ form }: { form: Pick<OidcClientFormState, "backchannel_logout_uri"> }) => (
+		<TextInput
+			value={form.backchannel_logout_uri ?? ""}
+			onChange={(e) => {
+				form.backchannel_logout_uri = e.target.value;
+			}}
+			placeholder="https://app.example.com/api/oidc/backchannel-logout"
+			className="font-mono"
+		/>
+	),
+};
 
 export const RedirectUrisInput = ({
 	form,

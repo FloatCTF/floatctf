@@ -193,3 +193,120 @@ B 独立同意、A 旧会话被撤销、两条独立 consent；`consent` / `logi
 3. 平台没有「停用用户」状态，PLAN 中「停用账号」场景以「用户被删除 → 会话失效」与 RP 侧停用（LearnOS `disabled_at`）覆盖。
 4. 不实现统一退出（RP-Initiated / Back-Channel Logout）。
 
+
+## 9. 统一身份（主站会话 × 多账号 × 标准退出，2026-10-26，分支 `feat/unified-identity`）
+
+设计见 [ADR-unified-identity.md](ADR-unified-identity.md)，审计、威胁模型与执行矩阵见 [unified-identity-audit.md](unified-identity-audit.md)，
+上线与回滚见 [oidc-operations.md](oidc-operations.md) §11。LearnOS 侧见其仓库 `docs/floatctf-unified-logout.md`。
+
+**环境**：Fedora 宿主上的隔离测试栈——一次性容器 PostgreSQL 17（FloatCTF、LearnOS 各一个）/ Redis 7 / RustFS；
+FloatCTF API 为本分支 debug 构建（`awd.network_runtime = "noop"`，Docker 只接 `_ping` 桩），Default Frontend 为本分支制品；
+LearnOS 为其 `feat/unified-identity` 分支生产构建（`next start`）。Caddy 按 `scripts/install.sh` 内嵌模板提供
+`https://ctf.localhost:8443`（API + `/public` → RustFS + 前端注册表）与 `https://learn.localhost:8444`。
+TLS 由一次性测试 CA 签发，Chrome（独立 NSS 库）与 Node（`NODE_EXTRA_CA_CERTS`）都**校验证书**，没有 `ignoreHTTPSErrors`。
+统一模式开关：`multi_account`、`unified_web_session`、`backchannel_logout` 全开，`backchannel_trusted_hosts = ["learn.localhost:8444", "learn.localhost:8446"]`
+（8446 无人监听，用于网络不可达）。**未部署到任何生产或公网环境。**
+
+### 9.1 自动化测试
+
+| 套件 | 命令 | 结果 |
+|------|------|------|
+| 质量门禁 `mise run check`：fmt + lint（workspace clippy、五个前端 lint、`web:typecheck`、`web:architecture`） | `mise run check` | fmt、lint 通过（clippy 只有既有 warning；biome 0 error） |
+| 质量门禁 `test` 阶段：Rust 全量（一次性兄弟库）+ Web 单测 + 前端管理器 | `scripts/test-rust.sh --no-fail-fast`、`pnpm run test:web`、`scripts/test-frontend-manager.sh`（`FLOATCTF_CONFIG` 指向隔离测试库的完整配置） | Rust **1075 passed / 6 failed / 14 ignored**——6 个失败全部是 `awdp_training`（本机缺本地镜像 `floatctf/test-g:gamebox-v1.0.3`，与 §1、§8 相同的既有失败，与本轮无关）；Web 69 / 109 / 15 / 189 passed；前端管理器 72/72。第一次 `mise run check` 因我给的基础 TOML 缺 `[server]`，一次性库没建成、`awd_score_semantics` 21 个用例在共享库上连接池超时；改用完整配置后该套件单独与全量均通过 |
+| 统一会话集成（真实 PostgreSQL） | `cargo test -p floatctf --test oidc_unified_session` | 15 个用例（见下） |
+| 标准退出集成（真实 PostgreSQL + 本地 HTTPS 接收端） | `cargo test -p floatctf --test oidc_standard_logout` | 7 个用例 |
+| 页面资源 / 头像（真实 RustFS） | `cargo test -p floatctf --test oidc_pages_assets` | 3 个用例 |
+| 账号选择（P2 重设计后全部保留） | `cargo test -p floatctf --test oidc_account_chooser` | 16 个用例 |
+| OIDC 单元（`decide` 矩阵、模板转义、Logout Token claims、公网地址判定、配置校验等） | `cargo test -p floatctf --lib identity::oidc` | 83 passed |
+| Default Frontend | `pnpm exec vitest run`、`biome lint`、`tsc --noEmit`、`vite build` | 189 passed；lint 0 error（5 条既有 warning）；tsc / build 通过 |
+| 安装器契约（含参考 Caddyfile / prod TOML 与内嵌模板无漂移） | `scripts/test-installer-contract.sh` | 114/114 |
+| LearnOS 单元 + 集成（含 Logout Token 10 项、Back-Channel 7 项） | `pnpm test` | 142 passed / 10 skipped |
+| LearnOS 类型检查 / 构建 / 客户端密钥扫描 | `pnpm typecheck`、`pnpm build`、`pnpm security:scan` | 通过 |
+| LearnOS lint | `pnpm lint` | **1 error**：`tests/integration/rls.test.ts` 的 `@ts-nocheck`——upstream/main 上已存在，与本轮无关，未修改 |
+
+### 9.2 真实浏览器跨应用 E2E（Chrome × 真实 HTTPS）
+
+LearnOS `tests/e2e/floatctf-unified-identity.spec.ts`：两个 FloatCTF 账号 A/B、四个独立浏览器上下文（浏览器 A、B 与设备 C、D）。
+**17/17 passed**（`E2E_FLOATCTF_UNIFIED=1 pnpm exec playwright test tests/e2e/floatctf-unified-identity.spec.ts`）。
+
+同一环境：LearnOS 全量 `pnpm exec playwright test` **43 passed / 18 skipped / 0 failed**（skipped = 只在旧模式或外部 IdP 环境运行的两套 FloatCTF spec）；
+`floatctf-sso.spec.ts`（`E2E_FLOATCTF_SSO=1`）对统一模式 OP **12/12**；FloatCTF 开关全部关闭（旧模式）时
+`floatctf-account-chooser.spec.ts` + `floatctf-sso.spec.ts` **18 passed / 6 skipped**。
+
+最终证据运行（全部提交之后）：主机重启后按 LearnOS `docs/floatctf-unified-logout.md` §5 从零重建测试环境，统一模式 spec **17/17**、
+旧模式两套 spec **18 passed / 6 skipped**；重启前同一代码的 LearnOS 全量 E2E **43 passed / 18 skipped / 0 failed**。
+
+### 9.3 A01–A20
+
+| ID | 结论 | 证据 |
+|----|------|------|
+| A01 主站密码登录 → LearnOS | **PASS** | E2E「A01/U01」：只有 HttpOnly + Secure + host-only `__Host-fctf_accounts`，`localStorage` 无令牌；选择页 1 个账号、点选即进入、全程无 `/oauth/login`；LearnOS 会话绑定的 `sid` 正是主站登录建立的身份会话。集成 `main_site_login_then_rp_chooser_continues_without_password`、`web_login_sets_only_an_httponly_container_cookie_and_returns_no_token` |
+| A02 LearnOS OIDC → 主站 | **PASS** | E2E「A02/U03」：新浏览器在 LearnOS 经 FloatCTF 输入密码，打开主站直接进入 `/service` 且为同一账号。集成 `oidc_login_page_restores_main_site_without_password` |
+| A03 LearnOS 本地退出 | **PASS** | E2E「A03/U04」：LearnOS 会话为空、主站仍登录；再次 SSO 先出选择页，免密码、无同意页。旧模式 spec 02/03/17 |
+| A04 FloatCTF 普通退出 | **PASS** | E2E「A04/U05/U12」：该浏览器的身份会话 `revoked_at` 置位、主站未登录且无可选账号、另一浏览器同一用户的会话不受影响；LearnOS 会话仍可用；重新打开主站不会被静默恢复。集成 `main_site_logout_revokes_identity_session_and_never_silently_restores`、`ordinary_logout_never_notifies_relying_parties` |
+| A05 退出后重新登录 LearnOS | **PASS** | E2E「A05」：FloatCTF 已退出时 LearnOS SSO 直达登录页，必须输入密码 |
+| A06 退出请求失败 | **PASS** | E2E「A06」：注入网络中断与 HTTP 500，均弹出「退出未完成 … 当前登录状态没有改变」，页面仍在 `/service`，服务端会话列表不变。单测 `keeps the user signed in and explains when sign-out fails` |
+| A07 同浏览器 A/B | **PASS** | E2E「A07/U06/U11」：主站添加 B 后选择页恰好 2 个真实账号；选 B 进入 B 自己的同意页（不继承 A 的授权），LearnOS 用户不同；库内两条独立 consent；RP 选 B 后主站当前账号仍是 A。集成 `rp_choosing_another_account_never_switches_the_main_site`、`password_login_rotates_container_secret_and_caps_accounts` |
+| A08 并发与跨标签 | **PASS** | 集成 `concurrent_continue_issues_exactly_one_code`（统一与选择页两套，8 路并发只发 1 个码）、`account_change_in_another_tab_forces_reconfirmation_and_never_mixes_users`；E2E「A08」：一个标签切换账号，另一个标签同步；旧模式 spec 15/16 |
+| A09 单账号 / 全部清理 | **PASS** | E2E「A09」：选择页「退出账号」只移除 B，主站随之只剩 A 且要求用户明确选择（不自动换人）；主站「退出本浏览器中的全部账号」后无任何账号，SSO 需要密码。集成 `chooser_signs_out_one_account_then_all_accounts` |
+| A10 prompt 兼容 | **PASS** | E2E「A10/A11」（不带 prompt 的旧 RP）：多账号先选择；`prompt=none` → 302 `account_selection_required` + `state` + `iss`，不渲染页面；`prompt=login` 选中后仍要密码。集成 `consent_and_login_prompts_do_not_show_the_chooser`、`prompt_none_never_renders_the_chooser`、`legacy_rp_without_prompt_keeps_silent_sso`；旧模式 spec 20/09 |
+| A11 `max_age=0`、`id_token_hint` | **PASS** | 集成 `id_token_hint_and_max_age_zero_with_several_accounts`（hint 只留下对应账号，`prompt=none` 静默成功；别人的正确密码不能满足 hint）、`id_token_hint_blocks_switching_to_a_different_account`；E2E `max_age=0` 选中后仍要密码 |
+| A12 Logout Token 伪造 / 重放 | **PASS** | LearnOS 单元（伪造签名 / 他人密钥 / 错误算法、非 `logout+jwt`（如重放的 ID Token）、不受信 issuer / 错 aud、过期 / 未来 / 过旧、events / nonce / jti / 标识缺失或畸形、垃圾与超长输入、sid-only 与 sub-only）与集成（只撤销对应 sid 且立即失效；拒绝重放 / 错 aud / 错签名 / 不受信 issuer / 错 typ / 非表单且不删除任何会话；只有 sub；无会话返回 200；登录上下文隔离；provider-logout 回归）；E2E「A12」：真实端点拒绝非 JWT、他人私钥签名（同 kid）、`alg=none`，所有会话不受影响。OP 端 `end_session_validates_hint_redirect_and_requires_confirmation` |
+| A13 全局退出作用范围 | **PASS** | E2E「A13/U08」：浏览器 A 中 A 的「退出所有关联应用」只撤销该 `sid` 并让 LearnOS 中对应会话失效；设备 C 上 A 的另一次登录、设备 D 上的 B、浏览器 A 中的 B 都保持登录；outbox 行 `delivered`；结果对话框列出 LearnOS「已确认退出」。集成 `global_logout_revokes_only_the_selected_session_and_sends_a_valid_logout_token` |
+| A14 投递失败 | **PASS** | E2E「A14」：把 LearnOS 的退出通知地址指向受信任但无人监听的端口（真实连接失败）→ 对话框「已退出 FloatCTF，但应用未全部同步 / 未送达，将自动重试」，outbox `pending`、`attempts = 1`、`last_error` 有值，OP 会话已撤销而 LearnOS 会话仍然有效（不谎报）；恢复地址后后台 worker 重试 → `delivered`，LearnOS 会话失效。集成 `unreachable_receiver_is_reported_and_retried` |
+| A15 Logo 与头像 | **PASS（本地）** | E2E「A15」：`/oauth/assets/float.png` 200 `image/png`；上传的真实头像加载；指向不存在文件的头像被隐藏、露出首字母，页面无可见破图。HTTP 实测：`/oauth/assets/*` 带 `nosniff`、`CORP same-origin`；页面 CSP `default-src 'none'; img-src 'self'; script-src 'self'…`。主站账号菜单 / 登录页账号选择的头像失败也回退首字母（本轮修复 `a5515d8`、`33dc1b8`）。集成 `official_logo_and_page_assets_are_served_from_the_op_origin`、`chooser_avatars_are_scoped_validated_and_fall_back_to_initials`。真实部署 origin 上的复核见 9.5 |
+| A16 亮暗 × 5 种宽度 | **PASS（本地）** | 7 类 OP 页面 × 亮/暗 × 320/390/768/1440/1920 共 90 张截图：无横向滚动；≥768px 时卡片宽 400–480px；390px 下所有可点击元素 ≥44px（本轮修复 `667874d`）；axe-core 4.14 WCAG 2.1 A/AA 在 6 类页面亮、暗两种配色下 **0 违规**。键盘：旧模式 spec「窄屏暗色」Tab 落到账号行、Enter 继续。截图见 9.4 |
+| A17 双 issuer / 内外网 | **PASS（配置与文档）/ BLOCKED（生产实测）** | 配置单测 `unified_web_session_requires_browser_account_container`（`first_party_origins` 必须与 issuer 同主机、拒绝其他主机与非 origin 形态）、`unified_identity_switches_default_off_for_staged_rollout`；LearnOS 受信 issuer 列表与 `(iss, sid)` 映射；方案见 `oidc-operations.md` §11.1。生产 `10.66.66.7` / `120.95.81.151` 两套 issuer 的实测需要生产访问权限：**BLOCKED** |
+| A18 LearnOS 学习数据 | **PASS** | LearnOS 全量 E2E 43 passed（学习流程、笔记、进度、并发报名、管理员课程与详情、访问控制、安全、响应式）；旧模式 spec「04/22」A/B 的报名与笔记互相不可见；`pnpm test` 142 passed；退出后登录页清理私有本地缓存（`ClearPrivateLocalData`） |
+| A19 管理员 / CLI | **PASS** | E2E「A19」：带 CSRF 的用户 Cookie 访问 `/api/admin/oidc/clients`、`/api/admin/users` 均 401；Cookie 访问 `/api/users/me` 200；CLI Bearer 令牌访问 `/api/users/me` 200、访问管理接口 401。集成 `cookie_requests_need_csrf_first_party_origin_and_matching_account` |
+| A20 CSRF / 跨站 / SSRF | **PASS** | E2E「A20」：Cookie 写接口缺 CSRF、伪造 CSRF、正确 CSRF 但跨站 `Origin` 均 403 且状态不变；跨站 Login CSRF 403；登记期拒绝 http / userinfo / fragment；投递期指向环回地址被拒绝（`failed`、「非公网地址」、不重试），LearnOS 会话不受影响。集成 `web_login_rejects_cross_site_and_missing_custom_header`、`rejected_and_internal_targets_fail_honestly` |
+
+### 9.4 截图（`images/unified/`，全量 90 张随测试证据保存）
+
+| 页面 | 亮色 | 暗色 |
+|------|------|------|
+| 选择账号（两个账号，桌面） | ![](images/unified/chooser-two-light-1440.png) | ![](images/unified/chooser-two-dark-1440.png) |
+| 选择账号（移动 390px） | ![](images/unified/chooser-two-light-390.png) | ![](images/unified/chooser-two-dark-390.png) |
+| 「退出账号」展开（390px） | ![](images/unified/chooser-manage-light-390.png) | ![](images/unified/chooser-manage-dark-390.png) |
+| 授权同意 | ![](images/unified/consent-light-390.png) | ![](images/unified/consent-dark-1440.png) |
+| 登录 / 登录失败 | ![](images/unified/login-light-1440.png) | ![](images/unified/login-error-dark-390.png) |
+| RP 发起的退出确认 | ![](images/unified/end-session-light-1440.png) | ![](images/unified/end-session-dark-390.png) |
+| 单账号 320px / 错误页 768px | ![](images/unified/chooser-single-light-320.png) | ![](images/unified/error-light-768.png) |
+
+主站：账号菜单（两个账号）![](images/unified/main-account-menu.png)
+「退出所有关联应用」确认与逐应用结果 ![](images/unified/main-global-confirm.png) ![](images/unified/main-global-result.png)
+退出当前账号后让用户明确选择剩余账号 ![](images/unified/main-pick-account.png)；头像失效时回退首字母 ![](images/unified/main-menu-broken-avatar.png)
+
+### 9.5 迁移、备份与回滚演练（本地一次性库）
+
+- 用 upstream/main（`64cb4bb`，含已上线的账号选择迁移）的 `migrate.sh` 建出升级前库，写入代表性数据（用户、机密应用、授权、旧单会话），
+  `pg_dump --format=custom` 备份。
+- 本分支 `migrate.sh apply`：Applied 2 / Pending 0；`verify` OK；用户 / 应用 / 授权 / 会话行数不变；旧会话自动获得 `sid`、`container_id` 为空；
+  应用的 `post_logout_redirect_uris = []`、`backchannel_logout_uri = null`；两份新迁移手工重放均 exit 0（幂等）。
+- `pg_restore` 到新库：数据与升级前一致、`oidc_browser_containers` 不存在、`migrate.sh status` 显示 2 个 pending——备份可恢复到升级前。
+- **代码回滚**：upstream/main（1.0.2，`64cb4bb`）的 API 二进制直接运行在已迁移的库上：正常启动；Discovery 不宣告 `end_session_endpoint`；
+  注册、口令登录（下发旧版 `fctf_sso`）、Bearer `/api/users/me` 正常；它写入的会话行自动获得 `sid`、`container_id` 为空；升级前的旧会话仍可读取。
+  即：回滚代码不需要回滚迁移。
+
+### 9.6 本轮发现并修复的问题
+
+| 提交 | 问题 | 发现方式 |
+|------|------|----------|
+| `8f12154` | 「退出所有关联应用」成功后主站立即跳回登录页并卸载账号菜单，逐应用结果对话框从未显示 | E2E A13 |
+| `667874d` | OP 页面若干触屏目标小于 44px（输入框、「退出」按钮、授权复选框、「使用其他账号」） | 截图审计 |
+| `a5515d8` | 主站账号菜单 / 登录页账号选择的头像加载失败时显示破图 | 真实浏览器截图 |
+| `33dc1b8` | 顶栏账号按钮中的头像被压成一条线 | 真实浏览器截图 |
+
+### 9.6.1 测试环境注意
+
+- 测试工具若先于 API 建出 `floatctf-public` 桶，桶不会有公开读策略（API 只在自己建桶时设置），`/public/images/*` 返回 403。
+  生产由 API 首次建桶，不受影响；测试环境需补策略。上传头像的对象没有设置 `Content-Type`（`application/octet-stream`），属既有行为：
+  OP 页面经头像端点按魔数校验并返回正确 MIME，不依赖它。
+- 整套 E2E 在同一 IP 上口令登录上百次，只在隔离测试库里调高了 `OIDC_LOGIN_RATE_PER_USER` / `OIDC_LOGIN_RATE_PER_IP`。
+
+### 9.7 未完成 / BLOCKED
+
+1. **生产部署、生产备份与恢复演练、真实双 issuer（`10.66.66.7:8443` / `120.95.81.151`）与公网 HTTPS 域名实测：BLOCKED**——本工作站没有生产主机、数据库与签名私钥的访问权限。命令与顺序见 `oidc-operations.md` §11。
+2. OpenID Foundation 一致性套件的 RP-Initiated / Back-Channel Logout 测试计划未运行（Phase 4 只跑了基础 OP 计划）。
+3. 生产 10.66 入口的主站与 LearnOS 同主机不同端口，FloatCTF Cookie 会被同主机其他端口的应用收到（ADR §7，既有问题；根治需不同主机名）。
+4. 头像上传对象不带 `Content-Type`（既有）；平台没有「停用用户」状态（同 §8.3）。

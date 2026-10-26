@@ -274,17 +274,30 @@ pub async fn run() -> Result<(), BootstrapError> {
         info!(
             issuer = %config.oidc.issuer,
             active_kid = %keys.active_kid(),
+            multi_account = config.oidc.multi_account,
+            unified_web_session = config.oidc.unified_web_session,
+            backchannel_logout = config.oidc.backchannel_logout,
             "OIDC provider enabled"
         );
-        Some(web::Data::new(
-            crate::modules::identity::oidc::OidcProvider::new(
-                config.oidc.clone(),
-                keys,
-                Arc::new(crate::infrastructure::ratelimit::RateLimiter::new(
-                    redis.clone(),
-                )),
-            ),
-        ))
+        // 开启标准退出时出站客户端必须可用（例如 backchannel_extra_ca_file 可读），否则拒绝启动。
+        if config.oidc.backchannel_logout {
+            crate::modules::identity::oidc::backchannel::Sender::from_config(&config.oidc)
+                .map_err(BootstrapError::Oidc)?;
+        }
+        let provider = web::Data::new(crate::modules::identity::oidc::OidcProvider::new(
+            config.oidc.clone(),
+            keys,
+            Arc::new(crate::infrastructure::ratelimit::RateLimiter::new(
+                redis.clone(),
+            )),
+        ));
+        if config.oidc.backchannel_logout {
+            crate::modules::identity::oidc::backchannel::spawn_worker(
+                db.get_ref().clone(),
+                provider.clone().into_inner(),
+            );
+        }
+        Some(provider)
     } else {
         info!("OIDC provider disabled ([oidc].enabled = false)");
         None

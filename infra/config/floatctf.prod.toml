@@ -115,6 +115,15 @@ web_terminal = true
 # issuer = "https://ctf.example.com"
 # require_client_approval = true
 # account_chooser = true                 # prompt=select_account 显示账号选择页；false 仅为临时回滚
+# 统一身份（docs/identity/ADR-unified-identity.md）：三个开关默认关闭，按顺序逐个开启，关闭即回到旧行为（不删数据）。
+# multi_account = true                   # 浏览器账号容器 __Host-fctf_accounts，同一浏览器可保留多个已登录账号
+# max_browser_accounts = 5
+# unified_web_session = true             # 主站改用服务端可撤销 Cookie 会话（要求 multi_account）；旧 localStorage JWT 首次访问时平滑迁移
+# first_party_origins = []               # 与 issuer 同主机、不同端口的其他主站入口，例如 ["https://10.0.0.7"]
+# backchannel_logout = true              # end_session_endpoint + Back-Channel Logout + ID Token sid；
+#                                        # 开启前所有 RP 必须先关闭「普通退出即 RP-Initiated Logout」（LearnOS ≥ 含 disableProviderLogout 的版本）
+# backchannel_trusted_hosts = []         # 允许解析到内网/环回的退出通知目标（host:port，运维白名单）；其余只能投递到公网地址
+# backchannel_extra_ca_file = "/etc/floatctf/oidc/rp-ca.pem"   # 内网 RP 使用私有 CA 时
 # [[oidc.signing_keys]]
 # kid = "oidc-20261023-a1b2"
 # private_key_file = "/etc/floatctf/oidc/oidc-20261023-a1b2.pem"

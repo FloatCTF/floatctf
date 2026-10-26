@@ -1,10 +1,15 @@
-import { serviceApi, userServiceApi } from "@/api";
+import { client, serviceApi, userServiceApi } from "@/api";
 import { useAppNavigate } from "@/navigation";
+import { isCookieMode, mutateSession } from "@/session";
 import { useAuthStore } from "@/stores/AuthStore";
+import { useSessionStore } from "@/stores/SessionStore";
 import { getLearnOSUrl } from "@/util";
-import { Button } from "@primer/react";
+import { Button, Dialog } from "@primer/react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+
+import { AccountMenu } from "./AccountMenu";
+import { formatApiError } from "./apiErrorMessage";
 
 export interface GenericHeaderProps
 	extends React.HTMLAttributes<HTMLDivElement> {
@@ -29,6 +34,7 @@ export const GenericHeader = ({
 }: GenericHeaderProps) => {
 	const authStore = useAuthStore();
 	const appNavigate = useAppNavigate();
+	const cookieMode = useSessionStore((s) => s.mode === "cookie");
 
 	const { data, isLoading } = useQuery({
 		queryKey: ["profile"],
@@ -88,17 +94,24 @@ export const GenericHeader = ({
 					>
 						LearnOS
 					</a>
-					<span
-						className="hover:cursor-pointer hover:underline"
-						onKeyUp={(e) => e.key === "Enter" && handleGoProfile()}
-						onClick={handleGoProfile}
-					>
-						{authStore.username}
-						{authStore.nickname && <span>:{authStore.nickname}</span>}
-					</span>
-					<Button variant="danger" onClick={onLogout}>
-						Logout
-					</Button>
+					{cookieMode ? (
+						// 统一会话：账号菜单（切换 / 添加 / 退出），状态以服务端为准。
+						<AccountMenu />
+					) : (
+						<>
+							<span
+								className="hover:cursor-pointer hover:underline"
+								onKeyUp={(e) => e.key === "Enter" && handleGoProfile()}
+								onClick={handleGoProfile}
+							>
+								{authStore.username}
+								{authStore.nickname && <span>:{authStore.nickname}</span>}
+							</span>
+							<Button variant="danger" onClick={onLogout}>
+								Logout
+							</Button>
+						</>
+					)}
 				</div>
 			) : (
 				<Button variant="danger" onClick={onLogout}>
@@ -109,24 +122,73 @@ export const GenericHeader = ({
 	);
 };
 
+/**
+ * 退出 FloatCTF（当前账号）：**服务端确认撤销后**才更新界面；失败如实告知「未完成退出」，
+ * 绝不出现「界面显示已退出、身份会话仍有效」。不通知第三方应用（LearnOS 已有会话保持不变）。
+ */
+async function signOutCurrentAccount(): Promise<void> {
+	if (isCookieMode()) {
+		await mutateSession((csrf) =>
+			client.service.webSession.logout("account", null, csrf),
+		);
+		return;
+	}
+	// 旧版 JWT 模式：先撤销 OIDC 身份会话，成功后再丢弃本地令牌。
+	try {
+		await serviceApi.oidc.endSso();
+	} catch (error) {
+		// 旧版 API 没有该接口：没有服务端会话可撤销。
+		if ((error as { httpStatus?: number }).httpStatus !== 404) throw error;
+	}
+	useAuthStore.getState().removeToken();
+}
+
 export const ServiceHeader = () => {
-	const authStore = useAuthStore();
 	const appNavigate = useAppNavigate();
+	const [logoutError, setLogoutError] = useState<string | null>(null);
+	const [pending, setPending] = useState(false);
+
+	const logout = async () => {
+		if (pending) return;
+		setPending(true);
+		try {
+			await signOutCurrentAccount();
+			setLogoutError(null);
+			appNavigate({ to: "/" });
+		} catch (error) {
+			setLogoutError(formatApiError(error));
+		} finally {
+			setPending(false);
+		}
+	};
 
 	return (
-		<GenericHeader
-			title="FloatCTF"
-			homePath="/"
-			logo="/float.png"
-			showUserInfo
-			useProfileQuery
-			onLogout={() => {
-				// 同时撤销服务端 SSO 会话（OIDC 第一方登录态）；失败不阻塞本地登出。
-				void serviceApi.oidc.endSso().catch(() => undefined);
-				authStore.removeToken();
-				appNavigate({ to: "/" });
-			}}
-		/>
+		<>
+			<GenericHeader
+				title="FloatCTF"
+				homePath="/"
+				logo="/float.png"
+				showUserInfo
+				useProfileQuery
+				onLogout={() => void logout()}
+			/>
+			{logoutError && (
+				<Dialog
+					title="退出未完成"
+					onClose={() => setLogoutError(null)}
+					footerButtons={[
+						{ content: "关闭", onClick: () => setLogoutError(null) },
+						{
+							content: "重试",
+							buttonType: "primary",
+							onClick: () => void logout(),
+						},
+					]}
+				>
+					<p>你仍处于登录状态：服务端没有确认撤销本次登录（{logoutError}）。请重试。</p>
+				</Dialog>
+			)}
+		</>
 	);
 };
 export const AdminHeader = () => {

@@ -40,6 +40,9 @@ pub struct IdTokenClaims {
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub at_hash: Option<String>,
+    /// 身份会话标识（Back-Channel Logout 1.0 §2.1）；部署开启标准退出且令牌来自浏览器会话时出现。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sid: Option<String>,
 }
 
 /// `at_hash`：access token ASCII 的 SHA-256 左半部分 base64url（RS256 → SHA-256，§3.1.3.6）。

@@ -1,10 +1,13 @@
 //! OIDC HTTP 端点。
 
+pub mod assets;
 pub mod developer;
 pub mod discovery;
+pub mod logout;
 pub mod pages;
 pub mod protocol;
 pub mod session;
+pub mod web_session;
 
 use actix_web::HttpResponse;
 

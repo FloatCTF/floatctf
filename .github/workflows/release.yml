@@ -161,26 +161,27 @@ jobs:
           echo "release artifacts:"
           ls -la release-artifacts
 
-      # 发布出去的 install.sh 必须能独立工作：源码里 6 个 DEFAULT_*_URL 是
-      # v0.0.0-fake 占位，--assemble 会把它们固化成 v<version>；这里再断言一次，
-      # 防止装配逻辑被改回「原样拷贝」而发布出不可用的安装器。
-      - name: Verify installer is release-ready
+      # 安装器默认指向 releases/latest/download/（不传 --version 即装最新版）。
+      # 装配脚本内部已断言；这里再独立检查一次，防止有人把默认地址改回硬编码 tag
+      # 或重新引入 v0.0.0-fake 占位。
+      - name: Verify installer default points at latest
         shell: bash
-        env:
-          PLATFORM_VERSION: ${{ steps.guard.outputs.version }}
         run: |
           set -Eeuo pipefail
           f=release-artifacts/install.sh
           bash -n "$f"
           if grep -q -F 'v0.0.0-fake' "$f"; then
-            echo "::error::install.sh 仍含 v0.0.0-fake 占位（装配未固化 release tag）"
+            echo "::error::install.sh 仍含 v0.0.0-fake 占位"
             exit 1
           fi
-          for a in floatctf floatctf-helper web-dist.tar.gz merged.sql frontend.sh ops-tools.tar.gz; do
-            grep -q -F "releases/download/v${PLATFORM_VERSION}/${a}\"" "$f" \
-              || { echo "::error::install.sh 未指向 ${a}@v${PLATFORM_VERSION}"; exit 1; }
-          done
-          echo "installer release-ready: v${PLATFORM_VERSION}"
+          n="$(grep -c -E '^DEFAULT_[A-Z_]+_URL="\$RELEASES_URL_BASE/latest/download/' "$f" || true)"
+          if [ "$n" -ne 6 ]; then
+            echo "::error::install.sh 默认产物地址应为 6 行 releases/latest/download/，实际 $n"
+            exit 1
+          fi
+          grep -q -F 'resolve_latest_release_version' "$f" \
+            || { echo "::error::install.sh 缺少 latest 版本解析"; exit 1; }
+          echo "installer defaults ok: releases/latest/download × 6"
 
       - name: Verify frontend release artifacts
         shell: bash

@@ -11,7 +11,6 @@
 #   --checksums <dir|files...>          写出 SHA256SUMS（不含自身，按名字排序）
 #   --pack-packages <outdir> <version>  pnpm pack 三个平台包 + 确定性改名
 #   --assemble <outdir> <version>       装配 ARTIFACT CONTRACT v1.0 全量制品 + SHA256SUMS
-#   --stamp-installer <file> <version>  把 install.sh 的 v0.0.0-fake 占位固化成本次 tag
 #   -h | --help
 #
 # 通用选项：
@@ -99,11 +98,6 @@ FloatCTF 发布制品工具（ARTIFACT CONTRACT v1.0）
       * 输入为多个文件时：输出 ./SHA256SUMS（或 -o 指定）。
       * 绝不含 SHA256SUMS 自身；输入为空（或仅剩 SHA256SUMS）即失败。
 
-  scripts/release-checksums.sh --stamp-installer <install.sh> <version>
-      把 install.sh 里 6 处 `v0.0.0-fake` 占位 URL 固化成 `v<version>`，使下载到的
-      安装器能直接运行（--assemble 内部自动调用）。占位数量不是 6、或替换后仍残留、
-      语法检查失败都会 fail closed。
-
   scripts/release-checksums.sh --pack-packages <outdir> <version>
       pnpm pack @floatctf/{sdk,react,frontend-runtime}，按 <version> 确定性改名为
       floatctf-sdk-<version>.tgz / floatctf-react-<version>.tgz /
@@ -131,31 +125,17 @@ validate_version() {
     fi
 }
 
-# ── install.sh 版本固化 ──────────────────────────────────────────────────────
-# install.sh 内置的 DEFAULT_*_URL 指向 `v0.0.0-fake` 占位（源码阶段不能写死某个 tag）。
-# 发布装配时必须替换成真实 tag，否则用户按文档
-#   curl .../releases/download/v<V>/install.sh && sudo bash install.sh
-# 会在 ensure_real_release_urls 处 fail closed，必须手工补 6 个 --*-url。
-stamp_installer_version() { # <install.sh> <version>
-    local file="$1" version="$2"
+# ── install.sh 默认地址断言 ──────────────────────────────────────────────────
+# 安装器默认指向 `releases/latest/download/<asset>`（不传 --version 即装最新版），
+# 源码里不应再出现硬编码 tag 或 v0.0.0-fake 占位。装配时断言，防止回退。
+assert_installer_defaults() { # <install.sh>
+    local file="$1" n
     [ -f "$file" ] || die "install.sh 不存在：$file"
-    validate_version "$version"
-
-    local placeholder="releases/download/v0.0.0-fake/"
-    local before
-    before="$(grep -c -F "$placeholder" "$file" || true)"
-    [ "$before" -eq 6 ] \
-        || die "install.sh 占位 URL 数量异常：期望 6 处 $placeholder，实际 $before"
-
-    sed -i "s#${placeholder}#releases/download/v${version}/#g" "$file"
-
-    # 只断言「占位 URL」清零；`ensure_real_release_urls` 里的占位常量与说明文字应保留
-    # （它在源码树里运行时的防御检查，固化后不会再命中）。
-    ! grep -q -F "$placeholder" "$file" || die "install.sh 仍残留 v0.0.0-fake URL 占位"
-    grep -q -F "releases/download/v${version}/floatctf\"" "$file" \
-        || die "install.sh 未指向 v${version} 的 API 产物"
+    n="$(grep -c -E '^DEFAULT_[A-Z_]+_URL="\$RELEASES_URL_BASE/latest/download/' "$file" || true)"
+    [ "$n" -eq 6 ] || die "install.sh 的默认产物地址应为 6 行 releases/latest/download/，实际 $n"
+    ! grep -q -F 'v0.0.0-fake' "$file" || die "install.sh 仍含 v0.0.0-fake 占位"
     bash -n "$file" || die "install.sh 语法检查失败"
-    ok "install.sh 已固化 release tag：v${version}"
+    ok "install.sh 默认指向 latest release（6 个产物）"
 }
 
 # ── --ops-tools ──────────────────────────────────────────────────────────────
@@ -371,7 +351,7 @@ assemble() { # <outdir> <version>
     install -m 0755 -- "$ROOT/scripts/frontend.sh" "$out/frontend.sh"
     install -m 0755 -- "$ROOT/scripts/install.sh" "$out/install.sh"
     # 发布产物里的 install.sh 必须能独立工作：把占位 tag 固化为本次版本。
-    stamp_installer_version "$out/install.sh" "$version"
+    assert_installer_defaults "$out/install.sh"
 
     pack_packages "$out" "$version"
     ops_tools_build "$out/ops-tools.tar.gz"
@@ -418,9 +398,6 @@ main() {
             --assemble)
                 [ $# -ge 3 ] || die "--assemble 需要 <outdir> <version>"
                 mode="assemble"; asm_out="$2"; asm_version="$3"; shift 3 ;;
-            --stamp-installer)
-                [ $# -ge 3 ] || die "--stamp-installer 需要 <install.sh> <version>"
-                mode="stamp-installer"; asm_out="$2"; asm_version="$3"; shift 3 ;;
             -o | --out)
                 [ $# -ge 2 ] || die "$1 需要 <file>"
                 check_out="$2"; shift 2 ;;
@@ -454,8 +431,6 @@ main() {
             pack_packages "$pack_out" "$pack_version" ;;
         assemble)
             assemble "$asm_out" "$asm_version" ;;
-        stamp-installer)
-            stamp_installer_version "$asm_out" "$asm_version" ;;
         "")
             die "必须指定模式（--ops-tools / --checksums / --pack-packages / --assemble）；-h 查看用法" ;;
         *)

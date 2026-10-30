@@ -93,12 +93,15 @@ RUNTIME_IMAGE_REGISTRY="${RUNTIME_IMAGE_REGISTRY%/}"
 export RUNTIME_IMAGE_REGISTRY
 
 # fake 占位地址：真实 release 地址发布后替换（或经 --*-url / 环境变量覆盖）。
-DEFAULT_API_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf"
-DEFAULT_HELPER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/floatctf-helper"
-DEFAULT_WEB_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/web-dist.tar.gz"
-DEFAULT_MIGRATE_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/merged.sql"
-DEFAULT_FRONTEND_MANAGER_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/frontend.sh"
-DEFAULT_OPS_URL="https://github.com/FloatCTF/floatctf/releases/download/v0.0.0-fake/ops-tools.tar.gz"
+# 默认取 GitHub 的「最新正式发布」：releases/latest/download/<asset> 永远指向最新 tag，
+# 因此 `sudo bash install.sh` 不需要任何参数即可装/升到最新版。
+RELEASES_URL_BASE="https://github.com/FloatCTF/floatctf/releases"
+DEFAULT_API_URL="$RELEASES_URL_BASE/latest/download/floatctf"
+DEFAULT_HELPER_URL="$RELEASES_URL_BASE/latest/download/floatctf-helper"
+DEFAULT_WEB_URL="$RELEASES_URL_BASE/latest/download/web-dist.tar.gz"
+DEFAULT_MIGRATE_URL="$RELEASES_URL_BASE/latest/download/merged.sql"
+DEFAULT_FRONTEND_MANAGER_URL="$RELEASES_URL_BASE/latest/download/frontend.sh"
+DEFAULT_OPS_URL="$RELEASES_URL_BASE/latest/download/ops-tools.tar.gz"
 
 # ── 颜色/日志 ─────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -110,6 +113,38 @@ info() { printf '%s[INFO]%s %s\n' "$C_INFO" "$C_END" "$*"; }
 ok()   { printf '%s[ OK ]%s %s\n' "$C_OK" "$C_END" "$*"; }
 warn() { printf '%s[WARN]%s %s\n' "$C_WARN" "$C_END" "$*"; }
 die()  { printf '%s[FAIL]%s %s\n' "$C_ERR" "$C_END" "$*" >&2; exit 1; }
+
+# ── release 版本解析 ─────────────────────────────────────────────────────────
+# 解析 GitHub「最新正式发布」的版本号（不带前导 v）。
+# 先跟随 /releases/latest 的 302 拿最终 tag URL（一次请求、不受 API 限流），
+# 失败再退到 REST API。
+resolve_latest_release_version() {
+    local effective tag
+    effective="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$RELEASES_URL_BASE/latest" 2>/dev/null || true)"
+    if [[ "$effective" =~ /releases/tag/v?([0-9][^/]*)$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    tag="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/FloatCTF/floatctf/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1 || true)"
+    [[ "$tag" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || return 1
+    printf '%s\n' "$tag"
+}
+
+# 显式版本时把**默认**产物地址钉到该 tag；显式传入的 --*-url 不动。
+pin_default_urls_to_version() { # <version>
+    local v="$1"
+    pin_url() {
+        printf '%s' "$1" | sed "s#^${RELEASES_URL_BASE}/latest/download/#${RELEASES_URL_BASE}/download/v${v}/#"
+    }
+    [ "$API_URL_EXPLICIT" -eq 1 ] || API_URL="$(pin_url "$API_URL")"
+    [ "$HELPER_URL_EXPLICIT" -eq 1 ] || HELPER_URL="$(pin_url "$HELPER_URL")"
+    [ "$WEB_URL_EXPLICIT" -eq 1 ] || WEB_URL="$(pin_url "$WEB_URL")"
+    [ "$MIGRATE_URL_EXPLICIT" -eq 1 ] || MIGRATE_URL="$(pin_url "$MIGRATE_URL")"
+    [ "$FRONTEND_MANAGER_URL_EXPLICIT" -eq 1 ] || FRONTEND_MANAGER_URL="$(pin_url "$FRONTEND_MANAGER_URL")"
+    [ "$OPS_URL_EXPLICIT" -eq 1 ] || OPS_URL="$(pin_url "$OPS_URL")"
+}
 
 # ── 参数 ──────────────────────────────────────────────────────────────────────
 API_URL="$DEFAULT_API_URL"
@@ -172,16 +207,23 @@ done
 [ "$OPS_URL_EXPLICIT" -eq 1 ] || OPS_URL="${FLOATCTF_OPS_URL:-$OPS_URL}"
 [ "$VERSION_EXPLICIT" -eq 1 ] || VERSION="${FLOATCTF_VERSION:-$VERSION}"
 
-# 生产镜像统一使用 release 版本 tag。GitHub Release URL 可自动推导版本；
-# 自定义产物 URL 需显式 --version / FLOATCTF_VERSION，避免渲染出空 tag 或回退 latest。
+# 版本来源优先级：--version / FLOATCTF_VERSION > 自定义产物 URL 里的 tag > 最新正式发布。
+# 默认产物地址是 releases/latest/download/，所以「不传版本 = 装最新」；
+# 传了版本则把默认地址钉到该 tag，避免 latest 在下载过程中漂移。
+# `--version latest` 等价于不传：交给下面的 latest 解析。
+[ "$VERSION" = "latest" ] && VERSION=""
 if [ -z "$VERSION" ] && [[ "$API_URL" =~ /releases/download/v?([^/]+)/ ]]; then
     VERSION="${BASH_REMATCH[1]}"
 fi
 if [ -z "$VERSION" ] && [ "$DEVELOP" -eq 1 ] && [ -f apps/api/Cargo.toml ]; then
     VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' apps/api/Cargo.toml | head -n1)"
 fi
-[ -n "$VERSION" ] || die "无法确定 release 版本；请传 --version <版本> 或设置 FLOATCTF_VERSION"
+if [ -z "$VERSION" ]; then
+    VERSION="$(resolve_latest_release_version)" \
+        || die "无法确定最新 release 版本（网络不可达或仓库还没有正式发布）；请显式传 --version <版本>"
+fi
 export VERSION
+pin_default_urls_to_version "$VERSION"
 # 升级保护的两种强制模式互斥（同时给出就无法判定意图 → fail closed，绝不猜）。
 [ "$RESET_RUNTIME_IMAGES" = "1" ] && [ "$KEEP_RUNTIME_IMAGES" = "1" ] \
     && die "--reset-runtime-images 与 --keep-runtime-images 互斥，请只选一个"
@@ -514,25 +556,7 @@ download_url() { # url dest
         || die "下载失败: $1（这是 fake 占位地址，替换为真实 release 地址或经 --*-url 传入）"
 }
 
-# 内置的 DEFAULT_*_URL 指向 v0.0.0-fake 占位 tag（真实 release 发布后才会替换）。
-# 不先拦一道的话，直接 `sudo bash install.sh` 会停在第 4 个 URL 的 curl 失败上，
-# 看起来像网络/防火墙问题。这里在动手前就快速失败，并列出该传哪个参数。
-ensure_real_release_urls() {
-    local placeholder="releases/download/v0.0.0-fake"
-    local missing=()
-    [[ "$API_URL" == *"$placeholder"* ]] && missing+=("--api-url（或 FLOATCTF_API_URL）")
-    [[ "$HELPER_URL" == *"$placeholder"* ]] && missing+=("--helper-url（或 FLOATCTF_HELPER_URL）")
-    [[ "$WEB_URL" == *"$placeholder"* ]] && missing+=("--web-url（或 FLOATCTF_WEB_URL）")
-    [[ "$MIGRATE_URL" == *"$placeholder"* ]] && missing+=("--migrate-url（或 FLOATCTF_MIGRATE_URL）")
-    [[ "$FRONTEND_MANAGER_URL" == *"$placeholder"* ]] && missing+=("--frontend-manager-url（或 FLOATCTF_FRONTEND_MANAGER_URL）")
-    [[ "$OPS_URL" == *"$placeholder"* ]] && missing+=("--ops-url（或 FLOATCTF_OPS_URL）")
-    if [ "${#missing[@]}" -gt 0 ]; then
-        die "缺少真实 release 地址：内置地址是 v0.0.0-fake 占位（仓库还没有对应发布产物）。请补：${missing[*]}"
-    fi
-}
-
 download_release() {
-    ensure_real_release_urls
     info "──── 第二阶段：下载 release 产物（6 URL）────"
     TMP_STAGE_DIR="$(mktemp -d /tmp/floatctf-install.XXXXXX)"
 

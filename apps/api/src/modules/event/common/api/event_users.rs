@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{EventsParticipantsManageGuard, EventsReadGuard};
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -21,12 +23,12 @@ pub struct AddUserRequest {
 /// POST /api/admin/events/{event_id}/users
 #[post("")]
 pub async fn add_user(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     aur: Json<AddUserRequest>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let aur = aur.into_inner();
     let event_id = event_id.into_inner();
 
@@ -68,12 +70,13 @@ pub async fn add_user(
                 "ADD",
                 format!(
                     "{} 为比赛 {} 添加 {} 名用户",
-                    user.username, event.title, added_count
+                    user.username(),
+                    event.title,
+                    added_count
                 )
                 .as_str(),
                 json!({"event_id": event.id, "count": added_count}),
-                None,
-                user.id.into(),
+                user.id().into(),
                 Some(&ctx.req),
             )
             .await;
@@ -100,10 +103,9 @@ pub async fn add_user(
                 "INFO",
                 "EVENT_USERS",
                 "ADD",
-                format!("{} 为比赛 {} 添加用户", user.username, event.title).as_str(),
+                format!("{} 为比赛 {} 添加用户", user.username(), event.title).as_str(),
                 json!({"event_id": event.id, "user_id": user_id}),
-                None,
-                user.id.into(),
+                user.id().into(),
                 Some(&ctx.req),
             )
             .await;
@@ -117,12 +119,12 @@ pub async fn add_user(
 /// DELETE /api/admin/events/{event_id}/users
 #[delete("")]
 pub async fn remove_user(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<Uuid>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let event_id = path.into_inner();
     let dir = dir.into_inner();
 
@@ -149,10 +151,9 @@ pub async fn remove_user(
             "INFO",
             "EVENT_USERS",
             "REMOVE",
-            format!("{} 从比赛移除 {} 名用户", user.username, deleted_count).as_str(),
+            format!("{} 从比赛移除 {} 名用户", user.username(), deleted_count).as_str(),
             json!({"event_id": event_id, "deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -169,7 +170,7 @@ pub struct EventUserResult {
 /// GET /api/admin/events/{event_id}/users
 #[get("")]
 pub async fn get_users(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,
@@ -263,11 +264,11 @@ pub async fn get_users(
 #[post("/{user_id}/banned")]
 
 pub async fn banned_user(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, user_id) = path.into_inner();
 
     let event = events::Entity::find_by_id(event_id)
@@ -297,10 +298,9 @@ pub async fn banned_user(
             "INFO",
             "EVENT_USERS",
             "BAN",
-            format!("{} 封禁用户: {}", user.username, u.username).as_str(),
+            format!("{} 封禁用户: {}", user.username(), u.username).as_str(),
             json!({"event_id": event_id, "user_id": user_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -311,11 +311,11 @@ pub async fn banned_user(
 /// POST /api/admin/events/{event_id}/users/{user_id}/unbanned
 #[post("/{user_id}/unbanned")]
 pub async fn unbanned_user(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<EventsParticipantsManageGuard>,
     ctx: ReqCtx,
     path: Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let (event_id, user_id) = path.into_inner();
 
     let event = events::Entity::find_by_id(event_id)
@@ -345,10 +345,9 @@ pub async fn unbanned_user(
             "INFO",
             "EVENT_USERS",
             "UNBAN",
-            format!("{} 解禁用户: {}", user.username, u.username).as_str(),
+            format!("{} 解禁用户: {}", user.username(), u.username).as_str(),
             json!({"event_id": event_id, "user_id": user_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

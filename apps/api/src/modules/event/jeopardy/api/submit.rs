@@ -102,7 +102,6 @@ pub async fn submit_flag(
                 "提交 Flag 成功",
                 json!({"instance_id": sfr.instance_id, "accepted": true}),
                 event_ctx.user.id.into(),
-                None,
                 Some(&ctx.req),
             )
             .await;

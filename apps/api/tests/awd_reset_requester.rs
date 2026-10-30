@@ -1,7 +1,7 @@
 //! AWD 靶机重置：主体分列（`requested_by` / `requested_by_admin`）契约测试。
 //!
 //! 回归背景：管理端 `POST /api/admin/events/{id}/awd/gameboxes/{instance_id}/reset`
-//! 曾把 `super_admin.id` 写进 `awd_reset_records.requested_by`（外键 → `users(id)`），
+//! 曾把 `users（Wave 10 前的 super_admin）.id` 写进 `awd_reset_records.requested_by`（外键 → `users(id)`），
 //! 稳定 500 `violates foreign key constraint "awd_reset_records_requested_by_fkey"`。
 //!
 //! 本文件走**真实 HTTP 端点**（不直接调用 service），断言：
@@ -316,7 +316,8 @@ impl Fixture {
 /// 管理端重置：真实端点 + 真实 SuperAdminJwtGuard。
 ///
 /// 断言 reset 记录由**管理员主体**产生，且管理员 ID 是数据库中真实存在的
-/// `super_admin.id`（内置系统管理员即 nil UUID，它不在 `users` 表）。
+/// `users（Wave 10 前的 super_admin）.id`。v2 起身份统一到 `users`（M3 保留了原主键）；Wave 10 起 `users（Wave 10 前的 super_admin）` 表已删除，
+/// 因此这个 id 同样是 `users.id`，外键写入两边都成立。
 #[tokio::test]
 async fn admin_reset_records_real_super_admin_id() {
     let Some(db) = live().await else { return };
@@ -330,12 +331,12 @@ async fn admin_reset_records_real_super_admin_id() {
         return;
     };
 
-    // 管理员的真实 super_admin.id（reset 记录必须引用它）。
-    let admin_id = floatctf::entity::super_admin::Entity::find()
-        .filter(floatctf::entity::super_admin::Column::Username.eq(&user))
+    // 管理员的真实 users.id（reset 记录必须引用它）。
+    let admin_id = floatctf::entity::users::Entity::find()
+        .filter(floatctf::entity::users::Column::Username.eq(&user))
         .one(&db)
         .await
-        .expect("query super_admin")
+        .expect("query users (admin)")
         .expect("admin row exists")
         .id;
 
@@ -373,7 +374,7 @@ async fn admin_reset_records_real_super_admin_id() {
     assert_eq!(
         rec.requested_by_admin,
         Some(admin_id),
-        "admin reset must record the real super_admin.id"
+        "admin reset must record the real users.id"
     );
     assert_eq!(
         rec.team_id, fx.team_id,
@@ -524,14 +525,14 @@ async fn player_reset_records_user_and_leaves_admin_column_empty() {
     fx.cleanup(&db).await;
 }
 
-/// 认证身份不变量：`SuperAdminJwtGuard` 解析出的管理员 ID 必须是 `super_admin`
+/// 认证身份不变量：管理端守卫解析出的管理员 ID 必须是 `users`
 /// 表中真实存在的主键。
 ///
 /// 回归价值：若 Guard 将来退化成返回 nil/占位 UUID，或从错误的表取 id，
 /// 本测试会红——而不必等到 reset 触发外键错误才暴露。
 ///
 /// 说明：内置系统管理员的 ID 本身**就是** nil UUID（initial-data 迁移），
-/// 因此这里断言的是"存在于 super_admin 表"，而不是"非 nil"。
+/// Wave 10 起只有 `users` 一张身份表，因此这里断言的是"存在于 users 表"，而不是"非 nil"。
 #[tokio::test]
 async fn super_admin_guard_id_resolves_to_real_database_row() {
     let Some(db) = live().await else { return };
@@ -544,11 +545,11 @@ async fn super_admin_guard_id_resolves_to_real_database_row() {
         return;
     };
 
-    let db_admin_id = floatctf::entity::super_admin::Entity::find()
-        .filter(floatctf::entity::super_admin::Column::Username.eq(&user))
+    let db_admin_id = floatctf::entity::users::Entity::find()
+        .filter(floatctf::entity::users::Column::Username.eq(&user))
         .one(&db)
         .await
-        .expect("query super_admin")
+        .expect("query users (admin)")
         .expect("admin row exists")
         .id;
 
@@ -567,8 +568,8 @@ async fn super_admin_guard_id_resolves_to_real_database_row() {
         "admin token must authenticate with SuperAdminJwtGuard"
     );
 
-    // 真实管理员的 id 必须能在 super_admin 表中按主键取回。
-    let found = floatctf::entity::super_admin::Entity::find_by_id(db_admin_id)
+    // 真实管理员的 id 必须能在 users（Wave 10 前的 super_admin） 表中按主键取回。
+    let found = floatctf::entity::users::Entity::find_by_id(db_admin_id)
         .one(&db)
         .await
         .expect("query super_admin by id");

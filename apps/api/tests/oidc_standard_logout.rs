@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use floatctf::core::config::OidcConfig;
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType};
 use floatctf::entity::{
     oidc_backchannel_deliveries, oidc_browser_sessions, oidc_clients, oidc_session_clients, users,
@@ -145,6 +146,8 @@ async fn seed_user(db: &DatabaseConnection, tag: &str) -> users::Model {
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(None),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await

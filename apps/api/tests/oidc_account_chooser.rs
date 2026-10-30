@@ -21,6 +21,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use floatctf::core::config::OidcConfig;
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType};
 use floatctf::entity::{
     oidc_auth_transactions, oidc_authorization_codes, oidc_browser_sessions, oidc_clients,
@@ -56,6 +57,8 @@ async fn seed_user(db: &DatabaseConnection, tag: &str) -> users::Model {
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(Some("/public/avatars/chooser.png".into())),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await

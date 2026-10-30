@@ -266,7 +266,9 @@ function RouteComponent() {
     });
     const currentUserId = meData?.id;
     const meNickname = meData?.nickname || "";
-    const meAvatar = meData?.avatar;
+    // DTO 的 avatar 是 `string | null`（serde 对 None 序列化为 null）；
+    // 组件契约是 `string | undefined`，这里归一化。
+    const meAvatar = meData?.avatar ?? undefined;
     const isAuthor = currentUserId === discussion?.author_id;
 
     const [editContent, setEditContent] = useState(discussion?.content || "");

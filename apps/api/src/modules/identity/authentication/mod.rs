@@ -1,7 +1,10 @@
 //! 登录、注册、会话与口令重置。
 
 use crate::api::prelude::*;
-use crate::core::security::jwt::{Role, gen_jwt_token, validate_jwt};
+use crate::core::security::jwt::{
+    TokenPurpose, gen_password_reset_token, gen_session_token, validate_jwt,
+};
+use crate::entity::sea_orm_active_enums::AccountStatus;
 use crate::entity::{prelude::Users, users};
 
 use argon2::{
@@ -39,11 +42,15 @@ pub(crate) async fn verify_user_credentials(
     Ok((Some(user), verified))
 }
 
-/// POST /api/users/session
+/// POST `/api/session` **与** `POST /api/users/session`（同一个 handler）。
 ///
-/// 响应体与引入 OIDC 前逐字一致（`UniResponse<String>`，data 为平台 JWT）。
-/// OIDC Provider 启用时额外下发第一方 SSO Cookie，使已登录 FloatCTF 的浏览器
-/// 授权第三方应用时无需再次输入密码。Cookie 建立失败不影响平台登录本身。
+/// v2 统一入口是 `/api/session`；`/api/users/session` 作为别名保留到 Wave 10。
+/// 两条路径**复用同一个 handler**，因此不可能出现「某一条登录路径行为不同」的分叉缺陷
+/// （这正是统一账户要消灭的那类问题）。
+///
+/// 响应体与引入 OIDC 前逐字一致（data 为平台 JWT）。OIDC Provider 启用时额外下发
+/// 第一方 SSO Cookie，使已登录 FloatCTF 的浏览器授权第三方应用时无需再次输入密码；
+/// Cookie 建立失败不影响平台登录本身。
 #[post("/session")]
 pub async fn user_login(
     ctx: ReqCtx,
@@ -54,6 +61,23 @@ pub async fn user_login(
 
     match verify_user_credentials(ctx.db.get_ref(), &ulr.username, &ulr.password).await? {
         (Some(user), true) => {
+            // 凭据正确但账号被禁用 → **403**（而不是 401）：
+            // 用户需要知道「账号存在但被停用」，重新登录不会解决问题。
+            if user.status != AccountStatus::Active {
+                ctx.log
+                    .add_log(
+                        "ERROR",
+                        "AUTH",
+                        "LOGIN_DISABLED",
+                        format!("{} 账号已禁用，拒绝登录", user.username).as_str(),
+                        json!([]),
+                        user.id.into(),
+                        Some(&ctx.req),
+                    )
+                    .await;
+                return Err(AppError::Forbidden("账号已被禁用".to_string()));
+            }
+
             ctx.log
                 .add_log(
                     "INFO",
@@ -62,11 +86,12 @@ pub async fn user_login(
                     format!("{} 登陆成功", user.username).as_str(),
                     json!([]),
                     user.id.into(),
-                    None,
                     Some(&ctx.req),
                 )
                 .await;
-            let jwt = gen_jwt_token(user.id, Role::User, None)
+
+            // 令牌只带身份与凭据版本；授权信息由每个请求从 DB 解析。
+            let jwt = gen_session_token(user.id, user.token_version)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
             let mut response = actix_web::HttpResponse::Ok();
@@ -87,6 +112,7 @@ pub async fn user_login(
                     Err(e) => warn!(error = %e, "SSO session not established after login"),
                 }
             }
+
             Ok(response.json(UniResponse::ok(Some(jwt))))
         }
         (Some(user), false) => {
@@ -98,7 +124,6 @@ pub async fn user_login(
                     format!("{} 登陆失败", user.username).as_str(),
                     json!([]),
                     user.id.into(),
-                    None,
                     Some(&ctx.req),
                 )
                 .await;
@@ -158,7 +183,6 @@ pub async fn create_user(ctx: ReqCtx, cur: Json<CreateUserRequest>) -> UniResult
             format!("{} 注册成功", user.username).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -209,7 +233,7 @@ pub async fn send_reset_email(ctx: ReqCtx, rpr: Json<ResetPasswordRequest>) -> U
         .await
         .map_err(|e| AppError::BadRequest(format!("Failed to get MAIN_URL: {}", e)))?;
 
-    let token = gen_jwt_token(user.id, Role::ResetAccount, Some(10))
+    let token = gen_password_reset_token(user.id, user.token_version)
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     let reset_link = format!("{}/reset_password?token={}", main_url, token);
@@ -236,7 +260,6 @@ pub async fn send_reset_email(ctx: ReqCtx, rpr: Json<ResetPasswordRequest>) -> U
             format!("{} 请求重置密码", user.username).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -269,7 +292,9 @@ pub async fn reset_password(
 
     let token = token.token.clone();
     let claim = validate_jwt(token).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    if claim.role != Role::ResetAccount {
+    // 用途必须**恰好**是口令重置：会话令牌不得用来重置口令
+    // （否则一个被盗的会话令牌就能永久接管账号）。
+    if claim.purpose != TokenPurpose::PasswordReset {
         return AppError::BadRequest("Invalid token".to_string()).into();
     }
 
@@ -279,8 +304,14 @@ pub async fn reset_password(
         .await?
         .ok_or_else(|| AppError::BadRequest("User 不存在".to_string()))?;
 
+    // 版本必须匹配：改密后旧的重置令牌立即失效（也避免同一封邮件被重复使用）
+    if user.token_version != claim.token_version {
+        return AppError::BadRequest("Invalid token".to_string()).into();
+    }
+
     let user_id = user.id;
     let username = user.username.clone();
+    let next_token_version = user.token_version.saturating_add(1);
     let mut m_user = user.into_active_model();
     let hashed_password = {
         let salt = SaltString::generate(&mut OsRng);
@@ -295,6 +326,9 @@ pub async fn reset_password(
     };
 
     m_user.password = Set(hashed_password);
+    // 改密即吊销：自增 token_version 使**所有**已签发的会话令牌与重置令牌立即失效。
+    // 这是「改密后其他设备上的登录必须掉线」的实现（v1 完全没有这个能力）。
+    m_user.token_version = Set(next_token_version);
 
     m_user.update(ctx.db.get_ref()).await?;
 
@@ -306,7 +340,6 @@ pub async fn reset_password(
             format!("{} 重置密码成功", username).as_str(),
             json!({}),
             user_id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

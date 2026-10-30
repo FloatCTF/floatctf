@@ -8,7 +8,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
-    api::{AppError, UniResponse, UniResult, extractor::auth::SuperAdminJwtGuard, prelude::*},
+    api::{AppError, UniResponse, UniResult, extractor::auth::RequirePermission, prelude::*},
+    core::permission::guards::{AwdManageGuard, AwdReadGuard, EventsLifecycleManageGuard},
     modules::event::awd::{
         domain::AwdEventStatusExt,
         repo::{ban_repo, event_repo, round_repo},
@@ -27,7 +28,7 @@ use actix_web::{delete, get, patch, post, put};
 /// 查询 AWD 配置；尚未在 Configure 页保存时返回 data=null。
 #[get("{event_id}/awd")]
 pub async fn get_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<AwdEventStatusDto> {
@@ -55,7 +56,7 @@ pub async fn get_awd_event(
 /// POST /api/admin/events/awd
 #[post("awd")]
 pub async fn create_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     body: web::Json<CreateAwdEventRequest>,
 ) -> UniResult<Uuid> {
@@ -211,7 +212,7 @@ pub async fn create_awd_event(
 /// Configure 页修改 AWD runtime / reset / judge / archive 参数。
 #[patch("{event_id}/awd")]
 pub async fn configure_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
     body: web::Json<AwdEventConfigRequest>,
@@ -242,7 +243,7 @@ pub async fn configure_awd_event(
 /// POST /api/admin/events/{event_id}/awd/start
 #[post("{event_id}/awd/start")]
 pub async fn start_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -272,7 +273,7 @@ pub async fn start_awd_event(
 /// POST /api/admin/events/{event_id}/awd/pause
 #[post("{event_id}/awd/pause")]
 pub async fn pause_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -292,7 +293,7 @@ pub async fn pause_awd_event(
 /// POST /api/admin/events/{event_id}/awd/resume
 #[post("{event_id}/awd/resume")]
 pub async fn resume_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -315,7 +316,7 @@ pub async fn resume_awd_event(
 /// Wave 6: 必须通过 Final Settlement 检查；不会绕过 Judge 待处理状态。
 #[post("{event_id}/awd/finish")]
 pub async fn finish_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -341,14 +342,14 @@ pub async fn finish_awd_event(
 /// → conntrack 清理 → publish。
 #[post("{event_id}/awd/teams/{team_id}/ban")]
 pub async fn ban_team(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
     body: web::Json<BanTeamRequest>,
 ) -> UniResult<Uuid> {
     let (event_id, team_id) = path.into_inner();
-    let admin_id = admin.into_inner().id;
+    let admin_id = admin.into_auth().id();
 
     let ban_id = crate::modules::event::awd::service::ban_service::ban_team(
         ctx.db.get_ref(),
@@ -369,7 +370,6 @@ pub async fn ban_team(
             crate::infrastructure::audit::AuditAction::TeamBanned,
             &format!("AWD team {team_id} banned in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "team_id": team_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -381,13 +381,13 @@ pub async fn ban_team(
 /// DELETE /api/admin/events/{event_id}/awd/teams/{team_id}/ban
 #[delete("{event_id}/awd/teams/{team_id}/ban")]
 pub async fn unban_team(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
     let (event_id, team_id) = path.into_inner();
-    let admin_id = _admin.into_inner().id;
+    let admin_id = _admin.into_auth().id();
 
     // P4-5 反向闭环：DB unbanned → WG host 恢复 peers → banned set reconcile → publish
     crate::modules::event::awd::service::ban_service::unban_team(
@@ -408,7 +408,6 @@ pub async fn unban_team(
             crate::infrastructure::audit::AuditAction::TeamUnbanned,
             &format!("AWD team {team_id} unbanned in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "team_id": team_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -422,14 +421,14 @@ pub async fn unban_team(
 /// POST /api/admin/events/{event_id}/awd/score/adjust
 #[post("{event_id}/awd/score/adjust")]
 pub async fn adjust_score(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
     body: web::Json<ScoreAdjustRequest>,
 ) -> UniResult<()> {
     let event_id = path.into_inner();
-    let admin_id = _admin.into_inner().id;
+    let admin_id = _admin.into_auth().id();
 
     score_service::record_adjustment(
         ctx.db.get_ref(),
@@ -447,9 +446,7 @@ pub async fn adjust_score(
         .record(
             crate::infrastructure::audit::AuditAction::ScoreAdjusted,
             &format!("AWD score adjusted for team {} in event {}", body.team_id, event_id),
-            serde_json::json!({ "event_id": event_id, "team_id": body.team_id, "delta": body.delta }),
-            None,
-            Some(admin_id),
+            serde_json::json!({ "event_id": event_id, "team_id": body.team_id, "delta": body.delta }), Some(admin_id),
             Some(&ctx.req),
         )
         .await;
@@ -464,7 +461,7 @@ pub async fn adjust_score(
 /// POST /api/admin/events/{event_id}/awd/deploy
 #[post("{event_id}/awd/deploy")]
 pub async fn deploy_awd_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -487,7 +484,7 @@ pub async fn deploy_awd_event(
 /// GET /api/admin/events/{event_id}/awd/scores
 #[get("{event_id}/awd/scores")]
 pub async fn get_event_scores(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<crate::modules::event::awd::domain::TeamScore>> {
@@ -518,7 +515,7 @@ pub async fn get_event_scores(
 /// POST /api/admin/events/{event_id}/awd/precheck
 #[post("{event_id}/awd/precheck")]
 pub async fn run_precheck(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -581,13 +578,13 @@ pub async fn run_precheck(
 /// POST /api/admin/events/{event_id}/awd/gameboxes/{instance_id}/reset
 #[post("{event_id}/awd/gameboxes/{instance_id}/reset")]
 pub async fn admin_reset_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {
     let (event_id, instance_id) = path.into_inner();
-    let admin_id = _admin.into_inner().id;
+    let admin_id = _admin.into_auth().id();
     crate::modules::event::awd::service::reset_service::execute_reset(
         ctx.db.get_ref(),
         awd.containers.as_ref(),
@@ -610,7 +607,6 @@ pub async fn admin_reset_gamebox(
             crate::infrastructure::audit::AuditAction::GameboxReset,
             &format!("admin reset gamebox {instance_id} in event {event_id}"),
             serde_json::json!({ "event_id": event_id, "instance_id": instance_id }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -624,7 +620,7 @@ pub async fn admin_reset_gamebox(
 /// GET /api/admin/events/{event_id}/awd/prechecks
 #[get("{event_id}/awd/prechecks")]
 pub async fn get_prechecks(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<PrecheckRunDto>> {
@@ -656,7 +652,7 @@ pub async fn get_prechecks(
 /// GET /api/admin/events/{event_id}/awd/judge
 #[get("{event_id}/awd/judge")]
 pub async fn get_judge_batches(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<Vec<JudgeBatchDto>> {
@@ -688,7 +684,7 @@ pub async fn get_judge_batches(
 /// POST /api/admin/events/{event_id}/awd/archive
 #[post("{event_id}/awd/archive")]
 pub async fn archive_event(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -744,7 +740,7 @@ pub async fn archive_event(
 /// 绝不允许"DB 已只认新 token 但运行中容器仍拿旧 token"的静默态。
 #[post("{event_id}/awd/tokens/rotate")]
 pub async fn rotate_tokens(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -753,7 +749,7 @@ pub async fn rotate_tokens(
     use crate::modules::event::awd::crypto::AwdCrypto;
 
     let event_id = path.into_inner();
-    let admin_id = admin.into_inner().id;
+    let admin_id = admin.into_auth().id();
 
     // 1. 解析真实 awd_event（真实主键 + 当前 key_version + infra 信息）
     let awd_event = event_repo::find_by_event_id(ctx.db.get_ref(), event_id)
@@ -861,7 +857,6 @@ pub async fn rotate_tokens(
             crate::infrastructure::audit::AuditAction::TokenRotated,
             &format!("AWD internal tokens rotated for event {event_id}"),
             serde_json::json!({ "event_id": event_id, "key_version": new_key_version }),
-            None,
             Some(admin_id),
             Some(&ctx.req),
         )
@@ -989,7 +984,7 @@ async fn rollout_infra_container(
 /// GET /api/admin/events/{event_id}/awd/network —— 查看 Event Network（§64）
 #[get("{event_id}/awd/network")]
 pub async fn get_event_network(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<super::dto::EventNetworkResponse> {
@@ -1019,7 +1014,7 @@ pub async fn get_event_network(
 /// 幂等：已分配未锁定 → 直接返回；已锁定 → AWD_NETWORK_LOCKED。
 #[put("{event_id}/awd/network")]
 pub async fn update_network(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -1078,7 +1073,7 @@ pub async fn update_network(
 /// POST /api/admin/events/{event_id}/awd/network/reallocate —— §33/§93
 #[post("{event_id}/awd/network/reallocate")]
 pub async fn reallocate_network(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<EventsLifecycleManageGuard>,
     ctx: ReqCtx,
     awd: web::Data<crate::bootstrap::AwdDependencies>,
     path: web::Path<Uuid>,
@@ -1104,13 +1099,13 @@ pub async fn reallocate_network(
 /// GET /api/admin/events/{event_id}/awd/stream
 ///
 /// 管理端 Server-Sent Events 流（fetch + Bearer admin token）。
-/// 认证：SuperAdminJwtGuard（admin token，super_admin 表）。
-/// 授权：所有 SuperAdmin 均可订阅任意赛事（与现有 Admin 端点一致）。
+/// 认证：RequirePermission（Bearer 会话令牌）。
+/// 授权：持有 `awd.read` 均可订阅任意赛事（与现有 Admin 端点一致）。
 ///
 /// 选手应使用 `/api/events/{event_id}/awd/stream`（UserJwtGuard + 战队成员）。
 #[get("{event_id}/awd/stream")]
 pub async fn admin_event_stream(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     hub: web::Data<crate::infrastructure::realtime::BroadcastEventPublisher>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {

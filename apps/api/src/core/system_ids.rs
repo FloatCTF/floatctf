@@ -31,8 +31,22 @@ pub const SCHED_TRAINING_SYNC: Uuid = Uuid::from_u128(3);
 /// 任务键 `identity.oidc.cleanup`：删除过期的 OIDC 授权事务、授权码、access token 与 SSO 会话。
 pub const SCHED_OIDC_CLEANUP: Uuid = Uuid::from_u128(4);
 
-// ── events：系统托管赛事 ────────────────────────────────────────────────────
+// ── platform_roles：内置平台角色 ─────────────────────────────────────────────
 
+/// 内置全权角色 `super-admin` 的主键（`platform_roles` 表）。
+///
+/// **必须固定**：migration M3 用它把每个旧 `super_admin` 账号授予该角色，
+/// 而「最后一个超管保护」的并发锁点也固定在这一行上
+/// （`SELECT ... FOR UPDATE WHERE key = 'super-admin'`）。
+///
+/// 数值与 sysadmin 的 `users.id`（nil UUID）相同，但**分属两张表**——本文件顶部
+/// 已声明「序号按表独立分配（不同表可复用同一 n，无跨表唯一约束）」。
+pub const PLATFORM_ROLE_SUPER_ADMIN: Uuid = Uuid::from_u128(0);
+
+/// [`PLATFORM_ROLE_SUPER_ADMIN`] 的稳定语义键。
+pub const PLATFORM_ROLE_SUPER_ADMIN_KEY: &str = "super-admin";
+
+// ── events：系统托管赛事 ────────────────────────────────────────────────────
 /// Jeopardy 系统练习赛事主键（`system_key = practice:jeopardy`）。
 ///
 /// 与 [`SCHED_CLEAN_INSTANCES`] 同为 `from_u128(1)`，但分属 `events` /

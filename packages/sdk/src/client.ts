@@ -126,7 +126,7 @@ export function createFloatCTFClient(
 	const adminTransport = createFloatCTFTransport("admin", options, adminBaseUrl);
 
 	const serviceApi = createServiceApi(serviceTransport.http);
-	const adminApi = createAdminApi(adminTransport.http);
+	const adminApi = createAdminApi(adminTransport.http, serviceTransport.http);
 
 	const connect = (
 		scope: FloatCTFAuthScope,

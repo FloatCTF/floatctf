@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::EventsReadGuard;
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -13,7 +15,7 @@ use crate::{
 /// GET /api/admin/events/{event_id}/writeups
 #[get("")]
 pub async fn get_all_event_writeups(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<EventsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,

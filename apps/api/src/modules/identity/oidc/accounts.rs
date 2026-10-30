@@ -17,6 +17,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::api::AppError;
+use crate::entity::sea_orm_active_enums::AccountStatus;
 use crate::entity::{oidc_browser_containers, oidc_browser_sessions, users};
 
 use super::OidcProvider;
@@ -536,6 +537,8 @@ pub enum WebAuthFailure {
     CrossSite,
     Csrf,
     AccountChanged,
+    /// 会话有效但账号已被禁用（或不再 active）：与 Bearer 通道一致地拒绝。
+    AccountDisabled,
 }
 
 /// `UserJwtGuard` 的 Cookie 通道：容器 → 主站活跃会话 → 用户。
@@ -584,6 +587,10 @@ pub async fn resolve_web_user(
         && expected != user.id.to_string()
     {
         return Ok(Err(WebAuthFailure::AccountChanged));
+    }
+    // 与 Bearer 通道（`resolve_session_account`）保持同一语义：禁用账号立刻失效。
+    if user.status != AccountStatus::Active {
+        return Ok(Err(WebAuthFailure::AccountDisabled));
     }
     Ok(Ok(user))
 }
@@ -636,6 +643,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 avatar: None,
+                status: AccountStatus::Active,
+                token_version: 0,
             },
         )
     }

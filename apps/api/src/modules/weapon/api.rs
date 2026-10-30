@@ -1,5 +1,7 @@
 //! 武器库 HTTP 处理器。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{WeaponsManageGuard, WeaponsReadGuard};
 use actix_multipart::form::MultipartForm;
 use actix_web::web::ServiceConfig;
 use sea_orm::Condition;
@@ -81,7 +83,7 @@ pub async fn get_weapons_player(
 /// GET /api/admin/weapons
 #[get("")]
 pub async fn get_weapons_admin(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<WeaponsReadGuard>,
     ctx: ReqCtx,
 ) -> UniResult<Vec<WeaponsDto>> {
     let weapons = application::list_all_admin(ctx.db.get_ref()).await?;
@@ -91,11 +93,11 @@ pub async fn get_weapons_admin(
 /// POST /api/admin/weapons
 #[post("")]
 pub async fn create_weapon(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<WeaponsManageGuard>,
     ctx: ReqCtx,
     cwr: Json<CreateWeaponRequest>,
 ) -> UniResult<WeaponsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let cwr = cwr.into_inner();
 
     let weapon = application::create(ctx.db.get_ref(), cwr).await?;
@@ -105,10 +107,9 @@ pub async fn create_weapon(
             "INFO",
             "WEAPONS",
             "CREATE",
-            format!("{} 创建武器: {}", user.username, weapon.name).as_str(),
+            format!("{} 创建武器: {}", user.username(), weapon.name).as_str(),
             json!({"name": weapon.name, "category": weapon.category}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -119,12 +120,12 @@ pub async fn create_weapon(
 /// PATCH /api/admin/weapons/{weapon_id}
 #[patch("/{weapon_id}")]
 pub async fn patch_weapon(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<WeaponsManageGuard>,
     ctx: ReqCtx,
     weapon_id: Path<Uuid>,
     pwr: Json<PatchWeaponRequest>,
 ) -> UniResult<WeaponsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let weapon_id = weapon_id.into_inner();
     let pwr = pwr.into_inner();
 
@@ -135,10 +136,9 @@ pub async fn patch_weapon(
             "INFO",
             "WEAPONS",
             "UPDATE",
-            format!("{} 更新武器: {}", user.username, weapon.name).as_str(),
+            format!("{} 更新武器: {}", user.username(), weapon.name).as_str(),
             json!({"weapon_id": weapon.id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -149,11 +149,11 @@ pub async fn patch_weapon(
 /// DELETE /api/admin/weapons
 #[delete("")]
 pub async fn delete_weapon(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<WeaponsManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
 
     let deleted_count: u64 = application::delete_many(ctx.db.get_ref(), dir.id_list).await?;
@@ -163,10 +163,9 @@ pub async fn delete_weapon(
             "INFO",
             "WEAPONS",
             "DELETE",
-            format!("{} 删除 {} 个武器", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 个武器", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -177,12 +176,12 @@ pub async fn delete_weapon(
 /// POST /api/admin/weapons/{weapon_id}/upload
 #[post("/{weapon_id}/upload")]
 pub async fn upload_weapon(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<WeaponsManageGuard>,
     ctx: ReqCtx,
     weapon_id: Path<Uuid>,
     MultipartForm(form): MultipartForm<WeaponForm>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let weapon_id = weapon_id.into_inner();
     let weapon_file = form.weapon;
     let file_name = weapon_file
@@ -203,10 +202,9 @@ pub async fn upload_weapon(
             "INFO",
             "WEAPONS",
             "UPLOAD",
-            format!("{} 上传武器文件: {}", user.username, file_name).as_str(),
+            format!("{} 上传武器文件: {}", user.username(), file_name).as_str(),
             json!({"weapon_id": weapon_id, "file_name": file_name}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

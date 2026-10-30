@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::DatabaseExecuteGuard;
 use actix_web::rt::time::Instant;
 use base64::Engine;
 use sea_orm::sqlx::{self, Column, Row, TypeInfo, postgres::PgRow};
@@ -28,7 +30,7 @@ pub struct SqlResult {
 #[post("/exec_sql")]
 pub async fn exec_sql(
     ctx: ReqCtx,
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DatabaseExecuteGuard>,
     ss: Json<SqlStatement>,
 ) -> UniResult<SqlResult> {
     // Gate: require unsafe_sql_admin in the static TOML configuration.
@@ -38,20 +40,19 @@ pub async fn exec_sql(
         ));
     }
 
-    let user = user.into_inner();
+    let user = user.into_auth();
     let sql = ss.into_inner().sql;
 
     // Explicit audit when the dangerous path is actually used (no SQL body stored).
     crate::infrastructure::audit::AuditService::new(ctx.log.get_ref().clone())
         .record(
             crate::infrastructure::audit::service::AuditAction::UnsafeSqlExecuted,
-            &format!("{} invoked admin SQL endpoint", user.username),
+            &format!("{} invoked admin SQL endpoint", user.username()),
             serde_json::json!({
                 "sql_len": sql.len(),
                 "sql_prefix": sql.chars().take(32).collect::<String>(),
             }),
-            None,
-            Some(user.id),
+            Some(user.id()),
             Some(&ctx.req),
         )
         .await;
@@ -147,13 +148,12 @@ pub async fn exec_sql(
                             "EXEC_SQL",
                             format!(
                                 "{} executed read query ({} rows)",
-                                user.username,
+                                user.username(),
                                 data.len()
                             )
                             .as_str(),
                             json!({"rows": data.len(), "elapsed_ms": elapsed, "sql_type": "query"}),
-                            None,
-                            user.id.into(),
+                            user.id().into(),
                             Some(&ctx.req),
                         )
                         .await;
@@ -190,12 +190,10 @@ pub async fn exec_sql(
                         "EXEC_SQL",
                         format!(
                             "{} executed write statement, affected {} rows",
-                            user.username, rows_affected
+                            user.username(), rows_affected
                         )
                         .as_str(),
-                        json!({"rows_affected": rows_affected, "elapsed_ms": elapsed, "sql_type": "exec"}),
-                        None,
-                        user.id.into(),
+                        json!({"rows_affected": rows_affected, "elapsed_ms": elapsed, "sql_type": "exec"}), user.id().into(),
                         Some(&ctx.req),
                     )
                     .await;

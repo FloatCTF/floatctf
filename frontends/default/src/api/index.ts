@@ -49,7 +49,6 @@ export const downloadAdminApi = client.admin.download;
 export const databaseAdminApi = client.admin.database;
 export const scheduledTaskAdminApi = client.admin.scheduled_tasks;
 export const weaponsAdminApi = client.admin.weapons;
-export const superAdminApi = client.admin.super_admin;
 export const systemAdminApi = client.admin.system;
 export const discussionAdminApi = client.admin.discussions;
 export const announcementAdminApi = client.admin.announcements;

@@ -94,22 +94,39 @@ pub enum Auth {
     None,
     /// Expect 401 without a token (or with garbage token).
     UserRequired,
+    /// v1 超管门禁（Wave 4 过渡期仍在用 `SuperAdminJwtGuard`）。
     SuperAdminRequired,
+    /// v2 权限门禁（`RequirePermission<P>`）：匿名挑战同样是 401，
+    /// 但「已认证无权限」是 **403** —— 与超管门禁的区别在授权而非认证。
+    PermissionRequired,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Method {
     Get,
     Post,
     Patch,
+    Put,
     Delete,
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Patch => "PATCH",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+        }
+    }
 }
 
 pub struct Route {
     pub method: Method,
     pub path: &'static str,
     pub auth: Auth,
-    /// If true, send minimal JSON `{}` body for POST/PATCH/DELETE.
+    /// If true, send minimal JSON `{}` body for POST/PATCH/PUT/DELETE.
     pub json_body: bool,
 }
 
@@ -119,6 +136,7 @@ pub async fn call(route: &Route, bearer: Option<&str>) -> reqwest::Response {
         Method::Get => client().get(&url),
         Method::Post => client().post(&url),
         Method::Patch => client().patch(&url),
+        Method::Put => client().put(&url),
         Method::Delete => client().delete(&url),
     };
     if let Some(t) = bearer {

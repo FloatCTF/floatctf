@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { adminApi } from "@/api";
 import { ActionSelect, GenericTable, useMsgBanner } from "@/components";
-import type { EventUsers, Users } from "@floatctf/sdk/entity";
+import type { EventUsers } from "@floatctf/sdk/entity";
 import { DatetimeToShow, useSelectedRowIds } from "@/util";
 import { useCallback, useRef, useState } from "react";
 import { AdminRouteGuard } from "../../route";

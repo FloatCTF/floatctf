@@ -46,7 +46,7 @@ const base = {
 	id: "demo",
 	name: "Demo",
 	version: "1.0.0",
-	compatibility: { frontendRuntime: "1", apiContract: "1" },
+	compatibility: { frontendRuntime: "1", apiContract: "2" },
 	entry: "assets/app.js",
 	styles: ["assets/app.css"],
 };
@@ -57,7 +57,7 @@ const fixtures: Fixture[] = [
 	{ name: "good", manifest: { ...base } },
 	{ name: "good-minimal", manifest: { ...base, styles: undefined } },
 	{ name: "good-with-optional", manifest: { ...base, description: "d", author: "a" } },
-	{ name: "good-sdk-note", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "1", sdk: "1.0.0" } } },
+	{ name: "good-sdk-note", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "2", sdk: "1.0.0" } } },
 	{ name: "unknown-field", manifest: { ...base, source: "/home/me/x" } },
 	{ name: "bad-schema", manifest: { ...base, schemaVersion: 2 } },
 	{ name: "bad-id", manifest: { ...base, id: "../evil" } },
@@ -68,11 +68,11 @@ const fixtures: Fixture[] = [
 	{ name: "name-too-long", manifest: { ...base, name: "x".repeat(129) } },
 	{ name: "description-too-long", manifest: { ...base, description: "x".repeat(1025) } },
 	{ name: "author-too-long", manifest: { ...base, author: "x".repeat(257) } },
-	{ name: "compat-unknown-key", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "1", buildHost: "ci" } } },
-	{ name: "compat-runtime-mismatch", manifest: { ...base, compatibility: { frontendRuntime: "9", apiContract: "1" } } },
+	{ name: "compat-unknown-key", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "2", buildHost: "ci" } } },
+	{ name: "compat-runtime-mismatch", manifest: { ...base, compatibility: { frontendRuntime: "9", apiContract: "2" } } },
 	{ name: "compat-api-mismatch", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "9" } } },
 	{ name: "compat-missing", manifest: { ...base, compatibility: undefined } },
-	{ name: "compat-sdk-wrong-type", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "1", sdk: 1 } } },
+	{ name: "compat-sdk-wrong-type", manifest: { ...base, compatibility: { frontendRuntime: "1", apiContract: "2", sdk: 1 } } },
 	{ name: "entry-absolute", manifest: { ...base, entry: "/etc/passwd" } },
 	{ name: "entry-traversal", manifest: { ...base, entry: "../../evil.js" } },
 	{ name: "entry-scheme", manifest: { ...base, entry: "https://evil.example/x.js" } },
@@ -124,7 +124,7 @@ function parseArtifact(manifest: unknown) {
 	return parseFrontendManifest(manifest, {
 		manifestSchemaVersion: 1,
 		frontendRuntimeVersion: "1",
-		apiContractVersion: "1",
+		apiContractVersion: "2",
 	});
 }
 

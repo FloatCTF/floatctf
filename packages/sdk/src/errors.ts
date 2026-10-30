@@ -45,6 +45,13 @@ export class FloatCTFError extends Error {
 	readonly original?: unknown;
 	/** 是否因认证失败（401）触发；前端据此决定是否跳登录。 */
 	readonly unauthorized: boolean;
+	/**
+	 * 是否因**已认证但不允许**（403）触发。
+	 *
+	 * 与 `unauthorized` 互斥：403 表示「你已登录，但这件事你不能做」，
+	 * 处理后应当**保留**会话，只提示无权限。
+	 */
+	readonly forbidden: boolean;
 	/** 兼容既有 UI 的 axios 形态读取。 */
 	readonly response?: FloatCTFErrorResponse;
 
@@ -56,6 +63,7 @@ export class FloatCTFError extends Error {
 		platformMessage?: string;
 		original?: unknown;
 		unauthorized?: boolean;
+		forbidden?: boolean;
 		response?: FloatCTFErrorResponse;
 	}) {
 		super(init.message);
@@ -65,7 +73,28 @@ export class FloatCTFError extends Error {
 		this.platformMessage = init.platformMessage;
 		this.original = init.original;
 		this.unauthorized = init.unauthorized ?? init.httpStatus === 401;
+		this.forbidden = init.forbidden ?? init.httpStatus === 403;
 		this.response = init.response;
+	}
+
+	/**
+	 * 凭据问题：401 —— 应清 token 并重新登录。
+	 *
+	 * 与 [`isForbidden`] 的区别是 v2 授权契约的核心：
+	 * 403 **不是**凭据问题，清 token 跳登录页解决不了它。
+	 */
+	get isUnauthorized(): boolean {
+		return this.unauthorized;
+	}
+
+	/**
+	 * 已认证但**不允许**（403）：账号被禁用、缺少权限、或对象级授权失败。
+	 *
+	 * 前端应展示「无权限」提示并**保留**当前会话，
+	 * 绝不能像 401 那样清 token 跳登录页（那会让用户以为会话丢了）。
+	 */
+	get isForbidden(): boolean {
+		return this.forbidden;
 	}
 
 	/** 最适合展示给用户的文案：平台文案优先，其次 Error.message。 */
@@ -82,6 +111,7 @@ export class FloatCTFError extends Error {
 			platformMessage: this.platformMessage,
 			message: this.message,
 			unauthorized: this.unauthorized,
+			forbidden: this.forbidden,
 		};
 	}
 }

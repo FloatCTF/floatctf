@@ -4,13 +4,27 @@ import tailwindcss from "@tailwindcss/vite";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+	API_CONTRACT_VERSION,
+	FRONTEND_RUNTIME_VERSION,
+} from "@floatctf/frontend-runtime";
 import pkg from "./package.json";
 
 const FRONTEND_ID = "default";
 const FRONTEND_NAME = "FloatCTF Default Frontend";
-/** 与 packages/frontend-runtime/src/version.ts 保持一致（契约 major）。 */
-const FRONTEND_RUNTIME_CONTRACT = "1";
-const API_CONTRACT = "1";
+/**
+ * 契约 major **从单一真相源读取**，不再本地硬编码。
+ *
+ * 历史教训：这两个值原先在这里写死，于是 `API_CONTRACT_VERSION` 在仓库里共有
+ * **五处**副本（后端 contract.rs、frontend-runtime/version.ts、scripts/frontend.sh
+ * 的变量与内嵌 Python 默认值、本文件、以及两个外部前端的 frontend.json）。
+ * Wave 10 把它从 1 升到 2 时，本文件被漏掉 —— `mise run check` **不会**发现，
+ * 因为 check 不跑 `vite build`；只有 `mise run build` 才在生成 frontend.json 后
+ * 用运行时校验器报出 `apiContract "1" is incompatible with API contract major 2`。
+ * 改为直接引用 `@floatctf/frontend-runtime`：漂移在结构上不再可能。
+ */
+const FRONTEND_RUNTIME_CONTRACT = FRONTEND_RUNTIME_VERSION;
+const API_CONTRACT = API_CONTRACT_VERSION;
 /** 生产制品入口固定文件名：注册表与 Caddy 缓存策略都依赖它的确定性。 */
 const ENTRY_FILE = "assets/frontend.js";
 const STYLE_FILE = "assets/frontend.css";

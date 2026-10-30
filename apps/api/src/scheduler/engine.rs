@@ -252,7 +252,6 @@ impl TaskScheduler {
                     }),
                     None,
                     None,
-                    None,
                 )
                 .await;
         } else {
@@ -321,7 +320,6 @@ impl TaskScheduler {
                     "EXECUTE",
                     format!("{} 执行成功", task.task_name).as_str(),
                     json!([]),
-                    None,
                     None,
                     None,
                 )

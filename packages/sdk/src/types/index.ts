@@ -41,6 +41,19 @@ export type {
 	ImportChallengeResponse,
 } from "./adminChallenge.js";
 export type {
+	MeDto,
+	UserDto,
+	UserWriteRequest,
+} from "./account.js";
+export type {
+	CreateRoleRequest,
+	PermissionDto,
+	RoleDto,
+	RoleSummaryDto,
+	UpdateRoleRequest,
+	UserRolesDto,
+} from "./roles.js";
+export type {
 	CreateOidcClientInput,
 	OidcAdminClientDto,
 	OidcAuthorizationDto,

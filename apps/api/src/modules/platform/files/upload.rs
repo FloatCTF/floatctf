@@ -59,7 +59,6 @@ pub async fn upload_image(
             format!("上传图片 {}", image_path).as_str(),
             json!({}),
             None,
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -110,7 +109,6 @@ pub async fn upload_avatar(
             format!("更新头像 {}", avatar_url).as_str(),
             json!({}),
             user_id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

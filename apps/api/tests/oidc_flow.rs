@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use floatctf::core::config::OidcConfig;
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::sea_orm_active_enums::{
     OidcClientStatus, OidcClientType, OidcTokenAuthMethod,
 };
@@ -53,6 +54,8 @@ async fn seed_user(db: &DatabaseConnection, tag: &str) -> users::Model {
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(Some("/public/avatars/test.png".into())),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await

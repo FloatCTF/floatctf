@@ -17,8 +17,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use floatctf::core::secret::Secret;
-use floatctf::core::security::jwt::{self, Role};
-use floatctf::entity::{super_admin, users};
+use floatctf::core::security::jwt;
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
+use floatctf::entity::{user_platform_roles, users};
 use floatctf::infrastructure::LogService;
 
 const PASSWORD: &str = "OidcMgmt@2026";
@@ -49,37 +50,34 @@ async fn seed_user(db: &DatabaseConnection, tag: &str) -> users::Model {
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(None),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await
     .unwrap()
 }
 
-async fn seed_admin(db: &DatabaseConnection) -> super_admin::Model {
-    let id = Uuid::new_v4();
-    let now = chrono::Utc::now().fixed_offset();
-    super_admin::ActiveModel {
-        id: Set(id),
-        username: Set(format!("mgmt-admin-{}", &id.simple().to_string()[..8])),
-        password: Set("unused".into()),
-        email: Set(format!(
-            "admin-{}@example.com",
-            &id.simple().to_string()[..8]
-        )),
-        created_at: Set(now),
-        updated_at: Set(now),
+async fn seed_admin(db: &DatabaseConnection) -> users::Model {
+    let user = seed_user(db, "admin").await;
+    user_platform_roles::ActiveModel {
+        user_id: Set(user.id),
+        role_id: Set(floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN),
+        granted_by: Set(None),
+        granted_at: Set(chrono::Utc::now().fixed_offset()),
     }
     .insert(db)
     .await
-    .unwrap()
+    .unwrap();
+    user
 }
 
 fn user_jwt(user: &users::Model) -> String {
-    jwt::gen_jwt_token(user.id, Role::User, None).unwrap()
+    jwt::gen_session_token(user.id, user.token_version).unwrap()
 }
 
-fn admin_jwt(admin: &super_admin::Model) -> String {
-    jwt::gen_jwt_token(admin.id, Role::SuperAdmin, None).unwrap()
+fn admin_jwt(admin: &users::Model) -> String {
+    jwt::gen_session_token(admin.id, admin.token_version).unwrap()
 }
 
 macro_rules! app {
@@ -425,10 +423,12 @@ async fn jwt_bridge_is_idempotent_and_uses_real_issue_time() {
     assert_eq!(body["data"]["established"], false);
 
     // 旧 JWT（无 iat）：auth_time = exp - 8h，而不是"现在"
+    // v2 令牌（有 purpose/token_version、无 iat）也必须可用，auth_time 同样按 exp - 8h 推算。
     #[derive(serde::Serialize)]
     struct Legacy {
         sub: Uuid,
-        role: Role,
+        purpose: &'static str,
+        token_version: i32,
         exp: usize,
     }
     let exp = chrono::Utc::now().timestamp() + 3 * 3600; // 5 小时前签发的 8h 令牌
@@ -436,7 +436,8 @@ async fn jwt_bridge_is_idempotent_and_uses_real_issue_time() {
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS512),
         &Legacy {
             sub: user.id,
-            role: Role::User,
+            purpose: "session",
+            token_version: user.token_version,
             exp: exp as usize,
         },
         &jsonwebtoken::EncodingKey::from_secret(JWT_SECRET.as_bytes()),

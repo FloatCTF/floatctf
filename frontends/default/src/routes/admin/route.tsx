@@ -6,8 +6,13 @@ import {
 } from "@tanstack/react-router";
 import { useTitle } from "ahooks";
 
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+
 import { AdminHeader, HierarchicalSideBar } from "@/components";
 import { adminIgnoreRoutes, adminNavigation } from "@/navigation";
+import type { NavigationVisibilityContext } from "@/navigation";
+import { serviceApi } from "@/api";
 import { useAuthStore } from "@/stores/AuthStore";
 
 export const Route = createFileRoute("/admin")({
@@ -30,6 +35,33 @@ export const Route = createFileRoute("/admin")({
 function RouteComponent() {
 	useTitle("Admin | FloatCTF");
 	const location = useLocation();
+	const authStore = useAuthStore();
+
+	// 权限感知导航的数据来源：`/me` 回传本次请求解析出的**有效权限**。
+	// 与 Header 共用同一个 queryKey，react-query 会去重，不会多打一次请求。
+	const { data } = useQuery({
+		queryKey: ["profile"],
+		queryFn: () => serviceApi.users.getMe(),
+		enabled: !adminIgnoreRoutes.includes(location.pathname),
+	});
+	const me = data?.data;
+
+	useEffect(() => {
+		if (me) {
+			authStore.setPermissions(me.permissions ?? [], Boolean(me.grants_all));
+		}
+	}, [me, authStore]);
+
+	const visibility = useMemo<NavigationVisibilityContext>(
+		() => ({
+			permissions: new Set(authStore.permissions),
+			// `features` 是**平台能力**（赛制等），与用户权限是两回事（计划 §7.1）。
+			// 这里留空表示「不按平台能力裁剪导航」；需要时由 API 填充。
+			features: new Set<string>(),
+		}),
+		[authStore.permissions],
+	);
+
 	if (adminIgnoreRoutes.includes(location.pathname)) {
 		return <Outlet />;
 	}
@@ -40,7 +72,10 @@ function RouteComponent() {
 
 			<div className="flex flex-row h-full">
 				<div className="border-right h-full pl-2 w-fit overflow-y-auto">
-					<HierarchicalSideBar sections={adminNavigation} />
+					<HierarchicalSideBar
+						sections={adminNavigation}
+						visibility={visibility}
+					/>
 				</div>
 				<div className="p-2 w-full flex-1 min-w-0 overflow-auto">
 					<Outlet />

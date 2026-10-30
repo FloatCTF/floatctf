@@ -65,13 +65,13 @@ pub enum Relation {
     #[sea_orm(has_many = "super::oidc_session_clients::Entity")]
     OidcSessionClients,
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::ReviewedBy",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SuperAdmin,
+    ReviewedByUser,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::OwnerUserId",
@@ -121,12 +121,6 @@ impl Related<super::oidc_logout_requests::Entity> for Entity {
 impl Related<super::oidc_session_clients::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::OidcSessionClients.def()
-    }
-}
-
-impl Related<super::super_admin::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::SuperAdmin.def()
     }
 }
 

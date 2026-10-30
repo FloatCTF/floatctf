@@ -124,7 +124,6 @@ pub async fn create_comment(
             format!("评论讨论: {}", discussion_title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -171,7 +170,6 @@ pub async fn patch_comment(
             format!("编辑评论 {}", comment_id).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -227,7 +225,6 @@ pub async fn delete_comment(
             format!("删除评论 {} (讨论: {})", comment_id, discussion_title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

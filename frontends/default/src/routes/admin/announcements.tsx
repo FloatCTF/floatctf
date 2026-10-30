@@ -5,7 +5,7 @@ import { useReactive, useTitle } from "ahooks";
 import { adminApi } from "@/api";
 import { GenericTable } from "@/components";
 import { type Announcements } from "@floatctf/sdk/entity";
-import { DatetimeToShow } from "@/util";
+import { DatetimeToShow, publisherLabel } from "@/util";
 import { AdminRouteGuard } from "./route";
 
 export const Route = createFileRoute("/admin/announcements")({
@@ -48,6 +48,8 @@ function RouteComponent() {
             accessorKey: "publisher",
             header: "发布者",
             field: "publisher",
+            // 发布者账号被注销时仍显示当时的名字快照，并标注已注销
+            renderCell: (row: Announcements) => <span>{publisherLabel(row)}</span>,
         },
         {
             accessorKey: "created_at",

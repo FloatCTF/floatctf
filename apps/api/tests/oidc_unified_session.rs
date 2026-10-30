@@ -22,11 +22,12 @@ use uuid::Uuid;
 
 use floatctf::core::config::OidcConfig;
 use floatctf::core::secret::Secret;
-use floatctf::core::security::jwt::{self, Role};
+use floatctf::core::security::jwt;
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType};
 use floatctf::entity::{
     oidc_authorization_codes, oidc_browser_containers, oidc_browser_sessions, oidc_clients,
-    super_admin, users,
+    user_platform_roles, users,
 };
 use floatctf::infrastructure::LogService;
 use floatctf::modules::identity::oidc::clients::{self, ClientInput};
@@ -59,29 +60,26 @@ async fn seed_user(db: &DatabaseConnection, tag: &str) -> users::Model {
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(None),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await
     .unwrap()
 }
 
-async fn seed_admin(db: &DatabaseConnection) -> super_admin::Model {
-    let id = Uuid::new_v4();
-    let now = chrono::Utc::now().fixed_offset();
-    super_admin::ActiveModel {
-        id: Set(id),
-        username: Set(format!("uni-admin-{}", &id.simple().to_string()[..8])),
-        password: Set("unused".into()),
-        email: Set(format!(
-            "uni-admin-{}@example.com",
-            &id.simple().to_string()[..8]
-        )),
-        created_at: Set(now),
-        updated_at: Set(now),
+async fn seed_admin(db: &DatabaseConnection) -> users::Model {
+    let user = seed_user(db, "admin").await;
+    user_platform_roles::ActiveModel {
+        user_id: Set(user.id),
+        role_id: Set(floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN),
+        granted_by: Set(None),
+        granted_at: Set(chrono::Utc::now().fixed_offset()),
     }
     .insert(db)
     .await
-    .unwrap()
+    .unwrap();
+    user
 }
 
 struct TestClient {
@@ -540,7 +538,7 @@ async fn cookie_requests_need_csrf_first_party_origin_and_matching_account() {
 
     // Bearer 兼容：CLI / 第三方前端照旧
     let bob = seed_user(&db, "bob").await;
-    let bearer = jwt::gen_jwt_token(bob.id, Role::User, None).unwrap();
+    let bearer = jwt::gen_session_token(bob.id, bob.token_version).unwrap();
     let req = test::TestRequest::get()
         .uri("/api/users/me")
         .insert_header(("Authorization", format!("Bearer {bearer}")))
@@ -563,7 +561,7 @@ async fn cookie_requests_need_csrf_first_party_origin_and_matching_account() {
         .insert_header(("Cookie", b.header()))
         .to_request();
     assert_eq!(test::call_service(&app, req).await.status(), 401);
-    let admin_token = jwt::gen_jwt_token(admin.id, Role::SuperAdmin, None).unwrap();
+    let admin_token = jwt::gen_session_token(admin.id, admin.token_version).unwrap();
     let req = test::TestRequest::get()
         .uri("/api/admin/users")
         .insert_header(("Authorization", format!("Bearer {admin_token}")))
@@ -988,7 +986,7 @@ async fn legacy_jwt_is_migrated_into_a_cookie_session() {
     };
     let app = app!(db, unified_config());
     let alice = seed_user(&db, "alice").await;
-    let bearer = jwt::gen_jwt_token(alice.id, Role::User, None).unwrap();
+    let bearer = jwt::gen_session_token(alice.id, alice.token_version).unwrap();
     let mut b = Browser::default();
 
     // Cookie 不能调用迁移接口；必须是 Bearer

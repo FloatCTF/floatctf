@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::AnnouncementsManageGuard;
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -10,7 +12,7 @@ use crate::{
         FilterMapping, apply_filters, dto::DeleteItemsRequest, prelude::*,
         sea_orm_utils::paginate_query,
     },
-    entity::{announcements, super_admin},
+    entity::announcements,
 };
 
 /// GET /api/announcements (player)
@@ -60,7 +62,7 @@ pub async fn get_player_announcements(
 /// GET /api/admin/announcements
 #[get("")]
 pub async fn get_announcements(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<AnnouncementsManageGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<AnnouncementsDto>> {
@@ -110,29 +112,22 @@ pub struct CreateAnnouncementRequest {
 /// POST /api/admin/announcements
 #[post("")]
 pub async fn create_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<AnnouncementsManageGuard>,
     ctx: ReqCtx,
     car: Json<CreateAnnouncementRequest>,
 ) -> UniResult<AnnouncementsDto> {
     let car = car.into_inner();
-    let user = user.into_inner();
-    let publisher_id = user.id;
-    let admin_username = user.username.clone();
-
-    // Lookup superadmin username by publisher_id
-    let publisher = super_admin::Entity::find_by_id(publisher_id)
-        .one(ctx.db.get_ref())
-        .await?
-        .ok_or(AppError::NotFound(format!(
-            "SuperAdmin {} 不存在",
-            publisher_id
-        )))?
-        .username;
+    let user = user.into_auth();
+    let publisher_id = user.id();
+    // 发布者展示名快照直接取当前账号的用户名 —— 不再回查 super_admin：
+    // 统一账户后发布者就是 `users` 里的一行，且快照的意义正是「发布当时的名字」。
+    let publisher = user.username().to_string();
+    let admin_username = user.username().to_string();
 
     let announcement = announcements::ActiveModel {
         title: Set(car.title),
         content: Set(car.content),
-        publisher_id: Set(publisher_id),
+        publisher_id: Set(Some(publisher_id)),
         publisher: Set(publisher),
         ..Default::default()
     };
@@ -145,8 +140,7 @@ pub async fn create_announcement(
             "CREATE",
             format!("{} 创建公告: {}", admin_username, announcement.title).as_str(),
             json!({"title": announcement.title}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -163,12 +157,12 @@ pub struct PatchAnnouncementRequest {
 /// PATCH /api/admin/announcements/{announcement_id}
 #[patch("/{announcement_id}")]
 pub async fn patch_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<AnnouncementsManageGuard>,
     ctx: ReqCtx,
     announcement_id: Path<Uuid>,
     par: Json<PatchAnnouncementRequest>,
 ) -> UniResult<AnnouncementsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let announcement_id = announcement_id.into_inner();
     let par = par.into_inner();
     let announcement = announcements::Entity::find_by_id(announcement_id)
@@ -191,10 +185,9 @@ pub async fn patch_announcement(
             "INFO",
             "ANNOUNCEMENTS",
             "UPDATE",
-            format!("{} 更新公告: {}", user.username, announcement.title).as_str(),
+            format!("{} 更新公告: {}", user.username(), announcement.title).as_str(),
             json!({"announcement_id": announcement.id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -205,11 +198,11 @@ pub async fn patch_announcement(
 /// DELETE /api/admin/announcements
 #[delete("")]
 pub async fn delete_announcement(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<AnnouncementsManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
     let mut deleted_count = 0;
     for announcement_id in dir.id_list {
@@ -227,10 +220,9 @@ pub async fn delete_announcement(
             "INFO",
             "ANNOUNCEMENTS",
             "DELETE",
-            format!("{} 删除 {} 条公告", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 条公告", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

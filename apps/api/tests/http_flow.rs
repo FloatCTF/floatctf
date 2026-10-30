@@ -399,7 +399,9 @@ async fn all_catalog_get_routes_with_admin_do_not_500() {
                 // admin token is SuperAdmin JWT — may fail UserJwtGuard; skip user GETs here
                 continue;
             }
-            Auth::SuperAdminRequired => Some(token.as_str()),
+            // 权限门禁与超管门禁在「匿名必须 401」这一点上相同；
+            // 区别在授权（403）而非认证，因此这里用同一个 bearer。
+            Auth::SuperAdminRequired | Auth::PermissionRequired => Some(token.as_str()),
         };
         let resp = call(&route, bearer).await;
         let status = resp.status().as_u16();

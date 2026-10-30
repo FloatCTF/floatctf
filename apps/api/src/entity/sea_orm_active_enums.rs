@@ -4,6 +4,15 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "account_status")]
+#[serde(rename_all = "snake_case")]
+pub enum AccountStatus {
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "disabled")]
+    Disabled,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "awd_event_status")]
 #[serde(rename_all = "snake_case")]
 pub enum AwdEventStatus {

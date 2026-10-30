@@ -1,7 +1,7 @@
 //! 开发者中心（`/api/oidc/*`，玩家 JWT）与管理员审核（`/api/admin/oidc/*`，超管 JWT）。
 //!
 //! 权限在服务端执行：所有者接口一律按 `owner_user_id` 过滤（他人应用一律 404，不暴露存在性）；
-//! 审批/封禁/PKCE 豁免只走 `SuperAdminJwtGuard`。所有变更写审计日志（只记 client_id 等非秘密元数据）。
+//! 审批/封禁/PKCE 豁免只走 `RequirePermission<SettingsManageGuard>`。所有变更写审计日志（只记 client_id 等非秘密元数据）。
 
 use actix_web::{HttpRequest, delete, get, patch, post, web};
 use chrono::{DateTime, FixedOffset};
@@ -12,8 +12,9 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::api::extractor::auth::{SuperAdminJwtGuard, UserJwtGuard};
+use crate::api::extractor::auth::{RequirePermission, UserJwtGuard};
 use crate::api::{AppError, UniResponse, UniResult};
+use crate::core::permission::guards::SettingsManageGuard;
 use crate::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType, OidcTokenAuthMethod};
 use crate::entity::{oidc_clients, oidc_consents, users};
 use crate::infrastructure::{WebDb, WebLog};
@@ -48,8 +49,7 @@ fn audit(
             &action,
             &message,
             details,
-            user,
-            admin,
+            admin.or(user),
             Some(&req),
         )
         .await;
@@ -601,7 +601,7 @@ pub struct AdminListQuery {
 /// GET /api/admin/oidc/clients?status=pending
 #[get("/clients")]
 pub async fn admin_list_clients(
-    _admin: SuperAdminJwtGuard,
+    _admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     query: web::Query<AdminListQuery>,
@@ -638,7 +638,7 @@ pub struct ReviewDto {
 #[allow(clippy::too_many_arguments)]
 async fn admin_transition(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -647,13 +647,13 @@ async fn admin_transition(
     action: AdminAction,
 ) -> UniResult<ClientDto> {
     require(oidc)?;
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let m = clients::find_by_client_id(&db, &client_id)
         .await?
         .ok_or_else(|| AppError::NotFound("应用不存在".into()))?;
     let next = clients::admin_transition(&m.status, action).map_err(AppError::InvalidState)?;
     let reason = body.and_then(|b| b.into_inner().reason);
-    let m = clients::set_status(&db, m, next, Some(admin.id), reason).await?;
+    let m = clients::set_status(&db, m, next, Some(admin.user.id), reason).await?;
     let code = match action {
         AdminAction::Approve => "OIDC_CLIENT_APPROVE",
         AdminAction::Reject => "OIDC_CLIENT_REJECT",
@@ -667,7 +667,7 @@ async fn admin_transition(
         format!("管理员 {:?} OIDC 应用 {}", action, m.name),
         &m.client_id,
         None,
-        Some(admin.id),
+        Some(admin.user.id),
     );
     Ok(UniResponse::ok(Some(dto(&db, m).await?)))
 }
@@ -676,7 +676,7 @@ async fn admin_transition(
 #[post("/clients/{client_id}/approve")]
 pub async fn admin_approve(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -700,7 +700,7 @@ pub async fn admin_approve(
 #[post("/clients/{client_id}/reject")]
 pub async fn admin_reject(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -724,7 +724,7 @@ pub async fn admin_reject(
 #[post("/clients/{client_id}/suspend")]
 pub async fn admin_suspend(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -748,7 +748,7 @@ pub async fn admin_suspend(
 #[post("/clients/{client_id}/reinstate")]
 pub async fn admin_reinstate(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -777,7 +777,7 @@ pub struct PkcePolicyDto {
 #[patch("/clients/{client_id}/pkce")]
 pub async fn admin_set_pkce(
     req: HttpRequest,
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<SettingsManageGuard>,
     oidc: Option<WebOidc>,
     db: WebDb,
     log: WebLog,
@@ -785,7 +785,7 @@ pub async fn admin_set_pkce(
     body: web::Json<PkcePolicyDto>,
 ) -> UniResult<ClientDto> {
     require(oidc)?;
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let m = clients::find_by_client_id(&db, &path)
         .await?
         .ok_or_else(|| AppError::NotFound("应用不存在".into()))?;
@@ -806,7 +806,7 @@ pub async fn admin_set_pkce(
         ),
         &m.client_id,
         None,
-        Some(admin.id),
+        Some(admin.user.id),
     );
     Ok(UniResponse::ok(Some(dto(&db, m).await?)))
 }

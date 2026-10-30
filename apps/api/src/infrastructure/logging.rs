@@ -37,6 +37,21 @@ impl LogService {
             .realip_remote_addr()
             .map(|s| s.to_string())
     }
+    /// 写一条平台审计日志。
+    ///
+    /// # 为什么只有一个 `actor_user_id`
+    ///
+    /// v1 的签名是 `(user_id, superadmin_id)` 双列 —— 它假定「选手主体」与
+    /// 「管理员主体」是两个不同的身份空间。统一账户后它们是同一个空间，
+    /// 双列会让每个读取方各自决定怎么合并，而写入方可以只填一个，
+    /// 于是审计查询很容易**静默漏掉**管理动作（审计漏记本身就是安全问题）。
+    ///
+    /// 因此 Wave 6 收敛为单一 `actor_user_id`：
+    /// - `Some(id)` = 某个账号发起的动作（无论该账号是选手还是管理员）；
+    /// - `None`     = 系统动作（定时任务、内部回调）或主体账号已注销。
+    ///
+    /// 「这是选手行为还是平台管理行为」的信息由 `category` + `action` 表达，
+    /// 不再由主体列承担 —— 主体列只回答「谁」。
     pub async fn add_log(
         &self,
         level: &str,
@@ -44,8 +59,7 @@ impl LogService {
         action: &str,
         message: &str,
         details: Value,
-        user_id: Option<Uuid>,
-        superadmin_id: Option<Uuid>,
+        actor_user_id: Option<Uuid>,
         request: Option<&actix_web::HttpRequest>,
     ) {
         let ip_address = request.map(|req| Self::get_client_ip(req)).flatten();
@@ -57,8 +71,7 @@ impl LogService {
             message: Set(message.to_string()),
             details: Set(details),
             ip_address: Set(ip_address),
-            user_id: Set(user_id),
-            superadmin_id: Set(superadmin_id),
+            actor_user_id: Set(actor_user_id),
             ..Default::default()
         };
         let db = self.db.get_ref().clone();

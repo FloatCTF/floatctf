@@ -9,7 +9,11 @@ use crate::api::dto::map_dto_vec;
 use crate::modules::challenge::catalog::ChallengesDto;
 use crate::modules::challenge::set::ChallengeSetsDto;
 use crate::{
-    api::{FilterMapping, dto::DeleteItemsRequest, prelude::*, sea_orm_utils::query_query},
+    api::{
+        FilterMapping, dto::DeleteItemsRequest, extractor::auth::RequirePermission, prelude::*,
+        sea_orm_utils::query_query,
+    },
+    core::permission::guards::{ChallengesManageGuard, ChallengesReadGuard},
     entity::{challenge_set_items, challenge_sets, challenges},
 };
 
@@ -22,11 +26,11 @@ pub struct CreateChallengeSetRequest {
 /// POST /api/admin/challenge_sets
 #[post("")]
 pub async fn create_challenge_set(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     csr: Json<CreateChallengeSetRequest>,
 ) -> UniResult<ChallengeSetsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let csr = csr.into_inner();
     let challenge_set = challenge_sets::ActiveModel {
         name: Set(csr.name),
@@ -52,10 +56,9 @@ pub async fn create_challenge_set(
             "INFO",
             "CHALLENGE_SETS",
             "CREATE",
-            format!("{} 创建题目集: {}", user.username, challenge_set.name).as_str(),
+            format!("{} 创建题目集: {}", user.username(), challenge_set.name).as_str(),
             json!({"name": challenge_set.name}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -72,12 +75,12 @@ pub struct PatchChallengeSetRequest {
 /// PATCH /api/admin/challenge_sets/{challenge_set_id}
 #[patch("/{challenge_set_id}")]
 pub async fn patch_challenge_set(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     challenge_set_id: Path<Uuid>,
     psr: Json<PatchChallengeSetRequest>,
 ) -> UniResult<ChallengeSetsDto> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let challenge_set_id = challenge_set_id.into_inner();
     let psr = psr.into_inner();
     let challenge_set = challenge_sets::Entity::find_by_id(challenge_set_id)
@@ -100,10 +103,9 @@ pub async fn patch_challenge_set(
             "INFO",
             "CHALLENGE_SETS",
             "UPDATE",
-            format!("{} 更新题目集: {}", user.username, challenge_set.name).as_str(),
+            format!("{} 更新题目集: {}", user.username(), challenge_set.name).as_str(),
             json!({"challenge_set_id": challenge_set.id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -114,11 +116,11 @@ pub async fn patch_challenge_set(
 /// DELETE /api/admin/challenge_sets
 #[delete("")]
 pub async fn delete_challenge_set(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
     let deleted_count = challenge_sets::Entity::delete_many()
         .filter(challenge_sets::Column::Id.is_in(dir.id_list))
@@ -131,10 +133,9 @@ pub async fn delete_challenge_set(
             "INFO",
             "CHALLENGE_SETS",
             "DELETE",
-            format!("{} 删除 {} 个题目集", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 个题目集", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -145,7 +146,7 @@ pub async fn delete_challenge_set(
 /// GET /api/admin/challenge_sets
 #[get("")]
 pub async fn get_challenge_sets(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<ChallengesReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<ChallengeSetsDto>> {
@@ -187,7 +188,7 @@ pub async fn get_challenge_sets(
 /// GET /api/admin/challenge_sets/{challenge_set_id}
 #[get("/{challenge_set_id}")]
 pub async fn get_challenge_set(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<ChallengesReadGuard>,
     ctx: ReqCtx,
     challenge_set_id: Path<Uuid>,
     query_params: Query<QueryParams>,
@@ -232,12 +233,12 @@ pub async fn get_challenge_set(
 /// DELETE /api/admin/challenge_sets/{challenge_set_id}/challenges
 #[delete("/{challenge_set_id}/challenges")]
 pub async fn delete_challenge_from_set(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     challenge_set_id: Path<Uuid>,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let challenge_set_id = challenge_set_id.into_inner();
     let dir = dir.into_inner();
 
@@ -253,10 +254,9 @@ pub async fn delete_challenge_from_set(
             "INFO",
             "CHALLENGE_SETS",
             "DELETE",
-            format!("{} 从题目集移除 {} 道题目", user.username, deleted_count).as_str(),
+            format!("{} 从题目集移除 {} 道题目", user.username(), deleted_count).as_str(),
             json!({"challenge_set_id": challenge_set_id, "deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -271,12 +271,12 @@ pub struct AddChallengeToSetRequest {
 /// POST /api/admin/challenge_sets/{challenge_set_id}/challenges
 #[post("/{challenge_set_id}/challenges")]
 pub async fn add_challenge_to_set(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<ChallengesManageGuard>,
     ctx: ReqCtx,
     challenge_set_id: Path<Uuid>,
     acr: Json<AddChallengeToSetRequest>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let challenge_set_id = challenge_set_id.into_inner();
     let acr = acr.into_inner();
     let count = acr.challenge_id_list.len();
@@ -295,10 +295,9 @@ pub async fn add_challenge_to_set(
             "INFO",
             "CHALLENGE_SETS",
             "ADD_CHALLENGES",
-            format!("{} 向题目集添加 {} 道题目", user.username, count).as_str(),
+            format!("{} 向题目集添加 {} 道题目", user.username(), count).as_str(),
             json!({"challenge_set_id": challenge_set_id, "count": count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

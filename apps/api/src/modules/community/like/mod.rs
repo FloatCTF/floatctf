@@ -52,7 +52,6 @@ pub async fn like_discussion(user: UserJwtGuard, ctx: ReqCtx, path: Path<Uuid>) 
             format!("点赞讨论: {}", discussion_title).as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;
@@ -99,7 +98,6 @@ pub async fn unlike_discussion(user: UserJwtGuard, ctx: ReqCtx, path: Path<Uuid>
                 format!("取消点赞讨论: {}", discussion_title).as_str(),
                 json!({}),
                 user.id.into(),
-                None,
                 Some(&ctx.req),
             )
             .await;

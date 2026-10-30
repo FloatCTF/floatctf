@@ -1,3 +1,8 @@
+export enum AccountStatus {
+  Active = 'active',
+  Disabled = 'disabled',
+}
+
 export enum AwdEventStatus {
   Draft = 'draft',
   Configuring = 'configuring',

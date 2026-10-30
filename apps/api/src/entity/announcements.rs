@@ -12,7 +12,7 @@ pub struct Model {
     pub title: String,
     #[sea_orm(column_type = "Text", nullable)]
     pub content: Option<String>,
-    pub publisher_id: Uuid,
+    pub publisher_id: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub publisher: String,
     pub created_at: DateTimeWithTimeZone,
@@ -22,18 +22,18 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::super_admin::Entity",
+        belongs_to = "super::users::Entity",
         from = "Column::PublisherId",
-        to = "super::super_admin::Column::Id",
+        to = "super::users::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
-    SuperAdmin,
+    Users,
 }
 
-impl Related<super::super_admin::Entity> for Entity {
+impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::SuperAdmin.def()
+        Relation::Users.def()
     }
 }
 

@@ -171,7 +171,6 @@ pub(crate) fn audit(
             &message,
             details,
             user_id,
-            None,
             Some(&req),
         )
         .await;

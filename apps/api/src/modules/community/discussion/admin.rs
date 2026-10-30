@@ -1,5 +1,7 @@
 //! 讨论管理端接口。
 
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::DiscussionsModerateGuard;
 use std::{collections::HashMap, str::FromStr};
 
 use sea_orm::Condition;
@@ -16,7 +18,7 @@ use crate::{
 /// GET /api/admin/discussions
 #[get("")]
 pub async fn get_discussions(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<DiscussionsModerateGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<DiscussionWithAuthor>> {
@@ -92,7 +94,7 @@ pub async fn get_discussions(
 /// GET /api/admin/discussions/{discussion_id}
 #[get("/{discussion_id}")]
 pub async fn get_discussion(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<DiscussionsModerateGuard>,
     ctx: ReqCtx,
     path: Path<Uuid>,
 ) -> UniResult<DiscussionsDto> {
@@ -112,11 +114,11 @@ pub async fn get_discussion(
 /// DELETE /api/admin/discussions
 #[delete("")]
 pub async fn delete_discussions(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DiscussionsModerateGuard>,
     ctx: ReqCtx,
     dir: Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let dir = dir.into_inner();
     let mut deleted_count = 0;
     for discussion_id in dir.id_list {
@@ -134,10 +136,9 @@ pub async fn delete_discussions(
             "INFO",
             "DISCUSSIONS",
             "DELETE",
-            format!("{} 删除 {} 条讨论", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 条讨论", user.username(), deleted_count).as_str(),
             json!({"deleted_count": deleted_count}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

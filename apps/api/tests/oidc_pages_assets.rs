@@ -12,6 +12,7 @@ use oidc_support::*;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
 use uuid::Uuid;
 
+use floatctf::entity::sea_orm_active_enums::AccountStatus;
 use floatctf::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType};
 use floatctf::entity::users;
 use floatctf::infrastructure::LogService;
@@ -85,6 +86,8 @@ async fn seed_user(db: &DatabaseConnection, tag: &str, avatar: Option<String>) -
         created_at: Set(now),
         updated_at: Set(now),
         avatar: Set(avatar),
+        status: Set(AccountStatus::Active),
+        token_version: Set(0),
     }
     .insert(db)
     .await

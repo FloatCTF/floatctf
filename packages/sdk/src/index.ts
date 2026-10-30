@@ -56,6 +56,7 @@ export {
 	type FloatCTFHttpClient,
 	type FloatCTFRequestConfig,
 	type FloatCTFTransport,
+	type ForbiddenContext,
 	type UnauthorizedContext,
 } from "./transport.js";
 

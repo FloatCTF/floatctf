@@ -1,7 +1,5 @@
 export type Logs = {
   id: string;
-  user_id?: string;
-  superadmin_id?: string;
   ip_address?: string;
   category: string;
   action: string;
@@ -9,4 +7,5 @@ export type Logs = {
   message: string;
   details: string;
   created_at: string;
+  actor_user_id?: string;
 };

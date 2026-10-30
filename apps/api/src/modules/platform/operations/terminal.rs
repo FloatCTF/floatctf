@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::TerminalOpenGuard;
 use std::{
     collections::HashMap,
     process::Stdio,
@@ -19,7 +21,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::api::prelude::*;
-use crate::entity::super_admin;
+use crate::entity::users;
 
 const TERMINAL_TICKET_COOKIE: &str = "floatctf_terminal_ticket";
 /// 生产 TTL：60 秒内必须完成 session → WS 握手。
@@ -167,20 +169,20 @@ impl TerminalTicketStore {
 /// 使用常规 SuperAdmin Authorization 签发 60 秒、单次使用的 HttpOnly ticket cookie。
 #[post("/session")]
 pub async fn create_terminal_session(
-    admin: SuperAdminJwtGuard,
+    admin: RequirePermission<TerminalOpenGuard>,
     ctx: ReqCtx,
 ) -> Result<HttpResponse, actix_web::Error> {
     if !ctx.config.features.enable_web_terminal {
         return Err(actix_web::error::ErrorNotFound("Web terminal is disabled"));
     }
 
-    let admin = admin.into_inner();
+    let admin = admin.into_auth();
     let ticket = ctx
         .req
         .app_data::<web::Data<crate::bootstrap::AppState>>()
         .expect("AppState 不存在")
         .terminal_tickets
-        .issue(admin.id)
+        .issue(admin.id())
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
     let secure = ctx.config.main_url.starts_with("https://")
@@ -200,8 +202,7 @@ pub async fn create_terminal_session(
             "ISSUE_TICKET",
             "Issued one-time web terminal ticket",
             json!({"ttl_secs": TERMINAL_TICKET_TTL.as_secs()}),
-            None,
-            Some(admin.id),
+            Some(admin.id()),
             Some(&ctx.req),
         )
         .await;
@@ -233,11 +234,22 @@ pub async fn terminal_ws(
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Invalid or expired terminal ticket"))?;
 
     let db = req.app_data::<WebDb>().cloned().expect("WebDb 不存在");
-    let _admin = super_admin::Entity::find_by_id(admin_id)
+    // Wave 10：管理员就是普通 `users` 账号（`super_admin` 表已删除）。
+    let account = users::Entity::find_by_id(admin_id)
         .one(db.get_ref())
         .await
         .map_err(|_| actix_web::error::ErrorInternalServerError("DB error"))?
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Not a super admin"))?;
+        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Invalid terminal session"))?;
+
+    // 票据是**一次性**的，但它可能是在权限被撤销之前签发的。
+    // 升级为 WebSocket 之前再解析一次权限并现查 `terminal.open` ——
+    // 终端是宿主级能力，不能靠"发票据那一刻有权限"就一直有效。
+    let auth = crate::api::extractor::auth::resolve_auth_context(db.get_ref(), account)
+        .await
+        .map_err(|_| actix_web::error::ErrorUnauthorized("Invalid terminal session"))?;
+    if !auth.has(crate::core::permission::Permission::TerminalOpen) {
+        return Err(actix_web::error::ErrorForbidden("需要 terminal.open 权限"));
+    }
 
     // Upgrade to WebSocket only after the one-time ticket has been atomically consumed.
     let (res, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;

@@ -15,7 +15,7 @@ const REGISTRY = {
 				"1.0.0": {
 					version: "1.0.0",
 					name: "Default Frontend",
-					compatibility: { frontendRuntime: "1", apiContract: "1" },
+					compatibility: { frontendRuntime: "1", apiContract: "2" },
 					entry: "assets/frontend.js",
 					styles: ["assets/frontend.css"],
 					installedAt: "2026-10-07T00:00:00.000Z",
@@ -29,7 +29,7 @@ const REGISTRY = {
 				"1.0.0": {
 					version: "1.0.0",
 					name: "Cyberpunk",
-					compatibility: { frontendRuntime: "1", apiContract: "1" },
+					compatibility: { frontendRuntime: "1", apiContract: "2" },
 					entry: "assets/frontend.js",
 					styles: ["assets/frontend.css"],
 					installedAt: "2026-10-07T00:00:00.000Z",
@@ -72,7 +72,7 @@ function makeFetch(options: {
 					data: {
 						active_frontend: activeFrontend,
 						platform_version: "1.0.0",
-						api_contract_version: "1",
+						api_contract_version: "2",
 						frontend_runtime_version: "1",
 						capabilities: ["awd", "awdp", "jeopardy"],
 					},

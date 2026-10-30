@@ -3,5 +3,5 @@
 pub mod auth;
 pub mod request_context;
 
-pub use auth::{SuperAdminJwtGuard, UserJwtGuard};
+pub use auth::UserJwtGuard;
 pub use request_context::ReqCtx;

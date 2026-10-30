@@ -182,6 +182,79 @@ describe("transport interceptors", () => {
 		expect(onUnauthorizedB).not.toHaveBeenCalled();
 	});
 
+	// ── v2：401 与 403 必须分流 ────────────────────────────────────────────
+	//
+	// v1 把「无权限」也返回 401，于是前端只有「清 token 跳登录」一条路径。
+	// v2 明确区分：401 = 重新认证能解决；403 = 已认证但不允许。
+	// 把 403 也走 onUnauthorized，会让用户因为「没权限」被反复踢出登录。
+
+	it("403 invokes onForbidden and NEVER onUnauthorized", async () => {
+		const onUnauthorized = vi.fn();
+		const onForbidden = vi.fn();
+		const client = createFloatCTFClient({
+			getUserToken: () => "user-token",
+			onUnauthorized,
+			onForbidden,
+		});
+		installAdapter(client.transport.service, [], () => ({
+			status: 403,
+			data: { code: 403, message: "没有权限执行该操作" },
+		}));
+
+		const error = await client.serviceHttp
+			.get("/admin/events")
+			.catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(FloatCTFError);
+		expect(onForbidden).toHaveBeenCalledTimes(1);
+		expect(onForbidden.mock.calls[0][0]).toMatchObject({ scope: "user", status: 403 });
+		expect(
+			onUnauthorized,
+			"★ 403 绝不能触发 onUnauthorized（否则前端会清 token 跳登录，而重新登录解决不了）",
+		).not.toHaveBeenCalled();
+		expect((error as FloatCTFError).isForbidden).toBe(true);
+		expect((error as FloatCTFError).isUnauthorized).toBe(false);
+	});
+
+	it("401 invokes onUnauthorized and NEVER onForbidden", async () => {
+		const onUnauthorized = vi.fn();
+		const onForbidden = vi.fn();
+		const client = createFloatCTFClient({ onUnauthorized, onForbidden });
+		installAdapter(client.transport.admin, [], () => ({ status: 401, data: {} }));
+
+		const error = await client.adminHttp.get("/settings").catch((e: unknown) => e);
+
+		expect(onUnauthorized).toHaveBeenCalledTimes(1);
+		expect(onForbidden).not.toHaveBeenCalled();
+		expect((error as FloatCTFError).isUnauthorized).toBe(true);
+		expect((error as FloatCTFError).isForbidden).toBe(false);
+	});
+
+	it("403 keeps the session usable: a later 200 request still carries the token", async () => {
+		// 这条用例锁定「403 不是凭据问题」这一语义：发生 403 之后，
+		// 同一个客户端的下一次请求仍然带着原 token 正常发出。
+		const onForbidden = vi.fn();
+		const onUnauthorized = vi.fn();
+		const seen: RecordedRequest[] = [];
+		let call = 0;
+		const client = createFloatCTFClient({
+			getUserToken: () => "still-valid-token",
+			onForbidden,
+			onUnauthorized,
+		});
+		installAdapter(client.transport.service, seen, () => {
+			call += 1;
+			return call === 1 ? { status: 403, data: {} } : { status: 200, data: { ok: true } };
+		});
+
+		await expect(client.serviceHttp.get("/admin/thing")).rejects.toBeInstanceOf(FloatCTFError);
+		await client.serviceHttp.get("/events");
+
+		expect(onForbidden).toHaveBeenCalledTimes(1);
+		expect(onUnauthorized).not.toHaveBeenCalled();
+		expect(seen[1]?.headers.Authorization).toBe("Bearer still-valid-token");
+	});
+
 	it("does not call onUnauthorized for 500 or for network failures", async () => {
 		const onUnauthorized = vi.fn();
 		const client = createFloatCTFClient({ onUnauthorized });

@@ -14,7 +14,10 @@ use uuid::Uuid;
 use crate::{
     api::{
         AppError, FilterMapping, UniResponse, UniResult, dto::DeleteItemsRequest,
-        extractor::auth::SuperAdminJwtGuard, prelude::*, sea_orm_utils::query_query,
+        extractor::auth::RequirePermission, prelude::*, sea_orm_utils::query_query,
+    },
+    core::permission::guards::{
+        AwdManageGuard, AwdReadGuard, GameboxesManageGuard, GameboxesReadGuard,
     },
     entity::{awd_event_gameboxes, gameboxes},
     infrastructure::settings::{get_setting, resolve_dir_path},
@@ -37,7 +40,7 @@ use super::dto::*;
 /// GET /api/admin/awd/gameboxes
 #[get("/awd/gameboxes")]
 pub async fn list_gamebox_library(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesReadGuard>,
     ctx: ReqCtx,
     query_params: web::Query<QueryParams>,
 ) -> UniResult<Vec<GameBoxLibraryDto>> {
@@ -92,7 +95,7 @@ struct ImportGameBoxForm {
 /// POST /api/admin/awd/gameboxes/import —— package zip 导入（单版本：同步 build）
 #[post("/awd/gameboxes/import")]
 pub async fn import_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     MultipartForm(form): MultipartForm<ImportGameBoxForm>,
 ) -> UniResult<ImportGameBoxResponse> {
@@ -133,7 +136,7 @@ pub struct GameBoxCheckRequest {
 
 #[post("/awd/gameboxes/check")]
 pub async fn check_gameboxes(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     req: web::Json<GameBoxCheckRequest>,
 ) -> UniResult<Vec<GameBoxCheckResult>> {
@@ -196,11 +199,11 @@ pub struct GameBoxBuildResult {
 
 #[post("/awd/gameboxes/build")]
 pub async fn build_gamebox(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     req: web::Json<GameBoxBuildRequest>,
 ) -> UniResult<Vec<GameBoxBuildResult>> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let req = req.into_inner();
     let mut id_list = Vec::new();
     if let Some(id) = req.gamebox_id {
@@ -246,10 +249,9 @@ pub async fn build_gamebox(
                 "INFO",
                 "GAMEBOXES",
                 "BUILD",
-                format!("{} 确保 gamebox 镜像: {}", user.username, gb.name).as_str(),
+                format!("{} 确保 gamebox 镜像: {}", user.username(), gb.name).as_str(),
                 json!({ "gamebox_name": gb.name, "success": is_ok }),
-                None,
-                user.id.into(),
+                user.id().into(),
                 Some(&ctx.req),
             )
             .await;
@@ -261,7 +263,7 @@ pub async fn build_gamebox(
 /// POST /api/admin/awd/gameboxes/scan —— 扫描 GAMEBOXES_DIR 登记未入库 package
 #[post("/awd/gameboxes/scan")]
 pub async fn scan_gameboxes(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
 ) -> UniResult<Vec<GameBoxScanItem>> {
     let items = gamebox_import::scan_gameboxes_dir(
@@ -278,7 +280,7 @@ pub async fn scan_gameboxes(
 /// PATCH /api/admin/awd/gameboxes/{gamebox_id} —— 身份 + 可编辑运行参数
 #[patch("/awd/gameboxes/{gamebox_id}")]
 pub async fn update_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
     body: web::Json<UpdateGameBoxIdentityRequest>,
@@ -334,7 +336,7 @@ pub async fn update_gamebox(
 /// POST /api/admin/awd/gameboxes/{gamebox_id}/hide —— 归档
 #[post("/awd/gameboxes/{gamebox_id}/hide")]
 pub async fn hide_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
 ) -> UniResult<()> {
@@ -351,11 +353,11 @@ pub async fn hide_gamebox(
 /// 磁盘 package 目录 `GAMEBOXES_DIR/{safe_name}` 一并清理；删除写入审计日志。
 #[delete("/awd/gameboxes")]
 pub async fn delete_gamebox_library(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<GameboxesManageGuard>,
     ctx: ReqCtx,
     req: web::Json<DeleteItemsRequest>,
 ) -> UniResult<u64> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let req = req.into_inner();
     let gameboxes_dir = get_setting(&ctx.db, "GAMEBOXES_DIR")
         .await
@@ -378,10 +380,9 @@ pub async fn delete_gamebox_library(
             "INFO",
             "GAMEBOX",
             "DELETE",
-            format!("{} 删除 {} 个 GameBox", user.username, deleted_count).as_str(),
+            format!("{} 删除 {} 个 GameBox", user.username(), deleted_count).as_str(),
             json!({ "deleted_count": deleted_count }),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -396,7 +397,7 @@ pub async fn delete_gamebox_library(
 /// GET /api/admin/events/{event_id}/awd/gameboxes
 #[get("{event_id}/awd/gameboxes")]
 pub async fn list_event_gameboxes(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdReadGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
     query_params: web::Query<QueryParams>,
@@ -490,7 +491,7 @@ fn to_event_gamebox_dto(d: event_gamebox_repo::EventGameBoxDetail) -> EventGameB
 /// POST /api/admin/events/{event_id}/awd/gameboxes —— 选择 GameBox（当前版本）
 #[post("{event_id}/awd/gameboxes")]
 pub async fn add_event_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     path: web::Path<Uuid>,
     body: web::Json<AddEventGameBoxRequest>,
@@ -601,7 +602,7 @@ pub async fn add_event_gamebox(
 /// PATCH /api/admin/events/{event_id}/awd/gameboxes/{event_gamebox_id}
 #[patch("{event_id}/awd/gameboxes/{event_gamebox_id}")]
 pub async fn update_event_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     path: web::Path<(Uuid, Uuid)>,
     body: web::Json<UpdateEventGameBoxRequest>,
@@ -644,7 +645,7 @@ pub async fn update_event_gamebox(
 /// DELETE /api/admin/events/{event_id}/awd/gameboxes/{event_gamebox_id}
 #[delete("{event_id}/awd/gameboxes/{event_gamebox_id}")]
 pub async fn delete_event_gamebox(
-    _admin: SuperAdminJwtGuard,
+    _: RequirePermission<AwdManageGuard>,
     ctx: ReqCtx,
     path: web::Path<(Uuid, Uuid)>,
 ) -> UniResult<()> {

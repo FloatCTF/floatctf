@@ -67,13 +67,16 @@ impl AuditService {
 
     /// Record an audit event. `details` must already be free of secrets
     /// (callers redact tokens/flags before calling).
+    ///
+    /// 单一 `actor_user_id`：统一账户后「选手主体」与「管理员主体」是同一个身份
+    /// 空间，双主体参数会让每个调用方各自决定怎么合并，并让审计查询静默漏掉
+    /// 管理动作。行为域（选手 / 平台管理）改由 `category` + `action` 表达。
     pub async fn record(
         &self,
         action: AuditAction,
         message: &str,
         details: Value,
         actor_user_id: Option<Uuid>,
-        actor_superadmin_id: Option<Uuid>,
         request: Option<&actix_web::HttpRequest>,
     ) {
         let safe_details = redact_sensitive_keys(details);
@@ -85,7 +88,6 @@ impl AuditService {
                 message,
                 safe_details,
                 actor_user_id,
-                actor_superadmin_id,
                 request,
             )
             .await;

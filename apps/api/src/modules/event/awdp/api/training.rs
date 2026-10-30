@@ -1126,7 +1126,6 @@ pub async fn save_run_writeup(
             .as_str(),
             json!({}),
             user.id.into(),
-            None,
             Some(&ctx.req),
         )
         .await;

@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::{DockerManageGuard, DockerReadGuard};
 use bollard::query_parameters::{
     ListImagesOptionsBuilder, ListNetworksOptionsBuilder, RemoveContainerOptions,
     StartContainerOptions, StopContainerOptions,
@@ -47,7 +49,7 @@ pub struct NetworkInfo {
 /// GET /api/admin/docker/containers
 #[get("/containers")]
 pub async fn get_containers(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<DockerReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<FloatDockerContainer>> {
@@ -116,11 +118,11 @@ pub async fn get_containers(
 /// POST /api/admin/docker/containers/{container_id}/stop
 #[post("/containers/{container_id}/stop")]
 pub async fn stop_container(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     container_id: Path<String>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let container_id = container_id.into_inner();
     let options = StopContainerOptions {
         t: Some(0),
@@ -136,10 +138,9 @@ pub async fn stop_container(
             "INFO",
             "DOCKER",
             "STOP_CONTAINER",
-            format!("{} 停止容器: {}", user.username, container_id).as_str(),
+            format!("{} 停止容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -150,11 +151,11 @@ pub async fn stop_container(
 /// POST /api/admin/docker/containers/{container_id}/start
 #[post("/containers/{container_id}/start")]
 pub async fn start_container(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     container_id: Path<String>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let container_id = container_id.into_inner();
     ctx.docker
         .start_container(&container_id, None::<StartContainerOptions>)
@@ -166,10 +167,9 @@ pub async fn start_container(
             "INFO",
             "DOCKER",
             "START_CONTAINER",
-            format!("{} 启动容器: {}", user.username, container_id).as_str(),
+            format!("{} 启动容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -180,11 +180,11 @@ pub async fn start_container(
 /// DELETE /api/admin/docker/containers/{container_id}
 #[delete("/containers/{container_id}")]
 pub async fn delete_container(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     container_id: Path<String>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let container_id = container_id.into_inner();
     let options = RemoveContainerOptions {
         v: true,
@@ -201,10 +201,9 @@ pub async fn delete_container(
             "INFO",
             "DOCKER",
             "DELETE_CONTAINER",
-            format!("{} 删除容器: {}", user.username, container_id).as_str(),
+            format!("{} 删除容器: {}", user.username(), container_id).as_str(),
             json!({"container_id": container_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -219,7 +218,7 @@ pub async fn delete_container(
 /// GET /api/admin/docker/images
 #[get("/images")]
 pub async fn get_images(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<DockerReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<ImageInfo>> {
@@ -256,11 +255,11 @@ pub async fn get_images(
 /// DELETE /api/admin/docker/images/{image_id}
 #[delete("/images/{image_id}")]
 pub async fn delete_image(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     image_id: Path<String>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let image_id = image_id.into_inner();
     use bollard::auth::DockerCredentials;
     use bollard::query_parameters::{
@@ -280,10 +279,9 @@ pub async fn delete_image(
             "INFO",
             "DOCKER",
             "DELETE_IMAGE",
-            format!("{} 删除镜像: {}", user.username, image_id).as_str(),
+            format!("{} 删除镜像: {}", user.username(), image_id).as_str(),
             json!({"image_id": image_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -298,7 +296,7 @@ pub async fn delete_image(
 /// GET /api/admin/docker/networks
 #[get("/networks")]
 pub async fn get_networks(
-    _user: SuperAdminJwtGuard,
+    _: RequirePermission<DockerReadGuard>,
     ctx: ReqCtx,
     query_params: Query<QueryParams>,
 ) -> UniResult<Vec<NetworkInfo>> {
@@ -356,11 +354,11 @@ pub async fn get_networks(
 /// POST /api/admin/docker/networks
 #[post("/networks")]
 pub async fn create_network(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     body: Json<CreateNetworkRequest>,
 ) -> UniResult<NetworkInfo> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let body = body.into_inner();
 
     #[allow(deprecated)]
@@ -388,10 +386,9 @@ pub async fn create_network(
             "INFO",
             "DOCKER",
             "CREATE_NETWORK",
-            format!("{} 创建网络: {}", user.username, body.name).as_str(),
+            format!("{} 创建网络: {}", user.username(), body.name).as_str(),
             json!({"name": body.name}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;
@@ -409,11 +406,11 @@ pub async fn create_network(
 /// DELETE /api/admin/docker/networks/{network_id}
 #[delete("/networks/{network_id}")]
 pub async fn delete_network(
-    user: SuperAdminJwtGuard,
+    user: RequirePermission<DockerManageGuard>,
     ctx: ReqCtx,
     network_id: Path<String>,
 ) -> UniResult<()> {
-    let user = user.into_inner();
+    let user = user.into_auth();
     let network_id = network_id.into_inner();
     ctx.docker
         .remove_network(&network_id)
@@ -425,10 +422,9 @@ pub async fn delete_network(
             "INFO",
             "DOCKER",
             "DELETE_NETWORK",
-            format!("{} 删除网络: {}", user.username, network_id).as_str(),
+            format!("{} 删除网络: {}", user.username(), network_id).as_str(),
             json!({"network_id": network_id}),
-            None,
-            user.id.into(),
+            user.id().into(),
             Some(&ctx.req),
         )
         .await;

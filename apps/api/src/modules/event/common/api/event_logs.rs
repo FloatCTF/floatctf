@@ -1,3 +1,5 @@
+use crate::api::extractor::auth::RequirePermission;
+use crate::core::permission::guards::LogsReadGuard;
 use std::str::FromStr;
 
 use sea_orm::Condition;
@@ -16,7 +18,7 @@ use crate::{
 /// GET /api/admin/events/{event_id}/logs
 #[get("")]
 pub async fn get_event_logs(
-    _user: SuperAdminJwtGuard,
+    _user: RequirePermission<LogsReadGuard>,
     ctx: ReqCtx,
     event_id: Path<Uuid>,
     query_params: Query<QueryParams>,

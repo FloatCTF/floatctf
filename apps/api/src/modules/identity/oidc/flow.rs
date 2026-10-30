@@ -9,7 +9,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::api::AppError;
-use crate::entity::sea_orm_active_enums::{OidcClientStatus, OidcClientType};
+use crate::entity::sea_orm_active_enums::{AccountStatus, OidcClientStatus, OidcClientType};
 use crate::entity::{oidc_auth_transactions, oidc_browser_sessions, oidc_clients, users};
 
 use super::OidcProvider;
@@ -1003,6 +1003,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 avatar: None,
+                status: AccountStatus::Active,
+                token_version: 0,
             },
         )
     }

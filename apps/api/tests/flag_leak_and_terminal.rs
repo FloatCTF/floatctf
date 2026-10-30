@@ -11,7 +11,7 @@ use chrono::{Duration, Utc};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
-use floatctf::core::security::jwt::{self, Role};
+use floatctf::core::security::jwt;
 use floatctf::entity::{
     event_challenge_instance, event_instances, event_users, events,
     sea_orm_active_enums::{EventFamily, EventPurpose, ParticipantMode},
@@ -37,7 +37,8 @@ async fn db_or_skip() -> Option<sea_orm::DatabaseConnection> {
 }
 
 fn token_for(user_id: Uuid) -> String {
-    jwt::gen_jwt_token(user_id, Role::User, Some(30)).expect("jwt")
+    // v2：令牌只带身份与凭据版本；新账号 token_version 为 0
+    jwt::gen_session_token(user_id, 0).expect("jwt")
 }
 
 async fn seed_submission_env(db: &sea_orm::DatabaseConnection) -> (Uuid, Uuid, Uuid, Uuid, String) {
@@ -319,12 +320,15 @@ mod terminal_security {
     use floatctf::infrastructure::logging::LogService;
     use floatctf::modules::platform::operations::terminal::{create_terminal_session, terminal_ws};
 
+    /// v2：管理员**不是**令牌角色，而是「持有全权角色的账号」。
+    /// 因此管理员的令牌与普通用户**完全相同**；区别只在 `seed_admin` 里的角色授予。
     fn admin_token(admin_id: Uuid) -> String {
-        jwt::gen_jwt_token(admin_id, Role::SuperAdmin, Some(30)).expect("jwt")
+        jwt::gen_session_token(admin_id, 0).expect("jwt")
     }
 
     fn user_token(user_id: Uuid) -> String {
-        jwt::gen_jwt_token(user_id, Role::User, Some(30)).expect("jwt")
+        // v2：令牌只带身份与凭据版本；新账号 token_version 为 0
+        jwt::gen_session_token(user_id, 0).expect("jwt")
     }
 
     async fn terminal_app(
@@ -388,18 +392,39 @@ mod terminal_security {
         .await
     }
 
+    /// v2：管理员 = `users` 行 + 内置 super-admin **角色授予**。
+    ///
+    /// Wave 10 起不再有 `super_admin` 表（也不再把身份双写到两张表）。
     async fn seed_admin(db: &sea_orm::DatabaseConnection) -> Uuid {
+        use floatctf::core::system_ids::PLATFORM_ROLE_SUPER_ADMIN;
+        use floatctf::entity::user_platform_roles;
+
+        floatctf::modules::identity::authorization::ensure_builtin_roles(db).await;
+
         let id = Uuid::new_v4();
-        floatctf::entity::super_admin::ActiveModel {
+        let tag = Uuid::new_v4().simple().to_string();
+        users::ActiveModel {
             id: Set(id),
-            username: Set(format!("tsa-{}", Uuid::new_v4().simple())),
+            username: Set(format!("tsa-{tag}")),
+            nickname: Set(format!("tsan-{tag}")),
             password: Set("x".into()),
-            email: Set(format!("tsa-{}@example.test", Uuid::new_v4().simple())),
+            email: Set(format!("tsa-{tag}@example.test")),
             ..Default::default()
         }
         .insert(db)
         .await
-        .expect("admin");
+        .expect("admin user row");
+
+        user_platform_roles::ActiveModel {
+            user_id: Set(id),
+            role_id: Set(PLATFORM_ROLE_SUPER_ADMIN),
+            granted_by: Set(None),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .expect("grant super-admin role");
+
         id
     }
 
@@ -442,9 +467,7 @@ mod terminal_security {
             .unwrap_or_default();
         assert!(body.is_empty(), "204 响应不得有 body");
 
-        let _ = floatctf::entity::super_admin::Entity::delete_by_id(admin)
-            .exec(&db)
-            .await;
+        let _ = users::Entity::delete_by_id(admin).exec(&db).await;
     }
 
     /// 非管理员 token、无 token、feature 关闭均拒绝。
@@ -484,8 +507,8 @@ mod terminal_security {
             .to_request();
         assert_eq!(
             actix_test::call_service(&app, req).await.status().as_u16(),
-            401,
-            "普通用户 token 必须 401"
+            403,
+            "普通用户会话令牌**有效**（已认证）但无管理能力 → 403（v1 曾是 401）"
         );
 
         let req = actix_test::TestRequest::post()
@@ -513,9 +536,7 @@ mod terminal_security {
         );
 
         let _ = users::Entity::delete_by_id(user_id).exec(&db).await;
-        let _ = floatctf::entity::super_admin::Entity::delete_by_id(admin)
-            .exec(&db)
-            .await;
+        let _ = users::Entity::delete_by_id(admin).exec(&db).await;
     }
 
     /// ws 端点：无 ticket 401；伪造 ticket 401。

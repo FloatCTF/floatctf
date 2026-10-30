@@ -7,7 +7,8 @@ pub struct AnnouncementsDto {
     pub id: Uuid,
     pub title: String,
     pub content: Option<String>,
-    pub publisher_id: Uuid,
+    /// 发布者账号 ID；`None` = 发布者账号已注销（展示回落到 `publisher` 快照）。
+    pub publisher_id: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub publisher: String,

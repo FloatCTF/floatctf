@@ -12,6 +12,9 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/admin").configure(configure_admin_routes)),
     );
 
+    // ── OpenID Connect Provider 协议端点（根路径：/.well-known/*、/oauth/*）──
+    cfg.configure(crate::modules::identity::oidc::configure_protocol_routes);
+
     // ── AWD internal routes (FlagServer / JudgeServer) ──
     cfg.configure(crate::modules::event::awd::api::internal_routes);
 

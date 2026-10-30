@@ -128,6 +128,10 @@ pub struct AuthClaims {
     pub token_version: i32,
     /// 过期时间（Unix 秒）。
     pub exp: usize,
+    /// 签发时间（新令牌必带；本字段引入前签发的旧令牌没有，反序列化为 `None`）。
+    /// OIDC SSO 桥接据此记录真实的认证时间（`auth_time`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iat: Option<usize>,
 }
 
 impl AuthClaims {
@@ -162,6 +166,7 @@ pub fn gen_jwt_token(
         purpose,
         token_version,
         exp: expiration_timestamp(expire_mins),
+        iat: Some(Utc::now().timestamp() as usize),
     };
 
     encode(
@@ -233,6 +238,40 @@ mod tests {
         assert!(!claims.is_session(), "重置令牌**不得**被视为会话令牌");
     }
 
+    /// `iat` 供 OIDC SSO 桥接记录 `auth_time`；引入它之前的 v2 令牌
+    /// （有 `purpose` / `token_version`、无 `iat`）必须继续有效。
+    #[test]
+    fn jwt_carries_iat_and_tolerates_v2_tokens_without_iat() {
+        install_secret();
+        let id = Uuid::new_v4();
+        let token = gen_session_token(id, 0).expect("encode");
+        let claims = validate_jwt(token).expect("decode");
+        let now = Utc::now().timestamp() as usize;
+        assert!(claims.iat.is_some_and(|iat| iat <= now && iat + 5 >= now));
+
+        #[derive(Serialize)]
+        struct NoIat {
+            sub: Uuid,
+            purpose: TokenPurpose,
+            token_version: i32,
+            exp: usize,
+        }
+        let legacy = encode(
+            &Header::new(Algorithm::HS512),
+            &NoIat {
+                sub: id,
+                purpose: TokenPurpose::Session,
+                token_version: 0,
+                exp: now + 600,
+            },
+            &EncodingKey::from_secret(&jwt_secret_bytes()),
+        )
+        .expect("encode");
+        let claims = validate_jwt(legacy).expect("v2 token without iat stays valid");
+        assert_eq!(claims.sub, id);
+        assert!(claims.iat.is_none());
+    }
+
     #[test]
     fn token_version_is_carried_verbatim() {
         install_secret();
@@ -254,6 +293,7 @@ mod tests {
             purpose: TokenPurpose::Session,
             token_version: 0,
             exp: (Utc::now().timestamp() - 3600) as usize,
+            iat: None,
         };
         let token = encode(
             &Header::new(Algorithm::HS512),
@@ -363,6 +403,7 @@ mod tests {
                 purpose: TokenPurpose::Session,
                 token_version: 0,
                 exp: (Utc::now().timestamp() + offset_secs) as usize,
+                iat: None,
             };
             encode(
                 &Header::new(Algorithm::HS512),

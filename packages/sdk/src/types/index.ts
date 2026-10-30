@@ -53,3 +53,21 @@ export type {
 	UpdateRoleRequest,
 	UserRolesDto,
 } from "./roles.js";
+export type {
+	CreateOidcClientInput,
+	OidcAdminClientDto,
+	OidcAuthorizationDto,
+	OidcClientDto,
+	OidcClientInput,
+	OidcClientWithSecretDto,
+	OidcProviderInfo,
+	SsoBridgeResult,
+} from "./oidc.js";
+export type {
+	GlobalLogoutReport,
+	LogoutDelivery,
+	WebAccount,
+	WebLogoutScope,
+	WebSessionStatus,
+	WebSessionUser,
+} from "./webSession.js";

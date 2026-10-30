@@ -1,7 +1,7 @@
 //! 通用工具类调度处理器（如清理未使用对象存储文件）。
 
 use async_trait::async_trait;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     entity::scheduled_tasks,
@@ -39,6 +39,37 @@ impl TaskHandler for CleanUnusedRustFSFilesHandler {
         warn!(
             task_key = %self.task_key(),
             "未实现的空操作：本次未清理任何 RustFS 对象（磁盘增长需另行实现清理逻辑）"
+        );
+        Ok(())
+    }
+}
+
+/// `identity.oidc.cleanup`（10 分钟级、protected）：删除过期的 OIDC 短期数据。
+///
+/// OIDC 未启用时同样运行（表为空，开销可忽略），保证关闭后再开启时没有堆积。
+pub struct OidcCleanupHandler {
+    pub db: WebDb,
+}
+
+#[async_trait]
+impl TaskHandler for OidcCleanupHandler {
+    fn trigger_type(&self) -> &'static str {
+        "cron"
+    }
+    fn task_key(&self) -> TaskKey {
+        TaskKey::OidcCleanup
+    }
+    async fn run(&self, _task: scheduled_tasks::Model) -> anyhow::Result<()> {
+        let stats = crate::modules::identity::oidc::store::cleanup_expired(self.db.get_ref())
+            .await
+            .map_err(|e| anyhow::anyhow!("oidc cleanup failed: {e}"))?;
+        info!(
+            transactions = stats.transactions,
+            codes = stats.codes,
+            access_tokens = stats.access_tokens,
+            sessions = stats.sessions,
+            containers = stats.containers,
+            "OIDC expired data cleaned"
         );
         Ok(())
     }

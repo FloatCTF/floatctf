@@ -197,12 +197,43 @@ impl FromRequest for UserJwtGuard {
         let db = req.app_data::<WebDb>().cloned();
         let req = req.clone();
 
+        // 主站统一 Cookie 会话（`[oidc].unified_web_session`）：仅当请求**没有** Authorization 头时启用。
+        // Bearer 与 Cookie 两种机制从不混用；Cookie 通道强制第一方来源 + CSRF，且只能得到普通用户身份。
+        let web_session = req
+            .app_data::<crate::modules::identity::oidc::WebOidc>()
+            .filter(|oidc| oidc.config.unified_web_session)
+            .cloned()
+            .filter(|_| req.headers().get("Authorization").is_none());
+
         Box::pin(async move {
             let Some(db) = db else {
                 return Err(auth_error(AuthFailure::UnknownAccount));
             };
             match resolve_session_account(db.get_ref(), &req).await {
                 Ok(user) => Ok(UserJwtGuard(user)),
+                // 没有 Bearer 时才回退到统一 Cookie 会话；有但无效的 Bearer 不回退（两种机制不混用）。
+                Err(AuthFailure::MissingCredentials) => {
+                    let Some(oidc) = web_session else {
+                        return Err(auth_error(AuthFailure::MissingCredentials));
+                    };
+                    match crate::modules::identity::oidc::accounts::resolve_web_user(
+                        db.get_ref(),
+                        &oidc,
+                        &req,
+                    )
+                    .await
+                    {
+                        Ok(Ok(user)) => Ok(UserJwtGuard(user)),
+                        Ok(Err(reason)) => {
+                            tracing::debug!(?reason, path = %req.path(), "web session rejected");
+                            Err(auth_error(AuthFailure::MissingCredentials))
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "web session lookup failed");
+                            Err(auth_error(AuthFailure::UnknownAccount))
+                        }
+                    }
+                }
                 Err(failure) => Err(auth_error(failure)),
             }
         })

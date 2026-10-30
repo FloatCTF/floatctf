@@ -1,6 +1,6 @@
 [package]
 name = "floatctf"
-version = "1.0.0"
+version = "1.0.3"
 edition.workspace = true
 description = "FloatCTF CTF 实训/竞赛平台后端（Actix Web + SeaORM + PostgreSQL + RustFS；Jeopardy + AWD 双赛制）"
 license.workspace = true
@@ -33,6 +33,10 @@ hex = "0.4"
 hkdf = "0.12"
 hmac = "0.12"
 rand = "0.8"
+# OIDC Provider：RS256 key 解析/公钥分量（jsonwebtoken 9 已依赖同版本 ring/pem）与常量时间比较。
+ring = "0.17"
+pem = "3"
+subtle = "2"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"

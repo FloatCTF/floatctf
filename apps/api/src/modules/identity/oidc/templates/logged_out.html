@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{% if cancelled %}已取消退出{% else %}退出结果{% endif %}{% endblock %}
+{% block content %}
+<div class="header">
+  {% if cancelled %}
+  <h1>已取消退出</h1>
+  <p class="subtitle">你在本浏览器中的 FloatCTF 登录保持不变。</p>
+  {% elif nothing_to_do %}
+  <h1>无需退出</h1>
+  <p class="subtitle">本浏览器中没有与该请求对应的 FloatCTF 登录。其他设备上的登录不受影响。</p>
+  {% elif not synced %}
+  <h1>已退出 FloatCTF，但应用未全部同步</h1>
+  <p class="subtitle">FloatCTF 登录已在本浏览器中撤销。部分应用的会话可能仍然有效。</p>
+  {% else %}
+  <h1>已退出 FloatCTF</h1>
+  <p class="subtitle">FloatCTF 登录已在本浏览器中撤销{% if deliveries %}，已接入的应用都确认收到了退出通知{% endif %}。</p>
+  {% endif %}
+</div>
+{% if deliveries %}
+<ul class="result-list" aria-label="应用退出通知结果">
+{% for d in deliveries %}
+  <li>
+    <span class="name">{{ d.client_name }}</span>
+    {% if d.status == "delivered" %}<span class="state ok">已确认退出</span>
+    {% elif d.status == "pending" %}<span class="state pending" title="{{ d.detail }}">未送达，将自动重试</span>
+    {% else %}<span class="state failed" title="{{ d.detail }}">未能确认</span>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if without_backchannel %}
+<div class="alert" role="note">以下应用不支持即时退出通知，你在其中的登录可能仍然有效，请在应用内手动退出：{% for name in without_backchannel %}{% if not loop.first %}、{% endif %}{{ name }}{% endfor %}。</div>
+{% endif %}
+{% if continue_url %}
+<div class="buttons stack">
+  <a class="btn primary" href="{{ continue_url }}">{% if client_name %}返回 {{ client_name }}{% else %}返回应用{% endif %}</a>
+</div>
+{% endif %}
+{% endblock %}
+{% block footer %}FloatCTF 账号 · OpenID Connect{% endblock %}

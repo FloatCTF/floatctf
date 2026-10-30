@@ -226,6 +226,45 @@ pub enum JudgeTaskStatus {
     SkippedBanned,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "oidc_client_status")]
+#[serde(rename_all = "snake_case")]
+pub enum OidcClientStatus {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "disabled")]
+    Disabled,
+    #[sea_orm(string_value = "suspended")]
+    Suspended,
+    #[sea_orm(string_value = "rejected")]
+    Rejected,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "oidc_client_type")]
+#[serde(rename_all = "snake_case")]
+pub enum OidcClientType {
+    #[sea_orm(string_value = "confidential")]
+    Confidential,
+    #[sea_orm(string_value = "public")]
+    Public,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "Enum",
+    enum_name = "oidc_token_auth_method"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OidcTokenAuthMethod {
+    #[sea_orm(string_value = "client_secret_basic")]
+    ClientSecretBasic,
+    #[sea_orm(string_value = "client_secret_post")]
+    ClientSecretPost,
+    #[sea_orm(string_value = "none")]
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "participant_mode")]
 #[serde(rename_all = "snake_case")]
 pub enum ParticipantMode {

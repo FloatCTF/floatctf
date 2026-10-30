@@ -32,6 +32,8 @@ pub struct AppConfig {
     pub proxy: ProxyConfig,
     /// 主站地址前缀（[application] main_url），作为 MAIN_URL 设置的 seed 默认值
     pub main_url: String,
+    /// OpenID Connect Provider（`[oidc]` 段，默认关闭）。
+    pub oidc: OidcConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +204,84 @@ pub struct LoggingConfig {
     pub timezone: String,
 }
 
+/// OpenID Connect Provider 静态配置（`[oidc]` 段）。
+///
+/// `enabled = false`（默认）时其余字段不校验、协议端点全部 404、登录不写 SSO Cookie。
+/// `enabled = true` 时 issuer 与签名 key ring 在启动期严格校验，任何不合法都拒绝启动
+/// （fail closed，绝不临时生成 key）。
+#[derive(Debug, Clone)]
+pub struct OidcConfig {
+    pub enabled: bool,
+    /// Issuer：只允许 origin（`https://host[:port]`，无 path/query/fragment/尾斜杠）；
+    /// `http` 只允许 loopback 主机（本地开发）。ID Token `iss` 与 Discovery 逐字节等于它。
+    pub issuer: String,
+    /// 签名 key ring：恰好一个 `active`（用于签发），其余仅发布公钥供验签过渡。
+    pub signing_keys: Vec<OidcSigningKeyConfig>,
+    /// 第一方 SSO 会话有效期（秒）。
+    pub session_ttl_secs: i64,
+    /// 授权事务（登录/同意页）有效期（秒）。
+    pub transaction_ttl_secs: i64,
+    /// 授权码有效期（秒，1..=120）。
+    pub authorization_code_ttl_secs: i64,
+    /// Access token 有效期（秒）。
+    pub access_token_ttl_secs: i64,
+    /// ID Token 有效期（秒）。
+    pub id_token_ttl_secs: i64,
+    /// 轮换 client secret 后旧 secret 的默认宽限期（秒）。
+    pub secret_rotation_grace_secs: i64,
+    /// 是否允许 `http://127.0.0.1|[::1]|localhost` 回调（本地开发 / 原生应用 loopback）。
+    pub allow_loopback_redirect_uris: bool,
+    /// 新登记应用是否需要管理员审批后才能使用（默认 true）。
+    pub require_client_approval: bool,
+    /// `prompt=select_account` 是否进入独立的账号选择页（默认 true）。
+    /// `false` 仅为临时兼容/回滚模式：`select_account` 回到旧行为（导向同意页）。
+    pub account_chooser: bool,
+    /// 浏览器账号容器（`__Host-fctf_accounts`）与多账号（默认 false = 旧版单会话 `__Host-fctf_sso`）。
+    pub multi_account: bool,
+    /// 一个浏览器容器内最多同时登录的账号数（超出时淘汰最久未用的会话）。
+    pub max_browser_accounts: usize,
+    /// 浏览器账号容器 Cookie 的滑动有效期（秒）；容器内各账号会话仍按 `session_ttl_secs` 过期。
+    pub browser_container_ttl_secs: i64,
+    /// FloatCTF 主站改用服务端可撤销的 Cookie 会话（默认 false = 旧版 localStorage JWT）。要求 `multi_account`。
+    pub unified_web_session: bool,
+    /// 除 issuer 外，同一 API 实例服务的其他主站 origin（必须与 issuer 同主机，Cookie 才能共享）。
+    pub first_party_origins: Vec<String>,
+    /// 标准退出：`end_session_endpoint`（RP-Initiated Logout 1.0）+ Back-Channel Logout 1.0 + ID Token `sid`（默认 false）。
+    pub backchannel_logout: bool,
+    /// 允许解析到内网/环回地址的 Back-Channel 目标（`host:port`，小写，逐字匹配）。其余目标只能是公网地址。
+    pub backchannel_trusted_hosts: Vec<String>,
+    /// 额外信任的 CA（PEM，内网 RP 使用私有 CA 时配置）；相对路径以配置文件所在目录为基准。
+    pub backchannel_extra_ca_file: Option<std::path::PathBuf>,
+    /// 单次 Back-Channel 投递超时（秒）。
+    pub backchannel_timeout_secs: u64,
+    /// Logout Token 有效期（秒）。
+    pub logout_token_ttl_secs: i64,
+}
+
+impl OidcConfig {
+    /// `[oidc]` 段全部缺省时的配置（OIDC 关闭；测试与工具构造用）。
+    pub fn disabled_defaults() -> Self {
+        parse_oidc_config(OidcToml::default(), Path::new("."))
+            .expect("default OIDC config is valid")
+    }
+
+    /// 主站 Cookie 会话允许的 `Origin`：issuer 本身 + `first_party_origins`。
+    pub fn is_first_party_origin(&self, origin: &str) -> bool {
+        origin == self.issuer || self.first_party_origins.iter().any(|o| o == origin)
+    }
+}
+
+/// 一把 OIDC 签名 key（RSA 私钥 PEM 文件引用）。
+#[derive(Debug, Clone)]
+pub struct OidcSigningKeyConfig {
+    /// JWS `kid`（`[A-Za-z0-9._-]{1,64}`，key ring 内唯一）。
+    pub kid: String,
+    /// RSA 私钥 PEM 文件（PKCS#8 或 PKCS#1）；相对路径以配置文件所在目录为基准。
+    pub private_key_file: std::path::PathBuf,
+    /// 是否为当前签发 key（恰好一把）；非 active 的 key 只在 JWKS 中发布公钥。
+    pub active: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct TomlConfig {
     #[serde(default)]
@@ -231,6 +311,8 @@ struct TomlConfig {
     logging: LoggingToml,
     #[serde(default)]
     proxy: ProxyToml,
+    #[serde(default)]
+    oidc: OidcToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -532,6 +614,365 @@ struct ProxyToml {
     url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OidcToml {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    issuer: String,
+    #[serde(default)]
+    signing_keys: Vec<OidcSigningKeyToml>,
+    #[serde(default = "default_oidc_session_ttl_secs")]
+    session_ttl_secs: i64,
+    #[serde(default = "default_oidc_transaction_ttl_secs")]
+    transaction_ttl_secs: i64,
+    #[serde(default = "default_oidc_authorization_code_ttl_secs")]
+    authorization_code_ttl_secs: i64,
+    #[serde(default = "default_oidc_access_token_ttl_secs")]
+    access_token_ttl_secs: i64,
+    #[serde(default = "default_oidc_id_token_ttl_secs")]
+    id_token_ttl_secs: i64,
+    #[serde(default = "default_oidc_secret_rotation_grace_secs")]
+    secret_rotation_grace_secs: i64,
+    #[serde(default)]
+    allow_loopback_redirect_uris: bool,
+    #[serde(default = "default_true")]
+    require_client_approval: bool,
+    #[serde(default = "default_true")]
+    account_chooser: bool,
+    #[serde(default)]
+    multi_account: bool,
+    #[serde(default = "default_oidc_max_browser_accounts")]
+    max_browser_accounts: usize,
+    #[serde(default = "default_oidc_browser_container_ttl_secs")]
+    browser_container_ttl_secs: i64,
+    #[serde(default)]
+    unified_web_session: bool,
+    #[serde(default)]
+    first_party_origins: Vec<String>,
+    #[serde(default)]
+    backchannel_logout: bool,
+    #[serde(default)]
+    backchannel_trusted_hosts: Vec<String>,
+    #[serde(default)]
+    backchannel_extra_ca_file: Option<String>,
+    #[serde(default = "default_oidc_backchannel_timeout_secs")]
+    backchannel_timeout_secs: u64,
+    #[serde(default = "default_oidc_logout_token_ttl_secs")]
+    logout_token_ttl_secs: i64,
+}
+
+impl Default for OidcToml {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            issuer: String::new(),
+            signing_keys: Vec::new(),
+            session_ttl_secs: default_oidc_session_ttl_secs(),
+            transaction_ttl_secs: default_oidc_transaction_ttl_secs(),
+            authorization_code_ttl_secs: default_oidc_authorization_code_ttl_secs(),
+            access_token_ttl_secs: default_oidc_access_token_ttl_secs(),
+            id_token_ttl_secs: default_oidc_id_token_ttl_secs(),
+            secret_rotation_grace_secs: default_oidc_secret_rotation_grace_secs(),
+            allow_loopback_redirect_uris: false,
+            require_client_approval: true,
+            account_chooser: true,
+            multi_account: false,
+            max_browser_accounts: default_oidc_max_browser_accounts(),
+            browser_container_ttl_secs: default_oidc_browser_container_ttl_secs(),
+            unified_web_session: false,
+            first_party_origins: Vec::new(),
+            backchannel_logout: false,
+            backchannel_trusted_hosts: Vec::new(),
+            backchannel_extra_ca_file: None,
+            backchannel_timeout_secs: default_oidc_backchannel_timeout_secs(),
+            logout_token_ttl_secs: default_oidc_logout_token_ttl_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OidcSigningKeyToml {
+    kid: String,
+    private_key_file: String,
+    #[serde(default)]
+    active: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_oidc_session_ttl_secs() -> i64 {
+    8 * 3600
+}
+fn default_oidc_transaction_ttl_secs() -> i64 {
+    600
+}
+fn default_oidc_authorization_code_ttl_secs() -> i64 {
+    60
+}
+fn default_oidc_access_token_ttl_secs() -> i64 {
+    3600
+}
+fn default_oidc_id_token_ttl_secs() -> i64 {
+    3600
+}
+fn default_oidc_secret_rotation_grace_secs() -> i64 {
+    24 * 3600
+}
+fn default_oidc_max_browser_accounts() -> usize {
+    5
+}
+fn default_oidc_browser_container_ttl_secs() -> i64 {
+    30 * 24 * 3600
+}
+fn default_oidc_backchannel_timeout_secs() -> u64 {
+    5
+}
+fn default_oidc_logout_token_ttl_secs() -> i64 {
+    120
+}
+
+/// 校验 OIDC issuer：只允许 origin，`https` 必需，`http` 仅限 loopback 主机。
+///
+/// 返回规范化前的原字符串——issuer 必须与 ID Token `iss` 逐字节一致，因此不做任何改写，
+/// 只拒绝不合法的形态（含尾斜杠、默认端口显式写出等会让 RP 比对失败的写法）。
+pub(crate) fn validate_oidc_issuer(issuer: &str) -> anyhow::Result<()> {
+    let parsed = url::Url::parse(issuer).map_err(|e| {
+        anyhow::anyhow!("oidc.issuer 不是合法 URL（{e}）：期望形如 https://ctf.example.com")
+    })?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("oidc.issuer 缺少主机名"))?;
+    match parsed.scheme() {
+        "https" => {}
+        "http" if is_loopback_host(host) => {}
+        "http" => anyhow::bail!(
+            "oidc.issuer 必须使用 https（http 只允许 localhost/127.0.0.1/[::1] 本地开发）"
+        ),
+        other => anyhow::bail!("oidc.issuer 不支持的 scheme：{other}"),
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        anyhow::bail!("oidc.issuer 不得包含 userinfo");
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        anyhow::bail!("oidc.issuer 不得包含 query 或 fragment");
+    }
+    // url crate 会把空 path 规范化为 "/"；原串必须恰好是 scheme://host[:port]。
+    if parsed.path() != "/" || issuer.ends_with('/') {
+        anyhow::bail!("oidc.issuer 只能是 origin（scheme://host[:port]），不得带路径或尾斜杠");
+    }
+    if parsed.origin().ascii_serialization() != issuer {
+        anyhow::bail!(
+            "oidc.issuer 必须是规范 origin 写法（小写主机、不写默认端口）：期望 {}",
+            parsed.origin().ascii_serialization()
+        );
+    }
+    Ok(())
+}
+
+/// loopback 主机判定（issuer 与 redirect_uri 的开发放行共用）。
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+}
+
+fn parse_oidc_config(file: OidcToml, config_dir: &Path) -> anyhow::Result<OidcConfig> {
+    let config = OidcConfig {
+        enabled: file.enabled,
+        issuer: file.issuer.trim().to_string(),
+        signing_keys: file
+            .signing_keys
+            .into_iter()
+            .map(|key| {
+                let path = std::path::PathBuf::from(key.private_key_file.trim());
+                OidcSigningKeyConfig {
+                    kid: key.kid.trim().to_string(),
+                    private_key_file: if path.is_absolute() {
+                        path
+                    } else {
+                        config_dir.join(path)
+                    },
+                    active: key.active,
+                }
+            })
+            .collect(),
+        session_ttl_secs: file.session_ttl_secs,
+        transaction_ttl_secs: file.transaction_ttl_secs,
+        authorization_code_ttl_secs: file.authorization_code_ttl_secs,
+        access_token_ttl_secs: file.access_token_ttl_secs,
+        id_token_ttl_secs: file.id_token_ttl_secs,
+        secret_rotation_grace_secs: file.secret_rotation_grace_secs,
+        allow_loopback_redirect_uris: file.allow_loopback_redirect_uris,
+        require_client_approval: file.require_client_approval,
+        account_chooser: file.account_chooser,
+        multi_account: file.multi_account,
+        max_browser_accounts: file.max_browser_accounts,
+        browser_container_ttl_secs: file.browser_container_ttl_secs,
+        unified_web_session: file.unified_web_session,
+        first_party_origins: file
+            .first_party_origins
+            .iter()
+            .map(|o| o.trim().to_string())
+            .collect(),
+        backchannel_logout: file.backchannel_logout,
+        backchannel_trusted_hosts: file
+            .backchannel_trusted_hosts
+            .iter()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .collect(),
+        backchannel_extra_ca_file: file
+            .backchannel_extra_ca_file
+            .map(|p| std::path::PathBuf::from(p.trim()))
+            .map(|p| {
+                if p.is_absolute() {
+                    p
+                } else {
+                    config_dir.join(p)
+                }
+            }),
+        backchannel_timeout_secs: file.backchannel_timeout_secs,
+        logout_token_ttl_secs: file.logout_token_ttl_secs,
+    };
+    if !config.enabled {
+        return Ok(config);
+    }
+
+    validate_oidc_issuer(&config.issuer)?;
+    if config.signing_keys.is_empty() {
+        anyhow::bail!(
+            "oidc.enabled = true 但未配置 [[oidc.signing_keys]]（拒绝启动，不会临时生成 key）"
+        );
+    }
+    let mut seen = std::collections::HashSet::new();
+    for key in &config.signing_keys {
+        let kid_ok = !key.kid.is_empty()
+            && key.kid.len() <= 64
+            && key
+                .kid
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !kid_ok {
+            anyhow::bail!(
+                "oidc.signing_keys.kid 非法：{:?}（只允许 [A-Za-z0-9._-]，1-64 字符）",
+                key.kid
+            );
+        }
+        if !seen.insert(key.kid.clone()) {
+            anyhow::bail!("oidc.signing_keys.kid 重复：{}", key.kid);
+        }
+    }
+    let active = config.signing_keys.iter().filter(|k| k.active).count();
+    if active != 1 {
+        anyhow::bail!(
+            "oidc.signing_keys 必须恰好有一把 active = true 的签发 key（当前 {active} 把）"
+        );
+    }
+    let bounded = |name: &str, value: i64, min: i64, max: i64| -> anyhow::Result<()> {
+        if value < min || value > max {
+            anyhow::bail!("oidc.{name} 必须在 {min}..={max} 之间（当前 {value}）");
+        }
+        Ok(())
+    };
+    bounded(
+        "session_ttl_secs",
+        config.session_ttl_secs,
+        300,
+        30 * 24 * 3600,
+    )?;
+    bounded(
+        "transaction_ttl_secs",
+        config.transaction_ttl_secs,
+        60,
+        3600,
+    )?;
+    bounded(
+        "authorization_code_ttl_secs",
+        config.authorization_code_ttl_secs,
+        1,
+        120,
+    )?;
+    bounded(
+        "access_token_ttl_secs",
+        config.access_token_ttl_secs,
+        60,
+        24 * 3600,
+    )?;
+    bounded("id_token_ttl_secs", config.id_token_ttl_secs, 60, 24 * 3600)?;
+    bounded(
+        "secret_rotation_grace_secs",
+        config.secret_rotation_grace_secs,
+        0,
+        30 * 24 * 3600,
+    )?;
+    if config.max_browser_accounts == 0 || config.max_browser_accounts > 10 {
+        anyhow::bail!(
+            "oidc.max_browser_accounts 必须在 1..=10 之间（当前 {}）",
+            config.max_browser_accounts
+        );
+    }
+    bounded(
+        "browser_container_ttl_secs",
+        config.browser_container_ttl_secs,
+        config.session_ttl_secs,
+        180 * 24 * 3600,
+    )?;
+    if config.unified_web_session && !config.multi_account {
+        anyhow::bail!(
+            "oidc.unified_web_session = true 需要 oidc.multi_account = true（主站会话挂在浏览器账号容器上）"
+        );
+    }
+    if config.backchannel_timeout_secs == 0 || config.backchannel_timeout_secs > 30 {
+        anyhow::bail!(
+            "oidc.backchannel_timeout_secs 必须在 1..=30 之间（当前 {}）",
+            config.backchannel_timeout_secs
+        );
+    }
+    bounded(
+        "logout_token_ttl_secs",
+        config.logout_token_ttl_secs,
+        30,
+        600,
+    )?;
+    for host in &config.backchannel_trusted_hosts {
+        // 主机只能是域名 / IPv4 / [IPv6] 字面量：不允许通配符或空主机。
+        let host_ok = |h: &str| {
+            if let Some(inner) = h.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+                return inner.parse::<std::net::Ipv6Addr>().is_ok();
+            }
+            !h.is_empty()
+                && h.len() <= 253
+                && !h.starts_with('.')
+                && !h.starts_with('-')
+                && h.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+        };
+        let valid = host
+            .rsplit_once(':')
+            .is_some_and(|(h, port)| host_ok(h) && port.parse::<u16>().is_ok_and(|p| p > 0));
+        if !valid {
+            anyhow::bail!(
+                "oidc.backchannel_trusted_hosts 项 {host:?} 必须形如 host:port（例如 10.66.66.7:8080）"
+            );
+        }
+    }
+    let issuer_host = url::Url::parse(&config.issuer)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string));
+    for origin in &config.first_party_origins {
+        validate_oidc_issuer(origin)
+            .map_err(|e| anyhow::anyhow!("oidc.first_party_origins 项 {origin:?} 非法：{e}"))?;
+        let host = url::Url::parse(origin)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string));
+        if host != issuer_host {
+            anyhow::bail!(
+                "oidc.first_party_origins 项 {origin:?} 必须与 issuer 同主机（host-only Cookie 只在同主机间共享）"
+            );
+        }
+    }
+    Ok(config)
+}
+
 impl AppConfig {
     /// Load and validate configuration from a TOML file.
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -562,6 +1003,8 @@ impl AppConfig {
             );
         }
         let proxy_url = parse_optional_proxy_url("proxy.url", file.proxy.url)?;
+        let config_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let oidc = parse_oidc_config(file.oidc, config_dir)?;
 
         Ok(Self {
             server: ServerConfig {
@@ -640,6 +1083,7 @@ impl AppConfig {
             },
             main_url: file.application.main_url,
             proxy: ProxyConfig { url: proxy_url },
+            oidc,
         })
     }
 
@@ -666,6 +1110,9 @@ impl AppConfig {
                 .as_ref()
                 .map(|url| redact_proxy(url.expose()))
                 .unwrap_or_else(|| "direct".to_string()),
+            oidc_enabled = self.oidc.enabled,
+            oidc_issuer = %self.oidc.issuer,
+            oidc_signing_kids = ?self.oidc.signing_keys.iter().map(|k| k.kid.as_str()).collect::<Vec<_>>(),
             "AppConfig loaded from TOML"
         );
         if self.features.enable_unsafe_sql_admin {
@@ -1040,5 +1487,223 @@ mod tests {
         let parsed: AuthToml = toml::from_str("jwt_secret = \"a-development-secret\"").unwrap();
         assert!(parsed.awd_root_key.is_none());
         assert!(parsed.internal_token_key.is_none());
+    }
+
+    /// 写一份最小可加载配置并追加 `[oidc]` 段（OIDC 配置测试用）。
+    fn write_oidc_config(oidc: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                r#"
+                [database]
+                url = "postgres://localhost/db"
+                [auth]
+                jwt_secret = "a-development-secret"
+                [redis]
+                url = "redis://localhost:6379/"
+                [rustfs]
+                endpoint_url = "http://localhost:9000"
+                access_key_id = "access"
+                secret_access_key = "secret"
+                region = "local"
+                {oidc}
+                "#
+            ),
+        )
+        .unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn oidc_is_disabled_by_default_with_safe_defaults() {
+        let (_dir, path) = write_oidc_config("");
+        let config = AppConfig::from_file(&path).unwrap();
+        assert!(!config.oidc.enabled);
+        assert!(config.oidc.require_client_approval);
+        assert!(config.oidc.account_chooser, "账号选择页默认开启");
+        assert!(!config.oidc.allow_loopback_redirect_uris);
+        assert_eq!(config.oidc.authorization_code_ttl_secs, 60);
+        assert_eq!(config.oidc.session_ttl_secs, 8 * 3600);
+    }
+
+    #[test]
+    fn oidc_account_chooser_can_be_turned_off_as_rollback_switch() {
+        let (_dir, path) = write_oidc_config("[oidc]\naccount_chooser = false\n");
+        let config = AppConfig::from_file(&path).unwrap();
+        assert!(!config.oidc.account_chooser);
+    }
+
+    const ENABLED_OIDC: &str = "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n\
+        [[oidc.signing_keys]]\nkid = \"a\"\nprivate_key_file = \"keys/a.pem\"\nactive = true\n";
+
+    #[test]
+    fn unified_identity_switches_default_off_for_staged_rollout() {
+        let (_dir, path) = write_oidc_config(ENABLED_OIDC);
+        let oidc = AppConfig::from_file(&path).unwrap().oidc;
+        assert!(!oidc.multi_account);
+        assert!(!oidc.unified_web_session);
+        assert_eq!(oidc.max_browser_accounts, 5);
+        assert_eq!(oidc.browser_container_ttl_secs, 30 * 24 * 3600);
+        assert!(oidc.first_party_origins.is_empty());
+        assert!(!oidc.backchannel_logout);
+        assert!(oidc.backchannel_trusted_hosts.is_empty());
+        assert_eq!(oidc.backchannel_timeout_secs, 5);
+        assert_eq!(oidc.logout_token_ttl_secs, 120);
+        assert!(oidc.is_first_party_origin("https://ctf.example.com"));
+        assert!(!oidc.is_first_party_origin("https://evil.example.com"));
+    }
+
+    #[test]
+    fn unified_web_session_requires_browser_account_container() {
+        // TOML 中 [[oidc.signing_keys]] 之后的键会落进数组表，因此开关必须写在 key 之前。
+        let toml = |body: &str| {
+            format!(
+                "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n{body}\n\
+                 [[oidc.signing_keys]]\nkid = \"a\"\nprivate_key_file = \"keys/a.pem\"\nactive = true\n"
+            )
+        };
+        let (_d, p) = write_oidc_config(&toml("unified_web_session = true"));
+        assert!(
+            AppConfig::from_file(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("multi_account")
+        );
+        let (_d, p) = write_oidc_config(&toml("unified_web_session = true\nmulti_account = true"));
+        let oidc = AppConfig::from_file(&p).unwrap().oidc;
+        assert!(oidc.unified_web_session && oidc.multi_account);
+
+        // 第一方 origin 必须是规范 origin 且与 issuer 同主机（端口可以不同）。
+        let (_d, p) = write_oidc_config(&toml(
+            "multi_account = true\nfirst_party_origins = [\"https://ctf.example.com:8443\"]",
+        ));
+        let oidc = AppConfig::from_file(&p).unwrap().oidc;
+        assert!(oidc.is_first_party_origin("https://ctf.example.com:8443"));
+        for bad in [
+            "https://other.example.com",
+            "https://ctf.example.com/",
+            "http://ctf.example.com",
+        ] {
+            let (_d, p) = write_oidc_config(&toml(&format!("first_party_origins = [\"{bad}\"]")));
+            assert!(AppConfig::from_file(&p).is_err(), "{bad} must be rejected");
+        }
+        let (_d, p) = write_oidc_config(&toml("multi_account = true\nmax_browser_accounts = 0"));
+        assert!(AppConfig::from_file(&p).is_err());
+
+        // Back-Channel 内网白名单必须是精确的 host:port。
+        let (_d, p) = write_oidc_config(&toml(
+            "backchannel_logout = true\nbackchannel_trusted_hosts = [\"Learn.Example.internal:8080\"]",
+        ));
+        let oidc = AppConfig::from_file(&p).unwrap().oidc;
+        assert_eq!(
+            oidc.backchannel_trusted_hosts,
+            vec!["learn.example.internal:8080"]
+        );
+        for bad in ["learn.example.internal", "10.0.0.1:0", ":8080", "*:443"] {
+            let (_d, p) =
+                write_oidc_config(&toml(&format!("backchannel_trusted_hosts = [\"{bad}\"]")));
+            assert!(AppConfig::from_file(&p).is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn oidc_enabled_requires_valid_issuer_and_exactly_one_active_key() {
+        let key = |active: bool, kid: &str| {
+            format!(
+                "[[oidc.signing_keys]]\nkid = \"{kid}\"\nprivate_key_file = \"keys/{kid}.pem\"\nactive = {active}\n"
+            )
+        };
+        // 无 key → 拒绝（不临时生成）
+        let (_d, p) =
+            write_oidc_config("[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n");
+        assert!(
+            AppConfig::from_file(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("signing_keys")
+        );
+        // 两把 active → 拒绝
+        let (_d, p) = write_oidc_config(&format!(
+            "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n{}{}",
+            key(true, "a"),
+            key(true, "b")
+        ));
+        assert!(
+            AppConfig::from_file(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("active")
+        );
+        // kid 重复 → 拒绝
+        let (_d, p) = write_oidc_config(&format!(
+            "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n{}{}",
+            key(true, "a"),
+            key(false, "a")
+        ));
+        assert!(
+            AppConfig::from_file(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("重复")
+        );
+        // 合法：相对路径以配置文件目录为基准
+        let (dir, p) = write_oidc_config(&format!(
+            "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\n{}{}",
+            key(true, "a"),
+            key(false, "b")
+        ));
+        let config = AppConfig::from_file(&p).unwrap();
+        assert_eq!(config.oidc.signing_keys.len(), 2);
+        assert_eq!(
+            config.oidc.signing_keys[0].private_key_file,
+            dir.path().join("keys/a.pem")
+        );
+        // 授权码 TTL 超过 120s → 拒绝
+        let (_d, p) = write_oidc_config(&format!(
+            "[oidc]\nenabled = true\nissuer = \"https://ctf.example.com\"\nauthorization_code_ttl_secs = 600\n{}",
+            key(true, "a")
+        ));
+        assert!(
+            AppConfig::from_file(&p)
+                .unwrap_err()
+                .to_string()
+                .contains("authorization_code_ttl_secs")
+        );
+    }
+
+    #[test]
+    fn oidc_issuer_rules() {
+        for ok in [
+            "https://ctf.example.com",
+            "https://ctf.example.com:8443",
+            "http://localhost:7780",
+            "http://127.0.0.1:9090",
+        ] {
+            assert!(validate_oidc_issuer(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://ctf.example.com",
+            "https://ctf.example.com/",
+            "https://ctf.example.com/idp",
+            "https://ctf.example.com?x=1",
+            "https://ctf.example.com#f",
+            "https://user@ctf.example.com",
+            "https://CTF.example.com",
+            "https://ctf.example.com:443",
+            "ftp://ctf.example.com",
+            "ctf.example.com",
+            "",
+        ] {
+            assert!(validate_oidc_issuer(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn oidc_disabled_does_not_validate_issuer() {
+        // 关闭时保留旧部署零配置启动能力：错误的占位 issuer 不阻断启动。
+        let (_d, p) = write_oidc_config("[oidc]\nenabled = false\nissuer = \"not a url\"\n");
+        assert!(AppConfig::from_file(&p).is_ok());
     }
 }

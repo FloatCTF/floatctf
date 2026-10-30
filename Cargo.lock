@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "floatctf"
-version = "1.0.0"
+version = "1.0.3"
 dependencies = [
  "actix-cors",
  "actix-http",
@@ -1979,15 +1979,18 @@ dependencies = [
  "jsonwebtoken",
  "lettre",
  "minijinja",
+ "pem",
  "pnet",
  "rand 0.8.7",
  "redis",
  "reqwest",
+ "ring",
  "sea-orm",
  "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "sysinfo",
  "tar",
  "tempfile",

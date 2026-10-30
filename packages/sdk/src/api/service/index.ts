@@ -49,3 +49,11 @@ export {
 	type DiscussionServiceApi,
 	type DiscussionWithAuthor,
 } from "./discussions.js";
+export {
+	createOidcServiceApi,
+	type OidcServiceApi,
+} from "./oidc.js";
+export {
+	createWebSessionServiceApi,
+	type WebSessionServiceApi,
+} from "./webSession.js";

@@ -25,6 +25,8 @@ pub enum TaskKey {
     /// 训练站（floatctf-training）静态制品同步：下载 GitHub Release 制品 → 校验 →
     /// 安全解包 → 原子切换 `current` 软链。可手工触发（管理端「运行」），也可改为 cron。
     PlatformTrainingSync,
+    /// OIDC Provider 过期数据清理（授权事务、授权码、access token、SSO 会话）。
+    OidcCleanup,
 }
 
 impl TaskKey {
@@ -44,6 +46,7 @@ impl TaskKey {
             Self::AwdpEvalWorker => "awdp.eval.worker",
             Self::AwdpPracticeJudge => "awdp.practice.judge",
             Self::PlatformTrainingSync => "platform.training.sync",
+            Self::OidcCleanup => "identity.oidc.cleanup",
         }
     }
 }
@@ -76,6 +79,7 @@ impl FromStr for TaskKey {
             "awdp.eval.worker" => Ok(Self::AwdpEvalWorker),
             "awdp.practice.judge" => Ok(Self::AwdpPracticeJudge),
             "platform.training.sync" => Ok(Self::PlatformTrainingSync),
+            "identity.oidc.cleanup" => Ok(Self::OidcCleanup),
             _ => Err(format!("unknown scheduled task key: {value}")),
         }
     }
@@ -102,6 +106,7 @@ mod tests {
             TaskKey::AwdpEvalWorker,
             TaskKey::AwdpPracticeJudge,
             TaskKey::PlatformTrainingSync,
+            TaskKey::OidcCleanup,
         ];
 
         for key in keys {

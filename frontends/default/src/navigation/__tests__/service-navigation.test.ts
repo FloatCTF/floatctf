@@ -46,6 +46,9 @@ describe("serviceNavigation", () => {
 				"/service/writeups",
 				"/service/weapons",
 				"/service/profile",
+				// FloatCTF 账号登录（OIDC）：已授权应用 + 开发者中心
+				"/service/authorizations",
+				"/service/developer",
 				// 整页跳转的非 SPA 入口（由 Caddy 直接伺服；见下一条用例）
 				"/training/",
 			].sort(),
@@ -75,6 +78,9 @@ describe("serviceNavigation", () => {
 	it("detail routes activate their segment-prefix leaf only", () => {
 		const active = (pathname: string) =>
 			findActiveNavigationPath(serviceNavigation, pathname).activeNodeId;
+
+		expect(active("/service/developer/fctf_abc")).toBe("service.developer");
+		expect(active("/service/authorizations")).toBe("service.authorizations");
 
 		expect(active("/service/events/jeopardy/abc/challenges")).toBe(
 			"service.events",

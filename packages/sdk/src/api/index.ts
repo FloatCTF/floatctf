@@ -26,6 +26,7 @@ export {
 	createEventWriteupAdminApi,
 	createInstanceAdminApi,
 	createLogsAdminApi,
+	createOidcClientAdminApi,
 	createScheduledTaskAdminApi,
 	createSettingAdminApi,
 	createSystemAdminApi,
@@ -39,11 +40,13 @@ export {
 	createDiscussionServiceApi,
 	createEventServiceApi,
 	createInstanceServiceApi,
+	createOidcServiceApi,
 	createSolveServiceApi,
 	createSubmitServiceApi,
 	createUploadsServiceApi,
 	createUserServiceApi,
 	createWeaponsServiceApi,
+	createWebSessionServiceApi,
 } from "./service/index.js";
 
 export type {
@@ -81,6 +84,7 @@ import {
 	createEventWriteupAdminApi,
 	createInstanceAdminApi,
 	createLogsAdminApi,
+	createOidcClientAdminApi,
 	createScheduledTaskAdminApi,
 	createSettingAdminApi,
 	createRoleAdminApi,
@@ -97,11 +101,13 @@ import {
 	createDiscussionServiceApi,
 	createEventServiceApi,
 	createInstanceServiceApi,
+	createOidcServiceApi,
 	createSolveServiceApi,
 	createSubmitServiceApi,
 	createUploadsServiceApi,
 	createUserServiceApi,
 	createWeaponsServiceApi,
+	createWebSessionServiceApi,
 } from "./service/index.js";
 
 /**
@@ -137,6 +143,7 @@ export function createAdminApi(http: FloatCTFHttpClient, serviceHttp: FloatCTFHt
 		download: createDownloadAdminApi(http),
 		docker: createDockerAdminApi(http),
 		dashboard: createDashboardAdminApi(http),
+		oidc_clients: createOidcClientAdminApi(http),
 		awd: createAwdAdminApi(http),
 	};
 }
@@ -160,6 +167,8 @@ export function createServiceApi(http: FloatCTFHttpClient) {
 		announcements: createAnnouncementServiceApi(http),
 		discussions: createDiscussionServiceApi(http),
 		uploads: createUploadsServiceApi(http),
+		oidc: createOidcServiceApi(http),
+		webSession: createWebSessionServiceApi(http),
 		awd: createAwdPlayerApi(http),
 	};
 }

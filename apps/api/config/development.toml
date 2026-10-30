@@ -81,3 +81,19 @@ url = "redis://127.0.0.1:6379/"
 
 [realtime]
 channel = "floatctf:realtime"
+
+# OpenID Connect Provider（FloatCTF 作为通用 OIDC 身份提供方）。默认关闭；
+# 设计与运维见 docs/identity/ADR-oidc-provider.md、docs/identity/oidc-operations.md。
+# 本地开启步骤：
+#   1. scripts/oidc-keygen.sh app/secrets/oidc dev-key-1      # /app 已被 gitignore
+#   2. 取消下面注释；issuer 必须与浏览器访问的 origin 完全一致（开发 Caddy 为 :7780）
+# [oidc]
+# enabled = true
+# issuer = "http://localhost:7780"
+# allow_loopback_redirect_uris = true    # 允许 http://127.0.0.1 / localhost 回调（仅开发）
+# require_client_approval = true
+# account_chooser = true                 # prompt=select_account 显示账号选择页；false 仅为临时回滚
+# [[oidc.signing_keys]]
+# kid = "dev-key-1"
+# private_key_file = "../../../app/secrets/oidc/dev-key-1.pem"   # 相对本文件所在目录
+# active = true

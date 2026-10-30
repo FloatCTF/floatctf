@@ -73,6 +73,18 @@ pub enum Relation {
     JeopardyChallengeSolves,
     #[sea_orm(has_many = "super::logs::Entity")]
     Logs,
+    #[sea_orm(has_many = "super::oidc_access_tokens::Entity")]
+    OidcAccessTokens,
+    #[sea_orm(has_many = "super::oidc_auth_transactions::Entity")]
+    OidcAuthTransactions,
+    #[sea_orm(has_many = "super::oidc_authorization_codes::Entity")]
+    OidcAuthorizationCodes,
+    #[sea_orm(has_many = "super::oidc_browser_sessions::Entity")]
+    OidcBrowserSessions,
+    #[sea_orm(has_many = "super::oidc_clients::Entity")]
+    OidcClients,
+    #[sea_orm(has_many = "super::oidc_consents::Entity")]
+    OidcConsents,
 }
 
 impl Related<super::announcements::Entity> for Entity {
@@ -210,6 +222,42 @@ impl Related<super::jeopardy_challenge_solves::Entity> for Entity {
 impl Related<super::logs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Logs.def()
+    }
+}
+
+impl Related<super::oidc_access_tokens::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcAccessTokens.def()
+    }
+}
+
+impl Related<super::oidc_auth_transactions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcAuthTransactions.def()
+    }
+}
+
+impl Related<super::oidc_authorization_codes::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcAuthorizationCodes.def()
+    }
+}
+
+impl Related<super::oidc_browser_sessions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcBrowserSessions.def()
+    }
+}
+
+impl Related<super::oidc_clients::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcClients.def()
+    }
+}
+
+impl Related<super::oidc_consents::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::OidcConsents.def()
     }
 }
 

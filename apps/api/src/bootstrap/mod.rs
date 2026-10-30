@@ -35,6 +35,8 @@ pub enum BootstrapError {
     Crypto(String),
     #[error("floatctf-helper unavailable: {0}")]
     Helper(String),
+    #[error("OIDC provider initialization failed: {0}")]
+    Oidc(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -221,6 +223,8 @@ pub async fn run() -> Result<(), BootstrapError> {
     // Initialize scheduler
     // 平台出网客户端：只有访问互联网的请求走它（代理取 settings.OUTBOUND_PROXY）。
     let outbound_http = crate::infrastructure::ProxyReqwest::new(db.get_ref().clone());
+    let scheduler_disabled =
+        std::env::var("FLOATCTF_DISABLE_SCHEDULER").ok().as_deref() == Some("1");
     let task_scheduler = scheduler::build_task_scheduler(
         db.clone(),
         docker.clone(),
@@ -237,19 +241,23 @@ pub async fn run() -> Result<(), BootstrapError> {
     .expect("init startup handlers failed!");
 
     let task_scheduler_arc = std::sync::Arc::new(task_scheduler);
-    task_scheduler_arc
-        .init_and_recover()
-        .await
-        .expect("init task scheduler failed!");
+    if !scheduler_disabled {
+        task_scheduler_arc
+            .init_and_recover()
+            .await
+            .expect("init task scheduler failed!");
 
-    // Start background polling
-    let sc_clone = task_scheduler_arc.clone();
-    actix_web::rt::spawn(async move {
-        sc_clone.start_polling().await;
-    });
+        // Start background polling
+        let sc_clone = task_scheduler_arc.clone();
+        actix_web::rt::spawn(async move {
+            sc_clone.start_polling().await;
+        });
 
-    // Redis 即时唤醒订阅；5s DB 轮询仅作为运行期 Redis 故障兜底。
-    crate::scheduler::wake::spawn_wake_listener(task_scheduler_arc.clone());
+        // Redis 即时唤醒订阅；5s DB 轮询仅作为运行期 Redis 故障兜底。
+        crate::scheduler::wake::spawn_wake_listener(task_scheduler_arc.clone());
+    } else {
+        tracing::warn!("scheduler disabled by FLOATCTF_DISABLE_SCHEDULER=1");
+    }
 
     // Create centralized AppState
     let terminal_tickets = std::sync::Arc::new(
@@ -270,6 +278,42 @@ pub async fn run() -> Result<(), BootstrapError> {
         task_scheduler_arc.clone(),
         terminal_tickets,
     ));
+
+    // OpenID Connect Provider：enabled 时 key ring 必须加载成功（fail closed，不临时生成 key）。
+    let oidc_provider = if config.oidc.enabled {
+        let keys = crate::modules::identity::oidc::keys::KeyRing::load(&config.oidc.signing_keys)
+            .map_err(BootstrapError::Oidc)?;
+        info!(
+            issuer = %config.oidc.issuer,
+            active_kid = %keys.active_kid(),
+            multi_account = config.oidc.multi_account,
+            unified_web_session = config.oidc.unified_web_session,
+            backchannel_logout = config.oidc.backchannel_logout,
+            "OIDC provider enabled"
+        );
+        // 开启标准退出时出站客户端必须可用（例如 backchannel_extra_ca_file 可读），否则拒绝启动。
+        if config.oidc.backchannel_logout {
+            crate::modules::identity::oidc::backchannel::Sender::from_config(&config.oidc)
+                .map_err(BootstrapError::Oidc)?;
+        }
+        let provider = web::Data::new(crate::modules::identity::oidc::OidcProvider::new(
+            config.oidc.clone(),
+            keys,
+            Arc::new(crate::infrastructure::ratelimit::RateLimiter::new(
+                redis.clone(),
+            )),
+        ));
+        if config.oidc.backchannel_logout {
+            crate::modules::identity::oidc::backchannel::spawn_worker(
+                db.get_ref().clone(),
+                provider.clone().into_inner(),
+            );
+        }
+        Some(provider)
+    } else {
+        info!("OIDC provider disabled ([oidc].enabled = false)");
+        None
+    };
 
     // AWD container runtime + crypto
     let awd_containers: Arc<dyn fcmc::AwdContainerRuntime> =
@@ -296,8 +340,13 @@ pub async fn run() -> Result<(), BootstrapError> {
     HttpServer::new(move || {
         let cors = build_cors(&cors_origins);
 
-        App::new()
-            .wrap(Logger::default())
+        let app = App::new();
+        // OIDC 运行时只在启用时注册：协议端点以 `Option<WebOidc>` 判定，未注册即 404。
+        let app = match &oidc_provider {
+            Some(provider) => app.app_data(provider.clone()),
+            None => app,
+        };
+        app.wrap(Logger::default())
             .wrap(TracingLogger::default())
             .wrap(cors)
             // multipart 体积超限默认映射 400 "Payload error"；按 HTTP 语义应为 413
@@ -404,7 +453,12 @@ fn build_cors(allowed_origins: &[String]) -> Cors {
         .allow_any_header()
         .allow_any_method()
         .supports_credentials()
-        .max_age(3600);
+        .max_age(3600)
+        // OIDC Discovery / JWKS / token / userinfo 供任意第三方浏览器端 RP 调用；
+        // 这些端点不读取 Cookie，放开 Origin 不会带来 CSRF 面。授权/登录/同意页不在此列。
+        .allowed_origin_fn(|_origin, head| {
+            crate::modules::identity::oidc::is_public_cors_path(head.uri.path())
+        });
     for origin in allowed_origins {
         cors = cors.allowed_origin(origin.as_str());
     }

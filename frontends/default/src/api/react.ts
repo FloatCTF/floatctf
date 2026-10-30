@@ -12,11 +12,28 @@
 import { createFloatCTFReact } from "@floatctf/react";
 
 import { useAuthStore } from "@/stores/AuthStore";
+import { useSessionStore } from "@/stores/SessionStore";
 import { client } from "./client";
+
+/**
+ * 选手端实时连接的「令牌」：旧版模式是平台 JWT；Cookie 会话模式下是「当前账号 + CSRF」组成的
+ * 不透明标记——只用于触发连接重建，SDK 在会话头存在时不会把它当作 Bearer 发送。
+ */
+function useUserConnectionKey(): string | null {
+	const legacy = useAuthStore((s) => s.token);
+	const mode = useSessionStore((s) => s.mode);
+	const status = useSessionStore((s) => s.status);
+	if (mode === "cookie") {
+		return status?.authenticated && status.user && status.csrf_token
+			? `session:${status.user.id}:${status.csrf_token.slice(0, 8)}`
+			: null;
+	}
+	return legacy;
+}
 
 const bindings = createFloatCTFReact({
 	client,
-	useUserToken: () => useAuthStore((s) => s.token),
+	useUserToken: useUserConnectionKey,
 	useAdminToken: () => useAuthStore((s) => s.adminToken),
 });
 

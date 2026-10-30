@@ -91,6 +91,10 @@ export const adminNavigation: NavigationSection[] = [
 				permission: "roles.read",
 				icon: <ShieldLockIcon />,
 			}),
+			// 第三方应用通过 FloatCTF 账号登录（OIDC）的审核。
+			item("access.oidc-clients", "OIDC Clients", "/admin/oidc_clients", {
+				icon: <KeyIcon />,
+			}),
 		],
 	},
 	{

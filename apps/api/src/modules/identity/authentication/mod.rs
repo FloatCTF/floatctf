@@ -18,33 +18,52 @@ pub struct UserLoginRequest {
     password: String,
 }
 
+/// 校验玩家用户名 + 口令（Argon2）。
+///
+/// 返回 `(Some(user), true)` 表示通过；`(Some(user), false)` 表示用户存在但口令错误；
+/// `(None, false)` 表示用户不存在。平台登录接口与 OIDC 第一方登录页共用这一实现。
+pub(crate) async fn verify_user_credentials(
+    db: &sea_orm::DatabaseConnection,
+    username: &str,
+    password: &str,
+) -> Result<(Option<users::Model>, bool), AppError> {
+    let Some(user) = Users::find()
+        .filter(users::Column::Username.eq(username))
+        .one(db)
+        .await?
+    else {
+        return Ok((None, false));
+    };
+    let parsed_hash = PasswordHash::new(&user.password)
+        .map_err(|e| AppError::Internal(format!("Failed to new the PasswordHash: {e}")))?;
+    let verified = Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok();
+    Ok((Some(user), verified))
+}
+
 /// POST `/api/session` **与** `POST /api/users/session`（同一个 handler）。
 ///
 /// v2 统一入口是 `/api/session`；`/api/users/session` 作为别名保留到 Wave 10。
 /// 两条路径**复用同一个 handler**，因此不可能出现「某一条登录路径行为不同」的分叉缺陷
 /// （这正是统一账户要消灭的那类问题）。
+///
+/// 响应体与引入 OIDC 前逐字一致（data 为平台 JWT）。OIDC Provider 启用时额外下发
+/// 第一方 SSO Cookie，使已登录 FloatCTF 的浏览器授权第三方应用时无需再次输入密码；
+/// Cookie 建立失败不影响平台登录本身。
 #[post("/session")]
-pub async fn user_login(ctx: ReqCtx, ulr: Json<UserLoginRequest>) -> UniResult<String> {
+pub async fn user_login(
+    ctx: ReqCtx,
+    oidc: Option<crate::modules::identity::oidc::WebOidc>,
+    ulr: Json<UserLoginRequest>,
+) -> Result<actix_web::HttpResponse, AppError> {
     let ulr = ulr.into_inner();
 
-    match Users::find()
-        .filter(users::Column::Username.eq(ulr.username))
-        .one(ctx.db.get_ref())
-        .await?
-    {
-        Some(user) => {
-            let verified = {
-                let parsed_hash = PasswordHash::new(&user.password).map_err(|e| {
-                    AppError::Internal(format!("Failed to new the PasswordHash: {e}"))
-                })?;
-                Argon2::default()
-                    .verify_password(ulr.password.as_bytes(), &parsed_hash)
-                    .is_ok()
-            };
-
+    match verify_user_credentials(ctx.db.get_ref(), &ulr.username, &ulr.password).await? {
+        (Some(user), true) => {
             // 凭据正确但账号被禁用 → **403**（而不是 401）：
             // 用户需要知道「账号存在但被停用」，重新登录不会解决问题。
-            if verified && user.status != AccountStatus::Active {
+            if user.status != AccountStatus::Active {
                 ctx.log
                     .add_log(
                         "ERROR",
@@ -56,42 +75,61 @@ pub async fn user_login(ctx: ReqCtx, ulr: Json<UserLoginRequest>) -> UniResult<S
                         Some(&ctx.req),
                     )
                     .await;
-                return AppError::Forbidden("账号已被禁用".to_string()).into();
+                return Err(AppError::Forbidden("账号已被禁用".to_string()));
             }
 
-            if verified {
-                ctx.log
-                    .add_log(
-                        "INFO",
-                        "AUTH",
-                        "LOGIN",
-                        format!("{} 登陆成功", user.username).as_str(),
-                        json!([]),
-                        user.id.into(),
-                        Some(&ctx.req),
-                    )
-                    .await;
-                // 令牌只带身份与凭据版本；授权信息由每个请求从 DB 解析。
-                let jwt = gen_session_token(user.id, user.token_version)
-                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            ctx.log
+                .add_log(
+                    "INFO",
+                    "AUTH",
+                    "LOGIN",
+                    format!("{} 登陆成功", user.username).as_str(),
+                    json!([]),
+                    user.id.into(),
+                    Some(&ctx.req),
+                )
+                .await;
 
-                UniResponse::ok(jwt.into()).into()
-            } else {
-                ctx.log
-                    .add_log(
-                        "ERROR",
-                        "AUTH",
-                        "LOGIN",
-                        format!("{} 登陆失败", user.username).as_str(),
-                        json!([]),
-                        user.id.into(),
-                        Some(&ctx.req),
-                    )
-                    .await;
-                AppError::Unauthorized.into()
+            // 令牌只带身份与凭据版本；授权信息由每个请求从 DB 解析。
+            let jwt = gen_session_token(user.id, user.token_version)
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+            let mut response = actix_web::HttpResponse::Ok();
+            if let Some(oidc) = oidc {
+                match crate::modules::identity::oidc::api::session::establish_after_password_login(
+                    ctx.db.get_ref(),
+                    &oidc,
+                    &ctx.req,
+                    &user,
+                )
+                .await
+                {
+                    Ok(cookies) => {
+                        for cookie in cookies {
+                            response.cookie(cookie);
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "SSO session not established after login"),
+                }
             }
+
+            Ok(response.json(UniResponse::ok(Some(jwt))))
         }
-        None => AppError::Unauthorized.into(),
+        (Some(user), false) => {
+            ctx.log
+                .add_log(
+                    "ERROR",
+                    "AUTH",
+                    "LOGIN",
+                    format!("{} 登陆失败", user.username).as_str(),
+                    json!([]),
+                    user.id.into(),
+                    Some(&ctx.req),
+                )
+                .await;
+            Err(AppError::Unauthorized)
+        }
+        (None, _) => Err(AppError::Unauthorized),
     }
 }
 

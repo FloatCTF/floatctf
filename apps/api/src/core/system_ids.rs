@@ -28,6 +28,9 @@ pub const SCHED_CLEAN_RUSTFS: Uuid = Uuid::from_u128(2);
 /// 管理端 `/admin/scheduled_tasks` 可随时手工「运行」。
 pub const SCHED_TRAINING_SYNC: Uuid = Uuid::from_u128(3);
 
+/// 任务键 `identity.oidc.cleanup`：删除过期的 OIDC 授权事务、授权码、access token 与 SSO 会话。
+pub const SCHED_OIDC_CLEANUP: Uuid = Uuid::from_u128(4);
+
 // ── platform_roles：内置平台角色 ─────────────────────────────────────────────
 
 /// 内置全权角色 `super-admin` 的主键（`platform_roles` 表）。
@@ -90,6 +93,12 @@ pub fn startup_scheduled_task_seeds() -> &'static [(Uuid, &'static str, &'static
             "platform.training.sync",
             "startup",
         ),
+        (
+            SCHED_OIDC_CLEANUP,
+            "OIDC 过期数据清理",
+            "identity.oidc.cleanup",
+            "cron",
+        ),
     ]
 }
 
@@ -99,6 +108,8 @@ pub fn system_task_cron_expr(task_key: &str) -> Option<&'static str> {
     match task_key {
         "system.practice.clean" => Some("*/30 * * * * *"),
         "platform.rustfs.clean" => Some("0 0 * * * *"),
+        // OIDC 短期数据每 10 分钟清理一次（表内只保留到期后 1 天 / 会话 7 天）。
+        "identity.oidc.cleanup" => Some("0 */10 * * * *"),
         _ => None,
     }
 }
@@ -156,13 +167,15 @@ mod tests {
     }
 
     #[test]
-    fn startup_seed_list_covers_four_platform_tasks() {
+    fn startup_seed_list_covers_platform_tasks() {
         let seeds = startup_scheduled_task_seeds();
-        assert_eq!(seeds.len(), 4);
+        assert_eq!(seeds.len(), 5);
         assert_eq!(seeds[0].0, SCHED_CHECK_PRACTICE_EVENT);
         assert_eq!(seeds[1].0, SCHED_CLEAN_INSTANCES);
         assert_eq!(seeds[2].0, SCHED_CLEAN_RUSTFS);
         assert_eq!(seeds[3].0, SCHED_TRAINING_SYNC);
+        assert_eq!(seeds[4].0, SCHED_OIDC_CLEANUP);
+        assert_eq!(system_task_cron_expr(seeds[4].2), Some("0 */10 * * * *"));
         // task_key 必须能被解析回枚举，否则引擎校验会在启动时失败
         for (_, _, task_key, trigger_type) in seeds {
             assert!(
@@ -184,7 +197,8 @@ mod tests {
             .map(|(id, _, _, _)| *id)
             .collect();
         assert_eq!(ids, expected);
-        assert_eq!(ids.len(), 4);
+        assert_eq!(ids.len(), 5);
+        assert!(ids.contains(&SCHED_OIDC_CLEANUP));
         assert!(ids.contains(&SCHED_CHECK_PRACTICE_EVENT));
         assert!(ids.contains(&SCHED_CLEAN_INSTANCES));
         assert!(ids.contains(&SCHED_CLEAN_RUSTFS));

@@ -10,6 +10,12 @@ http:// {
         reverse_proxy host.docker.internal:9090
     }
 
+    # OpenID Connect Provider：协议端点与发现文档由 API 提供（不能落到 Vite 的 SPA fallback）。
+    @oidc path /oauth/* /.well-known/openid-configuration /.well-known/oauth-authorization-server /.well-known/jwks.json
+    handle @oidc {
+        reverse_proxy host.docker.internal:9090
+    }
+
     # 本地已安装前端注册表 / 资产。
     # 开发环境没有 $FLOATCTF_HOME 安装目录：注册表由 Default Frontend 的 Vite 插件按
     # **真实 schema** 提供（只含 default），因此管理端「前端选择器」在 dev 下走的是与

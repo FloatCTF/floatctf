@@ -5,4 +5,4 @@ mod training_handlers;
 mod utils_handlers;
 pub use practice_handlers::{CheckPracticeEventHandler, CleanRunningInstancesHandler};
 pub use training_handlers::TrainingSyncHandler;
-pub use utils_handlers::CleanUnusedRustFSFilesHandler;
+pub use utils_handlers::{CleanUnusedRustFSFilesHandler, OidcCleanupHandler};

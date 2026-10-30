@@ -26,7 +26,7 @@ use crate::{
     },
     scheduler::{
         CheckPracticeEventHandler, CleanRunningInstancesHandler, CleanUnusedRustFSFilesHandler,
-        TaskHandler, TaskScheduler, TrainingSyncHandler,
+        OidcCleanupHandler, TaskHandler, TaskScheduler, TrainingSyncHandler,
     },
 };
 
@@ -69,6 +69,7 @@ pub async fn build_task_scheduler(
             db: db.clone(),
             proxy: proxy.clone(),
         }),
+        Arc::new(OidcCleanupHandler { db: db.clone() }),
         Arc::new(AwdAutoPrecheckHandler {
             db: db.clone(),
             network: network.clone(),

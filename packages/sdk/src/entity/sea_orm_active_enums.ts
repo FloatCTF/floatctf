@@ -106,6 +106,25 @@ export enum JudgeTaskStatus {
   SkippedBanned = 'skipped_banned',
 }
 
+export enum OidcClientStatus {
+  Pending = 'pending',
+  Active = 'active',
+  Disabled = 'disabled',
+  Suspended = 'suspended',
+  Rejected = 'rejected',
+}
+
+export enum OidcClientType {
+  Confidential = 'confidential',
+  Public = 'public',
+}
+
+export enum OidcTokenAuthMethod {
+  ClientSecretBasic = 'client_secret_basic',
+  ClientSecretPost = 'client_secret_post',
+  None = 'none',
+}
+
 export enum ParticipantMode {
   Individual = 'individual',
   Team = 'team',

@@ -86,6 +86,79 @@ pub fn service_routes() -> Vec<Route> {
             auth: Auth::UserRequired,
             json_body: false,
         },
+        // ── OIDC：SSO 桥接、开发者中心、已授权应用 ──
+        Route {
+            method: Method::Post,
+            path: "/api/users/sso",
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/oidc/provider",
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/oidc/clients",
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/oidc/clients",
+            auth: Auth::UserRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/oidc/clients/{id}"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/oidc/clients/{id}"),
+            auth: Auth::UserRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/oidc/clients/{id}/secret"),
+            auth: Auth::UserRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/oidc/clients/{id}/disable"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/oidc/clients/{id}/enable"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/oidc/clients/{id}"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/oidc/authorizations",
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/oidc/authorizations/{id}"),
+            auth: Auth::UserRequired,
+            json_body: false,
+        },
         Route {
             method: Method::Patch,
             path: "/api/users/me",
@@ -659,6 +732,403 @@ pub fn admin_routes() -> Vec<Route> {
             auth: Auth::SuperAdminRequired,
             json_body: true,
         },
+        Route {
+            method: Method::Get,
+            path: "/api/admin/weapons",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/weapons",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: "/api/admin/weapons",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/weapons/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/weapons/{id}/upload"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/users/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/users/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/admin/challenges",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/challenges/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/challenges",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/challenges/check",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/challenges/import",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/challenges/build",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: "/api/admin/challenges",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/challenges/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/admin/challenge_sets",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/challenge_sets/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/challenge_sets",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: "/api/admin/challenge_sets",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/challenge_sets/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/challenge_sets/{id}/challenges"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/challenge_sets/{id}/challenges"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        // ── OIDC：应用审核 ──
+        Route {
+            method: Method::Get,
+            path: "/api/admin/oidc/clients",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/oidc/clients/{id}/approve"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/oidc/clients/{id}/reject"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/oidc/clients/{id}/suspend"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/oidc/clients/{id}/reinstate"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/oidc/clients/{id}/pkce"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/admin/super_admin",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/super_admin/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/super_admin",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: "/api/admin/super_admin",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/super_admin/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/instances"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: "/api/admin/events",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: "/api/admin/events",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: "/api/admin/events",
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/events/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/data"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/report"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/users"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/users"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/events/{id}/users"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/users/{id}/banned"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/users/{id}/unbanned"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/teams"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/teams"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/events/{id}/teams"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/teams/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/teams/{id}/users"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/events/{id}/teams/{id}/users"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/teams/{id}/banned"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/teams/{id}/unbanned"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/challenges"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/challenges"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/events/{id}/challenges"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/challenges/hidden"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/challenges/open"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/announcements"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/announcements/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Post,
+            path: p("/api/admin/events/{id}/announcements"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Patch,
+            path: p("/api/admin/events/{id}/announcements/{id}"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Delete,
+            path: p("/api/admin/events/{id}/announcements"),
+            auth: Auth::SuperAdminRequired,
+            json_body: true,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/writeups"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
+        Route {
+            method: Method::Get,
+            path: p("/api/admin/events/{id}/logs"),
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
         // [platform]
         Route {
             method: Method::Get,
@@ -794,27 +1264,6 @@ pub fn admin_routes() -> Vec<Route> {
         },
         // [content]
         Route {
-            method: Method::Get,
-            path: "/api/admin/weapons",
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/weapons",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
-            method: Method::Delete,
-            path: "/api/admin/weapons",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
             method: Method::Patch,
             path: p("/api/admin/weapons/{weapon_id}"),
             auth: Auth::SuperAdminRequired,
@@ -830,44 +1279,9 @@ pub fn admin_routes() -> Vec<Route> {
         // [content]
         Route {
             method: Method::Get,
-            path: "/api/admin/challenges",
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [content]
-        Route {
-            method: Method::Get,
             path: p("/api/admin/challenges/{challenge_id}"),
             auth: Auth::SuperAdminRequired,
             json_body: false,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/challenges",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/challenges/check",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/challenges/import",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/challenges/build",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
         },
         // [content]
         Route {
@@ -878,13 +1292,6 @@ pub fn admin_routes() -> Vec<Route> {
         },
         // [content]
         Route {
-            method: Method::Delete,
-            path: "/api/admin/challenges",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
             method: Method::Patch,
             path: p("/api/admin/challenges/{challenge_id}"),
             auth: Auth::SuperAdminRequired,
@@ -893,30 +1300,9 @@ pub fn admin_routes() -> Vec<Route> {
         // [content]
         Route {
             method: Method::Get,
-            path: "/api/admin/challenge_sets",
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [content]
-        Route {
-            method: Method::Get,
             path: p("/api/admin/challenge_sets/{challenge_set_id}"),
             auth: Auth::SuperAdminRequired,
             json_body: false,
-        },
-        // [content]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/challenge_sets",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [content]
-        Route {
-            method: Method::Delete,
-            path: "/api/admin/challenge_sets",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
         },
         // [content]
         Route {
@@ -942,30 +1328,9 @@ pub fn admin_routes() -> Vec<Route> {
         // [events]
         Route {
             method: Method::Get,
-            path: "/api/admin/events",
-            auth: Auth::SuperAdminRequired,
-            json_body: false,
-        },
-        // [events]
-        Route {
-            method: Method::Get,
             path: p("/api/admin/events/{event_id}"),
             auth: Auth::SuperAdminRequired,
             json_body: false,
-        },
-        // [events]
-        Route {
-            method: Method::Post,
-            path: "/api/admin/events",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
-        },
-        // [events]
-        Route {
-            method: Method::Delete,
-            path: "/api/admin/events",
-            auth: Auth::SuperAdminRequired,
-            json_body: true,
         },
         // [events]
         Route {

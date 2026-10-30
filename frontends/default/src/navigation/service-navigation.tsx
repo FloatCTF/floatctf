@@ -1,4 +1,5 @@
 import {
+	AppsIcon,
 	BookIcon,
 	CommentDiscussionIcon,
 	FlameIcon,
@@ -10,6 +11,7 @@ import {
 	NoteIcon,
 	PackageIcon,
 	PersonIcon,
+	ShieldCheckIcon,
 	TasklistIcon,
 	TelescopeIcon,
 } from "@primer/octicons-react";
@@ -126,6 +128,15 @@ export const serviceNavigation: NavigationSection[] = [
 		children: [
 			item("service.profile", "Profile", "/service/profile", {
 				icon: <PersonIcon />,
+			}),
+			// FloatCTF 账号登录（OIDC）：用户已授权的第三方应用。
+			item("service.authorizations", "Authorized Apps", "/service/authorizations", {
+				icon: <ShieldCheckIcon />,
+			}),
+			// 开发者中心：登记自己的 OIDC 应用（详情页 /service/developer/$clientId 高亮本项）。
+			item("service.developer", "Developer Apps", "/service/developer", {
+				icon: <AppsIcon />,
+				match: { mode: "segment-prefix" },
 			}),
 		],
 	},

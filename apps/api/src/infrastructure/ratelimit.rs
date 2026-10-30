@@ -65,6 +65,31 @@ impl RateLimiter {
         limit: u32,
         window_secs: u64,
     ) -> AwdResult<()> {
+        let allowed = self
+            .hit_window(&format!("{scope:?}"), key, limit, window_secs)
+            .await
+            .map_err(crate::modules::event::awd::AwdError::Internal)?;
+        if allowed {
+            Ok(())
+        } else {
+            Err(crate::modules::event::awd::AwdError::Forbidden(format!(
+                "rate limit exceeded for {scope:?} ({} per {}s)",
+                limit, window_secs
+            )))
+        }
+    }
+
+    /// 通用滑动窗口：记录一次访问，返回是否仍在配额内。Redis 故障返回 `Err`（调用方 fail-closed）。
+    ///
+    /// Redis key：`floatctf:ratelimit:{bucket}:{key}`（AWD 的 bucket 是 `RateScope` 的 Debug 名，
+    /// 与重构前完全一致）。
+    pub async fn hit_window(
+        &self,
+        bucket: &str,
+        key: &str,
+        limit: u32,
+        window_secs: u64,
+    ) -> Result<bool, String> {
         // 单条 Lua 脚本完成 prune/count/add/expire，保证跨进程原子滑动窗口语义。
         const SCRIPT: &str = r#"
 local key = KEYS[1]
@@ -86,17 +111,13 @@ return 1
         let now_ms = chrono::Utc::now().timestamp_millis();
         let window_ms = (window_secs as i64).saturating_mul(1000);
         let cutoff_ms = now_ms.saturating_sub(window_ms);
-        let redis_key = format!("floatctf:ratelimit:{scope:?}:{key}");
+        let redis_key = format!("floatctf:ratelimit:{bucket}:{key}");
         let member = uuid::Uuid::new_v4().to_string();
         let mut conn = self
             .redis
             .get_multiplexed_async_connection()
             .await
-            .map_err(|e| {
-                crate::modules::event::awd::AwdError::Internal(format!(
-                    "distributed rate limiter unavailable: {e}"
-                ))
-            })?;
+            .map_err(|e| format!("distributed rate limiter unavailable: {e}"))?;
         let allowed: i64 = redis::cmd("EVAL")
             .arg(SCRIPT)
             .arg(1)
@@ -108,20 +129,8 @@ return 1
             .arg(window_ms)
             .query_async(&mut conn)
             .await
-            .map_err(|e| {
-                crate::modules::event::awd::AwdError::Internal(format!(
-                    "distributed rate limiter failed: {e}"
-                ))
-            })?;
-
-        if allowed == 1 {
-            Ok(())
-        } else {
-            Err(crate::modules::event::awd::AwdError::Forbidden(format!(
-                "rate limit exceeded for {scope:?} ({} per {}s)",
-                limit, window_secs
-            )))
-        }
+            .map_err(|e| format!("distributed rate limiter failed: {e}"))?;
+        Ok(allowed == 1)
     }
 }
 

@@ -1,0 +1,26 @@
+export type OidcAuthTransactions = {
+  id: string;
+  oidc_client_id: string;
+  browser_binding_hash: string;
+  csrf_hash: string;
+  redirect_uri: string;
+  scopes: string;
+  state?: string;
+  nonce?: string;
+  code_challenge?: string;
+  code_challenge_method?: string;
+  prompt: string;
+  max_age?: string;
+  login_hint?: string;
+  id_token_hint_sub?: string;
+  user_id?: string;
+  session_id?: string;
+  authenticated_at?: string;
+  created_at: string;
+  expires_at: string;
+  completed_at?: string;
+  account_choice_session_id?: string;
+  account_selected_at?: string;
+  account_selected_session_id?: string;
+  account_switch_requested_at?: string;
+};

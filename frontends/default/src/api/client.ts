@@ -14,19 +14,29 @@
 import { createFloatCTFClient } from "@floatctf/sdk";
 
 import { router } from "@/router";
+import { isCookieMode, refreshSession, sessionHeaders } from "@/session";
 import { useAuthStore } from "@/stores/AuthStore";
 import { API_URL } from "@/config";
 
 export const client = createFloatCTFClient({
 	baseUrl: API_URL,
-	getUserToken: () => useAuthStore.getState().token,
+	// 统一 Cookie 会话部署上选手端不再使用 localStorage JWT（见 `@/session`）。
+	getUserToken: () => (isCookieMode() ? null : useAuthStore.getState().token),
 	getAdminToken: () => useAuthStore.getState().adminToken,
+	getUserSessionHeaders: sessionHeaders,
 	onUnauthorized: ({ scope, error }) => {
-		// 与迁移前逐字一致的行为：清 token → 回到该端的登录入口。
 		if (scope === "admin") {
 			useAuthStore.getState().removeAdminToken();
 			void router.navigate({ to: "/admin" });
+		} else if (isCookieMode()) {
+			// 服务端会话失效、CSRF 轮换或另一标签页切换了账号：以服务端状态为准重新同步。
+			void refreshSession()
+				.then((status) => {
+					if (!status.authenticated) void router.navigate({ to: "/" });
+				})
+				.catch(() => void router.navigate({ to: "/" }));
 		} else {
+			// 旧版 JWT 模式：与迁移前逐字一致的行为——清 token → 回到登录入口。
 			useAuthStore.getState().removeToken();
 			void router.navigate({ to: "/" });
 		}

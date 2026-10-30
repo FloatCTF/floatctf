@@ -56,6 +56,11 @@ export interface ConnectSseOptions {
 	maxRetryDelayMs?: number;
 	/** 从响应中获取 token 的函数（用于 token 刷新场景） */
 	getToken?: () => string | null;
+	/**
+	 * 每次（重）连接时额外合并的请求头（Cookie 会话模式的 CSRF / 期望账号头）。
+	 * 返回非空时**不再**附带 `getToken` 的 Bearer。
+	 */
+	getHeaders?: () => Record<string, string> | null;
 }
 
 export interface SseConnection {
@@ -86,6 +91,7 @@ export function connectSse(options: ConnectSseOptions): SseConnection {
 		initialRetryDelayMs = DEFAULT_INITIAL_RETRY_MS,
 		maxRetryDelayMs = DEFAULT_MAX_RETRY_MS,
 		getToken,
+		getHeaders,
 	} = options;
 
 	let abortController: AbortController | null = null;
@@ -121,8 +127,11 @@ export function connectSse(options: ConnectSseOptions): SseConnection {
 			Accept: "text/event-stream",
 			...initialHeaders,
 		};
-		// 刷新 token（若提供 getToken）
-		if (getToken) {
+		const sessionHeaders = getHeaders?.();
+		if (sessionHeaders) {
+			Object.assign(h, sessionHeaders);
+		} else if (getToken) {
+			// 刷新 token（若提供 getToken）
 			const freshToken = getToken();
 			if (freshToken) {
 				h.Authorization = `Bearer ${freshToken}`;

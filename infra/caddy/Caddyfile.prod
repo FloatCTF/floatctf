@@ -27,6 +27,13 @@
         reverse_proxy api:{$API_PORT:9090}
     }
 
+    # OpenID Connect Provider（FloatCTF 账号登录）：协议端点与发现文档由 API 提供，
+    # 绝不能落到前端 SPA 的 index.html。[oidc].enabled = false 时 API 对这些路径返回 404。
+    @oidc path /oauth/* /.well-known/openid-configuration /.well-known/oauth-authorization-server /.well-known/jwks.json
+    handle @oidc {
+        reverse_proxy api:{$API_PORT:9090}
+    }
+
     # RustFS public bucket: /public/a.png -> /floatctf-public/a.png
     handle_path /public/* {
         rewrite * /floatctf-public{path}

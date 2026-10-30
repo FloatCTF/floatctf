@@ -26,6 +26,7 @@
 | [docs/frontend/ARTIFACT.md](docs/frontend/ARTIFACT.md) | 制品：manifest 字段、路径安全规则、注册表 schema、归档格式、构建隔离 |
 | [docs/frontend/AI-FRONTEND-GUIDE.md](docs/frontend/AI-FRONTEND-GUIDE.md) | **创建全新 Frontend 的权威手册**（AI 代理作业口径）：Default 只是语义参照、公共依赖边界、mount/auth/路由/SSE、完整性口径、框架配方、验收流程 |
 | [docs/frontend/CAPABILITY-MATRIX.md](docs/frontend/CAPABILITY-MATRIX.md) | **前端能力矩阵**（由源码审计生成）：每项能力的公共 SDK 面 / Default 参照 / 是否实时 / 完整前端是否必需 |
+| [docs/identity/ADR-oidc-provider.md](docs/identity/ADR-oidc-provider.md) | **OIDC Provider**：FloatCTF 作为通用 OpenID Provider 的设计决策（Issuer、签名 key、SSO Cookie、授权事务）；参考手册 [oidc-provider.md](docs/identity/oidc-provider.md)、第三方接入 [oidc-client-integration.md](docs/identity/oidc-client-integration.md)、运维与 key 轮换 [oidc-operations.md](docs/identity/oidc-operations.md)、测试证据 [oidc-test-report.md](docs/identity/oidc-test-report.md)；需求契约见 [docs/plans/floatctf-oidc-provider.md](docs/plans/floatctf-oidc-provider.md) |
 
 ## 前端任务先判型（动手前必做）
 

@@ -92,7 +92,9 @@ export const adminNavigation: NavigationSection[] = [
 				icon: <ShieldLockIcon />,
 			}),
 			// 第三方应用通过 FloatCTF 账号登录（OIDC）的审核。
+			// 审核/封禁改的是平台级配置，服务端用的是 settings.manage（见 oidc/api/developer.rs）。
 			item("access.oidc-clients", "OIDC Clients", "/admin/oidc_clients", {
+				permission: "settings.manage",
 				icon: <KeyIcon />,
 			}),
 		],

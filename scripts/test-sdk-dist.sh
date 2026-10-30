@@ -619,7 +619,7 @@ const registered = registerFrontendVersion(empty, {
 	version: {
 		version: "1.0.0",
 		name: "Default Frontend",
-		compatibility: { frontendRuntime: "1", apiContract: "1" },
+		compatibility: { frontendRuntime: "1", apiContract: "2" },
 		entry: "assets/frontend.js",
 		styles: ["assets/frontend.css"],
 		installedAt: NOW,
@@ -643,7 +643,7 @@ const manifest = parseFrontendManifest(
 		id: "default",
 		name: "Default",
 		version: "1.0.0",
-		compatibility: { frontendRuntime: "1", apiContract: "1" },
+		compatibility: { frontendRuntime: "1", apiContract: "2" },
 		entry: "assets/frontend.js",
 	}),
 );

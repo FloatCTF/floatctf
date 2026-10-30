@@ -321,8 +321,7 @@ check "build-runtime-images.sh 无 --push 时不执行 docker push（PUSH 守门
 # 这个测试**真实运行** scripts/install.sh（不是静态 grep）：
 #   * PATH 最前面放一个假 python3：`import tomllib` 退出 1，`-V` 输出 Python 3.10.13；
 #   * FLOATCTF_HOME 指向一个**尚不存在**的临时目录；
-#   * 只传 --version 1.0.0（arg 解析只需要版本；6 个 URL 仍是 v0.0.0-fake 占位，
-#     但断言的是"根本走不到下载"）。
+#   * 只传 --version 1.0.0（默认 URL 会被钉到 v1.0.0；断言的是"根本走不到下载"）。
 # 断言 4 件事：
 #   1) 退出码非 0；
 #   2) stderr 是 tomllib 的精确报错（≥3.11 要求 + 检测到的版本 + 迁移路径说明）；
@@ -619,23 +618,37 @@ if missing:
     raise SystemExit(1)
 PYEOF
 
-# ── 14. 发布装配：install.sh 必须固化 release tag ─────────────────────────────
-# 源码里的 DEFAULT_*_URL 是 v0.0.0-fake 占位；装配时必须替换成真实 tag，
-# 否则用户按文档下载 release 里的 install.sh 直接运行会 fail closed。
-STAMPED="$TMP_TEST_DIR/install-stamped.sh"
-cp "$INSTALL_SH" "$STAMPED"
-check "release-checksums.sh --stamp-installer 成功" \
-    bash "$ROOT/scripts/release-checksums.sh" --stamp-installer "$STAMPED" 1.0.4
-check "固化后无 v0.0.0-fake URL 占位" \
-    bash -c "! grep -q -F 'releases/download/v0.0.0-fake/' '$STAMPED'"
-check "固化后 6 个 DEFAULT_*_URL 指向 v1.0.4" \
-    bash -c "[ \"\$(grep -c -F 'releases/download/v1.0.4/' '$STAMPED')\" -eq 6 ]"
-check "固化后的 install.sh 语法正确" bash -n "$STAMPED"
-if bash "$ROOT/scripts/release-checksums.sh" --stamp-installer "$STAMPED" 1.0.4 >/dev/null 2>&1; then
-    fail "重复固化必须 fail closed（占位已不存在）"
-else
-    pass "重复固化 fail closed"
-fi
+# ── 14. 安装器默认指向 latest（不传 --version 即装最新版）────────────────────
+check "默认产物地址：6 行指向 releases/latest/download/" \
+    bash -c "[ \"\$(grep -c -E '^DEFAULT_[A-Z_]+_URL=\"\\\$RELEASES_URL_BASE/latest/download/' '$INSTALL_SH')\" -eq 6 ]"
+check "install.sh 无 v0.0.0-fake 占位" \
+    bash -c "! grep -q -F 'v0.0.0-fake' '$INSTALL_SH'"
+check "install.sh 内置 latest 版本解析" \
+    grep -q -F 'resolve_latest_release_version' "$INSTALL_SH"
+check "install.sh 内置「按版本钉住默认地址」" \
+    grep -q -F 'pin_default_urls_to_version' "$INSTALL_SH"
+
+# 行为：显式版本时把默认地址钉到该 tag（纯离线，不访问网络）。
+PIN_HARNESS="$TMP_TEST_DIR/pin-harness.sh"
+{
+    echo 'set -uo pipefail'
+    echo 'RELEASES_URL_BASE="https://github.com/FloatCTF/floatctf/releases"'
+    sed -n '/^pin_default_urls_to_version()/,/^}$/p' "$INSTALL_SH"
+    cat <<'EOS'
+for u in API HELPER WEB MIGRATE FRONTEND_MANAGER OPS; do
+    eval "${u}_URL=\"\$RELEASES_URL_BASE/latest/download/asset\""
+    eval "${u}_URL_EXPLICIT=0"
+done
+pin_default_urls_to_version 1.0.4
+printf '%s\n' "$API_URL" "$OPS_URL"
+EOS
+} > "$PIN_HARNESS"
+PIN_OUT="$(bash "$PIN_HARNESS" 2>/dev/null)"
+PIN_API="$(printf '%s\n' "$PIN_OUT" | sed -n '1p')"
+PIN_OPS="$(printf '%s\n' "$PIN_OUT" | sed -n '2p')"
+PIN_EXPECT="https://github.com/FloatCTF/floatctf/releases/download/v1.0.4/asset"
+[ "$PIN_API" = "$PIN_EXPECT" ] && pass "钉版本后 API 地址指向 v1.0.4" || fail "钉版本后 API 地址指向 v1.0.4（实际：$PIN_API）"
+[ "$PIN_OPS" = "$PIN_EXPECT" ] && pass "钉版本后 OPS 地址指向 v1.0.4" || fail "钉版本后 OPS 地址指向 v1.0.4（实际：$PIN_OPS）"
 
 # ── 结果 ─────────────────────────────────────────────────────────────────────
 echo ""

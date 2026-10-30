@@ -619,6 +619,24 @@ if missing:
     raise SystemExit(1)
 PYEOF
 
+# ── 14. 发布装配：install.sh 必须固化 release tag ─────────────────────────────
+# 源码里的 DEFAULT_*_URL 是 v0.0.0-fake 占位；装配时必须替换成真实 tag，
+# 否则用户按文档下载 release 里的 install.sh 直接运行会 fail closed。
+STAMPED="$TMP_TEST_DIR/install-stamped.sh"
+cp "$INSTALL_SH" "$STAMPED"
+check "release-checksums.sh --stamp-installer 成功" \
+    bash "$ROOT/scripts/release-checksums.sh" --stamp-installer "$STAMPED" 1.0.4
+check "固化后无 v0.0.0-fake URL 占位" \
+    bash -c "! grep -q -F 'releases/download/v0.0.0-fake/' '$STAMPED'"
+check "固化后 6 个 DEFAULT_*_URL 指向 v1.0.4" \
+    bash -c "[ \"\$(grep -c -F 'releases/download/v1.0.4/' '$STAMPED')\" -eq 6 ]"
+check "固化后的 install.sh 语法正确" bash -n "$STAMPED"
+if bash "$ROOT/scripts/release-checksums.sh" --stamp-installer "$STAMPED" 1.0.4 >/dev/null 2>&1; then
+    fail "重复固化必须 fail closed（占位已不存在）"
+else
+    pass "重复固化 fail closed"
+fi
+
 # ── 结果 ─────────────────────────────────────────────────────────────────────
 echo ""
 printf '通过 %d 项，失败 %d 项\n' "$PASS" "$FAIL"

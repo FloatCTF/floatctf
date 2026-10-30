@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "floatctf"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "actix-cors",
  "actix-http",

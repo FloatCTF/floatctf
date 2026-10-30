@@ -1,6 +1,6 @@
 {
   "name": "@floatctf/web",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "private": true,
   "description": "FloatCTF web bootstrap: resolves the installed frontend and mounts it. Intentionally boring and React-free.",
   "type": "module",

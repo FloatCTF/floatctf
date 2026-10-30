@@ -605,7 +605,7 @@ assert.equal(typeof bindings.eventInfoQueryOptions, "function");
 assert.equal(typeof bindings.invalidateAwdQueries, "function");
 
 assert.equal(FRONTEND_RUNTIME_VERSION, "1");
-assert.equal(API_CONTRACT_VERSION, "1");
+assert.equal(API_CONTRACT_VERSION, "2");
 assert.equal(checkRelativeAssetPath("../escape").ok, false);
 assert.equal(checkRelativeAssetPath("assets/app.js").ok, true);
 

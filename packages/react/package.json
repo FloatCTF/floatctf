@@ -1,6 +1,6 @@
 {
   "name": "@floatctf/react",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Optional headless React bindings for FloatCTF (query factories, SSE hooks) — no UI, no Primer, no routes",
   "license": "AGPL-3.0-only",
   "type": "module",

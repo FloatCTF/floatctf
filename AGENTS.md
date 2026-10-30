@@ -126,3 +126,17 @@ cargo test -p floatctf <关键词>               # 跑指定单元测试
 - 配置：`apps/api/config/development.toml`，正常 `awd.network_runtime = "helper"`；`noop` 仅供测试/mock。
 - 生产：API/PostgreSQL/Redis/RustFS/Caddy 由生产 Compose 承载（模板内嵌在 `scripts/install.sh`，安装后为 `$FLOATCTF_HOME/compose.prod.yml`，默认根 `/var/lib/floatctf`）；API 不发布宿主 9090，通过 external internal `fctf-platform-control`（API `10.42.8.2`）接收 FlagServer/JudgeServer 回调。生产 TOML 使用 Compose DNS。宿主只创建 `floatctf` 组（不创建该用户），API 容器以数值 `65532:$FLOATCTF_GID` 运行。
 - 修改 `crates/floatctf-helper/` / `crates/helper-protocol/` 后重新执行 `mise run setup`，刷新 root-owned `/usr/local/libexec/floatctf-helper`。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 与 spec 记在 GitHub Issues（`FloatCTF/floatctf`），用 `gh`。见 [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)。
+
+### Triage labels
+
+沿用默认五角色：`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`。见 [docs/agents/triage-labels.md](docs/agents/triage-labels.md)。
+
+### Domain docs
+
+single-context：根 `GLOSSARY.md` + `docs/adr/`。见 [docs/agents/domain.md](docs/agents/domain.md)。

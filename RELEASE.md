@@ -22,7 +22,6 @@
 |---|---|
 | [INSTALL.md](./INSTALL.md) | 生产安装、部署、运维、卸载权威说明 |
 | [README.md](./README.md) | 项目概览与产物说明 |
-| [chore/v1.0.0-release-notes.md](./chore/v1.0.0-release-notes.md) | v1.0.0 发布说明**草稿** |
 
 ---
 
@@ -80,9 +79,8 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
 - [ ] `release/v1.0` 合入后的 `main` 分支 CI 全绿（fmt / lint / test / 前端 `vite build && tsc` / 架构门禁）。
 - [ ] **两条产物通道都有核对方案**：文件产物由 `release.yml` 产出；3 个 GHCR 镜像由 tag 路径推送
       （见 §3）。缺任何一条都**不是**完成的发布。
-- [ ] 已核对 Phase 13 RC 报告的 **Verdict**（`chore/phase13-final-rc-report.md`）：
-      Phase 13 初判为 **BLOCKED**（无 root → 特权安装/升级/卸载/purge 未执行；AWD/AWDP 宿主级 E2E 因
-      唯一可用宿主已在跑重要生产实例而刻意未执行；无真实域名 HTTPS）。
+- [ ] 已核对上一版 RC 的 VERDICT：**B2**（宿主级 AWD/AWDP E2E）、**B3**（普通用户 + sudo 的
+      安装/升级/卸载/purge 全流程）是否真正执行。未完成之前不得声称已通过宿主级验证。
       **Phase 13.1 关闭了全部代码可控工作（B1 / R2 / R3 / 文档），产品负责人已豁免 B4。**
 - [ ] **B2 / B3 必须在独占宿主上作为发布前步骤执行**（Phase 13 / 13.1 **没有**执行）：
       - **B2**：独占宿主上的 Jeopardy / AWD / AWDP 完整宿主级 E2E（含 WireGuard / nftables）。
@@ -93,7 +91,7 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
       （`python3 -c 'import tomllib'`），缺失即 fail-fast；**不**走 pip 安装。
 - [ ] 工作区干净：`git status --porcelain` 无未预期的改动（**不要在脏树上打 tag**）。
 - [ ] 版本一致性对齐（见下表）。
-- [ ] 变更日志 / 发布说明已起草（[chore/v1.0.0-release-notes.md](./chore/v1.0.0-release-notes.md)）。
+- [ ] 变更日志 / 发布说明已起草。
 - [ ] 已复核 release workflow 的安全语义（tag 才发布、dispatch 默认只上传 workflow artifact、
       权限最小化、`packages: write` 只在 tag 发布路径）。
 - [ ] 确认 CI 会产出 `SHA256SUMS` 与 3 个 SDK tarball（无需人工上传）。

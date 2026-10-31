@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-: "${PROJECT_ROOT:?PROJECT_ROOT 未设置，请使用 mise dev 或 source ./activate.sh}"
+: "${PROJECT_ROOT:?PROJECT_ROOT 未设置，请使用 mise run dev}"
 
 RUSTFS_LOG_DIR="$PROJECT_ROOT/app/logs/rustfs"
 COMPOSE_FILE="$PROJECT_ROOT/infra/compose/compose.dev.yml"

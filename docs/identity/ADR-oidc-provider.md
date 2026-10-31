@@ -1,7 +1,6 @@
 # ADR — FloatCTF 作为通用 OpenID Connect Provider
 
 - 状态：已采纳（Phase 0，2026-10-23）
-- 需求契约：[docs/plans/floatctf-oidc-provider.md](../plans/floatctf-oidc-provider.md)
 - 基线：`main` @ `7c382e6b35a39148cbf6ecb581a6611ac61c673d`，实施分支 `oidc`
 - 规范：OpenID Connect Core 1.0 / Discovery 1.0（Errata Set 2）、RFC 6749、RFC 6750、RFC 7636、RFC 7519/7515/7517、RFC 8414、RFC 9207、RFC 9700
 

@@ -1,12 +1,8 @@
 # 平台路由 → 权限对照表（platform-permissions.md）
 
-> 本文是 [IDENTITY-AUTHORIZATION-V2-PLAN.md](./IDENTITY-AUTHORIZATION-V2-PLAN.md) §7 / §12 / §24 的
-> 配套**实现清单**：把当前源码里的**每一条** HTTP 路由映射到「认证级别 + 所需权限」。
->
-> **实现状态：全部落地（Wave 0–11 完成）。**
-> 分支 `feat/identity-authorization-v2` @ `52fe663`。本表描述的就是**当前实现**，
-> 不再是目标态：逐路由的 `RequirePermission<P>` 已全部切换（156 个 handler），
-> 粗粒度 `SuperAdminJwtGuard` 与 `LEGACY_GUARD_ALLOWLIST` 均已删除/清空。
+> 把当前源码里的**每一条** HTTP 路由映射到「认证级别 + 所需权限」，描述的是**当前实现**：
+> 逐路由 `RequirePermission<P>` 已全部切换（156 个 handler），粗粒度 `SuperAdminJwtGuard`
+> 与 `LEGACY_GUARD_ALLOWLIST` 均已删除/清空。
 >
 > 落地内容：权限目录 `core::permission` 的 **29 条**权限；RBAC 三表
 > （`platform_roles` / `user_platform_roles` / `platform_role_permissions`）；
@@ -278,6 +274,7 @@
 | `POST` | `/api/admin/settings` | `perm:settings.manage` ⚠️ 高危 |
 | `PATCH` | `/api/admin/settings/{setting_id}` | `perm:settings.manage` ⚠️ 高危 |
 | `DELETE` | `/api/admin/settings` | `perm:settings.manage` ⚠️ 高危 |
+| `GET` | `/api/admin/frontend-market` | `perm:settings.read` |
 | `GET` | `/api/admin/dashboard/summary` | `perm:system.read` |
 | `GET` | `/api/admin/system/monitor` | `perm:system.read` |
 | `GET` | `/api/admin/system/version` | `perm:system.read` |
@@ -411,6 +408,18 @@ cookie（`path=/api/admin/terminal/ws`）；`GET /api/admin/terminal/ws` 消费 
 以下端点还需要**在 handler 内把请求参数解析为一个平台资源，再对该资源授权**。
 这类端点不能只靠权限守卫。
 
+### 14.0 为什么「前端市场」是 `settings.read` 而不是 `settings.manage`
+
+`GET /api/admin/frontend-market` 只做**发现**：列出 GitHub 上候选前端仓库及其 release
+里的预构建制品元数据（版本、兼容契约、可复制的安装命令）。
+
+- 它**不改平台状态**，所以给读权限；
+- 真正会改变平台的是**安装**，而那**不在 API 里** —— 生产里 API 容器是
+  `read_only: true` + `cap_drop: ALL`，**根本没挂载前端目录**；安装由宿主的
+  `frontend.sh install <制品.tar.gz>` 负责（只解包 + 校验，**不在宿主构建**）。
+- 因此不需要新权限：前端管理本就归 `settings`（`/console/frontends` 用 `settings.manage`），
+  市场是它的只读辅助视图。拆一条新权限只会让 29 条变 30 条而无任何新授权边界。
+
 ### 14.1 `/api/admin/download?key=`（Wave 0 必修，计划 §7.6）
 
 | 项 | 内容 |
@@ -430,7 +439,30 @@ cookie（`path=/api/admin/terminal/ws`）；`GET /api/admin/terminal/ws` 消费 
 但第三方前端不得假设「有 `challenges.read` 就能下载任意 key」——
 它需要 `events.read`，且 key 必须是**平台已知的**那两族之一。
 
-### 14.2 未来新增此类端点的规则
+### 14.2 选手端「未参加赛事 / 未加入队伍」的状态码
+
+选手端的许多端点以**赛事**或**战队**为作用域（`/api/events/{id}/challenges`、
+`/instances`、AWD 的 gamebox 控制等）。已认证但**不是这场赛事/队伍的参与者**时，
+它属于**对象级授权失败**，按本文档开头的状态码契约必须是 **403**，不是 400 或 404。
+
+| 情形 | 状态码 | 理由 |
+|---|---|---|
+| 未参加赛事（赛事**已开始/已结束**） | **403** `你尚未加入本赛事` | 已认证但不允许 —— 授权问题 |
+| 未加入战队 | **403** `你尚未加入本赛事的队伍` | 同上 |
+| 赛事**尚未开始** | **400** `赛事尚未开始` | 状态问题：此时用户**仍可加入**，回 403 会误导 |
+| 赛事不存在 / 被隐藏 | **404** `未找到该赛事` | 资源确实不可见 |
+
+三条曾经**不一致**（AWDP 已是 403，AWD 是 404，common/jeopardy 是 400），
+现已统一。回归由 `apps/api/tests/identity_wave0_security.rs` 的
+`not_joined_participant_is_forbidden_not_bad_request` 守住，它同时守住
+「赛事尚未开始」那条 400 没被一起改坏。
+
+**实现注意**：jeopardy 的 application 层用 `anyhow` 抛错，而 API 边界过去一律
+`.map_err(|e| AppError::BadRequest(e.to_string()))` —— 这会把 403 在最后一跳抹成 400。
+因此 application 层需要 `anyhow!(AppError::Forbidden(..))`，边界用 `api::app_err`
+（`downcast` 取回类型）收口。**新增此类端点时照此办理**，否则 403 会静默退化。
+
+### 14.3 未来新增此类端点的规则
 
 若未来出现第三族私有制品（新前缀），**必须**：
 

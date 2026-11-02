@@ -368,6 +368,22 @@ jobs:
             --gid 65532 \
             --push
 
+      # Docker Hub 双推：复用本 job 本地已构建的镜像（同一 digest，不重建）。
+      # 登录在脚本内部完成（release.yml 保持只有一处 docker login）。
+      # 缺 secrets 时该步失败并给出修复命令；GHCR 与 GitHub Release 此时已完成，不受影响。
+      - name: Mirror images to Docker Hub
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/mirror-images.sh \
+            --from ghcr.io/floatctf \
+            --to docker.io/floatctf \
+            --tag "$VERSION"
+
       # OCI label 值全部来自 workflow 上下文，绝不硬编码版本/revision，也不含任何密钥。
       - name: Build & push runtime images
         shell: bash

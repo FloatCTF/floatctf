@@ -127,6 +127,9 @@ done
 check "release.yml 不含裸 docker push" \
     bash -c '! grep -qE "docker[[:space:]]+push" "$1"' _ "$TMP_TEST_DIR/release.nocomment.yml"
 
+check "release.yml 调用 mirror-images.sh 做 Docker Hub 双推" \
+    grep -q -F 'mirror-images.sh' "$TMP_TEST_DIR/release.nocomment.yml"
+
 # ── 3. packages: write 只在推送 job ─────────────────────────────────────────
 echo "== 3. packages: write 权限最小化 =="
 
@@ -316,6 +319,7 @@ fi
 echo "== 9. bash -n 语法门禁 =="
 
 for s in "$INSTALL_SH" "$BUILD_SH" "$ROOT/scripts/build-api-image.sh" \
+         "$ROOT/scripts/mirror-images.sh" \
          "$ROOT/scripts/test-installer-contract.sh" \
          "$ROOT/scripts/test-runtime-images.sh" "$ROOT/scripts/test-release-workflow.sh" \
          "$ROOT/scripts/release-checksums.sh"; do

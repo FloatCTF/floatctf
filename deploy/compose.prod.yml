@@ -1,0 +1,172 @@
+# FloatCTF production stack.
+# 宿主只保留 floatctf-helper（systemd）；API/PostgreSQL/Redis/RustFS/Caddy 全部由 Compose 管理。
+# API 不挂载 Docker socket、不授予 capabilities，只通过 /run/floatctf 的两个受控 helper socket
+# 操作 Docker/宿主网络。fctf-platform-control 是 installer 创建的 external internal network，
+# 仅供 API 与 FlagServer/JudgeServer 的内部回调；GameBox 不加入。
+
+name: floatctf
+
+services:
+    postgres:
+        image: postgres:17
+        container_name: floatctf-postgres
+        restart: unless-stopped
+        ports:
+            - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必须在 .env 设置}
+            POSTGRES_DB: ${POSTGRES_DB:-floatctf_db}
+        volumes:
+            - ${FLOATCTF_HOME}/data/postgres:/var/lib/postgresql/data
+            - ${FLOATCTF_HOME}/merged.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-floatctf_db}"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 10s
+
+    redis:
+        image: redis:7-alpine
+        container_name: floatctf-redis
+        restart: unless-stopped
+        ports:
+            - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+        # 稳定性：内存上限 + allkeys-lru（Redis 仅承载可重建数据）
+        command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
+        volumes:
+            - floatctf-redis-data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 5s
+
+    rustfs:
+        image: rustfs/rustfs:1.0.0-beta.12
+        container_name: floatctf-rustfs
+        restart: unless-stopped
+        user: "10001:10001"
+        ports:
+            - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
+            - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
+        volumes:
+            - ${FLOATCTF_HOME}/data/rustfs:/data
+            - ${FLOATCTF_HOME}/logs/rustfs:/logs
+        environment:
+            RUSTFS_ADDRESS: ":9000"
+            # API/Caddy 通过 Compose DNS + path-style S3 访问；不要启用 virtual-host domains，
+            # 否则 Host: rustfs:9000 会被 RustFS 误判为 bucket 名。
+            RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY 必须在 .env 设置}
+            RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY 必须在 .env 设置}
+            RUSTFS_CONSOLE_ENABLE: "true"
+            RUSTFS_OBS_LOG_DIRECTORY: /logs
+        healthcheck:
+            # 真实就绪探测：TCP 开放 ≠ S3/HTTP 层可用。此前仅 `nc -z` 导致 API 在
+            # RustFS 的 S3 层就绪前初始化 bucket → "init rustfs failed: service error"
+            # → panic → crash-loop（Phase 13 实测）。镜像内只有 BusyBox nc（无 curl），
+            # 因此用 nc 发一个真实 HTTP 请求读 /health；stdin 需保持打开否则 nc 立刻
+            # 半关连接读不到响应（`sleep 1` 即为此）。timeout 必须 > sleep+nc 超时。
+            test: ["CMD-SHELL", "{ printf 'GET /health HTTP/1.1\\r\\nHost: 127.0.0.1:9000\\r\\nConnection: close\\r\\n\\r\\n'; sleep 1; } | nc -w 3 127.0.0.1 9000 | head -1 | grep -q ' 200 '"]
+            interval: 10s
+            timeout: 10s
+            retries: 12
+            start_period: 30s
+
+    api:
+        image: ${API_IMAGE:-ghcr.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
+        container_name: floatctf-api
+        restart: unless-stopped
+        user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"
+        cap_drop:
+            - ALL
+        security_opt:
+            - no-new-privileges:true
+        read_only: true
+        # 稳定性：抬高文件描述符上限（此前 soft 1024）
+        ulimits:
+            nofile:
+                soft: 65536
+                hard: 65536
+        tmpfs:
+            - /tmp:rw,noexec,nosuid,nodev,size=64m
+        environment:
+            FLOATCTF_CONFIG: /etc/floatctf/floatctf.toml
+        # 出网代理常跑在宿主上：让 host.docker.internal 在 Linux 上也可用，
+        # 管理员即可把 OUTBOUND_PROXY 设为 http://host.docker.internal:<port>。
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        volumes:
+            - ${FLOATCTF_HOME}/config/floatctf.toml:/etc/floatctf/floatctf.toml:ro
+            # OIDC Provider 签名私钥（[oidc].signing_keys 引用 /etc/floatctf/oidc/<kid>.pem）；只读挂载。
+            - ${FLOATCTF_HOME}/config/oidc:/etc/floatctf/oidc:ro
+            - ${FLOATCTF_HOME}/runtime:/var/lib/floatctf/runtime
+            - /run/floatctf:/run/floatctf:ro
+        networks:
+            default: {}
+            platform_control:
+                ipv4_address: 10.42.8.2
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            rustfs:
+                condition: service_healthy
+        healthcheck:
+            test: ["CMD-SHELL", "curl -sS -o /dev/null --max-time 2 http://127.0.0.1:${API_PORT:-9090}/api/users/me"]
+            interval: 10s
+            timeout: 3s
+            retries: 12
+            start_period: 20s
+
+    caddy:
+        image: caddy:2-alpine
+        container_name: floatctf-caddy
+        restart: unless-stopped
+        ports:
+            - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+            - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}/tcp"
+            - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}/udp"
+        environment:
+            SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS 必须在 .env 设置}
+            HTTP_PORT: ${HTTP_PORT:-80}
+            HTTPS_PORT: ${HTTPS_PORT:-443}
+            API_PORT: ${API_PORT:-9090}
+        volumes:
+            - ${FLOATCTF_HOME}/config/caddy:/etc/caddy:ro
+            # bootstrap 引导页（apps/web 产物）。
+            - ${FLOATCTF_HOME}/web:/srv-web:ro
+            # 已安装前端（版本化制品 + registry.json）。Caddy 以 /__floatctf/frontends/*
+            # 同源提供；只读挂载——前端资产由 frontend.sh 维护，运行期不可变。
+            # 注意：必须挂在 /srv **之外**的兄弟路径。Docker 需要先在容器内创建
+            # 挂载点目录，而 /srv（runtime 挂载）是只读的 → 嵌套挂载会以
+            # "Read-only file system" 失败，Caddy 整体起不来。
+            - ${FLOATCTF_HOME}/frontends:/srv-frontends:ro
+            # 挂载 API 的 work_dir 根（宿主 ${FLOATCTF_HOME}/runtime == 容器
+            # /var/lib/floatctf/runtime）到 /srv；Caddyfile 里 root 是 /srv/challenges，
+            # 于是附件根恒等于 CHALLENGES_DIR（{{WORK_DIR}}/challenges），与 dev 同构。
+            - ${FLOATCTF_HOME}/runtime:/srv:ro
+            - ${FLOATCTF_HOME}/data/caddy:/data
+            - ${FLOATCTF_HOME}/data/caddy-config:/config
+        depends_on:
+            api:
+                condition: service_healthy
+            rustfs:
+                condition: service_healthy
+        healthcheck:
+            test: ["CMD-SHELL", "caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || exit 1"]
+            interval: 10s
+            timeout: 3s
+            retries: 10
+            start_period: 5s
+
+volumes:
+    floatctf-redis-data:
+
+networks:
+    platform_control:
+        external: true
+        name: fctf-platform-control

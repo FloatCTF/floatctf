@@ -701,7 +701,7 @@ services:
             start_period: 30s
 
     api:
-        image: floatctf/api:${VERSION:?VERSION 必须在 .env 设置}
+        image: ${API_IMAGE:-ghcr.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
         container_name: floatctf-api
         restart: unless-stopped
         user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"
@@ -1941,6 +1941,7 @@ prepare_env() {
         # （风险清单 #7）。既有安装不补这两项 —— 补了等于强制轮换 AWD flag 与判题令牌。
         env_set AWD_ROOT_KEY "${AWD_ROOT_KEY:-$(openssl rand -base64 32)}"
         env_set INTERNAL_TOKEN_KEY "${INTERNAL_TOKEN_KEY:-$(openssl rand -base64 32)}"
+        env_set API_IMAGE "floatctf/api:$VERSION"
         env_set API_PORT "${API_PORT:-9090}"
         env_set POSTGRES_PORT "${POSTGRES_PORT:-5433}"
         env_set REDIS_PORT "${REDIS_PORT:-6380}"
@@ -1953,6 +1954,7 @@ prepare_env() {
         chmod 600 "$ENV_FILE"
         ok ".env 已生成（含新密钥，root 可读）"
     else
+        env_set API_IMAGE "floatctf/api:$VERSION"
         env_set API_PORT "$(env_get API_PORT 9090)"
         env_set POSTGRES_PORT "$(env_get POSTGRES_PORT 5433)"
         env_set REDIS_PORT "$(env_get REDIS_PORT 6380)"

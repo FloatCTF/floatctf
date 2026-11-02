@@ -346,6 +346,28 @@ jobs:
           set -Eeuo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: floatctf-release-${{ needs.build.outputs.version }}
+          path: release-artifacts
+
+      # API 镜像：`deploy/` 里 compose 方式的默认镜像（install.sh 仍本地构建，使用 API_IMAGE）。
+      # 推送必须走受守卫的脚本（release.yml 内禁止裸 docker push，见 test-runtime-images.sh）。
+      # GID 固定 65532：镜像只能烘一个 gid，宿主的 floatctf 组 gid 各异；数值身份不影响
+      # 运行，只影响 Web 终端里 `id` 的组名解析（详见 deploy/README.md）。
+      - name: Build & push API image
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/build-api-image.sh \
+            --binary release-artifacts/floatctf \
+            --registry ghcr.io/floatctf \
+            --tag "$VERSION" \
+            --gid 65532 \
+            --push
+
       # OCI label 值全部来自 workflow 上下文，绝不硬编码版本/revision，也不含任何密钥。
       - name: Build & push runtime images
         shell: bash

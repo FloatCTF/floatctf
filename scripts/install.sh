@@ -11,6 +11,9 @@
 #
 # 【生产安装】无需 clone 仓库：
 #   curl -fsSL <install.sh 的 URL> -o install.sh && sudo bash install.sh
+#   不带参数 = 交互询问安装方式；要静默安装就显式指定：
+#     sudo bash install.sh --mode host       # 本机部署：装 helper + systemd，systemctl 启停
+#     sudo bash install.sh --mode compose    # 只生成 compose 栈；helper 照装，stack 不写 systemd
 #   或显式指定 6 个 release 产物 URL：
 #     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> \
 #                         --migrate-url <sql> --frontend-manager-url <script> \
@@ -50,7 +53,8 @@
 #   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
 #   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_OPS_URL /
 #   FLOATCTF_VERSION / FLOATCTF_SKIP_MIGRATIONS /
-#   FLOATCTF_SKIP_RUNTIME_IMAGES / FLOATCTF_RUNTIME_IMAGE_REGISTRY
+#   FLOATCTF_SKIP_RUNTIME_IMAGES / FLOATCTF_RUNTIME_IMAGE_REGISTRY /
+#   FLOATCTF_INSTALL_MODE=host|compose
 # 安装根：
 #   FLOATCTF_HOME=/opt/floatctf   （默认 /var/lib/floatctf）
 #
@@ -146,6 +150,37 @@ pin_default_urls_to_version() { # <version>
     [ "$OPS_URL_EXPLICIT" -eq 1 ] || OPS_URL="$(pin_url "$OPS_URL")"
 }
 
+# ── 安装方式 ──────────────────────────────────────────────────────────────────
+# host    = 本机部署：helper + Compose 栈都交给 systemd（floatctf.target）管理。
+# compose = 只生成 compose 栈与文件；helper 照装并启动（API 启动强依赖它），
+#           但 stack 不写 systemd 单元，由用户自己 `docker compose up`。
+normalize_install_mode() { # <value> -> host|compose
+    case "$1" in
+        host|local|本机) printf 'host' ;;
+        compose|docker|docker-compose) printf 'compose' ;;
+        *) return 1 ;;
+    esac
+}
+
+choose_install_mode() {
+    [ -n "$INSTALL_MODE" ] && return 0
+    if [ "$DEVELOP" = "1" ]; then INSTALL_MODE="host"; return 0; fi
+    [ -t 0 ] || die "未指定安装方式且当前不是交互终端；请加 --mode host|compose（静默安装）"
+
+    printf '\n选择安装方式：\n'
+    printf '  1) 本机部署       安装 helper + systemd（floatctf.target），systemctl 启停  [默认]\n'
+    printf '  2) docker compose 只生成 compose 栈与文件；helper 照装，但不写 stack 的 systemd 单元\n'
+    printf '输入 1/2（回车默认 1）: '
+    local choice
+    read -r choice || choice=""
+    case "${choice:-1}" in
+        1) INSTALL_MODE="host" ;;
+        2) INSTALL_MODE="compose" ;;
+        *) die "无效选择：$choice（只接受 1 或 2）" ;;
+    esac
+    ok "安装方式：$INSTALL_MODE"
+}
+
 # ── 参数 ──────────────────────────────────────────────────────────────────────
 API_URL="$DEFAULT_API_URL"
 HELPER_URL="$DEFAULT_HELPER_URL"
@@ -163,6 +198,9 @@ FRONTEND_MANAGER_URL_EXPLICIT=0
 OPS_URL_EXPLICIT=0
 DEVELOP=0
 HELPER_BIN=""
+# 安装方式：host（本机部署，systemd 管理整栈）或 compose（只生成 compose 栈）。
+# 空值 = 未指定：交互终端会询问，非交互终端直接失败（不猜）。
+INSTALL_MODE="${FLOATCTF_INSTALL_MODE:-}"
 # 升级既有安装时，迁移由 release 的 db/migrate.sh forward-only 应用；可用
 # --skip-migrations 显式跳过（见 apply_migrations 的说明与风险提示）。
 SKIP_MIGRATIONS="${FLOATCTF_SKIP_MIGRATIONS:-0}"
@@ -187,6 +225,11 @@ while [ $# -gt 0 ]; do
         --reset-runtime-images) RESET_RUNTIME_IMAGES=1 ;;
         --keep-runtime-images) KEEP_RUNTIME_IMAGES=1 ;;
         --develop) DEVELOP=1 ;;
+        --mode)
+            [ $# -ge 2 ] || die "--mode 需要 host|compose"
+            INSTALL_MODE="$(normalize_install_mode "$2")" \
+                || die "--mode 只接受 host|compose（收到：$2）"
+            shift ;;
         -h|--help)
             # 打印文件头注释块（从第 2 行到第一条非注释行之前）；不写死行号，
             # 避免以后往头部加内容时 --help 被静默截断。
@@ -206,6 +249,10 @@ done
 [ "$FRONTEND_MANAGER_URL_EXPLICIT" -eq 1 ] || FRONTEND_MANAGER_URL="${FLOATCTF_FRONTEND_MANAGER_URL:-$FRONTEND_MANAGER_URL}"
 [ "$OPS_URL_EXPLICIT" -eq 1 ] || OPS_URL="${FLOATCTF_OPS_URL:-$OPS_URL}"
 [ "$VERSION_EXPLICIT" -eq 1 ] || VERSION="${FLOATCTF_VERSION:-$VERSION}"
+if [ -n "$INSTALL_MODE" ]; then
+    INSTALL_MODE="$(normalize_install_mode "$INSTALL_MODE")" \
+        || die "FLOATCTF_INSTALL_MODE 只接受 host|compose（收到：$INSTALL_MODE）"
+fi
 
 # 版本来源优先级：--version / FLOATCTF_VERSION > 自定义产物 URL 里的 tag > 最新正式发布。
 # 默认产物地址是 releases/latest/download/，所以「不传版本 = 装最新」；
@@ -1118,6 +1165,11 @@ write_systemd_units() {
     systemctl disable floatctf-api.service >/dev/null 2>&1 || true
     systemctl stop floatctf-api.service >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/floatctf-api.service
+
+    if [ "$INSTALL_MODE" = "compose" ]; then
+        ok "compose 模式：只写 helper 单元（stack 由 docker compose 管理）"
+        return 0
+    fi
 
     cat > /etc/systemd/system/floatctf-infra.service <<'INFRA_SVC_EOF'
 [Unit]
@@ -2335,6 +2387,13 @@ fix_infra_ownership() {
 }
 
 install_systemd() {
+    if [ "$INSTALL_MODE" = "compose" ]; then
+        info "──── 部署：systemd（仅 floatctf-helper）────"
+        systemctl daemon-reload
+        systemctl enable --now floatctf-helper.service
+        ok "floatctf-helper 已 enable 并启动；Compose stack 未启动（由 docker compose 管理）"
+        return 0
+    fi
     info "──── 部署：systemd 单元（helper / Compose stack / target）────"
     systemctl daemon-reload
     systemctl enable floatctf.target floatctf-infra.service floatctf-helper.service
@@ -2595,10 +2654,28 @@ main() {
         ok "开发环境初始化完成（helper 已启动；API/Web 尚未启动）"
         return
     fi
-    info "FloatCTF 一键安装 → $FLOATCTF_HOME"
+    choose_install_mode
+    info "FloatCTF 一键安装（模式：$INSTALL_MODE）→ $FLOATCTF_HOME"
     run_init
     acquire_package
     run_deploy
+    if [ "$INSTALL_MODE" = "compose" ]; then
+        cat <<EOF
+
+安装完成（compose 模式：未写 stack 的 systemd 单元，也未启动容器）。
+启动 / 升级都用 Compose：
+  cd $FLOATCTF_HOME && sudo docker compose -f compose.prod.yml up -d --wait
+  sudo docker compose -f compose.prod.yml ps
+helper（API 启动强依赖）已由 systemd 托管：
+  systemctl status floatctf-helper
+新增迁移（升级既有库时）：
+  sudo FLOATCTF_CONFIG=$FLOATCTF_HOME/config/floatctf.toml $FLOATCTF_HOME/db/migrate.sh apply
+备份 / 恢复：
+  sudo $FLOATCTF_HOME/backup.sh
+  sudo $FLOATCTF_HOME/restore.sh <归档> --yes
+EOF
+        return 0
+    fi
     cat <<EOF
 
 安装完成（未启动任何服务）。启动整平台：

@@ -123,8 +123,9 @@ sudo docker compose -f compose.prod.yml exec api \
 # ① 让宿主组用 65532
 sudo groupmod -g 65532 floatctf
 
-# ② 用宿主真实 GID 本地构建
-sudo docker build --build-arg "FLOATCTF_VERSION=$VERSION" \
-  --build-arg "FLOATCTF_GID=$(getent group floatctf | cut -d: -f3)" \
-  -f deploy/api/Dockerfile -t "floatctf/api:$VERSION" .
+# ② 用宿主真实 GID 本地构建（脚本会校验 user=65532:65532）
+bash scripts/build-api-image.sh \
+  --binary ./floatctf --tag "$VERSION" \
+  --gid "$(getent group floatctf | cut -d: -f3)"
+# 之后在 .env 里设 API_IMAGE=floatctf/api:<V>
 ```

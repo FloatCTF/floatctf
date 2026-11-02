@@ -1,0 +1,106 @@
+# FloatCTF production process-static configuration.
+# This file is rendered by scripts/install.sh; ${...} placeholders are installer substitutions.
+
+[application]
+main_url = "https://${SITE_ADDRESS}:${HTTPS_PORT}"
+
+[server]
+work_dir = "/var/lib/floatctf/runtime"
+host_address = "${HOST_ADDRESS}"
+listen_ip = "0.0.0.0"
+listen_port = ${API_PORT}
+
+# 平台出网代理（可选）：只作用于平台主动访问互联网的请求（如训练站制品同步）；
+# 内网（postgres/redis/rustfs/容器）一律直连。可含凭据，不落日志。
+# 这里是 seed 默认值；日常修改走管理端设置 OUTBOUND_PROXY（改完无需重启）。
+# 留空时回落到标准代理环境变量（HTTPS_PROXY / HTTP_PROXY / ALL_PROXY），都没有才直连。
+# 注意：地址必须是**从 API 容器内**可达的，宿主上的代理请写 host.docker.internal。
+# [proxy]
+# url = "http://host.docker.internal:7890"
+
+[logging]
+timezone = "Asia/Shanghai"
+filter = "info,actix_web=warn,sqlx=warn"
+
+[docker]
+socket_path = "/run/floatctf/helper-docker.sock"
+
+[database]
+url = "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+max_connections = 64
+min_connections = 4
+connect_timeout_seconds = 10
+acquire_timeout_seconds = 10
+
+[rustfs]
+endpoint_url = "http://rustfs:9000"
+access_key_id = "${RUSTFS_ACCESS_KEY}"
+secret_access_key = "${RUSTFS_SECRET_KEY}"
+region = "cn-east-1"
+
+[auth]
+jwt_secret = "${JWT_SECRET}"
+# 与 JWT 主密钥解耦的两个派生根（可选；空值 = 回落 jwt_secret，启动时会告警）：
+#   awd_root_key       —— AWD/AWDP flag 与实例密钥的 HKDF 根
+#   internal_token_key —— AWDP 判题容器 INTERNAL_TOKEN 的派生根（会下发进容器）
+# 全新安装由 installer 生成独立随机值；**既有安装保持为空**（不改变已派生 flag），
+# 需要轮换时再显式填值。
+awd_root_key = "${AWD_ROOT_KEY}"
+internal_token_key = "${INTERNAL_TOKEN_KEY}"
+
+[redis]
+url = "redis://redis:6379/"
+
+[realtime]
+channel = "floatctf:realtime"
+
+[awd]
+network_runtime = "helper"
+# canonical 运行时镜像 ref（= release.yml 推送到 Docker Hub 的同一组）：
+#   ${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION} 等；awdp 已扁平化（无 infra/ 段）。
+# 升级时管理员的自定义值会被保留（见 preserve_custom_runtime_images）。
+flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"
+judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"
+platform_internal_url = "http://10.42.8.2:${API_PORT}"
+platform_internal_network = "fctf-platform-control"
+
+[awdp]
+practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"
+practice_network_subnet = "10.42.2.0/23"
+practice_judge_ip = "10.42.2.2"
+network_pool = "10.43.0.0/16"
+event_netmask = 24
+platform_internal_url = "http://10.42.8.2:${API_PORT}"
+
+[registry]
+image_prefix = "floatctf"
+push = false
+build_timeout_secs = 900
+
+[cors]
+allowed_origins = []
+
+[features]
+unsafe_sql_admin = false
+web_terminal = true
+# OpenID Connect Provider（FloatCTF 账号登录第三方应用）。默认关闭。
+# 开启步骤与 key 轮换见 docs/identity/oidc-operations.md；私钥放在宿主 $FLOATCTF_HOME/config/oidc/
+# （容器内只读挂载为 /etc/floatctf/oidc），权限 root:floatctf 0640。issuer 必须与站点 https origin 完全一致。
+# [oidc]
+# enabled = true
+# issuer = "https://ctf.example.com"
+# require_client_approval = true
+# account_chooser = true                 # prompt=select_account 显示账号选择页；false 仅为临时回滚
+# 统一身份（docs/identity/ADR-unified-identity.md）：三个开关默认关闭，按顺序逐个开启，关闭即回到旧行为（不删数据）。
+# multi_account = true                   # 浏览器账号容器 __Host-fctf_accounts，同一浏览器可保留多个已登录账号
+# max_browser_accounts = 5
+# unified_web_session = true             # 主站改用服务端可撤销 Cookie 会话（要求 multi_account）；旧 localStorage JWT 首次访问时平滑迁移
+# first_party_origins = []               # 与 issuer 同主机、不同端口的其他主站入口，例如 ["https://10.0.0.7"]
+# backchannel_logout = true              # end_session_endpoint + Back-Channel Logout + ID Token sid；
+#                                        # 开启前所有 RP 必须先关闭「普通退出即 RP-Initiated Logout」（LearnOS ≥ 含 disableProviderLogout 的版本）
+# backchannel_trusted_hosts = []         # 允许解析到内网/环回的退出通知目标（host:port，运维白名单）；其余只能投递到公网地址
+# backchannel_extra_ca_file = "/etc/floatctf/oidc/rp-ca.pem"   # 内网 RP 使用私有 CA 时
+# [[oidc.signing_keys]]
+# kid = "oidc-20261023-a1b2"
+# private_key_file = "/etc/floatctf/oidc/oidc-20261023-a1b2.pem"
+# active = true

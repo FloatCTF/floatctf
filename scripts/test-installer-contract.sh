@@ -15,6 +15,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_SH="$ROOT/scripts/install.sh"
+TOML_TMPL="$ROOT/deploy/templates/floatctf.toml.tmpl"
 BUILD_SH="$ROOT/scripts/build-runtime-images.sh"
 
 PASS=0
@@ -45,12 +46,9 @@ function_body() { # file funcname
     ' "$1"
 }
 
-# 提取内嵌的 uninstall.sh heredoc（顶层布局：<<'UNINSTALL_EOF' ... UNINSTALL_EOF）。
+# uninstall.sh 现在是仓库文件（安装器按版本下载），直接读它。
 extract_uninstall() {
-    local start
-    start="$(grep -n "<<'UNINSTALL_EOF'" "$INSTALL_SH" 2>/dev/null | head -1 | cut -d: -f1)"
-    [ -n "${start:-}" ] || return 1
-    awk -v s="$start" 'NR > s { if ($0 == "UNINSTALL_EOF") exit; print }' "$INSTALL_SH"
+    cat "$ROOT/deploy/uninstall.sh"
 }
 
 # ── 1. 语法 ──────────────────────────────────────────────────────────────────
@@ -148,11 +146,11 @@ check "ensure_runtime_images 在 prepare_env（写 .env/目录）之前调用" e
 
 # ── 6. config 模板 canonical ref + 升级保护（§2.5）───────────────────────────
 check "floatctf.toml 模板用 canonical registry + \$VERSION" \
-    grep -q -F 'flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"' "$INSTALL_SH"
+    grep -q -F 'flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"' "$TOML_TMPL"
 check "模板 judgeserver 也是 canonical" \
-    grep -q -F 'judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"' "$INSTALL_SH"
+    grep -q -F 'judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"' "$TOML_TMPL"
 check "模板 awdp 已扁平化（无 infra/ 段）" \
-    grep -q -F 'practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"' "$INSTALL_SH"
+    grep -q -F 'practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"' "$TOML_TMPL"
 check "install.sh 有 preserve_custom_runtime_images 升级保护" \
     grep -q -F 'preserve_custom_runtime_images() {' "$INSTALL_SH"
 check "prepare_configs 调用 preserve_custom_runtime_images" \
@@ -388,7 +386,7 @@ RENDER_HARNESS="$TMP_TEST_DIR/render-harness.sh"
 {
     cat <<'HDR'
 set -uo pipefail
-FLOATCTF_HOME="$1"; VERSION=1.0.0; RUNTIME_IMAGE_REGISTRY=docker.io/floatctf
+FLOATCTF_HOME="$1"; TPL_DIR="$2"; VERSION=1.0.0; RUNTIME_IMAGE_REGISTRY=docker.io/floatctf
 export FLOATCTF_HOME VERSION RUNTIME_IMAGE_REGISTRY
 SITE_ADDRESS=ctf.example.com; HTTPS_PORT=443; HOST_ADDRESS=127.0.0.1; API_PORT=9090
 POSTGRES_USER=pu; POSTGRES_PASSWORD=pw; POSTGRES_DB=db; RUSTFS_ACCESS_KEY=ak; RUSTFS_SECRET_KEY=sk
@@ -409,7 +407,7 @@ DRV
 } >"$RENDER_HARNESS"
 
 RENDER_HOME="$TMP_TEST_DIR/render-home"
-RENDER_OUT="$(bash "$RENDER_HARNESS" "$RENDER_HOME" 2>&1)" || true
+RENDER_OUT="$(bash "$RENDER_HARNESS" "$RENDER_HOME" "$ROOT/deploy/templates" 2>&1)" || true
 check "行为：模板渲染出 canonical flagserver（registry + VERSION 钉版）" \
     bash -c 'grep -qxF "flagserver_image = \"docker.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
 check "行为：模板渲染出 canonical judgeserver" \
@@ -559,50 +557,21 @@ check "行为：跳过时仍打印缺失 ref 与 docker load 逃生口" \
 # 初始化 bucket -> panic -> crash-loop（Phase 13 实测）。这里断言安装器模板用的是
 # 真实 HTTP /health 探测，且参数足以容纳探针自身耗时（timeout 必须 > sleep+nc 超时）。
 check "install.sh 的 rustfs healthcheck 是真实 HTTP /health 探测（非 TCP-only）" \
-    bash -c 'grep -qF "GET /health HTTP/1.1" "$1" && ! grep -qF "nc -z 127.0.0.1 9000 || exit 1" "$1"' _ "$ROOT/scripts/install.sh"
+    bash -c 'grep -qF "GET /health HTTP/1.1" "$1" && ! grep -qF "nc -z 127.0.0.1 9000 || exit 1" "$1"' _ "$ROOT/deploy/compose.prod.yml"
 check "install.sh 的 rustfs healthcheck 参数容纳探针耗时（interval 10s/timeout 10s/retries 12/start_period 30s）" \
     bash -c 'f="$1"; for p in "interval: 10s" "timeout: 10s" "retries: 12" "start_period: 30s"; do
         grep -qF "$p" <<<"$(awk "/healthcheck:/{n++} n>=2 && n<=3" "$f")" || { echo "missing: $p"; exit 1; }
-      done' _ "$ROOT/scripts/install.sh"
+      done' _ "$ROOT/deploy/compose.prod.yml"
 
-# ── 参考文件与安装器模板的一致性（防止静默漂移，see Phase 13.1 §10.5/§10.2）──
-# 生产 Caddyfile 的权威来源是 install.sh 内嵌的 CADDY_TMPL_EOF；infra/caddy/Caddyfile.prod
-# 是给运维阅读的镜像副本（仅多一个“勿单独编辑”头部）。这里断言正文逐字节相同，
-# 否则一旦有人只改一处，运维照抄参考文件就会部署出与安装器不同的站点配置。
-check "参考 Caddyfile 与 install.sh 内嵌模板正文逐字节一致（无静默漂移）" \
-    python3 - "$ROOT" <<'PYEOF'
-import pathlib, re, sys
-root = pathlib.Path(sys.argv[1])
-ins = (root / "scripts/install.sh").read_text()
-m = re.search(r"<<'CADDY_TMPL_EOF'\n(.*?)\nCADDY_TMPL_EOF", ins, re.S)
-if not m:
-    print("install.sh 中找不到 CADDY_TMPL_EOF 正文"); raise SystemExit(1)
-body = m.group(1)
-ref = (root / "infra/caddy/Caddyfile.prod").read_text()
-# 参考文件正文从模板首行（注释锚点）开始，忽略其上的镜像说明头。
-anchor_line = "# FloatCTF production Caddy configuration."
-idx = ref.find(anchor_line)
-if idx < 0:
-    print("参考 Caddyfile 缺少模板首行锚点:", anchor_line); raise SystemExit(1)
-ref_body = ref[idx:].rstrip("\n")
-if ref_body != body.rstrip("\n"):
-    import difflib
-    d = "\n".join(difflib.unified_diff(body.splitlines(), ref_body.splitlines(),
-                                       "install.sh:Caddyfile", "infra/caddy/Caddyfile.prod", lineterm=""))
-    print(d[:2000]); raise SystemExit(1)
-PYEOF
-
+# 模板都在仓库文件里，安装器按 tag 下载；不再有「内嵌副本 vs 参考文件」的漂移问题。
 # 参考生产 TOML 必须覆盖安装器模板里的每一个键/值（允许参考文件多出注释，不允许少键或值不同）。
-check "参考 floatctf.prod.toml 覆盖安装器模板的全部键值（无静默漂移）" \
+check "参考 floatctf.prod.toml 覆盖部署模板的全部键值（无静默漂移）" \
     python3 - "$ROOT" <<'PYEOF'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 ins = (root / "scripts/install.sh").read_text()
-m = re.search(r"<<'CONFIG_TMPL_EOF'\n(.*?)\nCONFIG_TMPL_EOF", ins, re.S)
-if not m:
-    print("install.sh 中找不到 CONFIG_TMPL_EOF 正文"); raise SystemExit(1)
 want = []
-for line in m.group(1).splitlines():
+for line in (root / "deploy/templates/floatctf.toml.tmpl").read_text().splitlines():
     s = line.strip()
     if not s or s.startswith("#") or s.startswith("["):
         continue
@@ -621,26 +590,6 @@ PYEOF
 # ── deploy/ 与安装器内嵌模板：逐字节一致（第二种部署方式的可读副本）──────────
 # deploy/ 是给「docker compose 手动部署」用的副本；install.sh 必须保持自包含（它从
 # release 单独下载运行）。两边一旦漂移，就会部署出两套不同的栈 —— 用测试锁死。
-drift_check() { # <描述> <heredoc tag> <参考文件>
-    local desc="$1" tag="$2" ref="$3"
-    check "$desc" python3 - "$ROOT" "$tag" "$ref" <<'PYEOF'
-import difflib, pathlib, re, sys
-root, tag, ref_rel = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-ins = (root / "scripts/install.sh").read_text()
-m = re.search(r"<<'" + re.escape(tag) + r"'\n(.*?)\n" + re.escape(tag), ins, re.S)
-if not m:
-    print(f"install.sh 中找不到 {tag} 正文"); raise SystemExit(1)
-body = m.group(1).rstrip("\n")
-ref = (root / ref_rel).read_text().rstrip("\n")
-if body != ref:
-    d = "\n".join(difflib.unified_diff(body.splitlines(), ref.splitlines(),
-                                       f"install.sh:{tag}", ref_rel, lineterm=""))
-    print(d[:2000]); raise SystemExit(1)
-PYEOF
-}
-
-drift_check "deploy/compose.prod.yml 与内嵌 COMPOSE_PROD 一致" COMPOSE_PROD_EOF deploy/compose.prod.yml
-drift_check "deploy/helper/floatctf-helper.service 与内嵌 HELPER_SVC 一致" HELPER_SVC_EOF deploy/helper/floatctf-helper.service
 
 # ── 14. 安装器默认指向 latest（不传 --version 即装最新版）────────────────────
 check "默认产物地址：5 行指向 releases/latest/download/" \

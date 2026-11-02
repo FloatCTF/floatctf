@@ -107,7 +107,7 @@ sudo docker compose -f compose.prod.yml exec api \
 
 | 文件 | 来源 | B 方式需要 |
 |---|---|---|
-| `deploy/compose.prod.yml` | 本目录（与 install.sh 内嵌模板逐字节一致，有测试守护） | ✓ |
+| `deploy/compose.prod.yml` | 本目录（install.sh 按版本从这里拉取） | ✓ |
 | `deploy/.env.example` | 本目录 | ✓ |
 | `deploy/helper/floatctf-helper.service` | 本目录（同上，测试守护） | ✓ |
 | `infra/config/floatctf.prod.toml` | 仓库 | ✓ |

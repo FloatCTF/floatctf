@@ -1,0 +1,17 @@
+[Unit]
+Description=FloatCTF production containers (API + data services + Caddy)
+Requires=docker.service floatctf-helper.service
+After=docker.service floatctf-helper.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${FLOATCTF_HOME}
+ExecStart=/usr/bin/docker compose -f ${FLOATCTF_HOME}/compose.prod.yml up -d --wait
+ExecStop=/usr/bin/docker compose -f ${FLOATCTF_HOME}/compose.prod.yml down
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=floatctf.target

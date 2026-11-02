@@ -1,3 +1,7 @@
+> **本目录是 `install.sh` 的模板副本**，不是第二个安装入口。
+> `install.sh --mode compose` 会生成同样的栈；这里的命令用于阅读、对照，或你确实想完全手动时。
+> 安装请用 [INSTALL.md](../INSTALL.md)（`--mode host` / `--mode compose`）。
+
 # 部署：两种方式，二选一
 
 | | A. `install.sh` | B. `docker compose` |

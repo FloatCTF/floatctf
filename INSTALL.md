@@ -2,12 +2,15 @@
 
 本文档是 FloatCTF **生产安装、容器化部署、systemd 运维、权限模型和生命周期管理**的权威说明。本地源码开发见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
-支持两种部署方式，二选一：
+安装入口只有一个：`install.sh`。**不带参数**会询问安装方式；也可以静默指定：
 
-| 方式 | 入口 | 说明 |
+| 模式 | 命令 | 行为 |
 |---|---|---|
-| **A. install.sh** | 本文 | 一条命令装齐 helper、systemd unit、Compose、配置、前端与迁移 |
-| **B. docker compose** | [deploy/README.md](./deploy/README.md) | 自己准备文件与网络；**前置是 helper 已安装**（API 启动强依赖它） |
+| 本机部署（默认） | `--mode host` | 装 helper + systemd（`floatctf.target`），之后用 `systemctl` 启停整栈 |
+| docker compose | `--mode compose` | 只生成 compose 栈与文件；helper 照装并启动，stack 不写 systemd，自己 `docker compose up` |
+
+非交互终端必须显式给 `--mode`（否则 fail closed，不会替你猜）。两种模式都会安装 helper ——
+API 启动强依赖 `helper-control.sock` / `helper-docker.sock`。
 
 ---
 
@@ -398,11 +401,14 @@ frontends/
 生产机无需 clone 仓库：
 
 ```bash
-curl -fsSL \
-  https://github.com/FloatCTF/floatctf/releases/download/<tag>/install.sh \
-  -o install.sh
+curl -fsSL https://github.com/FloatCTF/floatctf/releases/latest/download/install.sh -o install.sh
 
+# 交互：会问「本机部署 / docker compose」
 sudo env SITE_ADDRESS=ctf.example.com bash install.sh
+
+# 静默：
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh --mode host
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh --mode compose
 ```
 
 显式指定 release 产物：

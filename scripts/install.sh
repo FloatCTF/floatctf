@@ -1073,18 +1073,19 @@ CADDY_TMPL_EOF
 write_api_dockerfile() {
     mkdir -p "$FLOATCTF_HOME/image/api"
     cat > "$FLOATCTF_HOME/image/api/Dockerfile" <<'API_DOCKERFILE_EOF'
-FROM ubuntu:24.04
+FROM debian:bookworm-slim
 
 ARG FLOATCTF_VERSION=unknown
 # 容器以 65532:${FLOATCTF_GID} 运行（GID 是宿主 floatctf 组的真实 gid，各机不同），
 # 镜像内的组必须用同一个 gid 才不会出现"组名解析不到"。
 ARG FLOATCTF_GID=65532
 
+# 运行期只需要：CA 证书（OIDC/出网 TLS）、curl（compose healthcheck）、tzdata。
+# 不装 python3：API 进程本身不执行任何 Python（迁移器在宿主侧运行）。
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        python3 \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 

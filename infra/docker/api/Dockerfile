@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 ARG FLOATCTF_VERSION=unknown
 # 容器以 65532:${FLOATCTF_GID} 运行（GID 是宿主 floatctf 组的真实 gid，各机不同），
@@ -7,6 +7,8 @@ ARG FLOATCTF_GID=65532
 
 # 运行期只需要：CA 证书（OIDC/出网 TLS）、curl（compose healthcheck）、tzdata。
 # 不装 python3：API 进程本身不执行任何 Python（迁移器在宿主侧运行）。
+# 基础镜像必须与 release 二进制的 glibc 基线一致：构建机是 ubuntu-24.04（glibc 2.39），
+# 用 debian bookworm（2.36）会直接 GLIBC_2.38 not found。
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \

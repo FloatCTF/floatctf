@@ -618,6 +618,31 @@ if missing:
     raise SystemExit(1)
 PYEOF
 
+# ── deploy/ 与安装器内嵌模板：逐字节一致（第二种部署方式的可读副本）──────────
+# deploy/ 是给「docker compose 手动部署」用的副本；install.sh 必须保持自包含（它从
+# release 单独下载运行）。两边一旦漂移，就会部署出两套不同的栈 —— 用测试锁死。
+drift_check() { # <描述> <heredoc tag> <参考文件>
+    local desc="$1" tag="$2" ref="$3"
+    check "$desc" python3 - "$ROOT" "$tag" "$ref" <<'PYEOF'
+import difflib, pathlib, re, sys
+root, tag, ref_rel = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+ins = (root / "scripts/install.sh").read_text()
+m = re.search(r"<<'" + re.escape(tag) + r"'\n(.*?)\n" + re.escape(tag), ins, re.S)
+if not m:
+    print(f"install.sh 中找不到 {tag} 正文"); raise SystemExit(1)
+body = m.group(1).rstrip("\n")
+ref = (root / ref_rel).read_text().rstrip("\n")
+if body != ref:
+    d = "\n".join(difflib.unified_diff(body.splitlines(), ref.splitlines(),
+                                       f"install.sh:{tag}", ref_rel, lineterm=""))
+    print(d[:2000]); raise SystemExit(1)
+PYEOF
+}
+
+drift_check "deploy/compose.prod.yml 与内嵌 COMPOSE_PROD 一致" COMPOSE_PROD_EOF deploy/compose.prod.yml
+drift_check "deploy/helper/floatctf-helper.service 与内嵌 HELPER_SVC 一致" HELPER_SVC_EOF deploy/helper/floatctf-helper.service
+drift_check "deploy/api/Dockerfile 与内嵌 API_DOCKERFILE 一致" API_DOCKERFILE_EOF deploy/api/Dockerfile
+
 # ── 14. 安装器默认指向 latest（不传 --version 即装最新版）────────────────────
 check "默认产物地址：6 行指向 releases/latest/download/" \
     bash -c "[ \"\$(grep -c -E '^DEFAULT_[A-Z_]+_URL=\"\\\$RELEASES_URL_BASE/latest/download/' '$INSTALL_SH')\" -eq 6 ]"

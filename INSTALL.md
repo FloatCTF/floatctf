@@ -2,6 +2,13 @@
 
 本文档是 FloatCTF **生产安装、容器化部署、systemd 运维、权限模型和生命周期管理**的权威说明。本地源码开发见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
+支持两种部署方式，二选一：
+
+| 方式 | 入口 | 说明 |
+|---|---|---|
+| **A. install.sh** | 本文 | 一条命令装齐 helper、systemd unit、Compose、配置、前端与迁移 |
+| **B. docker compose** | [deploy/README.md](./deploy/README.md) | 自己准备文件与网络；**前置是 helper 已安装**（API 启动强依赖它） |
+
 ---
 
 ## 0. 动手之前：单控制面不变量（R1，必读）
@@ -280,16 +287,20 @@ SHA256SUMS                          上面 1-10 的 sha256（不含自身）
 `web-dist.tar.gz` / `merged.sql` / `frontend.sh` / `ops-tools.tar.gz`。
 人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
-### 6.2 通道 B —— GHCR 运行时镜像（3 个，AWD/AWDP 必需）
+### 6.2 通道 B —— GHCR 镜像（4 个：API + 3 个运行时）
 
 AWD / AWDP 需要三个运行时服务镜像。**GHCR 是规范在线分发通道**，由 tag 触发的 release
 workflow 以 `packages: write` 推送（**仅** tag 发布路径，PR / 分支 dispatch / RC 永不推送）：
 
 ```text
+ghcr.io/floatctf/floatctf-api:<V>          # API 镜像（compose 方式的默认；install.sh 仍本地构建）
 ghcr.io/floatctf/awd-flagserver:<V>
 ghcr.io/floatctf/awd-judgeserver:<V>
 ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
 ```
+
+> AWD / AWDP 需要后三个运行时镜像；API 镜像只被 `docker compose` 方式使用，固定
+> `FLOATCTF_GID=65532`（见 [deploy/README.md](./deploy/README.md)）。
 
 > 旧名 `floatctf/infra/awdp-judgeserver` 只是**历史引用**，规范 GHCR ref 已扁平化为
 > `ghcr.io/floatctf/awdp-judgeserver:<V>`。

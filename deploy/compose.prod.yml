@@ -76,7 +76,7 @@ services:
             start_period: 30s
 
     api:
-        image: ${API_IMAGE:-ghcr.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
+        image: ${API_IMAGE:-docker.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
         container_name: floatctf-api
         restart: unless-stopped
         user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"

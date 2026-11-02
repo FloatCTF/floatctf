@@ -131,8 +131,8 @@ check "ensure_runtime_images 给出 docker load escape hatch" \
     grep -q -F 'docker load < floatctf-runtime-images.tar' <<<"$ERI_BODY"
 check "ensure_runtime_images 支持 --skip-runtime-images 降级告警" \
     grep -q -F 'SKIP_RUNTIME_IMAGES' <<<"$ERI_BODY"
-check "RUNTIME_IMAGE_REGISTRY 默认 canonical ghcr.io/floatctf" \
-    grep -q -F 'RUNTIME_IMAGE_REGISTRY="${FLOATCTF_RUNTIME_IMAGE_REGISTRY:-ghcr.io/floatctf}"' "$INSTALL_SH"
+check "RUNTIME_IMAGE_REGISTRY 默认 canonical docker.io/floatctf" \
+    grep -q -F 'RUNTIME_IMAGE_REGISTRY="${FLOATCTF_RUNTIME_IMAGE_REGISTRY:-docker.io/floatctf}"' "$INSTALL_SH"
 check "install.sh 解析 --skip-runtime-images" grep -q -F -- '--skip-runtime-images)' "$INSTALL_SH"
 check "run_deploy 调用 ensure_runtime_images" \
     grep -q -F '    ensure_runtime_images' "$INSTALL_SH"
@@ -164,9 +164,9 @@ stock_ok() {
     printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/awd-flagserver:*' || return 1
     printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/awd-judgeserver:*' || return 1
     printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/infra/awdp-judgeserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'ghcr.io/floatctf/awd-flagserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'ghcr.io/floatctf/awd-judgeserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'ghcr.io/floatctf/awdp-judgeserver:*' || return 1
+    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awd-flagserver:*' || return 1
+    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awd-judgeserver:*' || return 1
+    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awdp-judgeserver:*' || return 1
     return 0
 }
 
@@ -293,8 +293,8 @@ check "build-runtime-images.sh --help 提到 --label" \
     bash -c 'grep -q -F -- "--label" <<<"$1"' _ "$BUILD_HELP"
 check "build-runtime-images.sh --help 提到 --push 且默认为不推送" \
     bash -c 'grep -q -F -- "--push" <<<"$1" && grep -q -F "默认**不推送**" <<<"$1"' _ "$BUILD_HELP"
-check "build-runtime-images.sh --help 列出 canonical ghcr refs" \
-    bash -c 'for r in ghcr.io/floatctf/awd-flagserver:1.0.0 ghcr.io/floatctf/awd-judgeserver:1.0.0 ghcr.io/floatctf/awdp-judgeserver:1.0.0; do grep -q -F -- "$r" <<<"$1" || exit 1; done' _ "$BUILD_HELP"
+check "build-runtime-images.sh --help 列出 canonical docker hub refs" \
+    bash -c 'for r in docker.io/floatctf/awd-flagserver:1.0.0 docker.io/floatctf/awd-judgeserver:1.0.0 docker.io/floatctf/awdp-judgeserver:1.0.0; do grep -q -F -- "$r" <<<"$1" || exit 1; done' _ "$BUILD_HELP"
 check "build-runtime-images.sh --help 文档化 awdp 扁平化映射" \
     bash -c 'grep -q -F "扁平化" <<<"$1"' _ "$BUILD_HELP"
 check "build-runtime-images.sh 解析 --tag" grep -q -F -- '--tag)' "$BUILD_SH"
@@ -375,7 +375,7 @@ fi
 # 静态 grep 只能证明"代码里写了 canonical ref / 保留了自定义值"，证明不了**行为**。
 # 这里把 install.sh 里的真实函数体抽出来（function_body 会丢掉 `name() {` 头，
 # 故 emit_fn 补回），在临时目录里跑：
-#   * write_config_template + render → 渲染结果必须是 canonical GHCR refs（用 VERSION 钉版）；
+#   * write_config_template + render → 渲染结果必须是 canonical Docker Hub refs（用 VERSION 钉版）；
 #   * preserve_custom_runtime_images → 三种模式（默认/reset/keep）语义逐条断言。
 # 全部只写临时目录，不联网、不碰真实安装根。
 emit_fn() { # <file> <fn>
@@ -388,7 +388,7 @@ RENDER_HARNESS="$TMP_TEST_DIR/render-harness.sh"
 {
     cat <<'HDR'
 set -uo pipefail
-FLOATCTF_HOME="$1"; VERSION=1.0.0; RUNTIME_IMAGE_REGISTRY=ghcr.io/floatctf
+FLOATCTF_HOME="$1"; VERSION=1.0.0; RUNTIME_IMAGE_REGISTRY=docker.io/floatctf
 export FLOATCTF_HOME VERSION RUNTIME_IMAGE_REGISTRY
 SITE_ADDRESS=ctf.example.com; HTTPS_PORT=443; HOST_ADDRESS=127.0.0.1; API_PORT=9090
 POSTGRES_USER=pu; POSTGRES_PASSWORD=pw; POSTGRES_DB=db; RUSTFS_ACCESS_KEY=ak; RUSTFS_SECRET_KEY=sk
@@ -411,11 +411,11 @@ DRV
 RENDER_HOME="$TMP_TEST_DIR/render-home"
 RENDER_OUT="$(bash "$RENDER_HARNESS" "$RENDER_HOME" 2>&1)" || true
 check "行为：模板渲染出 canonical flagserver（registry + VERSION 钉版）" \
-    bash -c 'grep -qxF "flagserver_image = \"ghcr.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
+    bash -c 'grep -qxF "flagserver_image = \"docker.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
 check "行为：模板渲染出 canonical judgeserver" \
-    bash -c 'grep -qxF "judgeserver_image = \"ghcr.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
+    bash -c 'grep -qxF "judgeserver_image = \"docker.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
 check "行为：模板渲染出扁平化 canonical awdp judgeserver" \
-    bash -c 'grep -qxF "practice_judgeserver_image = \"ghcr.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
+    bash -c 'grep -qxF "practice_judgeserver_image = \"docker.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
 check "行为：渲染结果不含旧的 floatctf/infra/ 本地名" \
     bash -c '! grep -qF "floatctf/infra/" <<<"$1"' _ "$RENDER_OUT"
 
@@ -448,11 +448,11 @@ practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:0.3.3"
 TOML
 cat >"$P_NEW" <<'TOML'
 [awd]
-flagserver_image = "ghcr.io/floatctf/awd-flagserver:1.0.0"
-judgeserver_image = "ghcr.io/floatctf/awd-judgeserver:1.0.0"
+flagserver_image = "docker.io/floatctf/awd-flagserver:1.0.0"
+judgeserver_image = "docker.io/floatctf/awd-judgeserver:1.0.0"
 
 [awdp]
-practice_judgeserver_image = "ghcr.io/floatctf/awdp-judgeserver:1.0.0"
+practice_judgeserver_image = "docker.io/floatctf/awdp-judgeserver:1.0.0"
 TOML
 
 cp "$P_NEW" "$TMP_TEST_DIR/p-default.toml"
@@ -461,15 +461,15 @@ check "行为（默认）：自定义镜像引用被保留 + warn" \
     bash -c 'grep -qF "flagserver_image = \"my.registry.local/awd-flagserver:9.9.9\"" <<<"$1" &&
              grep -qF "保留管理员自定义的运行时镜像" <<<"$1"' _ "$P_DEFAULT_OUT"
 check "行为（默认）：stock 的 floatctf/awd-judgeserver 迁移到 canonical" \
-    bash -c 'grep -qF "judgeserver_image = \"ghcr.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
+    bash -c 'grep -qF "judgeserver_image = \"docker.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
 check "行为（默认）：stock 的旧 floatctf/infra/awdp 迁移到扁平化 canonical" \
-    bash -c 'grep -qF "practice_judgeserver_image = \"ghcr.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
+    bash -c 'grep -qF "practice_judgeserver_image = \"docker.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
 
 cp "$P_NEW" "$TMP_TEST_DIR/p-reset.toml"
 P_RESET_OUT="$(RESET_RUNTIME_IMAGES=1 bash "$PRESERVE_HARNESS" "$P_OLD" "$TMP_TEST_DIR/p-reset.toml" 2>&1)" || true
 check "行为（--reset-runtime-images）：自定义值被丢弃，全部回到 canonical" \
-    bash -c 'grep -qxF "flagserver_image = \"ghcr.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1" &&
-             grep -qxF "judgeserver_image = \"ghcr.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1" &&
+    bash -c 'grep -qxF "flagserver_image = \"docker.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1" &&
+             grep -qxF "judgeserver_image = \"docker.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1" &&
              grep -qF "丢弃" <<<"$1"' _ "$P_RESET_OUT"
 
 cp "$P_NEW" "$TMP_TEST_DIR/p-keep.toml"
@@ -501,7 +501,7 @@ ENSURE_HARNESS="$TMP_TEST_DIR/ensure-harness.sh"
 {
     cat <<'HDR'
 set -uo pipefail
-RUNTIME_IMAGE_REGISTRY="${RUNTIME_IMAGE_REGISTRY:-ghcr.io/floatctf}"
+RUNTIME_IMAGE_REGISTRY="${RUNTIME_IMAGE_REGISTRY:-docker.io/floatctf}"
 VERSION="${VERSION:-1.0.0}"
 SKIP_RUNTIME_IMAGES="${SKIP_RUNTIME_IMAGES:-0}"
 RUNTIME_IMAGES_MISSING=""
@@ -530,10 +530,10 @@ else
 fi
 ensure_bad_ok() {
     local out="$1"
-    grep -q -F 'ghcr.io/floatctf/awd-flagserver:1.0.0' <<<"$out" || return 1
-    grep -q -F 'ghcr.io/floatctf/awd-judgeserver:1.0.0' <<<"$out" || return 1
-    grep -q -F 'ghcr.io/floatctf/awdp-judgeserver:1.0.0' <<<"$out" || return 1
-    grep -q -F 'docker pull ghcr.io/floatctf/awd-flagserver:1.0.0' <<<"$out" || return 1
+    grep -q -F 'docker.io/floatctf/awd-flagserver:1.0.0' <<<"$out" || return 1
+    grep -q -F 'docker.io/floatctf/awd-judgeserver:1.0.0' <<<"$out" || return 1
+    grep -q -F 'docker.io/floatctf/awdp-judgeserver:1.0.0' <<<"$out" || return 1
+    grep -q -F 'docker pull docker.io/floatctf/awd-flagserver:1.0.0' <<<"$out" || return 1
     grep -q -F 'sudo docker load < floatctf-runtime-images.tar' <<<"$out" || return 1
     grep -q -F -- '--skip-runtime-images' <<<"$out" || return 1
     return 0
@@ -551,7 +551,7 @@ else
     fail "行为：--skip-runtime-images 未降级为告警（rc=$ENSURE_SKIP_RC）"
 fi
 check "行为：跳过时仍打印缺失 ref 与 docker load 逃生口" \
-    bash -c 'grep -qF "ghcr.io/floatctf/awdp-judgeserver:1.0.0" <<<"$1" &&
+    bash -c 'grep -qF "docker.io/floatctf/awdp-judgeserver:1.0.0" <<<"$1" &&
              grep -qF "docker load < floatctf-runtime-images.tar" <<<"$1"' _ "$ENSURE_SKIP_OUT"
 
 # ── R2：rustfs 就绪探测契约（CI 静态门禁；真实 Docker E2E 见 test-rustfs-readiness.sh）──

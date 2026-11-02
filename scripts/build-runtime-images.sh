@@ -12,17 +12,17 @@ set -Eeuo pipefail
 #   bash scripts/build-runtime-images.sh [--tag <version>] [--extra-tag <tag>]...
 #   FLOATCTF_RUNTIME_IMAGE_TAG=<version> bash scripts/build-runtime-images.sh
 #   # CI / 发布（需要先 docker login；本脚本默认**绝不**推送）:
-#   bash scripts/build-runtime-images.sh --registry ghcr.io/floatctf --tag <V> --push
+#   bash scripts/build-runtime-images.sh --registry docker.io/floatctf --tag <V> --push
 #
 # 镜像引用映射（--registry 决定前缀）:
 #   无 --registry（本地/历史命名，与既有开发工具一致）:
 #     floatctf/awd-flagserver:<tag>
 #     floatctf/awd-judgeserver:<tag>
 #     floatctf/infra/awdp-judgeserver:<tag>      （历史名，保持不变）
-#   --registry ghcr.io/floatctf（canonical runtime image refs）:
-#     ghcr.io/floatctf/awd-flagserver:<tag>
-#     ghcr.io/floatctf/awd-judgeserver:<tag>
-#     ghcr.io/floatctf/awdp-judgeserver:<tag>    （awdp **扁平化**，不再带 infra/）
+#   --registry docker.io/floatctf（canonical runtime image refs）:
+#     docker.io/floatctf/awd-flagserver:<tag>
+#     docker.io/floatctf/awd-judgeserver:<tag>
+#     docker.io/floatctf/awdp-judgeserver:<tag>    （awdp **扁平化**，不再带 infra/）
 # 这三个 canonical ref 必须与 install.sh 写入 [awd]/[awdp] 的镜像名一致:
 #   flagserver_image           = "<registry>/awd-flagserver:<V>"
 #   judgeserver_image          = "<registry>/awd-judgeserver:<V>"
@@ -50,7 +50,7 @@ usage() {
                      镜像仓库前缀（env：FLOATCTF_RUNTIME_IMAGE_REGISTRY）。
                      留空（默认）= 本地历史命名 floatctf/...；
                      非空 = <prefix>/<name>，其中 awdp 扁平化为 awdp-judgeserver。
-                     例：--registry ghcr.io/floatctf
+                     例：--registry docker.io/floatctf
   --label <k=v>      给 docker build 追加 OCI label（可重复）。
   --push             构建 + ldd 体检通过后推送**版本 tag**（绝不推 :latest）。
                      默认**不推送**；推送前需自行 docker login <registry>。
@@ -61,9 +61,9 @@ EOF
     print_refs "$REGISTRY" "$RUNTIME_TAG"
     cat <<'EOF'
 
-canonical 发布引用示例（--registry ghcr.io/floatctf --tag 1.0.0）：
+canonical 发布引用示例（--registry docker.io/floatctf --tag 1.0.0）：
 EOF
-    print_refs "ghcr.io/floatctf" "1.0.0"
+    print_refs "docker.io/floatctf" "1.0.0"
     cat <<'EOF'
 
 仓库名映射（awdp 扁平化）：

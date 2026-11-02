@@ -30,7 +30,7 @@
 #   - --skip-migrations（或 FLOATCTF_SKIP_MIGRATIONS=1）跳过迁移步骤；跳过时
 #     平台可能因缺少新表/新列而启动失败。
 #   - 管理员在 config/floatctf.toml 里自定义过的 AWD/AWDP 镜像引用会被**保留**
-#     （并告警）；只有已知 stock 形态才迁移到新的 canonical GHCR 默认值。
+#     （并告警）；只有已知 stock 形态才迁移到新的 canonical Docker Hub 默认值。
 #     强制回默认用 --reset-runtime-images；强制保留用 --keep-runtime-images。
 #
 # 【前置依赖（R3）】宿主必须提供 **Python 3.11+**（stdlib tomllib）：
@@ -66,7 +66,7 @@
 #     数据库时临时 `up -d postgres` 应用迁移（平台其余服务仍不启动）。
 #   - AWD/AWDP 运行时镜像（${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:V、
 #     .../awd-judgeserver:V、.../awdp-judgeserver:V，V=release 版本）随 release
-#     发布到 GHCR（release.yml 的 runtime-images job）。安装/升级时 ensure_runtime_images
+#     发布到 Docker Hub（release.yml 的 runtime-images job）。安装/升级时 ensure_runtime_images
 #     会逐个 `docker image inspect`，缺则 `docker pull`；**拉不到就 die**（绝不继续
 #     进入一个 AWD/AWDP 注定失败、要等比赛现场才炸的部署）。
 #     离线/手工预载（escape hatch）：
@@ -91,8 +91,8 @@ HELPER_INSTALL_PATH="/usr/local/libexec/floatctf-helper"
 # 镜像推到这里，ensure_runtime_images 与 floatctf.toml 模板都从同一个前缀计算 ref
 # （单一事实来源，避免"模板写 A、安装器查 B"）。可用 FLOATCTF_RUNTIME_IMAGE_REGISTRY
 # 覆盖（例：指向自建 registry）；空值回落 canonical。
-RUNTIME_IMAGE_REGISTRY="${FLOATCTF_RUNTIME_IMAGE_REGISTRY:-ghcr.io/floatctf}"
-[ -n "$RUNTIME_IMAGE_REGISTRY" ] || RUNTIME_IMAGE_REGISTRY="ghcr.io/floatctf"
+RUNTIME_IMAGE_REGISTRY="${FLOATCTF_RUNTIME_IMAGE_REGISTRY:-docker.io/floatctf}"
+[ -n "$RUNTIME_IMAGE_REGISTRY" ] || RUNTIME_IMAGE_REGISTRY="docker.io/floatctf"
 RUNTIME_IMAGE_REGISTRY="${RUNTIME_IMAGE_REGISTRY%/}"
 export RUNTIME_IMAGE_REGISTRY
 
@@ -748,7 +748,7 @@ services:
             start_period: 30s
 
     api:
-        image: ${API_IMAGE:-ghcr.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
+        image: ${API_IMAGE:-docker.io/floatctf/floatctf-api:${VERSION:?VERSION 必须在 .env 设置}}
         container_name: floatctf-api
         restart: unless-stopped
         user: "${FLOATCTF_UID:-65532}:${FLOATCTF_GID:?FLOATCTF_GID 必须在 .env 设置}"
@@ -906,7 +906,7 @@ channel = "floatctf:realtime"
 
 [awd]
 network_runtime = "helper"
-# canonical 运行时镜像 ref（= release.yml 推送到 GHCR 的同一组）：
+# canonical 运行时镜像 ref（= release.yml 推送到 Docker Hub 的同一组）：
 #   ${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION} 等；awdp 已扁平化（无 infra/ 段）。
 # 升级时管理员的自定义值会被保留（见 preserve_custom_runtime_images）。
 flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"
@@ -2092,7 +2092,8 @@ toml_set_string_key() { # <file> <section> <key> <value>
 is_stock_runtime_image() { # <image-ref>
     case "$1" in
         floatctf/awd-flagserver:*|floatctf/awd-judgeserver:*|floatctf/infra/awdp-judgeserver:*|\
-        ghcr.io/floatctf/awd-flagserver:*|ghcr.io/floatctf/awd-judgeserver:*|ghcr.io/floatctf/awdp-judgeserver:*)
+        ghcr.io/floatctf/awd-flagserver:*|ghcr.io/floatctf/awd-judgeserver:*|ghcr.io/floatctf/awdp-judgeserver:*|\
+        docker.io/floatctf/awd-flagserver:*|docker.io/floatctf/awd-judgeserver:*|docker.io/floatctf/awdp-judgeserver:*)
             return 0
             ;;
         *) return 1 ;;
@@ -2487,7 +2488,7 @@ apply_migrations() {
 # ── 部署前硬校验：AWD/AWDP 运行时镜像（B1）────────────────────────────────────
 #
 # write_config_template 把 [awd]/[awdp] 指向 $RUNTIME_IMAGE_REGISTRY 下的三个镜像
-# （tag = 平台版本 $VERSION，awdp 已扁平化）。这些镜像随 release 发布到 GHCR
+# （tag = 平台版本 $VERSION，awdp 已扁平化）。这些镜像随 release 发布到 Docker Hub
 # （release.yml 的 runtime-images job）——但安装环境可能离线、registry 不可达或
 # 尚未登录。缺镜像时 AWD/AWDP 部署会在**比赛现场**才失败，且错误信息很难懂。
 # 因此这里逐个 inspect，缺则 pull；仍然缺就 **die**（绝不继续进入一个注定失败的

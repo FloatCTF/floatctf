@@ -231,7 +231,7 @@ Docker group 本身具有极高宿主控制能力，因此 `floatctf-helper` 是
 - **`python3` 且带 stdlib `tomllib`（即 Python ≥ 3.11）** —— 见下
 - curl / tar / openssl
 - systemd
-- 出网（拉取 release 产物与 GHCR 运行时镜像；离线见 §6.2）
+- 出网（拉取 release 产物与 Docker Hub 运行时镜像；离线见 §6.2）
 
 ### 5.1 Python / `tomllib` 前置条件（R3）
 
@@ -290,16 +290,16 @@ SHA256SUMS                          上面 1-10 的 sha256（不含自身）
 `web-dist.tar.gz` / `merged.sql` / `frontend.sh` / `ops-tools.tar.gz`。
 人工发布清单见 [RELEASE.md](./RELEASE.md)。
 
-### 6.2 通道 B —— GHCR 镜像（4 个：API + 3 个运行时）
+### 6.2 通道 B —— Docker Hub 镜像（4 个：API + 3 个运行时）
 
-AWD / AWDP 需要三个运行时服务镜像。**GHCR 是规范在线分发通道**，由 tag 触发的 release
-workflow 以 `packages: write` 推送（**仅** tag 发布路径，PR / 分支 dispatch / RC 永不推送）：
+AWD / AWDP 需要三个运行时服务镜像。**Docker Hub 是规范在线分发通道**，由 tag 触发的 release
+workflow 用 Docker Hub 凭据推送（**仅** tag 发布路径，PR / 分支 dispatch / RC 永不推送）：
 
 ```text
-ghcr.io/floatctf/floatctf-api:<V>          # API 镜像（compose 方式的默认；install.sh 仍本地构建）
-ghcr.io/floatctf/awd-flagserver:<V>
-ghcr.io/floatctf/awd-judgeserver:<V>
-ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
+docker.io/floatctf/floatctf-api:<V>          # API 镜像（compose 方式的默认；install.sh 仍本地构建）
+docker.io/floatctf/awd-flagserver:<V>
+docker.io/floatctf/awd-judgeserver:<V>
+docker.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
 ```
 
 同一批镜像同时以相同 digest 推送到 Docker Hub（`docker.io/floatctf/*`，与上面同名），
@@ -312,8 +312,8 @@ FLOATCTF_RUNTIME_IMAGE_REGISTRY=docker.io/floatctf sudo -E bash install.sh --mod
 > AWD / AWDP 需要后三个运行时镜像；API 镜像只被 `docker compose` 方式使用，固定
 > `FLOATCTF_GID=65532`（见 [deploy/README.md](./deploy/README.md)）。
 
-> 旧名 `floatctf/infra/awdp-judgeserver` 只是**历史引用**，规范 GHCR ref 已扁平化为
-> `ghcr.io/floatctf/awdp-judgeserver:<V>`。
+> 旧名 `floatctf/infra/awdp-judgeserver` 只是**历史引用**，规范 Docker Hub ref 已扁平化为
+> `docker.io/floatctf/awdp-judgeserver:<V>`。
 
 安装器的行为：
 
@@ -321,7 +321,7 @@ FLOATCTF_RUNTIME_IMAGE_REGISTRY=docker.io/floatctf sudo -E bash install.sh --mod
   仍无法获取时安装器**直接 `die`**（不是警告后就继续）。旧版"只告警"的行为已删除。
 - `--skip-runtime-images`（或环境变量 `FLOATCTF_SKIP_RUNTIME_IMAGES=1`）把硬失败降级为醒目告警，
   供 **Jeopardy-only** 宿主使用。此时 AWD/AWDP 赛事在补齐镜像前无法部署。
-- registry 前缀可覆盖：`FLOATCTF_RUNTIME_IMAGE_REGISTRY`（默认 `ghcr.io/floatctf`）。它是
+- registry 前缀可覆盖：`FLOATCTF_RUNTIME_IMAGE_REGISTRY`（默认 `docker.io/floatctf`）。它是
   **单一事实来源**，同时用于渲染 `config/floatctf.toml` 与安装器的镜像检查，避免"模板写 A、安装器查 B"。
 
 #### 离线 / 内网宿主的本地逃生通道
@@ -333,7 +333,7 @@ FLOATCTF_RUNTIME_IMAGE_REGISTRY=docker.io/floatctf sudo -E bash install.sh --mod
 #    不带 --registry = 沿用本地历史命名（awdp 仍带 infra/ 段，向后兼容）
 sudo bash scripts/build-runtime-images.sh --tag 1.0.0
 #    或直接产出规范名（awdp 扁平化）：
-sudo bash scripts/build-runtime-images.sh --registry ghcr.io/floatctf --tag 1.0.0
+sudo bash scripts/build-runtime-images.sh --registry docker.io/floatctf --tag 1.0.0
 
 # ② 导出并搬到目标机（下例对应"不带 --registry"的本地历史名；
 #    若用 --registry 构建，请把 awdp 的 ref 换成 <prefix>/awdp-judgeserver:1.0.0）
@@ -350,15 +350,15 @@ docker load < runtime-images-1.0.0.tar.gz
 |---|---|
 | `--tag <V>`（无 `--registry`） | `floatctf/awd-flagserver:<V>`、`floatctf/awd-judgeserver:<V>`、**`floatctf/infra/awdp-judgeserver:<V>`**（历史名，向后兼容） |
 | `--registry <prefix>` | `<prefix>/awd-flagserver:<V>`、`<prefix>/awd-judgeserver:<V>`、`<prefix>/awdp-judgeserver:<V>`（**不再有 `infra/` 段**） |
-| `--registry ghcr.io/floatctf` | 即规范 GHCR ref（= release 推送到 GHCR 的同一组） |
+| `--registry docker.io/floatctf` | 即规范 Docker Hub ref（= release 推送到 Docker Hub 的同一组） |
 
 `--push` 会推送**版本 tag**（绝不推 `:latest`），推送前需自行 `docker login <registry>`；
-release 的 GHCR 推送由 `release.yml` 的 `runtime-images` job 完成。
+release 的 Docker Hub 推送由 `release.yml` 的 `runtime-images` job 完成。
 `--extra-tag <tag>`（可重复）与 `--label k=v`（可重复）同样可用。
 
-不带 `--registry` 时产出的是**本地历史名**。安装器默认检查的是规范 GHCR ref，因此离线宿主需要
+不带 `--registry` 时产出的是**本地历史名**。安装器默认检查的是规范 Docker Hub ref，因此离线宿主需要
 把 `config/floatctf.toml` 的 `[awd].flagserver_image` / `[awd].judgeserver_image` /
-`[awdp].practice_judgeserver_image` 指向本地名，或用 `docker tag` 把它们打成 GHCR ref
+`[awdp].practice_judgeserver_image` 指向本地名，或用 `docker tag` 把它们打成 Docker Hub ref
 （把 `FLOATCTF_RUNTIME_IMAGE_REGISTRY` 指到本地前缀也可以）。升级重跑安装器时，
 **管理员自定义过的这些值会被保留**（见 §7.1）。参考取值见
 [infra/config/floatctf.prod.toml](infra/config/floatctf.prod.toml)。
@@ -367,7 +367,7 @@ release 的 GHCR 推送由 `release.yml` 的 `runtime-images` job 完成。
 
 仍然发布原始 API binary，是为了让安装器用同一份 Dockerfile 在目标机本地构建 API image
 （`floatctf/api:<V>`，默认用户非 root），从而**不依赖外部容器 registry 也能部署应用面**；
-运行时服务镜像（§6.2）才走 GHCR：
+运行时服务镜像（§6.2）才走 Docker Hub：
 
 ```text
 infra/docker/api/Dockerfile
@@ -449,9 +449,9 @@ FLOATCTF_SKIP_MIGRATIONS=1
 
 ```text
 --skip-runtime-images                    # 或 FLOATCTF_SKIP_RUNTIME_IMAGES=1
---reset-runtime-images                   # 升级时强制回规范 GHCR ref
+--reset-runtime-images                   # 升级时强制回规范 Docker Hub ref
 --keep-runtime-images                    # 升级时强制保留现有镜像设置
-FLOATCTF_RUNTIME_IMAGE_REGISTRY          # 覆盖 registry 前缀（默认 ghcr.io/floatctf）
+FLOATCTF_RUNTIME_IMAGE_REGISTRY          # 覆盖 registry 前缀（默认 docker.io/floatctf）
 ```
 
 已核对的开关全集（从 `scripts/install.sh` 的参数解析逐个核对；`--help` 文本覆盖其中大部分）：
@@ -509,7 +509,7 @@ install root-owned helper
         ↓
 build floatctf/api:<version> locally
         ↓
-ensure runtime images（docker image inspect → docker pull 规范 GHCR ref；
+ensure runtime images（docker image inspect → docker pull 规范 Docker Hub ref；
         缺失且无法拉取 → 硬失败，除非 --skip-runtime-images）
         ↓
 create/validate fctf-platform-control
@@ -546,8 +546,8 @@ sudo bash install.sh --version <新版本> --ops-url <ops-tools.tar.gz-url> ...
 `[awd].judgeserver_image` / `[awdp].practice_judgeserver_image`）在升级时：
 
 - **管理员自定义过的值被保留**（例如离线宿主的本地镜像名；安装器会告警）；
-- 只有命中**已知 stock 形态**的值才会被迁移到新的规范 GHCR 默认值；
-- `--reset-runtime-images` 强制写回规范 GHCR ref；
+- 只有命中**已知 stock 形态**的值才会被迁移到新的规范 Docker Hub 默认值；
+- `--reset-runtime-images` 强制写回规范 Docker Hub ref；
 - `--keep-runtime-images` 强制保留现值。
 
 （目标行为与 `bash scripts/install.sh --help` 中"升级既有安装"一节的描述一致。）
@@ -682,13 +682,13 @@ channel = "floatctf:realtime"
 
 [awd]
 network_runtime = "helper"
-flagserver_image = "ghcr.io/floatctf/awd-flagserver:1.0.0"
-judgeserver_image = "ghcr.io/floatctf/awd-judgeserver:1.0.0"
+flagserver_image = "docker.io/floatctf/awd-flagserver:1.0.0"
+judgeserver_image = "docker.io/floatctf/awd-judgeserver:1.0.0"
 platform_internal_url = "http://10.42.8.2:9090"
 platform_internal_network = "fctf-platform-control"
 
 [awdp]
-practice_judgeserver_image = "ghcr.io/floatctf/awdp-judgeserver:1.0.0"
+practice_judgeserver_image = "docker.io/floatctf/awdp-judgeserver:1.0.0"
 platform_internal_url = "http://10.42.8.2:9090"
 ```
 
@@ -824,7 +824,7 @@ docker compose -f /var/lib/floatctf/compose.prod.yml exec api \
 curl -fsS -o /dev/null -w '%{http_code}\n' "https://$SITE_ADDRESS/"
 
 # 运行时镜像是否齐备（AWD/AWDP 必需）
-docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(ghcr\.io/floatctf|floatctf)/'
+docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(docker\.io/floatctf|floatctf)/'
 ```
 
 > 说明：R2 的目标行为是 RustFS 的 compose healthcheck 用**真实 HTTP 探针**（探测 RustFS
@@ -1200,7 +1200,7 @@ docker exec floatctf-postgres \
 | AWD WG/nft 失败 | helper 日志、`ip_forward`、`br_netfilter`、`CAP_NET_ADMIN` |
 | Caddy 502 | `docker compose ... ps` 与 `docker compose ... logs api caddy` |
 | 安装器报缺少 `python3` / `tomllib` | 发行版 Python < 3.11；升级到 3.11+（要求 stdlib 自带 `tomllib`，不要 `pip install`） |
-| 安装器报缺少运行时镜像 | 检查 `docker images \| grep ghcr.io/floatctf`；需出网拉取，或按 §6.2 离线构建/`docker load` 后改 TOML ref。Jeopardy-only 宿主可用 `--skip-runtime-images` |
+| 安装器报缺少运行时镜像 | 检查 `docker images \| grep docker.io/floatctf`；需出网拉取，或按 §6.2 离线构建/`docker load` 后改 TOML ref。Jeopardy-only 宿主可用 `--skip-runtime-images` |
 | AWD/AWDP 行为异常、容器/网络被"莫名"重建 | 疑似同宿主存在**第二套 API**（dev/RC/第二份安装）—— 见 §0 的 R1 不变量；同一时刻只允许一个控制面 |
 | PostgreSQL 失败 | `docker logs floatctf-postgres` |
 | API 因 Redis 启动失败 | `docker logs floatctf-redis`、`docker exec floatctf-redis redis-cli ping`；Redis 必须 healthy 且 API bootstrap PING 成功 |

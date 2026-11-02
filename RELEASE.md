@@ -3,7 +3,7 @@
 本文档是 **v1.0 的人工发布清单**：发布由 CI 自动执行（`.github/workflows/release.yml`），
 本清单只规定人在**什么时机**做**什么动作**、以及**看什么证据**才算通过。
 
-> **当前状态**：`v1.0.4` 已发布（2026-10-30）—— 11 个文件产物 + 4 个镜像在 GHCR；
+> **当前状态**：`v1.0.4` 已发布（2026-10-30）—— 11 个文件产物 + 4 个镜像在 Docker Hub；
 > 4 个镜像已用 `scripts/publish-dockerhub.sh` 手工补推到 Docker Hub（`docker.io/floatctf/*`）。
 > 下一个 tag 起由 `release.yml` 自动双推。
 
@@ -65,39 +65,39 @@ v1.0 有**两条产物通道**，发布时必须**两条都验证**：
 | 10 | `floatctf-frontend-runtime-<V>.tgz` | `@floatctf/frontend-runtime` |
 | 11 | `SHA256SUMS` | **覆盖 1–10 全部文件产物**的 sha256（**不含自身**） |
 
-### 0.2 通道 B —— GHCR OCI 运行时镜像（3 个）
+### 0.2 通道 B —— Docker Hub OCI 镜像（4 个：API + 3 个运行时）
 
-AWD / AWDP 的运行时服务镜像不再"随 release 文件分发"；**GHCR 是规范在线分发通道**：
+AWD / AWDP 的运行时服务镜像不再"随 release 文件分发"；**Docker Hub 是唯一在线分发通道**（API 镜像也在此）：
 
 ```text
-ghcr.io/floatctf/awd-flagserver:<V>
-ghcr.io/floatctf/awd-judgeserver:<V>
-ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infra/awdp-judgeserver 不再使用
+docker.io/floatctf/awd-flagserver:<V>
+docker.io/floatctf/awd-judgeserver:<V>
+docker.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infra/awdp-judgeserver 不再使用
 ```
 
 - 由 tag 触发的 `release.yml` 推送（`runtime-images` job 复用
-  `scripts/build-runtime-images.sh --registry ghcr.io/floatctf --push`）；
-  `packages: write` **只**出现在 tag 发布路径上（PR / 分支 dispatch / RC **永不**推送镜像）。
+  `scripts/build-runtime-images.sh --registry docker.io/floatctf --push`）；
+  Docker Hub 登录**只**出现在 tag 发布路径上（PR / 分支 dispatch / RC **永不**推送镜像）。
 - 本地/开发构建（不接 registry）仍使用本地历史名 `floatctf/awd-flagserver:<tag>`、
   `floatctf/awd-judgeserver:<tag>`、`floatctf/infra/awdp-judgeserver:<tag>`（awdp 的
   `infra/` 段只为向后兼容保留）。
 - 离线宿主仍可用本地逃生通道：在源码签出上
   `sudo bash scripts/build-runtime-images.sh --tag <V>`（本地历史名）或
-  `--registry ghcr.io/floatctf --tag <V>`（规范名），再 `docker save` / `docker load`。
+  `--registry docker.io/floatctf --tag <V>`（规范名），再 `docker save` / `docker load`。
 - 安装器渲染 `config/floatctf.toml` 与检查镜像都使用**同一个** `FLOATCTF_RUNTIME_IMAGE_REGISTRY`
-  （默认 `ghcr.io/floatctf`），是运行时镜像 ref 的单一事实来源。
+  （默认 `docker.io/floatctf`），是运行时镜像 ref 的单一事实来源。
 
 ### 0.3 版本占位符
 
 `<V>` = tag 去掉前导 `v`（`v1.0.0` → `1.0.0`）。它是**平台版本**，同时用于文件产物命名
-与 GHCR image tag。安装器渲染生产配置时用同一个值（`${VERSION}`）。
+与 Docker Hub image tag。安装器渲染生产配置时用同一个值（`${VERSION}`）。
 
 ---
 
 ## 1. Pre-release（发布前）
 
 - [ ] `release/v1.0` 合入后的 `main` 分支 CI 全绿（fmt / lint / test / 前端 `vite build && tsc` / 架构门禁）。
-- [ ] **两条产物通道都有核对方案**：文件产物由 `release.yml` 产出；3 个 GHCR 镜像由 tag 路径推送
+- [ ] **两条产物通道都有核对方案**：文件产物由 `release.yml` 产出；4 个 Docker Hub 镜像由 tag 路径推送
       （见 §3）。缺任何一条都**不是**完成的发布。
 - [ ] 已核对上一版 RC 的 VERDICT：**B2**（宿主级 AWD/AWDP E2E）、**B3**（普通用户 + sudo 的
       安装/升级/卸载/purge 全流程）是否真正执行。未完成之前不得声称已通过宿主级验证。
@@ -113,7 +113,7 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
 - [ ] 版本一致性对齐（见下表）。
 - [ ] 变更日志 / 发布说明已起草。
 - [ ] 已复核 release workflow 的安全语义（tag 才发布、dispatch 默认只上传 workflow artifact、
-      权限最小化、`packages: write` 只在 tag 发布路径）。
+      权限最小化、Docker Hub 凭据只在 tag 发布路径）。
 - [ ] 确认 CI 会产出 `SHA256SUMS` 与 3 个 SDK tarball（无需人工上传）。
 
 ### 1.1 版本一致性
@@ -144,7 +144,7 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
   ```
 
 - [ ] **不要**在 dirty tree 上打 tag；tag 必须指向已通过 CI 的那个 commit。
-- [ ] 明确认知：**tag 就是发布开关** —— 推送 `v*` tag 会同时打开文件产物发布**和** GHCR 镜像推送。
+- [ ] 明确认知：**tag 就是发布开关** —— 推送 `v*` tag 会同时打开文件产物发布**和** Docker Hub 镜像推送。
 
 ---
 
@@ -166,53 +166,54 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
 - [ ] 核对 `ops-tools.tar.gz` 内含 `backup.sh`、`restore.sh`、`db/migrate.sh`、`db/migrations/*.sql`。
 - [ ] 核对 GitHub Release 页面包含全部 11 个产物，且 `generate_release_notes` 生成的内容已人工过目。
 
-### 3.2 通道 B —— GHCR 运行时镜像（tag 路径专属）
+### 3.2 通道 B —— Docker Hub 运行时镜像（tag 路径专属）
 
-- [ ] 确认 workflow 在 tag 发布路径上做了 GHCR 登录（`GITHUB_TOKEN` + `packages: write`）并
+- [ ] 确认 workflow 在 tag 发布路径上做了 Docker Hub 登录（`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`）并
       **推送 3 个镜像**。实现方式（供核对）：`release.yml` 的 `runtime-images` job 唯一持有
-      `packages: write`，只在 tag 守卫的 publish 路径上执行 `docker login ghcr.io`，然后复用
+      只在 tag 守卫的 publish 路径上执行 `docker login docker.io`，然后复用
       本地/RC 的同一契约脚本：
 
       ```bash
       bash scripts/build-runtime-images.sh \
-        --registry ghcr.io/floatctf --tag 1.0.0 ... --push
+        --registry docker.io/floatctf --tag 1.0.0 ... --push
       ```
 
       产出：
 
       ```text
-      ghcr.io/floatctf/awd-flagserver:1.0.0
-      ghcr.io/floatctf/awd-judgeserver:1.0.0
-      ghcr.io/floatctf/awdp-judgeserver:1.0.0      # awdp 已扁平化（无 infra/ 段）
+      docker.io/floatctf/awd-flagserver:1.0.0
+      docker.io/floatctf/awd-judgeserver:1.0.0
+      docker.io/floatctf/awdp-judgeserver:1.0.0      # awdp 已扁平化（无 infra/ 段）
       ```
 
-- [ ] 确认 `--push` **只推版本 tag、绝不推 `:latest`**；并确认 `packages: write` **没有**
+- [ ] 确认 `--push` **只推版本 tag、绝不推 `:latest`**；并确认 Docker Hub 登录**没有**
       出现在 PR / 分支 dispatch / RC 路径上（RC 只应上传 workflow artifact，永不推送镜像）。
-- [ ] 从一台干净的宿主核实 3 个 ref 真的可拉取且 tag 正确：
+- [ ] 从一台干净的宿主核实 4 个 ref 真的可拉取且 tag 正确：
 
   ```bash
-  docker pull ghcr.io/floatctf/awd-flagserver:1.0.0
-  docker pull ghcr.io/floatctf/awd-judgeserver:1.0.0
-  docker pull ghcr.io/floatctf/awdp-judgeserver:1.0.0
+  docker pull docker.io/floatctf/awd-flagserver:1.0.0
+  docker pull docker.io/floatctf/awd-judgeserver:1.0.0
+  docker pull docker.io/floatctf/awdp-judgeserver:1.0.0
+  docker pull docker.io/floatctf/floatctf-api:1.0.0
   ```
 
-- [ ] 若 GHCR 包可见性需要设置（public / 与仓库关联），在 Release 页面发布后确认匿名 `docker pull`
-      可用；否则只能靠 `docker login ghcr.io`。
-- [ ] 确认安装器的镜像检查与 GHCR ref **同源**：安装器渲染 `config/floatctf.toml` 与检查镜像都用
-      `FLOATCTF_RUNTIME_IMAGE_REGISTRY`（默认 `ghcr.io/floatctf`），避免"模板写 A、安装器查 B"。
+- [ ] 若 Docker Hub 包可见性需要设置（public / 与仓库关联），在 Release 页面发布后确认匿名 `docker pull`
+      可用；否则只能靠 `docker login docker.io`。
+- [ ] 确认安装器的镜像检查与 Docker Hub ref **同源**：安装器渲染 `config/floatctf.toml` 与检查镜像都用
+      `FLOATCTF_RUNTIME_IMAGE_REGISTRY`（默认 `docker.io/floatctf`），避免"模板写 A、安装器查 B"。
       缺镜像时安装器 `die`；`--skip-runtime-images` 才降级为告警。
 
 ### 3.3 workflow 语义速查（已实现，供核对）
 
 | 触发 | 行为 |
 |---|---|
-| `push` tag `v*` | build + verify + 发布 GitHub Release（11 个文件产物）+ 推送 3 个 GHCR 镜像 |
+| `push` tag `v*` | build + verify + 发布 GitHub Release（11 个文件产物）+ 推送 4 个 Docker Hub 镜像 |
 | `workflow_dispatch`（默认） | build + verify + 仅上传 workflow artifact；**不**建 Release、**不**打 tag、**不**发 npm、**不**推镜像 |
 | `workflow_dispatch` + `publish=true` | 仅当 ref 是 `v*` tag 才发布；否则 **fail closed** |
 | `workflow_dispatch` + `version` 输入 | 分支 dispatch 用于制品命名；缺 `version` 的分支 dispatch **fail closed** |
 
 权限：workflow 与 `build` job 为 `contents: read`；只有 tag 发布路径有 `contents: write` 与
-`packages: write`，且带 tag 守卫。另有**非发布** RC workflow `.github/workflows/rc.yml`
+Docker Hub 登录，且带 tag 守卫。另有**非发布** RC workflow `.github/workflows/rc.yml`
 （仅 `workflow_dispatch`、`contents: read`、上传 `floatctf-rc-<V>`，永不发布/打 tag/发 npm/推镜像）。
 
 ---
@@ -231,7 +232,7 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
 
 - [ ] 在下载目录执行 `sha256sum -c SHA256SUMS` 通过。
 - [ ] 安装器**成功获取 3 个运行时镜像**（`docker image inspect` 命中
-      `ghcr.io/floatctf/*:<V>` 或 `docker pull` 成功）；Jeopardy-only 宿主可用
+      `docker.io/floatctf/*:<V>` 或 `docker pull` 成功）；Jeopardy-only 宿主可用
       `--skip-runtime-images`（env `FLOATCTF_SKIP_RUNTIME_IMAGES=1`）降级为告警。
 - [ ] 确认安装器在改动前完成了 **`python3` + `tomllib`** 能力检查（Python ≥ 3.11）。
 - [ ] 在真实域名上验证 HTTPS（**B4：真实公网域名 / 公共 DNS / Let's Encrypt 签发未被 RC 验证，
@@ -264,7 +265,7 @@ ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化；旧名 floatctf/infr
 
 - ❌ 不要 force-push（尤其已推送的 tag / `main`）。
 - ❌ 不要从分支 / PR dispatch 发布（`publish=true` 在非 tag ref 上会 fail closed）。
-- ❌ 不要让 PR / 分支 / RC 路径获得 `packages: write` 或推送 GHCR 镜像。
+- ❌ 不要让 PR / 分支 / RC 路径获得镜像推送凭据或推送 Docker Hub 镜像。
 - ❌ 不要编辑、重命名、squash 任何**已冻结的历史 migration**；Schema 变更只能新增迁移。
 - ❌ 不要在既有 Default Frontend 版本号下改动字节（版本**不可变**：同 id+version 必须逐字节一致；要改就升版本号）。
 - ❌ 不要用新的 `merged.sql` 覆盖既有数据库（只用于 fresh DB）。

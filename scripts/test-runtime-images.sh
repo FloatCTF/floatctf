@@ -84,8 +84,8 @@ fi
 
 check "runtime-images 调用唯一构建契约 scripts/build-runtime-images.sh" \
     grep -q -F 'scripts/build-runtime-images.sh' "$TMP_TEST_DIR/release-runtime.txt"
-check "runtime-images 使用 canonical registry 前缀 ghcr.io/floatctf" \
-    grep -q -F -- '--registry ghcr.io/floatctf' "$TMP_TEST_DIR/release-runtime.txt"
+check "runtime-images 使用 canonical registry 前缀 docker.io/floatctf" \
+    grep -q -F -- '--registry docker.io/floatctf' "$TMP_TEST_DIR/release-runtime.txt"
 check "runtime-images tag 来自 guard 输出的版本（needs.build.outputs.version）" \
     grep -q -F 'needs.build.outputs.version' "$TMP_TEST_DIR/release-runtime.txt"
 check "runtime-images 显式 --push（推送是显式动作，不是默认）" \
@@ -127,24 +127,19 @@ done
 check "release.yml 不含裸 docker push" \
     bash -c '! grep -qE "docker[[:space:]]+push" "$1"' _ "$TMP_TEST_DIR/release.nocomment.yml"
 
-check "release.yml 调用 mirror-images.sh 做 Docker Hub 双推" \
-    grep -q -F 'mirror-images.sh' "$TMP_TEST_DIR/release.nocomment.yml"
-
 # 手工发布脚本必须能在无凭据/无构建产物的机器上预览（只打印命令）。
 check "publish-dockerhub.sh --dry-run 可离线预览" \
     bash -c 'cd "$1" && bash scripts/publish-dockerhub.sh --dry-run --skip-build >/dev/null' _ "$ROOT"
 
 # ── 3. packages: write 只在推送 job ─────────────────────────────────────────
-echo "== 3. packages: write 权限最小化 =="
+echo "== 3. 不再申请 packages: write（Docker Hub 通道）=="
 
 pkg_count="$(grep_count "$TMP_TEST_DIR/release.nocomment.yml" 'packages:[[:space:]]*write')"
-if [ "$pkg_count" = "1" ]; then
-    pass "release.yml 全文件恰好 1 处 packages: write"
+if [ "$pkg_count" = "0" ]; then
+    pass "release.yml 全文件 0 处 packages: write"
 else
-    fail "release.yml packages: write 出现 $pkg_count 次（期望恰好 1 次）"
+    fail "release.yml packages: write 出现 $pkg_count 次（期望 0 次）"
 fi
-check "packages: write 在 runtime-images job" \
-    grep -q -E 'packages:[[:space:]]*write' "$TMP_TEST_DIR/release-runtime.txt"
 check "runtime-images 同时保持 contents: read" \
     grep -q -E 'contents:[[:space:]]*read' "$TMP_TEST_DIR/release-runtime.txt"
 for block in build publish; do
@@ -230,16 +225,16 @@ if [ "$BUILD_HELP_RC" -eq 0 ]; then
 else
     fail "build-runtime-images.sh --help 退出 0（实际 rc=$BUILD_HELP_RC）"
 fi
-for ref in ghcr.io/floatctf/awd-flagserver:1.0.0 \
-           ghcr.io/floatctf/awd-judgeserver:1.0.0 \
-           ghcr.io/floatctf/awdp-judgeserver:1.0.0; do
+for ref in docker.io/floatctf/awd-flagserver:1.0.0 \
+           docker.io/floatctf/awd-judgeserver:1.0.0 \
+           docker.io/floatctf/awdp-judgeserver:1.0.0; do
     check "--help 列出 canonical ref $ref" \
         bash -c 'grep -qF -- "$2" <<<"$1"' _ "$BUILD_HELP" "$ref"
 done
 # 动态解析：--registry/--tag 放在 --help 之前必须反映在"当前解析"清单里。
-BUILD_HELP2="$(bash "$BUILD_SH" --registry ghcr.io/floatctf --tag 1.0.0 --help 2>&1 || true)"
+BUILD_HELP2="$(bash "$BUILD_SH" --registry docker.io/floatctf --tag 1.0.0 --help 2>&1 || true)"
 check "--help 动态反映 --registry/--tag（refs 与实际构建一致，不会文档漂移）" \
-    bash -c 'for r in ghcr.io/floatctf/awd-flagserver:1.0.0 ghcr.io/floatctf/awd-judgeserver:1.0.0 ghcr.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "$r" <<<"$1" || exit 1; done' _ "$BUILD_HELP2"
+    bash -c 'for r in docker.io/floatctf/awd-flagserver:1.0.0 docker.io/floatctf/awd-judgeserver:1.0.0 docker.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "$r" <<<"$1" || exit 1; done' _ "$BUILD_HELP2"
 check "--help 文档化 awdp 扁平化 + 无 registry 的历史名" \
     bash -c 'grep -qF "扁平化" <<<"$1" && grep -qF "floatctf/infra/awdp-judgeserver" <<<"$1"' _ "$BUILD_HELP"
 check "--help 文档化 --push 默认关闭且不推 :latest" \
@@ -286,29 +281,29 @@ run_stub() { # <log-name> <script-args...>
     return $?
 }
 
-if run_stub default.log --registry ghcr.io/floatctf --tag 1.0.0; then
+if run_stub default.log --registry docker.io/floatctf --tag 1.0.0; then
     pass "stub-docker：--registry/--tag（无 --push）执行成功"
 else
     fail "stub-docker：--registry/--tag（无 --push）执行失败"
     sed 's/^/      /' "$TMP_TEST_DIR/default.log.out" | tail -5
 fi
 check "stub-docker：默认调用里没有任何 push（--push 不是默认）" \
-    bash -c '! grep -qE "docker push|push ghcr" "$1"' _ "$TMP_TEST_DIR/default.log"
+    bash -c '! grep -qE "docker push|push docker.io" "$1"' _ "$TMP_TEST_DIR/default.log"
 check "stub-docker：默认确实构建了三个 canonical ref（证明日志捕获有效）" \
-    bash -c 'for r in ghcr.io/floatctf/awd-flagserver:1.0.0 ghcr.io/floatctf/awd-judgeserver:1.0.0 ghcr.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "$r" "$1" || exit 1; done' _ "$TMP_TEST_DIR/default.log"
+    bash -c 'for r in docker.io/floatctf/awd-flagserver:1.0.0 docker.io/floatctf/awd-judgeserver:1.0.0 docker.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "$r" "$1" || exit 1; done' _ "$TMP_TEST_DIR/default.log"
 check "stub-docker：默认不执行 docker login（脚本永不 login）" \
     bash -c '! grep -qE "docker login" "$1"' _ "$TMP_TEST_DIR/default.log"
 
 # 正向前置：同样的 stub + --push 必须真的出现 push —— 否则上面的负向断言
 # 只是因为 harness 抓不到 push 而"假通过"。
-if run_stub push.log --registry ghcr.io/floatctf --tag 1.0.0 --push; then
+if run_stub push.log --registry docker.io/floatctf --tag 1.0.0 --push; then
     pass "stub-docker：--push 执行成功"
 else
     fail "stub-docker：--push 执行失败"
     sed 's/^/      /' "$TMP_TEST_DIR/push.log.out" | tail -5
 fi
 check "stub-docker：--push 时三个版本 tag 都被推送" \
-    bash -c 'for r in ghcr.io/floatctf/awd-flagserver:1.0.0 ghcr.io/floatctf/awd-judgeserver:1.0.0 ghcr.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "docker push $r" "$1" || exit 1; done' _ "$TMP_TEST_DIR/push.log"
+    bash -c 'for r in docker.io/floatctf/awd-flagserver:1.0.0 docker.io/floatctf/awd-judgeserver:1.0.0 docker.io/floatctf/awdp-judgeserver:1.0.0; do grep -qF -- "docker push $r" "$1" || exit 1; done' _ "$TMP_TEST_DIR/push.log"
 check "stub-docker：--push 绝不推送 :latest（本地兼容 tag）" \
     bash -c '! grep -qE "docker push .*:latest" "$1"' _ "$TMP_TEST_DIR/push.log"
 # 没有 registry 时不允许推送（本地 floatctf/... 命名不推往任何 registry）。
@@ -323,7 +318,7 @@ fi
 echo "== 9. bash -n 语法门禁 =="
 
 for s in "$INSTALL_SH" "$BUILD_SH" "$ROOT/scripts/build-api-image.sh" \
-         "$ROOT/scripts/mirror-images.sh" "$ROOT/scripts/publish-dockerhub.sh" \
+         "$ROOT/scripts/publish-dockerhub.sh" \
          "$ROOT/scripts/test-installer-contract.sh" \
          "$ROOT/scripts/test-runtime-images.sh" "$ROOT/scripts/test-release-workflow.sh" \
          "$ROOT/scripts/release-checksums.sh"; do

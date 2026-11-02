@@ -20,7 +20,7 @@
 | PostgreSQL | Docker 容器 | Docker daemon（任意后端）、`127.0.0.1` 回环端口 |
 | RustFS | Docker 容器 | 同上（仅回环 9000/9001）；healthcheck 用镜像内 BusyBox `nc` 做 **HTTP `/health` 探针** |
 | Caddy | Docker 容器（Compose default bridge + 端口映射） | 映射宿主 80/443（HTTP/HTTPS）；API/RustFS 端口只在 Compose 网络内 |
-| AWD/AWDP 运行时镜像（FlagServer / JudgeServer） | Docker 镜像 + 赛事动态容器 | 从 **GHCR** 拉取 `ghcr.io/floatctf/{awd-flagserver,awd-judgeserver,awdp-judgeserver}:<V>`，或离线本地构建/`docker load` |
+| AWD/AWDP 运行时镜像（FlagServer / JudgeServer） | Docker 镜像 + 赛事动态容器 | 从 **Docker Hub** 拉取 `docker.io/floatctf/{awd-flagserver,awd-judgeserver,awdp-judgeserver}:<V>`，或离线本地构建/`docker load` |
 | AWD/AWDP 动态资源 | 容器 / 网络 / nft / WireGuard | helper 的 `CAP_NET_ADMIN` + docker 组（经 `helper-control.sock` / `helper-docker.sock` 创建子网/桥/nftables/WireGuard） |
 
 > 注：RustFS 的 HTTP `/health` 探针（`timeout 10s` / `interval 10s` / `retries 12` /
@@ -101,7 +101,7 @@ rustfs 10001）。Redis 数据在 Compose named volume `floatctf-redis-data`。
 
 1. 新主机：`sudo env SITE_ADDRESS=ctf.example.com ./scripts/install.sh`（下载 release tarball + 建用户/布局/内核参数/权限 + 部署）。
    需要 `python3` ≥ 3.11（stdlib `tomllib`）。
-2. 运行时镜像：新主机需能拉取 `ghcr.io/floatctf/*:<V>`；离线/内网则按
+2. 运行时镜像：新主机需能拉取 `docker.io/floatctf/*:<V>`；离线/内网则按
    [INSTALL.md §6.2](../../INSTALL.md) 在源码机上 `scripts/build-runtime-images.sh --tag <V>`
    后 `docker save` / `docker load`，并把 TOML 的镜像 ref 指向本地名。
 3. 数据迁移：`data/postgres/`、`data/rustfs/`、`data/caddy/` 与 `data/caddy-config/` 物理拷贝（原主机停容器后拷贝
@@ -118,5 +118,5 @@ rustfs 10001）。Redis 数据在 Compose named volume `floatctf-redis-data`。
 - `nft list table inet floatctf_awd` —— AWD 赛事防火墙表（单一全局表，R1）。
 - `docker network ls | grep -E 'fctf-awd|fctf-awdp-practice'` —— AWD / AWDP 赛事子网。
 - `docker ps -a --filter 'name=^fctf-awdp-practice'` —— AWDP 练习容器（**固定命名**，R1）。
-- `docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(ghcr\.io/floatctf|floatctf)/'`
+- `docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(docker\.io/floatctf|floatctf)/'`
   —— 运行时镜像是否齐备（AWD/AWDP 必需，见 §7 第 2 步 / INSTALL.md §6.2）。

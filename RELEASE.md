@@ -3,10 +3,9 @@
 本文档是 **v1.0 的人工发布清单**：发布由 CI 自动执行（`.github/workflows/release.yml`），
 本清单只规定人在**什么时机**做**什么动作**、以及**看什么证据**才算通过。
 
-> **尚未发布：Phase 13 / 13.1 没有打任何 tag、没有创建 GitHub Release、没有 npm publish、
-> 也没有向 GHCR 推送任何镜像。**
-> 本清单里的命令都是**待执行**（或事后回滚）的操作说明，不是已经发生的事实。
-> 当前仓库没有 `v1.0.0` tag，也没有 v1.0.0 的 GitHub Release / GHCR image。
+> **当前状态**：`v1.0.4` 已发布（2026-10-30）—— 11 个文件产物 + 3 个运行时镜像在 GHCR。
+> Docker Hub 双推自下一个 tag 起生效；需要补发历史版本时用
+> `scripts/publish-dockerhub.sh --version <V>`（见下）。
 
 > ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
 > 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源
@@ -22,6 +21,27 @@
 |---|---|
 | [INSTALL.md](./INSTALL.md) | 生产安装、部署、运维、卸载权威说明 |
 | [README.md](./README.md) | 项目概览与产物说明 |
+
+---
+
+## 0.0 手工发布镜像（不打 tag）
+
+CI 只在 `v*` tag 上发布。要提前验证 Docker Hub 通道、或补发某个版本：
+
+```bash
+DOCKERHUB_USERNAME=floatctf DOCKERHUB_TOKEN=<PAT> \
+  scripts/publish-dockerhub.sh --version 1.0.5 --yes
+```
+
+脚本四步：release 构建（packages/web/cargo）→ 装配 11 个产物 → 构建 4 个镜像 →
+推送 `docker.io/floatctf/{awd-flagserver,awd-judgeserver,awdp-judgeserver,floatctf-api}`。
+
+```bash
+scripts/publish-dockerhub.sh --dry-run --skip-build     # 只打印命令
+scripts/publish-dockerhub.sh --skip-build --yes         # 复用已有产物与 target/release
+```
+
+> 注意：本脚本推送的是**当前源码**构建出的镜像，与 tag 发布等价但不创建 GitHub Release。
 
 ---
 

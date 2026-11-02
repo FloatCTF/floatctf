@@ -130,6 +130,10 @@ check "release.yml 不含裸 docker push" \
 check "release.yml 调用 mirror-images.sh 做 Docker Hub 双推" \
     grep -q -F 'mirror-images.sh' "$TMP_TEST_DIR/release.nocomment.yml"
 
+# 手工发布脚本必须能在无凭据/无构建产物的机器上预览（只打印命令）。
+check "publish-dockerhub.sh --dry-run 可离线预览" \
+    bash -c 'cd "$1" && bash scripts/publish-dockerhub.sh --dry-run --skip-build >/dev/null' _ "$ROOT"
+
 # ── 3. packages: write 只在推送 job ─────────────────────────────────────────
 echo "== 3. packages: write 权限最小化 =="
 
@@ -319,7 +323,7 @@ fi
 echo "== 9. bash -n 语法门禁 =="
 
 for s in "$INSTALL_SH" "$BUILD_SH" "$ROOT/scripts/build-api-image.sh" \
-         "$ROOT/scripts/mirror-images.sh" \
+         "$ROOT/scripts/mirror-images.sh" "$ROOT/scripts/publish-dockerhub.sh" \
          "$ROOT/scripts/test-installer-contract.sh" \
          "$ROOT/scripts/test-runtime-images.sh" "$ROOT/scripts/test-release-workflow.sh" \
          "$ROOT/scripts/release-checksums.sh"; do

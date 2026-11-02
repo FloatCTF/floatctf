@@ -296,17 +296,16 @@ AWD / AWDP 需要三个运行时服务镜像。**Docker Hub 是规范在线分�
 workflow 用 Docker Hub 凭据推送（**仅** tag 发布路径，PR / 分支 dispatch / RC 永不推送）：
 
 ```text
-docker.io/floatctf/floatctf-api:<V>          # API 镜像（compose 方式的默认；install.sh 仍本地构建）
+docker.io/floatctf/floatctf-api:<V>          # API 镜像（install.sh 与 compose 都直接拉取）
 docker.io/floatctf/awd-flagserver:<V>
 docker.io/floatctf/awd-judgeserver:<V>
 docker.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
 ```
 
-同一批镜像同时以相同 digest 推送到 Docker Hub（`docker.io/floatctf/*`，与上面同名），
-国内可改用镜像站拉取；安装器侧只需：
+国内可改用 Docker Hub 镜像站拉取；安装器侧只需：
 
 ```bash
-FLOATCTF_RUNTIME_IMAGE_REGISTRY=docker.io/floatctf sudo -E bash install.sh --mode host
+FLOATCTF_RUNTIME_IMAGE_REGISTRY=<mirror>/floatctf sudo -E bash install.sh --mode host
 ```
 
 > AWD / AWDP 需要后三个运行时镜像；API 镜像只被 `docker compose` 方式使用，固定
@@ -363,21 +362,16 @@ release 的 Docker Hub 推送由 `release.yml` 的 `runtime-images` job 完成�
 **管理员自定义过的这些值会被保留**（见 §7.1）。参考取值见
 [infra/config/floatctf.prod.toml](infra/config/floatctf.prod.toml)。
 
-### 6.3 API runtime image 仍在目标机构建
+### 6.3 API 镜像同样直接拉取
 
-仍然发布原始 API binary，是为了让安装器用同一份 Dockerfile 在目标机本地构建 API image
-（`floatctf/api:<V>`，默认用户非 root），从而**不依赖外部容器 registry 也能部署应用面**；
-运行时服务镜像（§6.2）才走 Docker Hub：
+安装器**不再本地构建** API 镜像，而是和运行时镜像一样从 Docker Hub 拉取
+`docker.io/floatctf/floatctf-api:<V>`（镜像已含非 root 用户 65532）。安装器里因此
+没有 Dockerfile，也不再下载 52 MB 的 API 二进制。
 
-```text
-infra/docker/api/Dockerfile
-        +
-release floatctf binary
-        ↓
-floatctf/api:<V>
-```
+离线机：在有网络的机器 `docker pull` 后 `docker save` / `docker load`，再重跑安装器。
 
-Release CI 固定 Ubuntu 24.04 runner，并实际构建一次 production runtime image，校验 image 默认用户为非 root。
+Release 仍发布原始 `floatctf` 二进制，用于 CI 构建一次 production image 校验默认用户非 root，
+以及 `scripts/publish-dockerhub.sh` 手工补发镜像。
 
 `merged.sql` 由 migrations 确定性生成，只用于 fresh production database。
 

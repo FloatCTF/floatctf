@@ -4,7 +4,7 @@
 #
 # 为什么单独一个脚本：release.yml 里**禁止**出现裸 `docker push`（推送必须由受守卫的
 # 脚本完成，见 scripts/test-runtime-images.sh）。API 镜像与三个运行时镜像的构建方式不同
-# （需要 release 二进制 + deploy/api/Dockerfile），因此单独成脚本而不是塞进
+# （需要 release 二进制 + infra/docker/api/Dockerfile），因此单独成脚本而不是塞进
 # build-runtime-images.sh。
 #
 # 用法：
@@ -68,7 +68,7 @@ info "构建 $image（GID=$GID）"
 docker build \
     --build-arg "FLOATCTF_VERSION=$TAG" \
     --build-arg "FLOATCTF_GID=$GID" \
-    -f "$ROOT/deploy/api/Dockerfile" \
+    -f "$ROOT/infra/docker/api/Dockerfile" \
     -t "$image" \
     "$work"
 

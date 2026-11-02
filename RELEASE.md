@@ -53,7 +53,7 @@ v1.0 有**两条产物通道**，发布时必须**两条都验证**：
 
 | # | 产物 | 说明 |
 |---|---|---|
-| 1 | `floatctf` | API release 二进制（installer 用它本地构建生产 image） |
+| 1 | `floatctf` | API release 二进制（CI 校验 production image；`publish-dockerhub.sh` 手工补发镜像用） |
 | 2 | `floatctf-helper` | 宿主控制面二进制 |
 | 3 | `web-dist.tar.gz` | bootstrap 引导页 + 版本化 Default Frontend 制品 |
 | 4 | `merged.sql` | fresh PostgreSQL bootstrap |

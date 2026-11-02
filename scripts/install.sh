@@ -18,7 +18,7 @@
 #     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> \
 #                         --migrate-url <sql> --frontend-manager-url <script> \
 #                         --ops-url <ops-tools.tar.gz>
-#   流程：主机初始化 → 下载 6 产物 → 本地构建 API runtime image → 部署 →
+#   流程：主机初始化 → 下载 5 产物 + 拉取 API 镜像 → 部署 →
 #         安装 bootstrap 静态页 + Default Frontend + 前端管理器 frontend.sh →
 #         安装运维工具（backup.sh / restore.sh / db/migrate.sh + migrations）→
 #         既有数据库则先 apply 新增迁移（fresh 库由 merged.sql bootstrap，自动跳过）→
@@ -49,8 +49,8 @@
 #   sudo ./scripts/install.sh --develop --helper-bin <target/debug/floatctf-helper>
 #   仅准备主机、系统用户/组、内核参数与 floatctf-helper，不创建 dev systemd infra。
 #
-# 环境变量（覆盖 6 个产物 URL / release 版本 / 迁移开关 / 运行时镜像）：
-#   FLOATCTF_API_URL / FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
+# 环境变量（覆盖 5 个产物 URL / release 版本 / 迁移开关 / 运行时镜像）：
+#   FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
 #   FLOATCTF_MIGRATE_URL / FLOATCTF_FRONTEND_MANAGER_URL / FLOATCTF_OPS_URL /
 #   FLOATCTF_VERSION / FLOATCTF_SKIP_MIGRATIONS /
 #   FLOATCTF_SKIP_RUNTIME_IMAGES / FLOATCTF_RUNTIME_IMAGE_REGISTRY /
@@ -100,7 +100,6 @@ export RUNTIME_IMAGE_REGISTRY
 # 默认取 GitHub 的「最新正式发布」：releases/latest/download/<asset> 永远指向最新 tag，
 # 因此 `sudo bash install.sh` 不需要任何参数即可装/升到最新版。
 RELEASES_URL_BASE="https://github.com/FloatCTF/floatctf/releases"
-DEFAULT_API_URL="$RELEASES_URL_BASE/latest/download/floatctf"
 DEFAULT_HELPER_URL="$RELEASES_URL_BASE/latest/download/floatctf-helper"
 DEFAULT_WEB_URL="$RELEASES_URL_BASE/latest/download/web-dist.tar.gz"
 DEFAULT_MIGRATE_URL="$RELEASES_URL_BASE/latest/download/merged.sql"
@@ -142,7 +141,6 @@ pin_default_urls_to_version() { # <version>
     pin_url() {
         printf '%s' "$1" | sed "s#^${RELEASES_URL_BASE}/latest/download/#${RELEASES_URL_BASE}/download/v${v}/#"
     }
-    [ "$API_URL_EXPLICIT" -eq 1 ] || API_URL="$(pin_url "$API_URL")"
     [ "$HELPER_URL_EXPLICIT" -eq 1 ] || HELPER_URL="$(pin_url "$HELPER_URL")"
     [ "$WEB_URL_EXPLICIT" -eq 1 ] || WEB_URL="$(pin_url "$WEB_URL")"
     [ "$MIGRATE_URL_EXPLICIT" -eq 1 ] || MIGRATE_URL="$(pin_url "$MIGRATE_URL")"
@@ -182,7 +180,6 @@ choose_install_mode() {
 }
 
 # ── 参数 ──────────────────────────────────────────────────────────────────────
-API_URL="$DEFAULT_API_URL"
 HELPER_URL="$DEFAULT_HELPER_URL"
 WEB_URL="$DEFAULT_WEB_URL"
 MIGRATE_URL="$DEFAULT_MIGRATE_URL"
@@ -190,7 +187,6 @@ FRONTEND_MANAGER_URL="$DEFAULT_FRONTEND_MANAGER_URL"
 OPS_URL="$DEFAULT_OPS_URL"
 VERSION="${FLOATCTF_VERSION:-}"
 VERSION_EXPLICIT=0
-API_URL_EXPLICIT=0
 HELPER_URL_EXPLICIT=0
 WEB_URL_EXPLICIT=0
 MIGRATE_URL_EXPLICIT=0
@@ -212,7 +208,6 @@ RESET_RUNTIME_IMAGES=0
 KEEP_RUNTIME_IMAGES=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --api-url) API_URL="${2:?--api-url 需要一个地址参数}"; API_URL_EXPLICIT=1; shift ;;
         --helper-url) HELPER_URL="${2:?--helper-url 需要一个地址参数}"; HELPER_URL_EXPLICIT=1; shift ;;
         --helper-bin) HELPER_BIN="${2:?--helper-bin 需要本地二进制路径}"; shift ;;
         --web-url) WEB_URL="${2:?--web-url 需要一个地址参数}"; WEB_URL_EXPLICIT=1; shift ;;
@@ -242,7 +237,6 @@ while [ $# -gt 0 ]; do
 done
 # 环境变量兜底。优先级：显式命令行参数 > FLOATCTF_* 环境变量 > 默认值/自动推导。
 # （shell 惯例：显式传参优先，环境变量只作未传参时的兜底，避免静默覆盖。）
-[ "$API_URL_EXPLICIT" -eq 1 ] || API_URL="${FLOATCTF_API_URL:-$API_URL}"
 [ "$HELPER_URL_EXPLICIT" -eq 1 ] || HELPER_URL="${FLOATCTF_HELPER_URL:-$HELPER_URL}"
 [ "$WEB_URL_EXPLICIT" -eq 1 ] || WEB_URL="${FLOATCTF_WEB_URL:-$WEB_URL}"
 [ "$MIGRATE_URL_EXPLICIT" -eq 1 ] || MIGRATE_URL="${FLOATCTF_MIGRATE_URL:-$MIGRATE_URL}"
@@ -259,7 +253,7 @@ fi
 # 传了版本则把默认地址钉到该 tag，避免 latest 在下载过程中漂移。
 # `--version latest` 等价于不传：交给下面的 latest 解析。
 [ "$VERSION" = "latest" ] && VERSION=""
-if [ -z "$VERSION" ] && [[ "$API_URL" =~ /releases/download/v?([^/]+)/ ]]; then
+if [ -z "$VERSION" ] && [[ "$WEB_URL" =~ /releases/download/v?([^/]+)/ ]]; then
     VERSION="${BASH_REMATCH[1]}"
 fi
 if [ -z "$VERSION" ] && [ "$DEVELOP" -eq 1 ] && [ -f apps/api/Cargo.toml ]; then
@@ -604,15 +598,12 @@ download_url() { # url dest
 }
 
 download_release() {
-    info "──── 第二阶段：下载 release 产物（6 URL）────"
+    info "──── 第二阶段：下载 release 产物（5 URL）────"
     TMP_STAGE_DIR="$(mktemp -d /tmp/floatctf-install.XXXXXX)"
 
-    # 1) API 二进制
-    mkdir -p "$TMP_STAGE_DIR/bin"
-    download_url "$API_URL" "$TMP_STAGE_DIR/bin/floatctf"
-    chmod 0755 "$TMP_STAGE_DIR/bin/floatctf"
+    # API 镜像不再本地构建：直接拉 Docker Hub 上已发布的 <V> 镜像（见 stage_release）。
 
-    # 2) 特权网络守护进程（单独 root-owned 安装，不放进 API 可写目录）
+    # 1) 特权网络守护进程（单独 root-owned 安装，不放进 API 可写目录）
     download_url "$HELPER_URL" "$TMP_STAGE_DIR/bin/floatctf-helper"
     chmod 0755 "$TMP_STAGE_DIR/bin/floatctf-helper"
 
@@ -1070,57 +1061,6 @@ CADDY_TMPL_EOF
     ok "已写出 Caddy 模板"
 }
 
-write_api_dockerfile() {
-    mkdir -p "$FLOATCTF_HOME/image/api"
-    cat > "$FLOATCTF_HOME/image/api/Dockerfile" <<'API_DOCKERFILE_EOF'
-FROM ubuntu:24.04
-
-ARG FLOATCTF_VERSION=unknown
-# 容器以 65532:${FLOATCTF_GID} 运行（GID 是宿主 floatctf 组的真实 gid，各机不同），
-# 镜像内的组必须用同一个 gid 才不会出现"组名解析不到"。
-ARG FLOATCTF_GID=65532
-
-# 运行期只需要：CA 证书（OIDC/出网 TLS）、curl（compose healthcheck）、tzdata。
-# 不装 python3：API 进程本身不执行任何 Python（迁移器在宿主侧运行）。
-# 基础镜像必须与 release 二进制的 glibc 基线一致：构建机是 ubuntu-24.04（glibc 2.39），
-# 用 debian bookworm（2.36）会直接 GLIBC_2.38 not found。
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY floatctf /usr/local/bin/floatctf
-RUN chmod 0755 /usr/local/bin/floatctf \
-    && mkdir -p /var/lib/floatctf/runtime \
-    && chown 65532:65532 /var/lib/floatctf/runtime
-
-# 为容器的数值身份建一个命名用户 floatctf：否则 Web 终端里的 shell 解析不到 uid，
-# bash 会打印 "I have no name!"，且 HOME 缺失会让不少工具报错。组 gid 用宿主
-# floatctf 组的真实 gid（构建参数传入），与 compose 的 ${FLOATCTF_UID:-65532}:${FLOATCTF_GID}
-# 对齐；宿主上仍只创建 floatctf 组、不创建同名用户。
-RUN groupadd -f --gid "${FLOATCTF_GID}" floatctf \
-    && { getent passwd 65532 >/dev/null 2>&1 \
-         || useradd --uid 65532 --gid "${FLOATCTF_GID}" --home-dir /var/lib/floatctf/runtime \
-                    --shell /bin/bash --no-create-home floatctf; }
-
-ENV HOME=/var/lib/floatctf/runtime
-
-WORKDIR /var/lib/floatctf/runtime
-USER 65532:65532
-
-LABEL io.floatctf.managed="true" \
-      org.opencontainers.image.title="FloatCTF API" \
-      org.opencontainers.image.version="${FLOATCTF_VERSION}"
-
-STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/floatctf"]
-API_DOCKERFILE_EOF
-    chown -R root:"$FCTF_USER" "$FLOATCTF_HOME/image"
-    chmod 750 "$FLOATCTF_HOME/image" "$FLOATCTF_HOME/image/api"
-    ok "已写出 API runtime Dockerfile"
-}
 write_helper_systemd_unit() {
     mkdir -p /etc/systemd/system
     cat > /etc/systemd/system/floatctf-helper.service <<'HELPER_SVC_EOF'
@@ -1637,7 +1577,7 @@ remove_api_images() {
         else
             warn "floatctf/api image $id 无 managed label，跳过"
         fi
-    done < <(docker image ls --filter 'reference=floatctf/api:*' -q 2>/dev/null | sort -u)
+    done < <(docker image ls --filter 'reference=floatctf/floatctf-api:*' -q 2>/dev/null | sort -u)
     ok "API runtime image 清理完成"
 }
 
@@ -1996,7 +1936,7 @@ prepare_env() {
         # （风险清单 #7）。既有安装不补这两项 —— 补了等于强制轮换 AWD flag 与判题令牌。
         env_set AWD_ROOT_KEY "${AWD_ROOT_KEY:-$(openssl rand -base64 32)}"
         env_set INTERNAL_TOKEN_KEY "${INTERNAL_TOKEN_KEY:-$(openssl rand -base64 32)}"
-        env_set API_IMAGE "floatctf/api:$VERSION"
+        env_set API_IMAGE "docker.io/floatctf/floatctf-api:$VERSION"
         env_set API_PORT "${API_PORT:-9090}"
         env_set POSTGRES_PORT "${POSTGRES_PORT:-5433}"
         env_set REDIS_PORT "${REDIS_PORT:-6380}"
@@ -2009,7 +1949,7 @@ prepare_env() {
         chmod 600 "$ENV_FILE"
         ok ".env 已生成（含新密钥，root 可读）"
     else
-        env_set API_IMAGE "floatctf/api:$VERSION"
+        env_set API_IMAGE "docker.io/floatctf/floatctf-api:$VERSION"
         env_set API_PORT "$(env_get API_PORT 9090)"
         env_set POSTGRES_PORT "$(env_get POSTGRES_PORT 5433)"
         env_set REDIS_PORT "$(env_get REDIS_PORT 6380)"
@@ -2185,19 +2125,16 @@ stage_release() {
     info "──── 部署：装配产物 → $FLOATCTF_HOME ────"
     install_helper_binary "$PKG_DIR/bin/floatctf-helper"
 
-    write_api_dockerfile
-    install -m 0755 "$PKG_DIR/bin/floatctf" "$FLOATCTF_HOME/image/api/floatctf"
-    chown root:"$FCTF_USER" "$FLOATCTF_HOME/image/api/floatctf"
-    # 宿主 floatctf 组的真实 gid：容器以 65532:<gid> 运行，镜像内的组要用同一个 gid。
-    local fctf_gid
-    fctf_gid="$(getent group "$FCTF_USER" | cut -d: -f3)"
-    docker build \
-        --build-arg "FLOATCTF_VERSION=$VERSION" \
-        --build-arg "FLOATCTF_GID=${fctf_gid:-65532}" \
-        -t "floatctf/api:$VERSION" \
-        "$FLOATCTF_HOME/image/api" \
-        || die "构建生产 API image 失败"
-    ok "生产 API image 已构建: floatctf/api:$VERSION"
+    # API 镜像与运行时镜像同样来自 Docker Hub：默认只拉取，不做本地构建。
+    # 这样安装器不再内嵌 Dockerfile，也不再需要 52 MB 的 API 二进制产物。
+    local api_image="docker.io/floatctf/floatctf-api:$VERSION"
+    if docker image inspect "$api_image" >/dev/null 2>&1; then
+        ok "API image 已存在: $api_image"
+    else
+        docker pull "$api_image" || die "拉取 API image 失败: $api_image
+  网络不可达时可在有网络的机器 docker save/docker load 后重跑本安装器。"
+        ok "API image 已拉取: $api_image"
+    fi
 
     # ── 前端管理器：先安装它，后面的前端安装复用它的注册表语义与安全校验 ──
     install -m 0755 "$PKG_DIR/frontend.sh" "$FLOATCTF_HOME/frontend.sh"

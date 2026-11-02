@@ -47,8 +47,8 @@ floatctf/
 `docker.io/floatctf/awd-flagserver:<V>`、`docker.io/floatctf/awd-judgeserver:<V>`、
 `docker.io/floatctf/awdp-judgeserver:<V>`（已扁平化；旧名 `floatctf/infra/awdp-judgeserver` 为历史引用）。
 本地/开发构建不带 registry 时用本地名 `floatctf/awd-flagserver:<tag>` 等。
-API runtime image（`floatctf/api:<V>`）仍由安装器在目标机用 `infra/docker/api/Dockerfile` + release
-二进制本地构建。`<V>` = release tag 去掉前导 `v`。契约见 [RELEASE.md](../../RELEASE.md)。
+API 镜像同样走 Docker Hub：`docker.io/floatctf/floatctf-api:<V>`，安装器直接拉取、不本地构建。
+`<V>` = release tag 去掉前导 `v`。契约见 [RELEASE.md](../../RELEASE.md)。
 
 ## 2. 业务模块（apps/api/src/modules/）
 

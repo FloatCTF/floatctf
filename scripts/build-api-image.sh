@@ -44,7 +44,9 @@ done
 
 [ -n "$BINARY" ] || die "缺少 --binary <release 二进制>"
 [ -f "$BINARY" ] || die "二进制不存在：$BINARY"
-[ -x "$BINARY" ] || die "二进制不可执行：$BINARY"
+[ -s "$BINARY" ] || die "二进制为空：$BINARY"
+# 注意：actions/download-artifact 会丢掉可执行位，所以这里不要求 -x；
+# 构建上下文里统一 `install -m 0755` 赋权（见下方 docker build 之前）。
 [ -n "$TAG" ] || die "缺少 --tag <V>（拒绝 latest/空 tag）"
 case "$TAG" in
     latest|"") die "拒绝使用 latest 作为发布 tag" ;;

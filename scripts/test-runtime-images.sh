@@ -315,7 +315,8 @@ fi
 # ── 9. 语法门禁 ─────────────────────────────────────────────────────────────
 echo "== 9. bash -n 语法门禁 =="
 
-for s in "$INSTALL_SH" "$BUILD_SH" "$ROOT/scripts/test-installer-contract.sh" \
+for s in "$INSTALL_SH" "$BUILD_SH" "$ROOT/scripts/build-api-image.sh" \
+         "$ROOT/scripts/test-installer-contract.sh" \
          "$ROOT/scripts/test-runtime-images.sh" "$ROOT/scripts/test-release-workflow.sh" \
          "$ROOT/scripts/release-checksums.sh"; do
     check "bash -n ${s#"$ROOT"/}" bash -n "$s"

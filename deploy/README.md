@@ -113,7 +113,7 @@ sudo docker compose -f compose.prod.yml exec api \
 | `infra/config/floatctf.prod.toml` | 仓库 | ✓ |
 | `infra/caddy/Caddyfile.prod` | 仓库 | ✓ |
 | `web-dist.tar.gz` / `merged.sql` / `ops-tools.tar.gz` | GitHub Release | ✓ |
-| API 镜像 | `ghcr.io/floatctf/floatctf-api:<V>`（release 自动发布） | ✓（或改成 `API_IMAGE=floatctf/api:<V>` 用本地构建） |
+| API 镜像 | `docker.io/floatctf/floatctf-api:<V>`（release 自动发布） | ✓（或改成 `API_IMAGE=floatctf/api:<V>` 用本地构建） |
 | `deploy/api/Dockerfile` | 本目录（与 install.sh 内嵌模板一致，测试守护） | 仅本地构建 API 镜像时需要 |
 
 ### API 镜像与 GID

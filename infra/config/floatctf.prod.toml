@@ -61,23 +61,23 @@ url = "redis://redis:6379/"
 [realtime]
 channel = "floatctf:realtime"
 
-# AWD/AWDP 运行时镜像：GHCR 是**规范在线分发通道**，由 tag 触发的 release workflow
+# AWD/AWDP 运行时镜像：Docker Hub 是**唯一在线分发通道**，由 tag 触发的 release workflow
 # 以 `packages: write` 推送（仅 tag 发布路径）。`${VERSION}` 即上文 `<V>`。
 #
 # `${RUNTIME_IMAGE_REGISTRY}` 是安装器的单一事实来源（同一变量同时用于渲染本文件与
-# 运行时镜像检查），默认 `ghcr.io/floatctf`，可用 `FLOATCTF_RUNTIME_IMAGE_REGISTRY`
-# 覆盖。用默认值时渲染结果就是规范 GHCR ref：
-#   ghcr.io/floatctf/awd-flagserver:<V>
-#   ghcr.io/floatctf/awd-judgeserver:<V>
-#   ghcr.io/floatctf/awdp-judgeserver:<V>      # awdp 已扁平化（无 infra/ 段）
+# 运行时镜像检查），默认 `docker.io/floatctf`，可用 `FLOATCTF_RUNTIME_IMAGE_REGISTRY`
+# 覆盖。用默认值时渲染结果就是规范 Docker Hub ref：
+#   docker.io/floatctf/awd-flagserver:<V>
+#   docker.io/floatctf/awd-judgeserver:<V>
+#   docker.io/floatctf/awdp-judgeserver:<V>      # awdp 已扁平化（无 infra/ 段）
 #
 # 离线宿主可用本地逃生通道：源码签出上 `sudo bash scripts/build-runtime-images.sh
 # --tag <V>`（不带 `--registry` 时沿用本地历史名，awdp 仍带 `infra/` 段；
-# 加 `--registry ghcr.io/floatctf` 则直接产出规范名），或对预置镜像归档执行
+# 加 `--registry docker.io/floatctf` 则直接产出规范名），或对预置镜像归档执行
 # `docker load`。此时需把下面三个值指向实际镜像名。
 [awd]
 network_runtime = "helper"
-# canonical 运行时镜像 ref（= release.yml 推送到 GHCR 的同一组）：
+# canonical 运行时镜像 ref（= release.yml 推送到 Docker Hub 的同一组）：
 #   ${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION} 等；awdp 已扁平化（无 infra/ 段）。
 # 升级时管理员的自定义值会被保留（见 preserve_custom_runtime_images）。
 flagserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-flagserver:${VERSION}"

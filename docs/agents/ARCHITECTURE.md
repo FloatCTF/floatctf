@@ -43,9 +43,9 @@ floatctf/
 └── AGENTS.md                    # AI 工作手册索引
 ```
 
-产物与分发：AWD/AWDP 运行时镜像的**规范在线通道是 GHCR** ——
-`ghcr.io/floatctf/awd-flagserver:<V>`、`ghcr.io/floatctf/awd-judgeserver:<V>`、
-`ghcr.io/floatctf/awdp-judgeserver:<V>`（已扁平化；旧名 `floatctf/infra/awdp-judgeserver` 为历史引用）。
+产物与分发：AWD/AWDP 运行时镜像的**规范在线通道是 Docker Hub** ——
+`docker.io/floatctf/awd-flagserver:<V>`、`docker.io/floatctf/awd-judgeserver:<V>`、
+`docker.io/floatctf/awdp-judgeserver:<V>`（已扁平化；旧名 `floatctf/infra/awdp-judgeserver` 为历史引用）。
 本地/开发构建不带 registry 时用本地名 `floatctf/awd-flagserver:<tag>` 等。
 API runtime image（`floatctf/api:<V>`）仍由安装器在目标机用 `infra/docker/api/Dockerfile` + release
 二进制本地构建。`<V>` = release tag 去掉前导 `v`。契约见 [RELEASE.md](../../RELEASE.md)。
@@ -186,9 +186,9 @@ API container 以数值 `65532:<floatctf GID>`（`.env` 的 `FLOATCTF_UID`/`FLOA
 
 AWD/AWDP 的 FlagServer/JudgeServer 通过 external internal network `fctf-platform-control` 回调 API：subnet `10.42.8.0/24`，API 固定 `10.42.8.2`，动态地址范围 `10.42.8.128/25`。GameBox 不加入该网络。`AwdStaticConfig.platform_internal_network` 为空时保持开发模式的“按赛事 infra gateway 派生 host”逻辑；生产设置该字段后使用固定 `platform_internal_url` 并把基础设施容器额外接入 control network。
 
-服务这些赛事的运行时镜像是 **GHCR OCI 制品**（`ghcr.io/floatctf/awd-flagserver:<V>` /
+服务这些赛事的运行时镜像是 **Docker Hub OCI 制品**（`docker.io/floatctf/awd-flagserver:<V>` /
 `awd-judgeserver:<V>` / `awdp-judgeserver:<V>`，`<V>` = 平台版本 = tag 去掉前导 `v`）：
-由 tag 触发的 release workflow 以 `packages: write` 推送（**仅** tag 发布路径；PR / 分支 dispatch / RC
+由 tag 触发的 release workflow 用 Docker Hub 凭据推送（**仅** tag 发布路径；PR / 分支 dispatch / RC
 永不推送）。安装器在部署前 `docker image inspect` 再 `docker pull` 精确 `<V>` ref，取不到就**硬失败**
 （`--skip-runtime-images` / `FLOATCTF_SKIP_RUNTIME_IMAGES=1` 可降级为告警，供 Jeopardy-only 宿主）。
 离线宿主用本地逃生通道：`scripts/build-runtime-images.sh --tag <V>` + `docker load`。

@@ -641,11 +641,10 @@ PYEOF
 
 drift_check "deploy/compose.prod.yml 与内嵌 COMPOSE_PROD 一致" COMPOSE_PROD_EOF deploy/compose.prod.yml
 drift_check "deploy/helper/floatctf-helper.service 与内嵌 HELPER_SVC 一致" HELPER_SVC_EOF deploy/helper/floatctf-helper.service
-drift_check "deploy/api/Dockerfile 与内嵌 API_DOCKERFILE 一致" API_DOCKERFILE_EOF deploy/api/Dockerfile
 
 # ── 14. 安装器默认指向 latest（不传 --version 即装最新版）────────────────────
-check "默认产物地址：6 行指向 releases/latest/download/" \
-    bash -c "[ \"\$(grep -c -E '^DEFAULT_[A-Z_]+_URL=\"\\\$RELEASES_URL_BASE/latest/download/' '$INSTALL_SH')\" -eq 6 ]"
+check "默认产物地址：5 行指向 releases/latest/download/" \
+    bash -c "[ \"\$(grep -c -E '^DEFAULT_[A-Z_]+_URL=\"\\\$RELEASES_URL_BASE/latest/download/' '$INSTALL_SH')\" -eq 5 ]"
 check "install.sh 无 v0.0.0-fake 占位" \
     bash -c "! grep -q -F 'v0.0.0-fake' '$INSTALL_SH'"
 check "install.sh 内置 latest 版本解析" \
@@ -660,19 +659,19 @@ PIN_HARNESS="$TMP_TEST_DIR/pin-harness.sh"
     echo 'RELEASES_URL_BASE="https://github.com/FloatCTF/floatctf/releases"'
     sed -n '/^pin_default_urls_to_version()/,/^}$/p' "$INSTALL_SH"
     cat <<'EOS'
-for u in API HELPER WEB MIGRATE FRONTEND_MANAGER OPS; do
+for u in HELPER WEB MIGRATE FRONTEND_MANAGER OPS; do
     eval "${u}_URL=\"\$RELEASES_URL_BASE/latest/download/asset\""
     eval "${u}_URL_EXPLICIT=0"
 done
 pin_default_urls_to_version 1.0.4
-printf '%s\n' "$API_URL" "$OPS_URL"
+printf '%s\n' "$HELPER_URL" "$OPS_URL"
 EOS
 } > "$PIN_HARNESS"
 PIN_OUT="$(bash "$PIN_HARNESS" 2>/dev/null)"
-PIN_API="$(printf '%s\n' "$PIN_OUT" | sed -n '1p')"
+PIN_HELPER="$(printf '%s\n' "$PIN_OUT" | sed -n '1p')"
 PIN_OPS="$(printf '%s\n' "$PIN_OUT" | sed -n '2p')"
 PIN_EXPECT="https://github.com/FloatCTF/floatctf/releases/download/v1.0.4/asset"
-[ "$PIN_API" = "$PIN_EXPECT" ] && pass "钉版本后 API 地址指向 v1.0.4" || fail "钉版本后 API 地址指向 v1.0.4（实际：$PIN_API）"
+[ "$PIN_HELPER" = "$PIN_EXPECT" ] && pass "钉版本后 HELPER 地址指向 v1.0.4" || fail "钉版本后 HELPER 地址指向 v1.0.4（实际：$PIN_HELPER）"
 [ "$PIN_OPS" = "$PIN_EXPECT" ] && pass "钉版本后 OPS 地址指向 v1.0.4" || fail "钉版本后 OPS 地址指向 v1.0.4（实际：$PIN_OPS）"
 
 # ── 15. 安装方式：--mode host|compose ────────────────────────────────────────

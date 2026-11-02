@@ -302,6 +302,13 @@ ghcr.io/floatctf/awd-judgeserver:<V>
 ghcr.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
 ```
 
+同一批镜像同时以相同 digest 推送到 Docker Hub（`docker.io/floatctf/*`，与上面同名），
+国内可改用镜像站拉取；安装器侧只需：
+
+```bash
+FLOATCTF_RUNTIME_IMAGE_REGISTRY=docker.io/floatctf sudo -E bash install.sh --mode host
+```
+
 > AWD / AWDP 需要后三个运行时镜像；API 镜像只被 `docker compose` 方式使用，固定
 > `FLOATCTF_GID=65532`（见 [deploy/README.md](./deploy/README.md)）。
 

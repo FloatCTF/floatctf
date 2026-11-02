@@ -1,9 +1,8 @@
 # FloatCTF production process-static configuration.
 #
-# REFERENCE COPY: this file mirrors what `scripts/install.sh` renders into
-# `$FLOATCTF_HOME/config/floatctf.toml` (the embedded CONFIG_TMPL_EOF heredoc in
-# write_config_template). scripts/install.sh is authoritative — this file exists so the
-# rendered production configuration can be reviewed without parsing the installer.
+# DOC MIRROR: the authoritative template is deploy/templates/floatctf.toml.tmpl, which
+# install.sh fetches at the target version and renders into $FLOATCTF_HOME/config/floatctf.toml.
+# This copy carries extra comments for reviewers; the deploy template is the source of truth.
 #
 # ${...} are installer substitutions (envsubst from `$FLOATCTF_HOME/.env`), never literal
 # values. Never put a real secret into this file. `${VERSION}` is the platform version

@@ -39,7 +39,7 @@ sudo systemctl start floatctf.target
 ```bash
 # 从 release 取二进制与 unit
 sudo install -m 0755 floatctf-helper /usr/local/libexec/floatctf-helper
-sudo install -m 0644 deploy/helper/floatctf-helper.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/floatctf-helper.service /etc/systemd/system/
 
 # 前置用户/组：floatctf 组、floatctf-helper 用户（加入 docker 组）
 sudo groupadd -f floatctf
@@ -107,9 +107,11 @@ sudo docker compose -f compose.prod.yml exec api \
 
 | 文件 | 来源 | B 方式需要 |
 |---|---|---|
-| `deploy/compose.prod.yml` | 本目录（与 install.sh 内嵌模板逐字节一致，有测试守护） | ✓ |
+| `deploy/compose.prod.yml` | 本目录（install.sh 按版本从这里拉取） | ✓ |
 | `deploy/.env.example` | 本目录 | ✓ |
-| `deploy/helper/floatctf-helper.service` | 本目录（同上，测试守护） | ✓ |
+| `deploy/systemd/*.service` / `floatctf.target` | 本目录（install.sh 按版本拉取） | ✓ |
+| `deploy/templates/floatctf.toml.tmpl` | 本目录（TOML 模板，install.sh 按版本拉取） | ✓ |
+| `deploy/uninstall.sh` | 本目录（卸载脚本，install.sh 按版本拉取） | 由安装器写入 |
 | `infra/config/floatctf.prod.toml` | 仓库 | ✓ |
 | `infra/caddy/Caddyfile.prod` | 仓库 | ✓ |
 | `web-dist.tar.gz` / `merged.sql` / `ops-tools.tar.gz` | GitHub Release | ✓ |

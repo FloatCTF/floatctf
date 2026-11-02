@@ -79,7 +79,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     command -v pnpm >/dev/null 2>&1 || die "pnpm 不在 PATH（先 mise install / 激活 mise 环境）"
     command -v cargo >/dev/null 2>&1 || die "cargo 不在 PATH（先 mise install / 激活 mise 环境）"
     info "1/4 release 构建（packages + web + cargo）"
-    run pnpm install --frozen-lockfile
+    # --prefer-offline：本地 store 命中时不访问网络；缺包才回退（弱网/沙箱环境必需）。
+    run pnpm install --frozen-lockfile --prefer-offline
     run pnpm run build:packages
     run pnpm run build:web
     run cargo build --locked --release -p floatctf -p floatctf-helper --bins
@@ -88,10 +89,8 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     run bash scripts/release-checksums.sh --assemble "$OUT" "$VERSION"
 else
     info "跳过构建与装配（--skip-build）"
+    # 只需要装配好的 API 二进制；三个运行时二进制由 build-runtime-images.sh 自行构建。
     [ "$DRY_RUN" -eq 1 ] || [ -x "$OUT/floatctf" ] || die "$OUT/floatctf 不存在，无法 --skip-build"
-    for b in awd_flagserver awd_judgeserver awdp_judgeserver; do
-        [ "$DRY_RUN" -eq 1 ] || [ -x "target/release/$b" ] || die "target/release/$b 不存在"
-    done
 fi
 
 if [ "$DRY_RUN" -eq 0 ] && [ "$YES" -eq 0 ]; then

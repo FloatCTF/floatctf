@@ -20,3 +20,4 @@ apps/api/src/sql/merged.sql
 /examples/*.zip
 __pycache__/
 release/
+release-artifacts/

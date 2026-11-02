@@ -3,9 +3,9 @@
 本文档是 **v1.0 的人工发布清单**：发布由 CI 自动执行（`.github/workflows/release.yml`），
 本清单只规定人在**什么时机**做**什么动作**、以及**看什么证据**才算通过。
 
-> **当前状态**：`v1.0.4` 已发布（2026-10-30）—— 11 个文件产物 + 3 个运行时镜像在 GHCR。
-> Docker Hub 双推自下一个 tag 起生效；需要补发历史版本时用
-> `scripts/publish-dockerhub.sh --version <V>`（见下）。
+> **当前状态**：`v1.0.4` 已发布（2026-10-30）—— 11 个文件产物 + 4 个镜像在 GHCR；
+> 4 个镜像已用 `scripts/publish-dockerhub.sh` 手工补推到 Docker Hub（`docker.io/floatctf/*`）。
+> 下一个 tag 起由 `release.yml` 自动双推。
 
 > ⚠️ **单控制面不变量（R1）—— 同一宿主/helper/Docker daemon 同一时刻只允许一个 FloatCTF 控制面（API）。**
 > 第二套 API —— 包括开发栈、RC/测试栈或第二份生产安装 —— 会 reconcile 全局/固定命名的宿主资源

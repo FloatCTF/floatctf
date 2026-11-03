@@ -24,7 +24,7 @@ sudo env SITE_ADDRESS=ctf.example.com bash install.sh
 sudo systemctl start floatctf.target
 ```
 
-脚本会：装 `floatctf-helper` + 三个 systemd unit → 下 6 个产物 → 渲染 TOML/Caddyfile/compose →
+脚本会：装 `floatctf-helper` + 三个 systemd unit → 下 5 个产物 → 拉镜像 → 渲染 TOML/Caddyfile/compose →
 建 `fctf-platform-control` 网络 → 本地构建 `floatctf/api:<V>` → 起 Compose。
 升级 = 重跑同一条命令。
 

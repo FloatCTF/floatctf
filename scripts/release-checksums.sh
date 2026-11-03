@@ -132,10 +132,10 @@ assert_installer_defaults() { # <install.sh>
     local file="$1" n
     [ -f "$file" ] || die "install.sh 不存在：$file"
     n="$(grep -c -E '^DEFAULT_[A-Z_]+_URL="\$RELEASES_URL_BASE/latest/download/' "$file" || true)"
-    [ "$n" -eq 6 ] || die "install.sh 的默认产物地址应为 6 行 releases/latest/download/，实际 $n"
+    [ "$n" -eq 5 ] || die "install.sh 的默认产物地址应为 5 行 releases/latest/download/，实际 $n"
     ! grep -q -F 'v0.0.0-fake' "$file" || die "install.sh 仍含 v0.0.0-fake 占位"
     bash -n "$file" || die "install.sh 语法检查失败"
-    ok "install.sh 默认指向 latest release（6 个产物）"
+    ok "install.sh 默认指向 latest release（5 个产物）"
 }
 
 # ── --ops-tools ──────────────────────────────────────────────────────────────

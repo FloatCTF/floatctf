@@ -1,6 +1,6 @@
 {
   "name": "@floatctf/sdk",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "FloatCTF platform client SDK (framework independent): transport, error model, REST/SSE clients, DTOs",
   "license": "AGPL-3.0-only",
   "type": "module",

@@ -175,13 +175,13 @@ jobs:
             exit 1
           fi
           n="$(grep -c -E '^DEFAULT_[A-Z_]+_URL="\$RELEASES_URL_BASE/latest/download/' "$f" || true)"
-          if [ "$n" -ne 6 ]; then
-            echo "::error::install.sh 默认产物地址应为 6 行 releases/latest/download/，实际 $n"
+          if [ "$n" -ne 5 ]; then
+            echo "::error::install.sh 默认产物地址应为 5 行 releases/latest/download/，实际 $n"
             exit 1
           fi
           grep -q -F 'resolve_latest_release_version' "$f" \
             || { echo "::error::install.sh 缺少 latest 版本解析"; exit 1; }
-          echo "installer defaults ok: releases/latest/download × 6"
+          echo "installer defaults ok: releases/latest/download × 5"
 
       - name: Verify frontend release artifacts
         shell: bash

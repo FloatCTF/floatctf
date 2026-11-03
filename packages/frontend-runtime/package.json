@@ -1,6 +1,6 @@
 {
   "name": "@floatctf/frontend-runtime",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "FloatCTF pluggable frontend artifact/runtime contract (framework independent)",
   "license": "AGPL-3.0-only",
   "type": "module",

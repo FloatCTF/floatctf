@@ -188,11 +188,13 @@ check "install.sh 按数值 UID chown runtime" \
     grep -q -F 'chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/runtime"' "$INSTALL_SH"
 check "install.sh 没有 chown 到 floatctf 用户名（该用户不存在）" \
     no_user_chown
-# Debian/Ubuntu 是受支持的生产宿主（包名与 Arch 不同）。
-check "install.sh 有 install_debian_pkgs" grep -q -F 'install_debian_pkgs() {' "$INSTALL_SH"
-check "install.sh Debian 包名正确（docker.io/conntrack/procps）" \
-    grep -q -F 'DEBIAN_PKGS=(docker.io nftables wireguard-tools iproute2 conntrack iptables procps openssl curl tar python3)' "$INSTALL_SH"
-check "install.sh run_init 走 debian 分支" grep -q -F 'install_debian_pkgs' "$INSTALL_SH"
+# 宿主依赖由运维准备：安装器不得自己 apt/pacman 安装，只能检查并给命令。
+check "install.sh 不代装宿主依赖（无 apt-get install / pacman -S 执行）" \
+    bash -c '! grep -qE "^\s*(apt-get|pacman) " "$1"' _ "$INSTALL_SH"
+check "install.sh 提供 prereq_hint（缺依赖时报精确安装命令）" \
+    grep -q -F 'prereq_hint() {' "$INSTALL_SH"
+check "install.sh 不写 sysctl（提示文案除外）" \
+    bash -c '! grep -qE "sysctl -w .*>/dev/null" "$1" && ! grep -qF "persist_sysctl" "$1"' _ "$INSTALL_SH"
 check "install.sh 缺 docker compose v2 插件时 fail closed" \
     grep -q -F '缺少 docker compose v2 插件' "$INSTALL_SH"
 

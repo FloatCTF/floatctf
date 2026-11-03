@@ -17,7 +17,7 @@
 #     sudo bash install.sh --api-url <bin> --helper-url <bin> --web-url <dist> \
 #                         --migrate-url <sql> --frontend-manager-url <script> \
 #                         --ops-url <ops-tools.tar.gz>
-#   流程：主机初始化 → 下载 5 产物 + 拉取 API 镜像 → 部署 →
+#   流程：校验宿主依赖 → 下载 5 产物 + 拉取 API 镜像 → 部署 →
 #         安装 bootstrap 静态页 + Default Frontend + 前端管理器 frontend.sh →
 #         安装运维工具（backup.sh / restore.sh / db/migrate.sh + migrations）→
 #         既有数据库则先 apply 新增迁移（fresh 库由 merged.sql bootstrap，自动跳过）→
@@ -246,14 +246,8 @@ require_root() {
 }
 
 # ============================================================================
-# 第一阶段：主机初始化（幂等，逐项补齐，已存在即 skip）
+# 第一阶段：宿主依赖校验（安装器不装包、不写 sysctl；缺什么就报命令）
 # ============================================================================
-detect_distro() {
-    if command -v pacman >/dev/null 2>&1; then echo "arch"; return; fi
-    if command -v apt-get >/dev/null 2>&1; then echo "debian"; return; fi
-    if command -v dnf >/dev/null 2>&1; then echo "fedora"; return; fi
-    echo "unknown"
-}
 
 # postgresql 包仅取其客户端 psql（dev 的 migrate.sh status/apply 在宿主执行；
 # Arch 无 client-only 包）。生产手动运维/备份同样受益。
@@ -268,34 +262,7 @@ ARCH_PKGS=(docker docker-compose nftables wireguard-tools iproute2 conntrack-too
 #   - docker compose v2 插件不由 Debian 仓库提供（见 check_docker 的显式提示）。
 DEBIAN_PKGS=(docker.io nftables wireguard-tools iproute2 conntrack iptables procps openssl curl tar python3)
 
-install_debian_pkgs() {
-    local missing=() p
-    for p in "${DEBIAN_PKGS[@]}"; do
-        dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing+=("$p")
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        ok "主机包齐全（dpkg）"
-        return
-    fi
-    info "安装缺失主机包: ${missing[*]}（apt-get install）"
-    DEBIAN_FRONTEND=noninteractive apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
-    ok "主机包安装完成"
-}
 
-install_arch_pkgs() {
-    local missing=() p
-    for p in "${ARCH_PKGS[@]}"; do
-        pacman -Q "$p" >/dev/null 2>&1 || missing+=("$p")
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        ok "主机包齐全（pacman）"
-        return
-    fi
-    info "安装缺失主机包: ${missing[*]}（pacman -S --needed）"
-    pacman -S --needed --noconfirm "${missing[@]}"
-    ok "主机包安装完成"
-}
 
 check_linux() {
     [ -d /proc/sys ] || die "非标准 Linux（无 /proc/sys），不支持"
@@ -325,11 +292,27 @@ check_python_tomllib() {
     die "Python 缺少 stdlib tomllib（需要 Python 3 且带标准库 tomllib，即 **Python ≥3.11**；检测到: ${pyver}）。release 的 db/migrate.sh 用它解析 TOML 配置，**升级/迁移路径**必须有它才能运行。请用宿主包管理器升级 python3 到 ≥3.11（tomllib 只随标准库提供：不要用 pip 往宿主装，也不要用 sudo pip）后重新运行本安装器。"
 }
 
+# 宿主依赖由运维自己准备；安装器只检查并给出精确命令。
+prereq_hint() {
+    if command -v pacman >/dev/null 2>&1; then
+        printf '%s' 'pacman -S --needed docker docker-compose nftables wireguard-tools iproute2 conntrack-tools iptables procps-ng openssl curl tar python'
+    elif command -v apt-get >/dev/null 2>&1; then
+        printf '%s' 'apt-get install -y docker.io nftables wireguard-tools iproute2 conntrack iptables procps openssl curl tar python3（compose v2 插件需单装：docker-compose-plugin 或 /usr/local/lib/docker/cli-plugins/docker-compose）'
+    else
+        printf '%s' '用发行版包管理器安装 docker（含 compose v2）、nftables、wireguard-tools、iproute2、conntrack、iptables、procps、openssl、curl、tar、python3'
+    fi
+}
+
 check_commands() {
-    local c
+    local c missing=()
     for c in ip wg nft conntrack iptables docker sysctl modprobe; do
-        command -v "$c" >/dev/null 2>&1 || die "缺少命令: $c"
+        command -v "$c" >/dev/null 2>&1 || missing+=("$c")
     done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        die "缺少命令: ${missing[*]}
+  安装器不代装宿主依赖，请先准备：
+    $(prereq_hint)"
+    fi
     # 前端管理器 frontend.sh 需要 python3（JSON 解析 + 原子注册表更新）；
     # 迁移器 db/migrate.sh 额外需要 Python ≥3.11 的 stdlib tomllib（见上）。
     command -v python3 >/dev/null 2>&1 \
@@ -340,9 +323,8 @@ check_commands() {
 
 check_docker() {
     if command -v systemctl >/dev/null 2>&1 && ! systemctl -q is-active docker.service; then
-        info "启动并 enable Docker daemon"
-        systemctl enable --now docker.service >/dev/null \
-            || die "Docker daemon 启动失败"
+        die "Docker daemon 未运行。请由运维启动并设为开机自启：
+    sudo systemctl enable --now docker"
     fi
     docker info >/dev/null 2>&1 || die "docker daemon 不可用（docker info 失败）"
     # systemd 单元用 `docker compose`（v2 语法）管理生产栈，缺插件会在启动平台时
@@ -377,49 +359,33 @@ check_wireguard() {
 SYSCTL_FILE="/etc/sysctl.d/99-floatctf.conf"
 MODULES_FILE="/etc/modules-load.d/floatctf-br-netfilter.conf"
 
-persist_sysctl() {
-    local key="$1" value="$2"
-    if [ ! -f "$SYSCTL_FILE" ] || ! grep -qE "^${key}\s*=\s*${value}\s*$" "$SYSCTL_FILE"; then
-        mkdir -p /etc/sysctl.d
-        printf '%s=%s\n' "$key" "$value" >> "$SYSCTL_FILE"
-        ok "已持久化 $key=$value → $SYSCTL_FILE"
-    fi
-}
 
 check_ip_forward() {
     local v
     v=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo "?")
-    if [ "$v" = "1" ]; then
-        ok "net.ipv4.ip_forward=1"
-    else
-        sysctl -w net.ipv4.ip_forward=1 >/dev/null
-        ok "net.ipv4.ip_forward 已设为 1"
-    fi
-    persist_sysctl "net.ipv4.ip_forward" "1"
+    [ "$v" = "1" ] || die "net.ipv4.ip_forward=$v，AWD 容器网络需要转发。请由运维设置：
+    sysctl -w net.ipv4.ip_forward=1
+    echo 'net.ipv4.ip_forward=1' > $SYSCTL_FILE && sysctl --system"
+    ok "net.ipv4.ip_forward=1"
 }
 
 check_bridge_netfilter() {
-    local loaded=1
-    if ! modprobe br_netfilter 2>/dev/null; then
-        warn "modprobe br_netfilter 失败（内核未含该模块？同桥隔离将不生效）"
-        loaded=0
-    fi
-    if [ "$loaded" != "0" ]; then
-        if [ ! -f "$MODULES_FILE" ] || ! grep -qE '^br_netfilter\s*$' "$MODULES_FILE"; then
-            mkdir -p /etc/modules-load.d
-            printf 'br_netfilter\n' >> "$MODULES_FILE"
-            ok "已持久化模块 br_netfilter → $MODULES_FILE"
-        fi
-    fi
-    local ok_bridge=1 k v
+    local k v bad=()
+    grep -qE '^br_netfilter$' /proc/modules 2>/dev/null \
+        || bad+=("br_netfilter 未加载")
     for k in net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables; do
         v=$(cat "/proc/sys/$k" 2>/dev/null || echo "?")
-        if [ "$v" != "1" ]; then
-            sysctl -w "$k=1" >/dev/null || { warn "无法写入 $k"; ok_bridge=0; }
-            persist_sysctl "$k" "1"
-        fi
+        [ "$v" = "1" ] || bad+=("$k=$v")
     done
-    [ "$ok_bridge" = "1" ] && ok "br_netfilter + bridge-nf-call-{ip,ip6}tables=1"
+    if [ "${#bad[@]}" -gt 0 ]; then
+        die "AWD 同桥隔离依赖的内核设置未就绪：${bad[*]}
+  请由运维设置（会写入宿主全局配置）：
+    modprobe br_netfilter
+    echo br_netfilter > $MODULES_FILE
+    printf 'net.bridge.bridge-nf-call-iptables=1\nnet.bridge.bridge-nf-call-ip6tables=1\n' > $SYSCTL_FILE
+    sysctl --system"
+    fi
+    ok "br_netfilter + bridge-nf-call-{ip,ip6}tables=1"
 }
 
 ensure_service_group() {
@@ -492,24 +458,6 @@ run_init() {
     info "──── 第一阶段：主机初始化（幂等，mode=$mode）────"
     require_root
     check_linux
-
-    local DISTRO
-    DISTRO=$(detect_distro)
-    info "发行版: $DISTRO"
-    case "$DISTRO" in
-        arch)
-            install_arch_pkgs
-            ;;
-        debian)
-            install_debian_pkgs
-            ;;
-        fedora)
-            die "发行版 $DISTRO 尚未实现安装路径（包名未确认）；请手动安装 docker/nftables/wireguard-tools/iproute2/procps 后重试。已支持：Arch Linux、Debian/Ubuntu"
-            ;;
-        unknown)
-            die "无法识别的发行版；不支持盲装"
-            ;;
-    esac
 
     check_commands
     check_docker
@@ -1366,7 +1314,7 @@ EOF
 main() {
     # R3（fail closed，且在**任何 mutation 之前**）：release 的 db/migrate.sh 用
     # stdlib tomllib 解析 TOML（Python ≥3.11）。这里先于 require_root / run_init
-    #（会装包、建目录）/ 下载 / docker build / 迁移 检查，缺则立刻 die，
+    #（会建目录）/ 下载 / 迁移 检查，缺则立刻 die，
     # 宿主上不留任何半成品。
     check_python_tomllib
     if [ "$DEVELOP" = "1" ]; then

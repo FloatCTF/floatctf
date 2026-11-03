@@ -623,44 +623,6 @@ PIN_EXPECT="https://github.com/FloatCTF/floatctf/releases/download/v1.0.4/asset"
 [ "$PIN_HELPER" = "$PIN_EXPECT" ] && pass "钉版本后 HELPER 地址指向 v1.0.4" || fail "钉版本后 HELPER 地址指向 v1.0.4（实际：$PIN_HELPER）"
 [ "$PIN_OPS" = "$PIN_EXPECT" ] && pass "钉版本后 OPS 地址指向 v1.0.4" || fail "钉版本后 OPS 地址指向 v1.0.4（实际：$PIN_OPS）"
 
-# ── 15. 安装方式：--mode host|compose ────────────────────────────────────────
-check "install.sh 提供 --mode host|compose" \
-    grep -q -- '--mode)' "$INSTALL_SH"
-check "install.sh 的 --help 头部说明两种模式" \
-    grep -qF 'FLOATCTF_INSTALL_MODE=host|compose' "$INSTALL_SH"
-
-# 非交互且没给 mode：必须在下载/改动前 fail closed，而不是默认选一个。
-MODE_STDERR="$TMP_TEST_DIR/mode.err"
-if bash "$INSTALL_SH" --version 1.0.0 </dev/null >"$MODE_STDERR" 2>&1; then
-    fail "非交互未指定 --mode 必须失败"
-else
-    if grep -qF '未指定安装方式' "$MODE_STDERR"; then
-        pass "非交互未指定 --mode 时 fail closed（提示 --mode host|compose）"
-    else
-        fail "非交互未指定 --mode 的报错不明确"
-    fi
-fi
-
-# 取值归一化（extract 真实函数，不依赖网络/root）
-NORM_HARNESS="$TMP_TEST_DIR/mode-harness.sh"
-{
-    sed -n '/^normalize_install_mode()/,/^}$/p' "$INSTALL_SH"
-    cat <<'EOS'
-for v in host local compose docker docker-compose; do
-    printf '%s=%s\n' "$v" "$(normalize_install_mode "$v")"
-done
-normalize_install_mode bogus || echo "bogus=REJECTED"
-EOS
-} > "$NORM_HARNESS"
-NORM_OUT="$(bash "$NORM_HARNESS" 2>/dev/null)"
-for want in "host=host" "local=host" "compose=compose" "docker=compose" "docker-compose=compose" "bogus=REJECTED"; do
-    if printf '%s\n' "$NORM_OUT" | grep -qx "$want"; then
-        pass "mode 归一化：$want"
-    else
-        fail "mode 归一化：$want"
-    fi
-done
-
 # ── 结果 ─────────────────────────────────────────────────────────────────────
 echo ""
 printf '通过 %d 项，失败 %d 项\n' "$PASS" "$FAIL"

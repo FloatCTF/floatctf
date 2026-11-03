@@ -2,15 +2,15 @@
 
 本文档是 FloatCTF **生产安装、容器化部署、systemd 运维、权限模型和生命周期管理**的权威说明。本地源码开发见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
-安装入口只有一个：`install.sh`。**不带参数**会询问安装方式；也可以静默指定：
+安装入口只有一个：`install.sh`。它把整栈写成 Docker Compose，并交给 systemd 托管：
 
-| 模式 | 命令 | 行为 |
-|---|---|---|
-| 本机部署（默认） | `--mode host` | 装 helper + systemd（`floatctf.target`），之后用 `systemctl` 启停整栈 |
-| docker compose | `--mode compose` | 只生成 compose 栈与文件；helper 照装并启动，stack 不写 systemd，自己 `docker compose up` |
+```bash
+curl -fsSL https://github.com/FloatCTF/floatctf/releases/latest/download/install.sh -o install.sh
+sudo env SITE_ADDRESS=ctf.example.com bash install.sh
+sudo systemctl start floatctf.target
+```
 
-非交互终端必须显式给 `--mode`（否则 fail closed，不会替你猜）。两种模式都会安装 helper ——
-API 启动强依赖 `helper-control.sock` / `helper-docker.sock`。
+`floatctf-helper` 是唯一跑在宿主上的进程（systemd 托管），API 启动强依赖它的两个 socket。
 
 ---
 
@@ -305,7 +305,7 @@ docker.io/floatctf/awdp-judgeserver:<V>      # 已扁平化
 国内可改用 Docker Hub 镜像站拉取；安装器侧只需：
 
 ```bash
-FLOATCTF_RUNTIME_IMAGE_REGISTRY=<mirror>/floatctf sudo -E bash install.sh --mode host
+FLOATCTF_RUNTIME_IMAGE_REGISTRY=<mirror>/floatctf sudo -E bash install.sh
 ```
 
 > AWD / AWDP 需要后三个运行时镜像；API 镜像只被 `docker compose` 方式使用，固定
@@ -404,12 +404,8 @@ frontends/
 ```bash
 curl -fsSL https://github.com/FloatCTF/floatctf/releases/latest/download/install.sh -o install.sh
 
-# 交互：会问「本机部署 / docker compose」
 sudo env SITE_ADDRESS=ctf.example.com bash install.sh
-
-# 静默：
-sudo env SITE_ADDRESS=ctf.example.com bash install.sh --mode host
-sudo env SITE_ADDRESS=ctf.example.com bash install.sh --mode compose
+sudo systemctl start floatctf.target
 ```
 
 显式指定 release 产物：

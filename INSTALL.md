@@ -12,11 +12,36 @@
 
 | 项 | 要求 |
 |---|---|
-| 系统 | Linux + systemd；Arch / Debian / Ubuntu 的包名已适配 |
-| Docker | Docker Engine + compose v2 插件（`docker compose`，不是 `docker-compose`） |
-| Python | 3.11+（宿主侧 `db/migrate.sh` 用 stdlib `tomllib`；安装器会先做能力探测） |
+| 系统 | Linux + systemd |
+| Docker | Docker Engine + compose v2 插件（`docker compose`，不是 `docker-compose`），已 `enable --now` |
+| Python | 3.11+（宿主侧 `db/migrate.sh` 用 stdlib `tomllib`） |
 | 网络 | `SITE_ADDRESS` 的 80/443 可从公网到达（Caddy 签证书）；出网可达 Docker Hub 与 GitHub |
 | 权限 | root（`sudo`） |
+
+### 运维自己准备（安装器只检查，不代做）
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install -y docker.io nftables wireguard-tools iproute2 conntrack \
+     iptables procps openssl curl tar python3
+# Arch
+sudo pacman -S --needed docker docker-compose nftables wireguard-tools iproute2 \
+     conntrack-tools iptables procps-ng openssl curl tar python
+
+# compose v2 插件（Debian 仓库通常没有）
+sudo install -m 0755 docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+
+sudo systemctl enable --now docker
+
+# AWD 需要的内核设置（宿主全局，可能影响同机其它负载）
+sudo modprobe br_netfilter
+echo br_netfilter | sudo tee /etc/modules-load.d/floatctf.conf
+printf 'net.ipv4.ip_forward=1\nnet.bridge.bridge-nf-call-iptables=1\nnet.bridge.bridge-nf-call-ip6tables=1\n' \
+  | sudo tee /etc/sysctl.d/99-floatctf.conf
+sudo sysctl --system
+```
+
+安装器在动任何文件之前逐项校验；缺什么就 `die` 并打印上面这些命令。
 
 ---
 
@@ -28,7 +53,7 @@ sudo env SITE_ADDRESS=ctf.example.com bash install.sh
 sudo systemctl start floatctf.target
 ```
 
-安装器依次做：装宿主包 / 建组 → 下载 5 个 release 产物 → 按版本拉 7 个部署模板 →
+安装器依次做：校验宿主依赖 → 建组 → 下载 5 个 release 产物 → 按版本拉 7 个部署模板 →
 拉 4 个镜像 → 渲染配置 → 对既有库补迁移 → 写并 enable 三个 systemd 单元（**不启动**容器）。
 
 首次 `systemctl start` 时 Postgres 用 `merged.sql` 初始化空库。

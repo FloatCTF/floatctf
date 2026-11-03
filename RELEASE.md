@@ -251,7 +251,7 @@ Docker Hub 登录，且带 tag 守卫。另有**非发布** RC workflow `.github
 | 场景 | 动作 |
 |---|---|
 | 只是装错了版本 | 用上一个 tag 的安装器重装：`sudo bash install.sh --version <上一版本> ...` |
-| 运行时镜像有问题 | 改 `config/floatctf.toml` 的 `[awd]` / `[awdp]` 镜像 ref 指向已知可用 tag（或 `--reset-runtime-images` / `--keep-runtime-images` 控制升级行为），再重跑安装器 |
+| 运行时镜像有问题 | 改 `config/floatctf.toml` 的 `[awd]` / `[awdp]` 镜像 ref（或用 `FLOATCTF_RUNTIME_IMAGE_REGISTRY` 换 registry），再重跑安装器 |
 | 前端版本有问题 | `sudo $FLOATCTF_HOME/frontend.sh set-current <id> <version>` 回退指针；内容有问题的前端用 `remove <id> <version>` |
 | 前端把 UI 弄坏（破窗） | 任意页面 URL 追加 `?frontend=default` |
 | 数据库升级出错 | **数据库迁移是 forward-only**，无法 downgrade；只能 `sudo $FLOATCTF_HOME/restore.sh <备份归档> --yes` 从备份恢复 |

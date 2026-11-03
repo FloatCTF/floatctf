@@ -151,43 +151,18 @@ check "模板 judgeserver 也是 canonical" \
     grep -q -F 'judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awd-judgeserver:${VERSION}"' "$TOML_TMPL"
 check "模板 awdp 已扁平化（无 infra/ 段）" \
     grep -q -F 'practice_judgeserver_image = "${RUNTIME_IMAGE_REGISTRY}/awdp-judgeserver:${VERSION}"' "$TOML_TMPL"
-check "install.sh 有 preserve_custom_runtime_images 升级保护" \
-    grep -q -F 'preserve_custom_runtime_images() {' "$INSTALL_SH"
-check "prepare_configs 调用 preserve_custom_runtime_images" \
-    grep -q -F 'preserve_custom_runtime_images "$prev_toml"' "$INSTALL_SH"
-check "install.sh 有 is_stock_runtime_image" grep -q -F 'is_stock_runtime_image() {' "$INSTALL_SH"
-STOCK_BODY="$(function_body "$INSTALL_SH" is_stock_runtime_image)"
-stock_ok() {
-    [ -n "$STOCK_BODY" ] || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/awd-flagserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/awd-judgeserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'floatctf/infra/awdp-judgeserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awd-flagserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awd-judgeserver:*' || return 1
-    printf '%s\n' "$STOCK_BODY" | grep -q -F 'docker.io/floatctf/awdp-judgeserver:*' || return 1
-    return 0
-}
-
-# 宿主只创建 floatctf 组（不创建该用户，见 AGENTS.md），因此安装器里
-# 任何 `chown "floatctf":"floatctf"` 都会在全新生效的宿主机上失败。
+# 宿主只创建 floatctf 组（不创建该用户），chown 到用户名会在全新宿主机上失败。
 no_user_chown() {
     ! grep -q -F 'chown "$FCTF_USER":"$FCTF_USER"' "$INSTALL_SH"
 }
-check "is_stock_runtime_image 含全部 6 个 stock 形态（含旧 floatctf/infra/awdp）" stock_ok
-check "install.sh 解析 --reset-runtime-images" grep -q -F -- '--reset-runtime-images)' "$INSTALL_SH"
-check "install.sh 解析 --keep-runtime-images" grep -q -F -- '--keep-runtime-images)' "$INSTALL_SH"
-check "--reset/--keep-runtime-images 互斥（fail closed）" \
-    grep -q -F '互斥，请只选一个' "$INSTALL_SH"
-check "preserve 写回自定义值并 warn" \
-    grep -q -F '保留管理员自定义的运行时镜像' "$INSTALL_SH"
+check "install.sh 没有 chown 到 floatctf 用户名（该用户不存在）" \
+    no_user_chown
 
 # runtime 目录只能按数值 UID chown：宿主只创建 floatctf 组、不创建该用户
 # （见 AGENTS.md 生产说明），用用户名 chown 会在全新宿主机上以
 # "chown: invalid user: 'floatctf:floatctf'" 中断整个安装（实测）。
 check "install.sh 按数值 UID chown runtime" \
     grep -q -F 'chown "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/runtime"' "$INSTALL_SH"
-check "install.sh 没有 chown 到 floatctf 用户名（该用户不存在）" \
-    no_user_chown
 # 宿主依赖由运维准备：安装器不得自己 apt/pacman 安装，只能检查并给命令。
 check "install.sh 不代装宿主依赖（无 apt-get install / pacman -S 执行）" \
     bash -c '! grep -qE "^\s*(apt-get|pacman) " "$1"' _ "$INSTALL_SH"
@@ -418,65 +393,6 @@ check "行为：模板渲染出扁平化 canonical awdp judgeserver" \
     bash -c 'grep -qxF "practice_judgeserver_image = \"docker.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$RENDER_OUT"
 check "行为：渲染结果不含旧的 floatctf/infra/ 本地名" \
     bash -c '! grep -qF "floatctf/infra/" <<<"$1"' _ "$RENDER_OUT"
-
-PRESERVE_HARNESS="$TMP_TEST_DIR/preserve-harness.sh"
-{
-    cat <<'HDR'
-set -uo pipefail
-RESET_RUNTIME_IMAGES="${RESET_RUNTIME_IMAGES:-0}"; KEEP_RUNTIME_IMAGES="${KEEP_RUNTIME_IMAGES:-0}"
-warn(){ printf 'WARN %s\n' "$*"; }; die(){ printf 'FAIL %s\n' "$*" >&2; exit 1; }; ok(){ :; }
-HDR
-    emit_fn "$INSTALL_SH" toml_get_string_key
-    emit_fn "$INSTALL_SH" toml_set_string_key
-    emit_fn "$INSTALL_SH" is_stock_runtime_image
-    emit_fn "$INSTALL_SH" preserve_custom_runtime_images
-    cat <<'DRV'
-preserve_custom_runtime_images "$1" "$2"
-grep -E '^(flagserver_image|judgeserver_image|practice_judgeserver_image)' "$2"
-DRV
-} >"$PRESERVE_HARNESS"
-
-P_OLD="$TMP_TEST_DIR/old.toml"
-P_NEW="$TMP_TEST_DIR/new.toml"
-cat >"$P_OLD" <<'TOML'
-[awd]
-flagserver_image = "my.registry.local/awd-flagserver:9.9.9"
-judgeserver_image = "floatctf/awd-judgeserver:0.3.3"
-
-[awdp]
-practice_judgeserver_image = "floatctf/infra/awdp-judgeserver:0.3.3"
-TOML
-cat >"$P_NEW" <<'TOML'
-[awd]
-flagserver_image = "docker.io/floatctf/awd-flagserver:1.0.0"
-judgeserver_image = "docker.io/floatctf/awd-judgeserver:1.0.0"
-
-[awdp]
-practice_judgeserver_image = "docker.io/floatctf/awdp-judgeserver:1.0.0"
-TOML
-
-cp "$P_NEW" "$TMP_TEST_DIR/p-default.toml"
-P_DEFAULT_OUT="$(bash "$PRESERVE_HARNESS" "$P_OLD" "$TMP_TEST_DIR/p-default.toml" 2>&1)" || true
-check "行为（默认）：自定义镜像引用被保留 + warn" \
-    bash -c 'grep -qF "flagserver_image = \"my.registry.local/awd-flagserver:9.9.9\"" <<<"$1" &&
-             grep -qF "保留管理员自定义的运行时镜像" <<<"$1"' _ "$P_DEFAULT_OUT"
-check "行为（默认）：stock 的 floatctf/awd-judgeserver 迁移到 canonical" \
-    bash -c 'grep -qF "judgeserver_image = \"docker.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
-check "行为（默认）：stock 的旧 floatctf/infra/awdp 迁移到扁平化 canonical" \
-    bash -c 'grep -qF "practice_judgeserver_image = \"docker.io/floatctf/awdp-judgeserver:1.0.0\"" <<<"$1"' _ "$P_DEFAULT_OUT"
-
-cp "$P_NEW" "$TMP_TEST_DIR/p-reset.toml"
-P_RESET_OUT="$(RESET_RUNTIME_IMAGES=1 bash "$PRESERVE_HARNESS" "$P_OLD" "$TMP_TEST_DIR/p-reset.toml" 2>&1)" || true
-check "行为（--reset-runtime-images）：自定义值被丢弃，全部回到 canonical" \
-    bash -c 'grep -qxF "flagserver_image = \"docker.io/floatctf/awd-flagserver:1.0.0\"" <<<"$1" &&
-             grep -qxF "judgeserver_image = \"docker.io/floatctf/awd-judgeserver:1.0.0\"" <<<"$1" &&
-             grep -qF "丢弃" <<<"$1"' _ "$P_RESET_OUT"
-
-cp "$P_NEW" "$TMP_TEST_DIR/p-keep.toml"
-P_KEEP_OUT="$(KEEP_RUNTIME_IMAGES=1 bash "$PRESERVE_HARNESS" "$P_OLD" "$TMP_TEST_DIR/p-keep.toml" 2>&1)" || true
-check "行为（--keep-runtime-images）：连 stock 旧值也原样保留" \
-    bash -c 'grep -qF "judgeserver_image = \"floatctf/awd-judgeserver:0.3.3\"" <<<"$1" &&
-             grep -qF "practice_judgeserver_image = \"floatctf/infra/awdp-judgeserver:0.3.3\"" <<<"$1"' _ "$P_KEEP_OUT"
 
 # ── 13. 行为测试：ensure_runtime_images（stub docker，硬失败/跳过/齐备）────────
 #

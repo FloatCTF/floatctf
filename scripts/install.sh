@@ -489,24 +489,6 @@ ensure_service_group() {
     fi
 
     if getent group docker >/dev/null 2>&1; then
-        # 历史清理：早期宿主 systemd 版本以 User=floatctf 运行 API，该账号可能被加入
-        # docker 组；systemd 会继承 NSS 里的 supplementary groups，那样 API 就能绕过
-        # helper 直连 /var/run/docker.sock。账号仍存在时收敛一次（已不存在则跳过）。
-        if id "$FCTF_USER" >/dev/null 2>&1 \
-            && id -nG "$FCTF_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-            if command -v gpasswd >/dev/null 2>&1; then
-                gpasswd -d "$FCTF_USER" docker >/dev/null
-            elif command -v deluser >/dev/null 2>&1; then
-                deluser "$FCTF_USER" docker >/dev/null
-            else
-                local keep_groups
-                keep_groups="$(id -nG "$FCTF_USER" | tr ' ' '\n' \
-                    | grep -vx "$FCTF_USER" | grep -vx docker | paste -sd, -)"
-                usermod -G "$keep_groups" "$FCTF_USER"
-            fi
-            ok "已确保历史账号 $FCTF_USER 不属于 docker 组（API Docker 权限仅经 helper）"
-        fi
-
         if ! id -nG "$FCTF_HELPER_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
             usermod -aG docker "$FCTF_HELPER_USER"
             ok "已把 $FCTF_HELPER_USER 加入 docker 组（Docker 控制面仅授予 helper）"
@@ -525,7 +507,7 @@ check_user_layout() {
     [ -n "$fctf_gid" ] || die "无法解析 $FCTF_USER 组 GID"
 
     local d
-    for d in image/api web config/caddy data/postgres data/rustfs data/caddy data/caddy-config logs/rustfs runtime; do
+    for d in web config/caddy data/postgres data/rustfs data/caddy data/caddy-config logs/rustfs runtime; do
         mkdir -p "$FLOATCTF_HOME/$d"
     done
     chown root:"$FCTF_USER" "$FLOATCTF_HOME" >/dev/null 2>&1 || true
@@ -534,11 +516,11 @@ check_user_layout() {
     for run_dir in data logs runtime; do
         chown -R "$FCTF_UID":"$FCTF_USER" "$FLOATCTF_HOME/$run_dir" >/dev/null 2>&1 || true
     done
-    chown -R root:"$FCTF_USER" "$FLOATCTF_HOME/image" "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
-    chmod 750 "$FLOATCTF_HOME/image" "$FLOATCTF_HOME/image/api" "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
+    chown -R root:"$FCTF_USER" "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
+    chmod 750 "$FLOATCTF_HOME/web" >/dev/null 2>&1 || true
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy" >/dev/null 2>&1 || true
     chmod 750 "$FLOATCTF_HOME/config" >/dev/null 2>&1 || true
-    ok "布局就绪: $FLOATCTF_HOME/{image/api,web,config/caddy,data/{postgres,rustfs,caddy,caddy-config},logs/rustfs,runtime}"
+    ok "布局就绪: $FLOATCTF_HOME/{web,config/caddy,data/{postgres,rustfs,caddy,caddy-config},logs/rustfs,runtime}"
 
     if [ ! -f "$FLOATCTF_HOME/.initialized" ]; then
         printf 'FloatCTF host initialized at %s by %s\n' "$(date -Is 2>/dev/null || date)" "${SUDO_USER:-root}" \
@@ -711,11 +693,6 @@ write_systemd_units() {
     mkdir -p /etc/systemd/system
     write_helper_systemd_unit
 
-    # 生产 API 已由 Compose 托管；移除旧 native API unit，避免双实例/端口竞争。
-    systemctl disable floatctf-api.service >/dev/null 2>&1 || true
-    systemctl stop floatctf-api.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/floatctf-api.service
-
     if [ "$INSTALL_MODE" = "compose" ]; then
         ok "compose 模式：只写 helper 单元（stack 由 docker compose 管理）"
         return 0
@@ -725,7 +702,7 @@ write_systemd_units() {
     sed -i "s|\${FLOATCTF_HOME}|$FLOATCTF_HOME|g" /etc/systemd/system/floatctf-infra.service
     install -m 0644 "$TPL_DIR/floatctf.target" /etc/systemd/system/floatctf.target
 
-    ok "systemd 单元已写出（helper + Compose stack；native API unit 已清理）"
+    ok "systemd 单元已写出（helper + Compose stack）"
 }
 
 write_uninstall() {
@@ -1136,28 +1113,6 @@ install_platform_frontends() {
 
 ensure_platform_control_network() {
     local name="fctf-platform-control"
-    local legacy_name="fctf-awdp-control"
-
-    # 旧版 AWDP control network 使用了同一 10.42.8.0/24。Docker 不允许两个 bridge
-    # network 占用相同 subnet，因此升级时仅在旧网络已空闲且确属 FloatCTF 时自动迁移。
-    if ! docker network inspect "$name" >/dev/null 2>&1 \
-        && docker network inspect "$legacy_name" >/dev/null 2>&1; then
-        local legacy_internal legacy_subnet legacy_containers legacy_managed legacy_managed_old
-        legacy_internal="$(docker network inspect -f '{{.Internal}}' "$legacy_name")"
-        legacy_subnet="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$legacy_name")"
-        legacy_containers="$(docker network inspect -f '{{len .Containers}}' "$legacy_name")"
-        legacy_managed="$(docker network inspect -f '{{index .Labels "io.floatctf.managed"}}' "$legacy_name")"
-        legacy_managed_old="$(docker network inspect -f '{{index .Labels "floatctf.managed"}}' "$legacy_name")"
-        [ "$legacy_internal" = "true" ] \
-            && [ "$legacy_subnet" = "10.42.8.0/24" ] \
-            && { [ "$legacy_managed" = "true" ] || [ "$legacy_managed_old" = "true" ]; } \
-            || die "$legacy_name 占用 10.42.8.0/24 但不匹配 FloatCTF 旧 control network 契约，请人工处理"
-        [ "$legacy_containers" = "0" ] \
-            || die "$legacy_name 仍连接 $legacy_containers 个容器；请先停止旧 AWDP Judge 后重新部署"
-        docker network rm "$legacy_name" >/dev/null \
-            || die "移除旧 control network 失败: $legacy_name"
-        ok "已迁移旧 control network 名称: $legacy_name → $name"
-    fi
 
     if docker network inspect "$name" >/dev/null 2>&1; then
         local internal subnet occupied

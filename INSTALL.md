@@ -99,7 +99,7 @@ GameBox ───────────── 不加入该网络
 | `floatctf-infra.service` | systemd/root | 执行生产 `docker compose up/down` |
 | `floatctf.target` | systemd target | 聚合 helper + Compose stack |
 
-`floatctf-api.service` 已退出当前架构。安装器会清理旧版 native API unit，避免同一台机器出现两份 API。
+`floatctf-api.service` 不在当前架构里：平台只由 Compose + `floatctf-infra.service` 管理，宿主上没有 API 的 systemd 单元。
 
 Compose 管理：
 
@@ -740,7 +740,7 @@ label     io.floatctf.managed=true
 
 该网络声明为 Compose `external`。这样赛事 FlagServer/JudgeServer 可以在 Compose 生命周期之外加入它，`docker compose down` 也不会误删仍被动态业务容器使用的 control network。
 
-旧版使用 `fctf-awdp-control` 占用同一 `10.42.8.0/24`。installer 在新网络不存在时会识别旧网络；仅当它是 internal、subnet/managed label 匹配且已经没有连接容器时自动删除旧网络并创建 `fctf-platform-control`。如果旧 Judge 仍连接其中，部署会 fail-fast，要求先停止旧 Judge，避免在线迁移时强行断网。
+安装器只负责创建/校验 `fctf-platform-control`（10.42.8.0/24、internal）。若同 subnet 已被其它 Docker 网络（例如历史遗留的 `fctf-awdp-control`）占用，创建会失败并提示先清理——安装器不再自动迁移旧网络。
 
 ---
 
@@ -1075,7 +1075,6 @@ frontend.sh
 uninstall.sh
 ```
 
-卸载器保留旧 `floatctf-api.service` 和 `fctf-awdp-control` 的清理分支，仅用于迁移旧安装。
 
 ### 17.1 卸载后重新安装（fresh reinstall）
 

@@ -17,7 +17,7 @@ export DOCKER_UID DOCKER_GID
 
 # 用 root 容器执行一次属主对齐（幂等）。bind 目录旧属主可能是容器 uid 10001
 #（历史方案 chown 10001:10001:750：容器可写但开发者自己不可读），也可能是
-# root（install.sh --develop 以 root 建目录）；开发者无权直接 chown，须借容器。
+# root（宿主目录由安装器/setup-dev 以 root 建）；开发者无权直接 chown，须借容器。
 chown_as_root() { # $1 = 宿主路径（bind 目录）或 named volume 名
     docker run --rm --user 0 \
         -v "$1":/target \

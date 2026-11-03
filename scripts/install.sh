@@ -28,9 +28,6 @@
 #     已应用版本由 schema_migrations 跳过；不做任何破坏性回滚。
 #   - --skip-migrations（或 FLOATCTF_SKIP_MIGRATIONS=1）跳过迁移步骤；跳过时
 #     平台可能因缺少新表/新列而启动失败。
-#   - 管理员在 config/floatctf.toml 里自定义过的 AWD/AWDP 镜像引用会被**保留**
-#     （并告警）；只有已知 stock 形态才迁移到新的 canonical Docker Hub 默认值。
-#     强制回默认用 --reset-runtime-images；强制保留用 --keep-runtime-images。
 #
 # 【前置依赖（R3）】宿主必须提供 **Python 3.11+**（stdlib tomllib）：
 #   release 的 db/migrate.sh 用 `python3 -c 'import tomllib'` 解析 TOML 配置，
@@ -44,9 +41,6 @@
 #   db/                        migrate.sh + migrations/ + merged.sql（升级用）
 #   frontend.sh uninstall.sh   前端管理器 / 生命周期工具
 #
-# 【开发宿主初始化】由 `mise run setup` 内部调用；开发者无需直接运行：
-#   sudo ./scripts/install.sh --develop --helper-bin <target/debug/floatctf-helper>
-#   仅准备主机、系统用户/组、内核参数与 floatctf-helper，不创建 dev systemd infra。
 #
 # 环境变量（覆盖 5 个产物 URL / release 版本 / 迁移开关 / 运行时镜像）：
 #   FLOATCTF_HELPER_URL / FLOATCTF_WEB_URL /
@@ -160,21 +154,15 @@ WEB_URL_EXPLICIT=0
 MIGRATE_URL_EXPLICIT=0
 FRONTEND_MANAGER_URL_EXPLICIT=0
 OPS_URL_EXPLICIT=0
-DEVELOP=0
-HELPER_BIN=""
 # 升级既有安装时，迁移由 release 的 db/migrate.sh forward-only 应用；可用
 # --skip-migrations 显式跳过（见 apply_migrations 的说明与风险提示）。
 SKIP_MIGRATIONS="${FLOATCTF_SKIP_MIGRATIONS:-0}"
 # AWD/AWDP 运行时镜像默认**硬要求**（缺则 die）；--skip-runtime-images 是 operator
 # 显式退出口（只跑 Jeopardy 的宿主），降级为醒目告警。
 SKIP_RUNTIME_IMAGES="${FLOATCTF_SKIP_RUNTIME_IMAGES:-0}"
-# 升级时自定义镜像引用的处置：默认保留"非 stock"的自定义值；两者互斥。
-RESET_RUNTIME_IMAGES=0
-KEEP_RUNTIME_IMAGES=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --helper-url) HELPER_URL="${2:?--helper-url 需要一个地址参数}"; HELPER_URL_EXPLICIT=1; shift ;;
-        --helper-bin) HELPER_BIN="${2:?--helper-bin 需要本地二进制路径}"; shift ;;
         --web-url) WEB_URL="${2:?--web-url 需要一个地址参数}"; WEB_URL_EXPLICIT=1; shift ;;
         --migrate-url) MIGRATE_URL="${2:?--migrate-url 需要一个地址参数}"; MIGRATE_URL_EXPLICIT=1; shift ;;
         --frontend-manager-url) FRONTEND_MANAGER_URL="${2:?--frontend-manager-url 需要一个地址参数}"; FRONTEND_MANAGER_URL_EXPLICIT=1; shift ;;
@@ -182,9 +170,6 @@ while [ $# -gt 0 ]; do
         --version) VERSION="${2:?--version 需要 release 版本，如 0.3.3}"; VERSION_EXPLICIT=1; shift ;;
         --skip-migrations) SKIP_MIGRATIONS=1 ;;
         --skip-runtime-images) SKIP_RUNTIME_IMAGES=1 ;;
-        --reset-runtime-images) RESET_RUNTIME_IMAGES=1 ;;
-        --keep-runtime-images) KEEP_RUNTIME_IMAGES=1 ;;
-        --develop) DEVELOP=1 ;;
         -h|--help)
             # 打印文件头注释块（从第 2 行到第一条非注释行之前）；不写死行号，
             # 避免以后往头部加内容时 --help 被静默截断。
@@ -222,8 +207,6 @@ fi
 export VERSION
 pin_default_urls_to_version "$VERSION"
 # 升级保护的两种强制模式互斥（同时给出就无法判定意图 → fail closed，绝不猜）。
-[ "$RESET_RUNTIME_IMAGES" = "1" ] && [ "$KEEP_RUNTIME_IMAGES" = "1" ] \
-    && die "--reset-runtime-images 与 --keep-runtime-images 互斥，请只选一个"
 
 # ── trap：清理临时资源（init 阶段登记的网络资源 + 下载解压的临时目录）──────────
 TMP_DOCKER_NET=""
@@ -454,24 +437,17 @@ check_user_layout() {
 }
 
 run_init() {
-    local mode="${1:-production}"
-    info "──── 第一阶段：主机初始化（幂等，mode=$mode）────"
+    info "──── 第一阶段：宿主依赖校验 + 目录/组 ────"
     require_root
     check_linux
-
     check_commands
     check_docker
     check_nftables
     check_wireguard
     check_ip_forward
     check_bridge_netfilter
-    if [ "$mode" = "develop" ]; then
-        ensure_service_group
-        ok "开发宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/服务组 就绪）"
-    else
-        check_user_layout
-        ok "生产宿主初始化完成（docker/nftables/WireGuard/转发/br_netfilter/组/布局 就绪）"
-    fi
+    check_user_layout
+    ok "宿主就绪（docker/nftables/WireGuard/转发/br_netfilter/组/布局）"
 }
 
 # ============================================================================
@@ -742,87 +718,6 @@ render() { # template out
     mv "$out.tmp" "$out"
 }
 
-# ── 升级保护：管理员自定义的 AWD/AWDP 镜像引用（§2.5）────────────────────────
-# prepare_configs 每次都用模板重渲染 config/floatctf.toml；没有保护的话，管理员
-# 指向自建 registry / 私有镜像的配置会在升级时被静默冲掉（"升级后 AWD 忽然拉
-# 官方镜像"）。这里只处理 TOML 里那三个 key（数据库里没有任何镜像设置）。
-toml_get_string_key() { # <file> <section> <key>：打印该 key 的字符串值（去引号）
-    local file="$1" section="$2" key="$3"
-    [ -f "$file" ] || return 1
-    # 用字符串比较而不是正则拼 section：`[awd]` 里的方括号在 ERE 里是字符类。
-    awk -v want="[$section]" -v key="$key" '
-        /^[[:space:]]*\[/ {
-            line = $0
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-            inseg = (line == want)
-            next
-        }
-        inseg && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-            line = $0
-            sub(/^[^=]*=[[:space:]]*/, "", line)
-            sub(/[[:space:]]*(#.*)?$/, "", line)
-            gsub(/^"|"$/, "", line)
-            print line
-            exit
-        }
-    ' "$file"
-}
-
-toml_set_string_key() { # <file> <section> <key> <value>
-    local file="$1" section="$2" key="$3" value="$4" tmp="$1.tmp.$$"
-    awk -v want="[$section]" -v key="$key" -v val="$value" '
-        /^[[:space:]]*\[/ {
-            line = $0
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-            inseg = (line == want)
-        }
-        !done && inseg && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-            print key " = \"" val "\""
-            done = 1
-            next
-        }
-        { print }
-    ' "$file" > "$tmp" || return 1
-    mv "$tmp" "$file"
-}
-
-# 已知 stock 形态（安装器历史默认 + 现在的 canonical 默认）= 可安全迁移到 canonical；
-# 其它任何值都视为管理员自定义 → 保留 + 告警。
-is_stock_runtime_image() { # <image-ref>
-    case "$1" in
-        floatctf/awd-flagserver:*|floatctf/awd-judgeserver:*|floatctf/infra/awdp-judgeserver:*|\
-        ghcr.io/floatctf/awd-flagserver:*|ghcr.io/floatctf/awd-judgeserver:*|ghcr.io/floatctf/awdp-judgeserver:*|\
-        docker.io/floatctf/awd-flagserver:*|docker.io/floatctf/awd-judgeserver:*|docker.io/floatctf/awdp-judgeserver:*)
-            return 0
-            ;;
-        *) return 1 ;;
-    esac
-}
-
-# 把既有 floatctf.toml 里**自定义**的三个镜像引用写回新渲染的文件。
-#   --reset-runtime-images → 忽略既有值（强制 canonical），被丢弃的自定义值告警
-#   --keep-runtime-images  → 无条件保留既有值（连 stock 也保留）
-#   默认                   → stock 迁移到 canonical；非 stock 保留 + warn
-preserve_custom_runtime_images() { # <旧 toml 快照> <新渲染的 toml>
-    local old="$1" new="$2" spec section key existing
-    for spec in "awd flagserver_image" "awd judgeserver_image" "awdp practice_judgeserver_image"; do
-        section="${spec%% *}"
-        key="${spec##* }"
-        existing="$(toml_get_string_key "$old" "$section" "$key" 2>/dev/null || true)"
-        [ -n "$existing" ] || continue
-        if [ "$RESET_RUNTIME_IMAGES" = "1" ]; then
-            is_stock_runtime_image "$existing" || \
-                warn "--reset-runtime-images：丢弃 [$section] $key 的自定义值 $existing（改用 canonical 默认）"
-            continue
-        fi
-        if [ "$KEEP_RUNTIME_IMAGES" = "1" ] || ! is_stock_runtime_image "$existing"; then
-            toml_set_string_key "$new" "$section" "$key" "$existing" \
-                || die "写回自定义运行时镜像引用失败: [$section] $key"
-            warn "升级保护：保留管理员自定义的运行时镜像 [$section] $key = $existing（改回 canonical 默认请加 --reset-runtime-images）"
-        fi
-    done
-}
-
 prepare_configs() {
     set -a
     # ENV_FILE is generated at runtime by this installer.
@@ -830,22 +725,9 @@ prepare_configs() {
     . "$ENV_FILE"
     set +a
     export FLOATCTF_HOME
-    # 升级保护：渲染前先快照既有 floatctf.toml（渲染会覆盖它）。快照含 JWT_SECRET
-    # 等敏感值 → 必须是 0600（umask 077 建文件 + 显式 chmod 双重保险），绝不能
-    # 因为 cp 默认 0644 把密钥泄露给本机其他用户。
-    local prev_toml=""
-    if [ -f "$FLOATCTF_HOME/config/floatctf.toml" ]; then
-        prev_toml="$FLOATCTF_HOME/.floatctf.toml.prev"
-        ( umask 077; cp "$FLOATCTF_HOME/config/floatctf.toml" "$prev_toml" )
-        chmod 0600 "$prev_toml"
-    fi
     # 先替换模板里的 FLOATCTF_HOME 占位符，再渲染。
     sed "s|\${FLOATCTF_HOME}|$FLOATCTF_HOME|g" "$FLOATCTF_HOME/.floatctf.toml.tmpl" > "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
     render "$FLOATCTF_HOME/.floatctf.toml.tmpl.real" "$FLOATCTF_HOME/config/floatctf.toml"
-    if [ -n "$prev_toml" ]; then
-        preserve_custom_runtime_images "$prev_toml" "$FLOATCTF_HOME/config/floatctf.toml"
-        rm -f "$prev_toml"
-    fi
     cp "$FLOATCTF_HOME/.Caddyfile.tmpl" "$FLOATCTF_HOME/config/caddy/Caddyfile"
     rm -f "$FLOATCTF_HOME/.floatctf.toml.tmpl.real"
     chown root:"$FCTF_USER" "$FLOATCTF_HOME/config" "$FLOATCTF_HOME/config/caddy" "$FLOATCTF_HOME/config/oidc"
@@ -1252,64 +1134,6 @@ run_deploy() {
     ok "部署完成（服务未启动）：$FLOATCTF_HOME；生产 API 将由 Compose 以非 root/无 capabilities 容器运行"
 }
 
-# ============================================================================
-# 开发宿主初始化（--develop）：仅由 `mise run setup` 内部调用。
-# 开发环境自身由仓库内 mise + compose 管理；这里仅准备一次性的宿主能力与 helper。
-# ============================================================================
-run_develop() {
-    info "════ 开发宿主初始化（mise run setup）════"
-
-    local src_root developer
-    src_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    [ -f "$src_root/Cargo.toml" ] && [ -d "$src_root/apps" ] && [ -d "$src_root/infra" ] \
-        || die "未检测到 FloatCTF 源码根目录"
-    [ -n "$HELPER_BIN" ] || die "开发初始化缺少 --helper-bin；请通过 `mise run setup` 执行"
-    [ -x "$HELPER_BIN" ] || die "helper 二进制不可执行: $HELPER_BIN"
-
-    run_init develop
-
-    developer="${SUDO_USER:-}"
-    [ -n "$developer" ] && id "$developer" >/dev/null 2>&1 \
-        || die "开发初始化需要通过 sudo 从普通开发者会话执行"
-
-    # 开发者保留 docker 组用于仓库 Compose；API 子进程会显式丢弃该组。
-    # floatctf 组用于访问 helper 两个 Unix socket。
-    for group in docker "$FCTF_USER"; do
-        if getent group "$group" >/dev/null 2>&1 \
-            && ! id -nG "$developer" | tr ' ' '\n' | grep -qx "$group"; then
-            usermod -aG "$group" "$developer"
-            ok "已把 $developer 加入 $group 组（重新登录后生效）"
-        fi
-    done
-
-    install_helper_binary "$HELPER_BIN"
-    write_helper_systemd_unit
-
-    # 清理历史双轨开发单元；开发基础设施今后只由 `mise run dev` 管理。
-    systemctl disable --now floatctf-dev-infra.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/floatctf-dev-infra.service
-    systemctl daemon-reload
-    systemctl enable --now floatctf-helper.service
-
-    # 等待 socket 创建，确保 setup 在控制面真正可用后才成功返回。
-    local _attempt
-    for _attempt in $(seq 1 50); do
-        [ -S /run/floatctf/helper-control.sock ] && [ -S /run/floatctf/helper-docker.sock ] && break
-        sleep 0.1
-    done
-    [ -S /run/floatctf/helper-control.sock ] && [ -S /run/floatctf/helper-docker.sock ] \
-        || die "floatctf-helper 已启动但 sockets 未出现；请查看 journalctl -u floatctf-helper"
-
-    cat <<EOF
-
-开发宿主初始化完成。
-- API / Vite 由当前开发者用户运行。
-- floatctf-helper 由 systemd 以 $FCTF_HELPER_USER + docker 组 + CAP_NET_ADMIN 运行。
-- 开发基础设施由仓库内 Docker Compose 管理。
-- 首次加入 docker/floatctf 组后请重新登录，再执行：mise run dev
-EOF
-}
-
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 main() {
     # R3（fail closed，且在**任何 mutation 之前**）：release 的 db/migrate.sh 用
@@ -1317,11 +1141,6 @@ main() {
     #（会建目录）/ 下载 / 迁移 检查，缺则立刻 die，
     # 宿主上不留任何半成品。
     check_python_tomllib
-    if [ "$DEVELOP" = "1" ]; then
-        run_develop
-        ok "开发环境初始化完成（helper 已启动；API/Web 尚未启动）"
-        return
-    fi
     info "FloatCTF 一键安装 → $FLOATCTF_HOME"
     run_init
     acquire_package
@@ -1341,8 +1160,7 @@ main() {
 升级既有安装：重新运行本安装器（release 的 db/migrate.sh 会 forward-only 补齐新迁移）；
   已装好的迁移器也可手动使用：sudo $FLOATCTF_HOME/db/migrate.sh status
 AWD/AWDP 运行时镜像（$RUNTIME_IMAGE_REGISTRY，tag=$VERSION）：
-  已在部署前逐个 docker image inspect / docker pull 校验通过；
-  升级时管理员自定义的镜像引用会被保留（--reset-runtime-images 可强制回默认）。
+  已在部署前逐个 docker image inspect / docker pull 校验通过。
 EOF
     if [ -n "$RUNTIME_IMAGES_MISSING" ]; then
         cat <<EOF

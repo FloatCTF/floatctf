@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
+
+use crate::api::AppError;
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
@@ -189,7 +191,7 @@ impl EventContext {
         event_users::Entity::find_by_id((self.event.id, self.user.id))
             .one(self.db.get_ref())
             .await?
-            .ok_or_else(|| anyhow!("你尚未加入本赛事"))?;
+            .ok_or_else(|| anyhow!(AppError::Forbidden("你尚未加入本赛事".to_string())))?;
         Ok(())
     }
 }

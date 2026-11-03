@@ -1129,6 +1129,14 @@ pub fn admin_routes() -> Vec<Route> {
             auth: Auth::SuperAdminRequired,
             json_body: false,
         },
+        // [platform] 前端市场：只读外部元数据（发现 GitHub 上的候选前端与它们的
+        // release 制品），不改平台状态，因此是 settings.read 而不是 manage。
+        Route {
+            method: Method::Get,
+            path: "/api/admin/frontend-market",
+            auth: Auth::SuperAdminRequired,
+            json_body: false,
+        },
         // [platform]
         Route {
             method: Method::Get,
@@ -1900,7 +1908,7 @@ pub fn admin_routes() -> Vec<Route> {
 /// **新增或删除 admin 路由时必须同步更新本常量与 [`admin_routes`]**。
 /// 用「精确钉住」而不是 `>= N`：后者对**删除**完全无感（历史脚本曾用
 /// `assert!(a.len() >= 60)`，而当时实际有 94 条且漏掉了整个 terminal / AWD / AWDP 面）。
-pub const ADMIN_ROUTE_COUNT: usize = 156;
+pub const ADMIN_ROUTE_COUNT: usize = 157;
 
 /// 各域条数：`(域, 条数, 最小要求)`。整块域消失会被 [`admin_route_domains_meet_minimums`] 抓到。
 pub fn admin_route_domains() -> Vec<(&'static str, usize, usize)> {

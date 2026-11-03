@@ -166,7 +166,7 @@ register_login() {
   local username="je_${role}_${SUFFIX//-/_}"
   local password="E2e-${role}-${SUFFIX}-Aa1!"
   api_ok POST /api/users '' "$(json_string_obj username "$username" nickname "$role" password "$password" email "$username@example.invalid")" >/dev/null
-  api_ok POST /api/users/session '' "$(json_string_obj username "$username" password "$password")" | json_get data
+  api_ok POST /api/session '' "$(json_string_obj username "$username" password "$password")" | json_get data
 }
 make_event_json() {
   local mode=$1 title=$2 start=$3 end=$4
@@ -256,7 +256,7 @@ pass "isolated API booted through PostgreSQL + Redis + RustFS + helper Docker"
 
 ADMIN_PASSWORD="$(sed -n 's/^- 密码：`\(.*\)`/\1/p' docs/agents/TESTING.md | head -n1)"
 [[ -n "$ADMIN_PASSWORD" ]] || fail "local test admin credential unavailable"
-ADMIN_TOKEN="$(api_ok POST /api/admin/session '' "$(json_string_obj username sysadmin password "$ADMIN_PASSWORD")" | json_get data)"
+ADMIN_TOKEN="$(api_ok POST /api/session '' "$(json_string_obj username sysadmin password "$ADMIN_PASSWORD")" | json_get data)"
 unset ADMIN_PASSWORD
 [[ -n "$ADMIN_TOKEN" ]] || fail "admin authentication failed"
 pass "admin authenticated"

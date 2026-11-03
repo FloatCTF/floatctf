@@ -1,0 +1,371 @@
+/**
+ * 应用级样式。
+ *
+ * 设计原则：**不重新发明设计系统**。`animal-island-ui/style` 已经定义了完整的
+ * token 与组件样式，这里只做三件事：
+ *
+ * 1. 引入库样式（必须在最前）；
+ * 2. 定义少量**库没有**的应用级东西（页面骨架、布局网格、滚动条、焦点环）；
+ * 3. 明确几条「自定义组件也必须遵守」的形态规则，写成可复用的类，
+ *    避免每个页面各写一份 `border: 2px solid ...`。
+ */
+
+@import "animal-island-ui/style";
+
+/* ---------------------------------------------------------------------------
+ * 应用级 token：只补充库没有的语义，不覆盖库的颜色。
+ * 颜色一律引用 `--animal-*`，这样将来换主题只需改库的一处。
+ * ------------------------------------------------------------------------- */
+:root {
+	/* 页面骨架尺寸 */
+	--ai-topbar-h: 60px;
+	--ai-sidebar-w: 244px;
+	--ai-sidebar-w-collapsed: 76px;
+	--ai-content-max: 1280px;
+
+	/* 表单与卡片的统一内距（与库的 spacing 对齐） */
+	--ai-panel-pad: var(--animal-spacing-lg);
+	/* 列表行高，用于键盘可达的密集列表 */
+	--ai-row-h: 44px;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	background: var(--animal-bg-color);
+	color: var(--animal-text-color);
+	font-family: var(--animal-font-family);
+	font-size: var(--animal-font-size-base);
+	line-height: var(--animal-line-height-base);
+	-webkit-font-smoothing: antialiased;
+}
+
+/* 焦点可见性：库的组件自带，但自定义元素也必须可见（键盘可达性）。
+ *
+ * 颜色遵循库的设计法第 6 条：**绝不用冷蓝色焦点环**。
+ * 输入类用黄 `#ffcc00`，其余交互用主色薄荷 `#19c8b9`。
+ */
+:focus-visible {
+	outline: 2px solid var(--animal-primary-color);
+	outline-offset: 2px;
+	border-radius: var(--animal-border-radius-sm);
+}
+
+/* 输入类自定义元素用黄色焦点环（与库的 Input/Switch/Checkbox 一致） */
+.ai-focus-input:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+	outline-color: #ffcc00;
+}
+
+/* ---------------------------------------------------------------------------
+ * 应用骨架
+ * ------------------------------------------------------------------------- */
+.ai-app {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.ai-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	gap: var(--animal-spacing-lg);
+	padding: var(--animal-spacing-lg);
+	padding-top: 0;
+}
+
+.ai-main {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
+	padding-bottom: var(--animal-spacing-xl);
+}
+
+.ai-shell-wide .ai-main-inner {
+	max-width: none;
+}
+
+.ai-main-inner {
+	max-width: var(--ai-content-max);
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--animal-spacing-lg);
+}
+
+/* 顶栏 */
+.ai-topbar {
+	height: var(--ai-topbar-h);
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: var(--animal-spacing-md);
+	padding: 0 var(--animal-spacing-lg);
+	background: var(--animal-bg-color-secondary);
+	border-bottom: var(--animal-border-width) solid var(--animal-border-color);
+}
+
+.ai-topbar-brand {
+	display: flex;
+	align-items: center;
+	gap: var(--animal-spacing-sm);
+	font-weight: 800;
+	font-size: var(--animal-font-size-lg);
+	white-space: nowrap;
+}
+
+.ai-topbar-brand-dot {
+	width: 26px;
+	height: 26px;
+	border-radius: 9px;
+	background: var(--animal-primary-color);
+	border: var(--animal-border-width) solid var(--animal-text-color);
+	flex: 0 0 auto;
+}
+
+.ai-topbar-spacer {
+	flex: 1;
+}
+
+/* 侧栏 */
+.ai-sidebar {
+	width: var(--ai-sidebar-w);
+	flex: 0 0 auto;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--animal-spacing-sm);
+	padding: var(--animal-spacing-md);
+	background: var(--animal-bg-color-secondary);
+	border: var(--animal-border-width) solid var(--animal-border-color);
+	border-radius: var(--animal-border-radius-lg);
+	transition: width var(--animal-motion-duration-base) var(--animal-motion-ease);
+}
+
+.ai-sidebar-collapsed {
+	width: var(--ai-sidebar-w-collapsed);
+}
+
+.ai-nav-group-label {
+	font-size: var(--animal-font-size-sm);
+	font-weight: 700;
+	color: var(--animal-text-color-secondary);
+	padding: var(--animal-spacing-xs) var(--animal-spacing-sm);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.ai-nav-item {
+	display: flex;
+	align-items: center;
+	gap: var(--animal-spacing-sm);
+	min-height: var(--ai-row-h);
+	padding: var(--animal-spacing-sm) var(--animal-spacing-md);
+	border-radius: var(--animal-border-radius-sm);
+	border: var(--animal-border-width) solid transparent;
+	color: var(--animal-text-color);
+	text-decoration: none;
+	font-weight: 600;
+	cursor: pointer;
+	background: transparent;
+	width: 100%;
+	text-align: left;
+	font-family: inherit;
+	font-size: inherit;
+}
+
+.ai-nav-item:hover {
+	background: var(--animal-bg-color);
+	border-color: var(--animal-border-color-light);
+}
+
+/* 选中态用「抬起 + 描边」而不是换整块底色：与库的卡片语言一致 */
+.ai-nav-item-active {
+	background: var(--animal-primary-color-bg);
+	border-color: var(--animal-primary-color);
+	color: var(--animal-primary-color-active);
+}
+
+.ai-nav-item-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * 通用布局工具（数量刻意保持很少）
+ * ------------------------------------------------------------------------- */
+.ai-grid {
+	display: grid;
+	gap: var(--animal-spacing-lg);
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.ai-grid-wide {
+	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+}
+
+.ai-row {
+	display: flex;
+	align-items: center;
+	gap: var(--animal-spacing-sm);
+	flex-wrap: wrap;
+}
+
+.ai-row-between {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--animal-spacing-sm);
+	flex-wrap: wrap;
+}
+
+.ai-col {
+	display: flex;
+	flex-direction: column;
+	gap: var(--animal-spacing-sm);
+	min-width: 0;
+}
+
+.ai-muted {
+	color: var(--animal-text-color-secondary);
+}
+
+.ai-strong {
+	font-weight: 800;
+}
+
+.ai-mono {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 13px;
+}
+
+/* 三态占位块：保证空/错/载三态在视觉上占同样体量，避免布局跳动 */
+.ai-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--animal-spacing-sm);
+	text-align: center;
+	padding: var(--animal-spacing-xl);
+	min-height: 200px;
+	color: var(--animal-text-color-secondary);
+}
+
+.ai-state-title {
+	font-weight: 800;
+	font-size: var(--animal-font-size-lg);
+	color: var(--animal-text-color);
+}
+
+/* 状态图标：用 naive-icons 渲染，**不用 emoji**（设计法第 16 条：
+   emoji / Unicode 符号 / 手写 SVG 都不允许作为 UI 图标）。 */
+.ai-state-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 56px;
+	height: 56px;
+	border-radius: 50%;
+	background: var(--animal-bg-color-secondary);
+	border: var(--animal-border-width) solid var(--animal-border-color);
+	color: var(--animal-text-color-secondary);
+}
+
+/* 统计数字 */
+.ai-stat-value {
+	font-size: 28px;
+	font-weight: 800;
+	line-height: 1.1;
+}
+
+/* 可滚动区域（表格横向滚动、日志窗口等） */
+.ai-scroll {
+	overflow: auto;
+}
+
+/* 更细的滚动条，避免奶油底色被粗灰条割裂 */
+.ai-scroll::-webkit-scrollbar,
+.ai-sidebar::-webkit-scrollbar,
+.ai-main::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.ai-scroll::-webkit-scrollbar-thumb,
+.ai-sidebar::-webkit-scrollbar-thumb,
+.ai-main::-webkit-scrollbar-thumb {
+	background: var(--animal-border-color);
+	border-radius: 999px;
+	border: 3px solid transparent;
+	background-clip: content-box;
+}
+
+.ai-scroll::-webkit-scrollbar-thumb:hover,
+.ai-sidebar::-webkit-scrollbar-thumb:hover,
+.ai-main::-webkit-scrollbar-thumb:hover {
+	background: var(--animal-border-color-hover);
+	background-clip: content-box;
+}
+
+/* 终端输出：**刻意的例外** —— 真实终端按惯例是深色，且必须等宽。
+ * 但底色仍取"暖"的一端（#3a3229 是暖棕而非冷灰/纯黑），
+ * 这样它看起来仍属于这座岛，而不是从别的应用里剪过来的一块。
+ * 设计法禁止的是「UI 文本用等宽字体」与「冷灰/纯黑」，
+ * 终端输出既是代码语境、又用了暖色，两条都不违反。 */
+.ai-terminal {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 13px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-all;
+	background: #3a3229;
+	color: #f4efe4;
+	border-radius: var(--animal-border-radius-sm);
+	padding: var(--animal-spacing-md);
+	max-height: 420px;
+}
+
+/* xterm 的挂载容器：xterm 自己会创建 .xterm 元素并接管内部样式，
+ * 因此这里**只**负责外框（圆角 / 底色 / 内边距），不去改它的内部结构。
+ * 覆盖 xterm 内部样式会与它自己的主题机制打架。 */
+.ai-terminal-host {
+	background: #3a3229;
+	border-radius: var(--animal-border-radius-base);
+	padding: var(--animal-spacing-sm);
+	overflow: hidden;
+}
+
+/* 小屏：侧栏改为顶部横向滚动，而不是硬挤 */
+@media (max-width: 900px) {
+	.ai-body {
+		flex-direction: column;
+	}
+
+	.ai-sidebar {
+		width: 100%;
+		flex-direction: row;
+		overflow-x: auto;
+		align-items: center;
+	}
+
+	.ai-nav-group-label {
+		display: none;
+	}
+}

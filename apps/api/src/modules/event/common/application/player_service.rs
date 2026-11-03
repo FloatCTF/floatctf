@@ -14,6 +14,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::api::app_err;
 use crate::{
     api::{AppError, FilterMapping, prelude::*},
     entity::{
@@ -260,7 +261,7 @@ pub async fn list_event_challenges(
         .is_some();
 
     if !joined {
-        return Err(AppError::BadRequest("你尚未加入本赛事".to_string()));
+        return Err(AppError::Forbidden("你尚未加入本赛事".to_string()));
     }
 
     let c_ec = event
@@ -331,7 +332,7 @@ pub async fn list_event_instances(
 
     let instances = jeopardy_instance::get_instances(&event_ctx)
         .await
-        .map_err(|e| AppError::BadRequest(format!("get_instances error: {}", e)))?;
+        .map_err(|e| app_err("get_instances error", e))?;
 
     Ok(instances
         .into_iter()

@@ -6,3 +6,21 @@ packages:
 allowBuilds:
   "@biomejs/biome": true
   esbuild: true
+
+# 让 `frontends/*` 能用**普通版本范围**（`^1.0.0`）引用 `@floatctf/*`，而仍然解析到
+# 仓库内的本地包。
+#
+# 为什么必须显式打开：`linkWorkspacePackages` 默认**不**把版本范围链接到工作区包
+# （实测最小复现：`"@floatctf/sdk": "^1.0.0"` → `ERR_PNPM_FETCH_404`，因为这三个包
+# 尚未发布到 npm）。只有 `workspace:*` 协议才会强制链接。
+#
+# 为什么前端要用 `^1.0.0` 而不是 `workspace:*`：`workspace:*` 是**仓库内协议**，
+# GitHub 上的独立仓库（`floatctf-frontend-*`）里根本解析不了。前端既要能在 monorepo
+# 里被一起 typecheck，又要能作为独立仓库安装，所以统一用 `^1.0.0`，由这一行保证
+# monorepo 内仍然链本地包。（实测有效：`frontends/foo/node_modules/@floatctf/sdk`
+# 软链到 `packages/sdk`。）
+linkWorkspacePackages: true
+
+minimumReleaseAgeExclude:
+  - animal-island-ui@2.2.1
+  - naive-icons@1.6.0

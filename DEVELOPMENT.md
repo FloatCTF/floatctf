@@ -196,6 +196,8 @@ Vite HMR
 
 开发端口默认只绑定回环地址。
 
+内置开发账号：用户端 `1000000` / `testuser`，管理端 `/admin` 为 `sysadmin` / `FloatCTF@2025`。
+
 Rust/TOML 修改后，`watchexec` 会重新编译并以受限组重新启动 API。前端由 Vite HMR 更新。
 
 常用生命周期命令：

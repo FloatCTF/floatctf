@@ -42,7 +42,7 @@ export function createEventUserAdminApi(http: FloatCTFHttpClient) {
 	    }: {
 	        event_id: string;
 	        user_id: string;
-	    }): Promise<UniResponse<EventUserResult>> => {
+	    }): Promise<UniResponse<null>> => {
 	        const res = await http.post(
 	            `/events/${event_id}/users/${user_id}/banned`,
 	        );
@@ -54,7 +54,7 @@ export function createEventUserAdminApi(http: FloatCTFHttpClient) {
 	    }: {
 	        event_id: string;
 	        user_id: string;
-	    }): Promise<UniResponse<EventUserResult>> => {
+	    }): Promise<UniResponse<null>> => {
 	        const res = await http.post(
 	            `/events/${event_id}/users/${user_id}/unbanned`,
 	        );

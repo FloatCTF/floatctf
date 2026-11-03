@@ -11,7 +11,9 @@ use crate::{
         prelude::*,
         sea_orm_utils::{CrossFilterMapping, paginate_query, resolve_cross_filters},
     },
+    // 响应体**必须**用账号 DTO，不能用生成实体 —— 见 `EventUserResult` 的说明。
     entity::{event_users, events, users},
+    modules::identity::user::dto::UsersDto,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -161,9 +163,32 @@ pub async fn remove_user(
     UniResponse::ok(deleted_count.into()).into()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// 赛事参与用户条目。
+///
+/// # 为什么 `user` 是 `UsersDto` 而不是 `users::Model`
+///
+/// `users::Model` 是 **sea-orm-codegen 生成的 DB 列镜像**，它派生 `Serialize`
+/// 且 `password` 列**没有** `#[serde(skip_serializing)]`（全仓 entity 都没有，
+/// 因为实体是生成物、不该手改）。因此任何把它放进响应结构体的地方，
+/// 都会把 argon2id 密码哈希回传给客户端。
+///
+/// 这**曾经真实发生过**（`GET /api/admin/events/{id}/users` 仅需 `events.read`）：
+/// 当时的字段就是 `pub user: users::Model`。这正是安全不变量 #1
+/// （响应 DTO 永不含 password，见 `modules/identity/user/dto.rs` 的文件头）
+/// 所禁止的形态，`identity` 模块当时改用独立 DTO 修好了，但**这一处漏了**。
+///
+/// 现在统一复用 `UsersDto` —— 全平台只有一个"账号出现在响应里"的表示，
+/// 不再有第二个可能与 DB 列同构的入口。
+///
+/// 只派生 `Serialize`：这是**响应**类型，没有任何地方反序列化它；
+/// 而且 `UsersDto` 本身也只派生 `Serialize`（响应 DTO 不该可反序列化，
+/// 输入走 `UserWriteRequest`）。多派生一个 `Deserialize` 只会扩大它的使用面。
+#[derive(Debug, Serialize)]
 pub struct EventUserResult {
-    pub user: users::Model,
+    /// 行标识 = 账号 id。`event_users` 是 (event_id, user_id) 复合主键，
+    /// 没有单一 `id` 列，因此这里显式给出 `user.id` 作为稳定的行键。
+    pub id: Uuid,
+    pub user: UsersDto,
     pub event_user: event_users::Model,
 }
 
@@ -249,8 +274,12 @@ pub async fn get_users(
             .one(ctx.db.get_ref())
             .await?
             .ok_or(AppError::NotFound(format!("未找到 {}", eu.user_id)))?;
+        // `id` 在转换前取出：`UsersDto::from` 会消费 `user`。
+        let id = user.id;
         result.push(EventUserResult {
-            user,
+            id,
+            // 显式转换到 DTO —— 这一步就是"不含 password"的保证本身。
+            user: user.into(),
             event_user: eu,
         });
     }

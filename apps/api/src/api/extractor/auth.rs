@@ -27,6 +27,7 @@ use crate::entity::{platform_roles, user_platform_roles, users};
 use crate::infrastructure::WebDb;
 use crate::modules::identity::authorization::permissions_of_roles;
 use actix_web::FromRequest;
+use actix_web::HttpMessage;
 use actix_web::ResponseError;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 
@@ -307,8 +308,12 @@ use crate::core::permission::{Permission, PermissionMarker};
 /// 管理员调整权限后，下一次请求即刻生效。
 ///
 /// 注意解析时机：只有真正需要做授权判断的端点才会解析权限
-/// （即用 [`RequirePermission`] / [`RequireAny`] 的 handler）。
+/// （即用 [`RequirePermission`] / [`RequireAny`] 的 handler）；
+/// 这些端点还会被 [`pre_resolve_auth`] 中间件在**进入 handler 之前**
+/// 预解析一次并放进 `HttpRequest` extensions，守卫直接复用 —— 这样授权错误
+/// 才会先于 body 解析错误出现（原因见 [`pre_resolve_auth`] 的说明）。
 /// 参赛端 handler 用 [`AccountGuard`] 即可，不必为每次请求多花一次查询。
+#[derive(Clone)]
 pub struct AuthContext {
     /// 已认证且状态可用的账号。
     pub user: users::Model,
@@ -395,7 +400,9 @@ impl<P: PermissionMarker> RequirePermission<P> {
     }
 }
 
-impl<P: PermissionMarker> FromRequest for RequirePermission<P> {
+// 加 `'static`：快路径要返回 `std::future::ready(...)`，而 `Self::Future` 是
+// `Pin<Box<dyn Future>>`（隐含 `'static`）。所有权限标记都是 unit struct，天然满足。
+impl<P: PermissionMarker + 'static> FromRequest for RequirePermission<P> {
     type Error = actix_web::Error;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
@@ -403,6 +410,27 @@ impl<P: PermissionMarker> FromRequest for RequirePermission<P> {
         req: &actix_web::HttpRequest,
         _payload: &mut actix_web::dev::Payload,
     ) -> Self::Future {
+        // ── 快路径：中间件已解析过 → 同步就绪 ──
+        //
+        // 这不只是省一次查询：**必须**同步就绪，授权错误才能抢在 body 解析错误之前。
+        // actix-web 的元组提取器（`src/extract.rs` 的 `tuple_from_req`）会**立刻创建
+        // 所有提取器的 future**，然后在一趟 poll 里按声明顺序逐个 poll，
+        // 遇到**第一个 `Ready(Err)` 就返回** —— `Pending` 不会阻断后面的提取器。
+        //
+        // 于是：本守卫要 await DB（首轮 `Pending`），而 `Json<T>` 的 body 解析
+        // 若已就绪并返回 400，**400 就会先返回**，哪怕守卫写在第一个参数位置
+        // （实测 55/62 个 handler 守卫都是第一个参数，照样发生）。
+        // 结果是未授权调用方能靠 400/403 的差异探测端点存在性与 body schema。
+        if let Some(ctx) = req.extensions().get::<AuthContext>() {
+            let result = if ctx.has(P::PERMISSION) {
+                Ok(RequirePermission(ctx.clone(), std::marker::PhantomData))
+            } else {
+                Err(forbidden_error(P::PERMISSION))
+            };
+            return Box::pin(std::future::ready(result));
+        }
+
+        // ── 慢路径：中间件未挂载时保持原行为 ──
         let db = req.app_data::<WebDb>().cloned();
         let req = req.clone();
 
@@ -449,7 +477,9 @@ impl<P1: PermissionMarker, P2: PermissionMarker> RequireAny<P1, P2> {
     }
 }
 
-impl<P1: PermissionMarker, P2: PermissionMarker> FromRequest for RequireAny<P1, P2> {
+impl<P1: PermissionMarker + 'static, P2: PermissionMarker + 'static> FromRequest
+    for RequireAny<P1, P2>
+{
     type Error = actix_web::Error;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
@@ -457,6 +487,17 @@ impl<P1: PermissionMarker, P2: PermissionMarker> FromRequest for RequireAny<P1, 
         req: &actix_web::HttpRequest,
         _payload: &mut actix_web::dev::Payload,
     ) -> Self::Future {
+        // 快路径：与 `RequirePermission` 同理 —— 必须同步就绪，
+        // 否则 body 解析错误会抢在授权错误之前（见该 impl 的详细说明）。
+        if let Some(ctx) = req.extensions().get::<AuthContext>() {
+            let result = if ctx.has(P1::PERMISSION) || ctx.has(P2::PERMISSION) {
+                Ok(RequireAny(ctx.clone(), std::marker::PhantomData))
+            } else {
+                Err(forbidden_error(P1::PERMISSION))
+            };
+            return Box::pin(std::future::ready(result));
+        }
+
         let db = req.app_data::<WebDb>().cloned();
         let req = req.clone();
 
@@ -504,4 +545,57 @@ fn auth_internal_error() -> actix_web::Error {
         AppError::Internal("权限校验失败".to_string()).error_response(),
     )
     .into()
+}
+
+/// 在**进入 handler 之前**解析一次认证 / 授权上下文，并放进 `HttpRequest` extensions。
+///
+/// # 为什么需要这个中间件（这是本文件里唯一"反直觉"的一段）
+///
+/// actix-web 的元组提取器（`actix_web::extract` 里的 `tuple_from_req`）会
+/// **立刻创建所有提取器的 future**，然后在一趟 `poll` 里按参数顺序逐个 poll，
+/// 并在遇到**第一个 `Ready(Err)` 时立即返回**：
+///
+/// ```ignore
+/// match fut.poll(cx) {
+///     Poll::Ready(Err(err)) => return Poll::Ready(Err(err.into())),
+///     Poll::Pending => ready = false,      // ← Pending 不阻断后面的提取器
+///     ...
+/// }
+/// ```
+///
+/// 于是「把守卫写在第一个参数位置就能先于 body 校验」这个直觉**并不成立**：
+/// 守卫需要 await DB（首轮是 `Pending`），而 `Json<T>` 的反序列化若已就绪并返回 400，
+/// **400 会抢先返回**。实测 62 个「`RequirePermission` + `Json` body」的 handler 中，
+/// 55 个守卫都已经写在第一个参数位置，照样如此 —— 声明顺序在这个机制下不起作用。
+///
+/// **影响**：未授权（甚至未认证）的调用方能靠 **400 vs 403** 的差异探测
+/// 端点是否存在、以及它期望什么 body schema。授权本身**没有**被绕过
+/// （给合法 body 时未授权调用方仍然得到 403），但这是一处不必要的暴露，
+/// 也让"未授权"这件事在客户端看起来像"请求格式错误"。
+///
+/// # 做法
+///
+/// 这里先把上下文解析好放进 extensions；守卫命中后返回 `std::future::ready(...)`，
+/// **首轮 poll 就就绪**，因此它的 401/403 一定先于 body 解析错误。
+///
+/// # 边界（刻意如此）
+///
+/// - **只在带 Bearer 头时**才尝试解析：公开端点（登录、`/api/frontend`）不产生额外查询。
+/// - **任何失败都放行**：拒绝是守卫的职责，这里只负责"提前算好"。
+///   因此 token 无效 / 过期时行为与之前**完全一致**（仍由守卫报 401）。
+/// - 上下文只活在这一个请求里（extensions 随请求销毁），不存在跨请求的陈旧权限。
+pub async fn pre_resolve_auth(
+    req: actix_web::dev::ServiceRequest,
+    next: actix_web::middleware::Next<impl actix_web::body::MessageBody>,
+) -> Result<actix_web::dev::ServiceResponse<impl actix_web::body::MessageBody>, actix_web::Error> {
+    if bearer_token(req.request()).is_some() {
+        if let Some(db) = req.app_data::<WebDb>().cloned() {
+            if let Ok(user) = resolve_session_account(db.get_ref(), req.request()).await {
+                if let Ok(ctx) = resolve_auth_context(db.get_ref(), user).await {
+                    req.extensions_mut().insert(ctx);
+                }
+            }
+        }
+    }
+    next.call(req).await
 }

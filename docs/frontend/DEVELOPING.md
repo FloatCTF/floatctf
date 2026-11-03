@@ -176,11 +176,42 @@ VITE_API_BASE_URL=http://127.0.0.1:7780/api pnpm dev
 用未发布的本地包时，先打包再引用（**不要**用 `workspace:*`，那是仓库内协议）：
 
 ```bash
-# 在 FloatCTF 仓库里
-pnpm --filter @floatctf/frontend-runtime --filter @floatctf/sdk pack --pack-destination /tmp/pkgs
-# 在你的前端仓库里
-pnpm add file:/tmp/pkgs/floatctf-sdk-1.0.0.tgz file:/tmp/pkgs/floatctf-frontend-runtime-1.0.0.tgz
+# ① 在 FloatCTF 仓库里打包（用平台自带脚本，它会先构建并做 fail-closed 校验）
+pnpm run build:packages
+./scripts/package-sdk-dist.sh /tmp/pkgs
+
+# ② 在你的前端仓库里指向这些 tarball
+./scripts/use-local-packages.sh /tmp/pkgs    # 可照抄官方前端仓库里那份
+pnpm install
 ```
+
+**不要用 `pnpm add file:...`**（本节的旧写法）。在 pnpm 11 上它会失败：
+`pnpm add` 会**先解析已有的** `^1.0.0` 依赖，而这三个包不在 npm 上 → 直接 404，
+根本走不到"添加本地 tarball"那一步。正确做法是**改 overrides**，而不是追加依赖。
+
+**为什么必须用 overrides 而不是只改直接依赖**：`@floatctf/react` 自身依赖
+`@floatctf/sdk@1.0.0`。只把直接依赖指到 tarball 的话，这条**传递依赖**仍会去 registry 找。
+
+**不要用裸 `pnpm pack`**：三个包的 `files` 只有 `dist` + `README.md`，
+**不先构建就会打出只有 `package.json`/`README.md`/`LICENSE` 的空壳 tarball**
+（约 13–15KB）。`package-sdk-dist.sh` 正是为拦这个而写的，它还会校验三包版本一致、
+拒绝 `workspace:` 残留、并附 `SDK-SHA256SUMS`。
+
+#### pnpm 11 的两个静默坑
+
+1. **`package.json` 里的 `pnpm` 字段不再被读取**（pnpm 11 起）。原来放
+   `pnpm.overrides` 的配置会被**静默忽略**（只打一行 WARN），必须写到
+   `pnpm-workspace.yaml` 的 `overrides:`。
+2. **构建脚本默认被拦**。要显式放行，且旧名 `onlyBuiltDependencies` **已失效**
+   —— 正确写法是 `pnpm-workspace.yaml` 里的 `allowBuilds` **map + 显式布尔**：
+
+   ```yaml
+   allowBuilds:
+     esbuild: true
+   ```
+
+   否则 `pnpm install` 会以 `ERR_PNPM_IGNORED_BUILDS` 失败（依赖其实装上了，
+   但 esbuild 的 postinstall 被拦，`vite build` 起不来）。
 
 ### 2.5 构建产物
 
@@ -190,6 +221,94 @@ pnpm add file:/tmp/pkgs/floatctf-sdk-1.0.0.tgz file:/tmp/pkgs/floatctf-frontend-
 的校验器自检（`frontends/default/vite.config.ts`），可以直接照抄思路。
 
 构建产物必须**自包含**：可以自带框架（v1 不做共享 React 单例/模块联邦）。
+
+### 2.6 发布：制品 CI（GitHub Release）
+
+**强烈建议**给前端仓库配一条发布 CI：把上面那份 `dist/` 打成制品并挂到 GitHub Release 上。
+这样**消费方只下载、不构建** —— 宿主不需要 Node，也不执行你仓库里的任何代码。
+
+这与平台既有的训练站同步完全同构（见 `apps/api/src/scheduler/handlers/training_handlers.rs`
+的开头注释）。三个官方前端仓库（`FloatCTF/floatctf-frontend-{animal-island,shadcn,xzmu}`）
+的 `.github/workflows/release.yml` 就是照这个形状写的，可以直接拿去改。
+
+#### 产出的三个资产
+
+| 资产 | 用途 |
+|---|---|
+| `frontend-dist.tar.gz` | 制品本体。**`frontend.json` 必须在归档根部**（`tar -C dist .` 的形态），且**不含 `build` 段** |
+| `frontend-dist.tar.gz.sha256` | 校验和；消费方 `sha256sum -c` |
+| `BUILD_INFO.json` | 构建元数据。其中 **`frontend` 字段是 `dist/frontend.json` 的原样副本** |
+
+**为什么要有 `BUILD_INFO.json` 里的 `frontend` 字段**：前端市场
+（`GET /api/admin/frontend-market`）要展示每个前端的 id / version / 兼容契约，
+而这些字段在 tar.gz 内部。市场只读这个几 KB 的小文件就能拿到，
+**不必为了显示元数据去下载整个制品**。所以**不要把 `frontend` 字段裁成部分字段**。
+
+#### 发布通道
+
+| 触发 | 产出 |
+|---|---|
+| push 到 `main` | **滚动** release，tag 固定为 `frontend-latest`（每次覆盖三个资产） |
+| push tag `v*` | **版本化** release，永久保留，用于固定版本部署 |
+| `workflow_dispatch` | 手动重跑 |
+
+稳定的下载地址（消费方不需要知道具体提交）：
+
+```bash
+gh release download frontend-latest -R <owner>/<repo> -p 'frontend-dist.tar.gz*'
+sha256sum -c frontend-dist.tar.gz.sha256
+sudo /var/lib/floatctf/frontend.sh install frontend-dist.tar.gz
+```
+
+#### 打包时的两个硬要求
+
+1. **`frontend.json` 必须在归档根部**，且 `entry` / `styles` 指向的文件真实存在。
+   `frontend.sh install` 会做 `normalize_artifact_root` → `validate_artifact_tree` →
+   `validate_manifest_file`，任一步不过就拒装。用
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -cf - -C dist . | gzip -9n`
+   可以得到**确定性**的归档（同样内容得到同样字节）。
+2. **归档里不能有符号链接 / 特殊文件** —— 制品树校验会拒绝。
+   建议在打包前就 `find dist -type l` 检查并 fail。
+
+#### 契约对齐（最容易踩的坑）
+
+制品的 `compatibility.frontendRuntime` / `apiContract` 必须与**构建它时用的
+`@floatctf/frontend-runtime`** 里的常量一致。前端的 Vite 插件会在 `closeBundle` 里
+用 `parseFrontendManifest` **自检**，不一致时**构建直接失败**（这是好事：不会产出装不上的制品）。
+
+反过来，一个声明 `apiContract: "1"` 的制品，会被契约 major 为 2 的平台在
+`frontend.sh` 侧**拒绝**。所以升级平台契约时，前端要**同时**升级自己的声明并重新发布。
+
+#### 依赖从哪来（当前状态）
+
+`@floatctf/sdk` / `@floatctf/frontend-runtime` / `@floatctf/react` **尚未发布到 npm**，
+而 `workspace:*` 是仓库内协议、独立仓库解析不了。因此**当前**的 CI 做法是：
+
+1. `git clone` 平台 monorepo（`vars.FLOATCTF_MONOREPO_REF`，默认 `main`）；
+2. 用平台自带的 **`scripts/package-sdk-dist.sh <dir>`** 打出三个 tarball ——
+   它**先构建**（否则 `files` 里只有 `dist` + `README.md`，打出来是**空壳**），
+   校验三包版本一致、**fail-closed 拒绝 `workspace:` 残留**，并产出 `SDK-SHA256SUMS`；
+3. `scripts/use-local-packages.sh <dir>` 把 `pnpm-workspace.yaml` 的 `overrides`
+   指向这些 tarball（**必须用 overrides**：`@floatctf/react` 自身依赖
+   `@floatctf/sdk`，只改直接依赖的话这条**传递依赖**仍会去 registry 找而 404）；
+4. `pnpm install && pnpm build`。
+
+`FLOATCTF_MONOREPO_REF` 这个仓库变量是为**平台契约刚升级、尚未并入 `main`** 的场景准备的：
+把 CI 指向一个已含该升级的 ref，就能在不动 `main` 的前提下产出制品。
+
+> 这三个包一旦发布到 npm，上面 4 步可以整体删掉，改成普通的 `pnpm install`。
+> 在那之前，每个前端仓库的 CI 都被「借 monorepo」绑住，也就必然受契约版本影响。
+
+#### 让市场发现你
+
+前端市场按 **`<owner>` + 仓库名前缀 `floatctf-frontend-`** 发现候选
+（默认 owner = `FloatCTF`，可用 `[frontend_market]` 配置改）。所以：
+
+- 仓库名要以 `floatctf-frontend-` 开头才会被列出；
+- 有 `frontend-latest` release 且含上述三个资产，市场才会显示版本 / 契约 / 可复制的安装命令。
+
+市场**只做发现，不安装** —— 安装始终是宿主的 `frontend.sh`（原因见
+[ARCHITECTURE.md](./ARCHITECTURE.md) 与 `apps/api/src/modules/platform/frontend/market.rs` 的边界说明）。
 
 ## 3. 三方前端能用什么、不能用什么
 
@@ -262,6 +381,12 @@ CLI **不会**替你改 `FRONTEND_ACTIVE`。
 | `frontend.sh install` 报 "已存在同 ID 同版本但内容不同" | 资产不可变（immutable 长缓存）：**发新版本号**；没有 `--reinstall` 这类例外 |
 | `frontend.sh remove <id> <version>` 报 "该版本是 currentVersion" | 显式指针：先 `frontend.sh set-current <id> <其它版本>` 再删除 |
 | 跨源请求被浏览器拦 | 把 dev server 的源加入后端 TOML 的 `[cors].allowed_origins` |
+| CI 报 `apiContract "2" is incompatible with API contract major 1` | 你声明的契约与**构建时用的 `@floatctf/frontend-runtime`** 不一致。若平台契约刚升级、尚未并入 `main`，把仓库变量 `FLOATCTF_MONOREPO_REF` 指向已含该升级的 ref；**不要**为了过 CI 而下调声明（那是伪造兼容性，制品装不上） |
+| CI 产出的 tarball 只有 13–15KB；`frontend.sh` 报缺 `dist` | **空壳 tarball**：打包前没有构建（三个包的 `files` 只有 `dist`）。改用 `scripts/package-sdk-dist.sh`，它会 fail-closed |
+| `pnpm install` 报 `ERR_PNPM_FETCH_404 @floatctf/sdk` | 独立仓库不能用 `workspace:*`（仓库内协议）；且必须用 `pnpm-workspace.yaml` 的 `overrides` 才能覆盖**传递**依赖。见 §2.4 |
+| `pnpm install` 报 `ERR_PNPM_IGNORED_BUILDS` | pnpm 11 默认拦构建脚本：加 `allowBuilds: { esbuild: true }`（旧名 `onlyBuiltDependencies` 已失效） |
+| 配了 `pnpm.overrides` 却"没生效" | pnpm 11 起 `package.json` 的 `pnpm` 字段**不再被读取**，只打一行 WARN。写进 `pnpm-workspace.yaml` |
+| 前端市场里看不到我的前端 | 仓库名必须以 `floatctf-frontend-` 开头，且要有含 `frontend-dist.tar.gz` 的 release |
 
 ## 6. 生产形态验证（不启动整套生产）
 

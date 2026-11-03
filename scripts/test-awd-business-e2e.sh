@@ -334,7 +334,7 @@ log "admin login"
 ADMIN_PASSWORD="$(sed -n 's/^- 密码：`\(.*\)`/\1/p' docs/agents/TESTING.md | head -n1)"
 [[ -n "$ADMIN_PASSWORD" ]] || fail "cannot read local test admin credential from TESTING.md"
 ADMIN_BODY="$(json_string_obj username sysadmin password "$ADMIN_PASSWORD")"
-ADMIN_JSON="$(api_ok POST /api/admin/session '' "$ADMIN_BODY")"
+ADMIN_JSON="$(api_ok POST /api/session '' "$ADMIN_BODY")"
 ADMIN_TOKEN="$(json_get data <<<"$ADMIN_JSON")"
 unset ADMIN_PASSWORD ADMIN_BODY
 [[ -n "$ADMIN_TOKEN" && "$ADMIN_TOKEN" != null ]] || fail "admin login returned no token"
@@ -385,7 +385,7 @@ for role in redcap redmember bluecap bluemember; do
     body="$(json_string_obj username "$username" nickname "$role" password "$USER_PASS" email "$username@example.invalid")"
     api_ok POST /api/users '' "$body" >/dev/null
     login_body="$(json_string_obj username "$username" password "$USER_PASS")"
-    login="$(api_ok POST /api/users/session '' "$login_body")"
+    login="$(api_ok POST /api/session '' "$login_body")"
     TOKENS[$role]="$(json_get data <<<"$login")"
     [[ -n "${TOKENS[$role]}" && "${TOKENS[$role]}" != null ]] || fail "login failed for $role"
 done

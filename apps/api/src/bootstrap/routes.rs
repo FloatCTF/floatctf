@@ -9,7 +9,23 @@ pub fn configure_all_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
             .configure(configure_player_routes)
-            .service(web::scope("/admin").configure(configure_admin_routes)),
+            .service(
+                web::scope("/admin")
+                    // 在进入 handler 之前解析一次认证/授权上下文并缓存到请求 extensions。
+                    //
+                    // 目的只有一个：让守卫的 401/403 抢在 `Json<T>` 的 400 之前返回。
+                    // actix-web 的元组提取器会**同时**创建所有提取器的 future，并在一趟
+                    // poll 中返回**第一个就绪的错误**（`Pending` 不阻断后面的提取器），
+                    // 因此「守卫写在第一个参数」并不足以保证它先失败 —— 详见
+                    // `api::extractor::auth::pre_resolve_auth`。
+                    //
+                    // 只挂在 `/admin`：所有「权限守卫 + JSON body」的 handler 都在这里；
+                    // 选手侧公开端点不受影响（而且中间件本身也只对带 Bearer 头的请求工作）。
+                    .wrap(actix_web::middleware::from_fn(
+                        crate::api::extractor::auth::pre_resolve_auth,
+                    ))
+                    .configure(configure_admin_routes),
+            ),
     );
 
     // ── OpenID Connect Provider 协议端点（根路径：/.well-known/*、/oauth/*）──
@@ -32,7 +48,8 @@ fn configure_player_routes(cfg: &mut ServiceConfig) {
     // POST /api/session —— v2 统一登录入口
     // （与 /api/users/session 是同一个 handler，行为不可能分叉）
     cfg.configure(crate::modules::identity::configure_unified_session_routes);
-    // POST /api/admin/session（过渡期别名，Wave 10 移除）
+    // 注意：`POST /api/admin/session` 这个过渡期别名**已在 Wave 10 移除**（现返回 404）。
+    // 这里曾留着一行"过渡期别名"注释，导致 `scripts/test-*-e2e.sh` 一直以为它还在用。
     // Player identity: /api/users/*
     cfg.configure(crate::modules::identity::configure_player_routes);
     // GET /api/weapons

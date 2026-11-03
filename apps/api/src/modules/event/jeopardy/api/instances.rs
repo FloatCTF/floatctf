@@ -2,6 +2,7 @@ use sea_orm::{DatabaseConnection, DbErr};
 
 use bollard::Docker;
 
+use crate::api::app_err;
 use crate::modules::event::jeopardy::api::InstancesDto;
 use crate::{
     api::prelude::*,
@@ -358,7 +359,7 @@ pub async fn get_instance(
     let (model, runtime) =
         jeopardy_instance::find_instance_by_challenge_id(&event_ctx, seed.challenge_id)
             .await
-            .map_err(|e| AppError::BadRequest(format!("get instance:{e}")))?
+            .map_err(|e| app_err("get instance", e))?
             .filter(|(model, _)| model.id == instance_id)
             .ok_or(AppError::NotFound(format!("未找到 {}", instance_id)))?;
 
@@ -407,7 +408,7 @@ pub async fn launch_instance(
 
     let instance = jeopardy_instance::launch_instance(&event_ctx, lir.challenge_id)
         .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        .map_err(|e| app_err("", e))?;
 
     ctx.log
         .add_log(

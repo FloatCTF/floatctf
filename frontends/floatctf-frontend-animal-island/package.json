@@ -1,0 +1,41 @@
+{
+  "name": "@floatctf/frontend-animal-island",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FloatCTF Animal Island frontend — a complete, pluggable replacement frontend (player + admin) built on animal-island-ui",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "vite --port 13500",
+    "start": "vite --port 13500",
+    "build": "vite build && tsc --noEmit",
+    "build:artifact": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "tsc tests/nav-permissions.test.ts --outDir .test-out --module commonjs --target es2022 --moduleResolution node --esModuleInterop --skipLibCheck --strict && node -e \"require('fs').writeFileSync('.test-out/package.json','{\\\"type\\\":\\\"commonjs\\\"}')\" && node .test-out/tests/nav-permissions.test.js"
+  },
+  "dependencies": {
+    "@floatctf/frontend-runtime": "workspace:*",
+    "@floatctf/react": "workspace:*",
+    "@floatctf/sdk": "workspace:*",
+    "@tanstack/react-query": "^5.66.5",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "animal-island-ui": "2.2.1",
+    "classnames": "^2.5.1",
+    "naive-icons": "^1.6.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.1.5",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/classnames": "^2.3.4",
+    "@types/node": "^24.5.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.3.5"
+  }
+}

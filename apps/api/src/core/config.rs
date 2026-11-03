@@ -34,6 +34,37 @@ pub struct AppConfig {
     pub main_url: String,
     /// OpenID Connect Provider（`[oidc]` 段，默认关闭）。
     pub oidc: OidcConfig,
+    /// 前端市场：发现 GitHub 上的 FloatCTF 前端仓库与它们的 release 制品。
+    pub frontend_market: FrontendMarketConfig,
+}
+
+/// 前端市场（`GET /api/admin/frontend-market`）的静态配置。
+///
+/// 市场**只做发现与元数据**：它列出候选前端仓库及其 release 制品，供管理员决定装哪个。
+/// 安装本身由宿主的 `frontend.sh` 负责（见 `modules/platform/frontend/mod.rs` 的边界说明），
+/// 因此这个模块**没有任何特权操作**，也不需要 API 容器能写前端目录。
+#[derive(Debug, Clone)]
+pub struct FrontendMarketConfig {
+    /// 搜索哪个 GitHub 所有者（用户或组织）。
+    pub owner: String,
+    /// 仓库名前缀；只有以此开头的仓库会被列为候选。
+    pub name_prefix: String,
+    /// 可选的 GitHub token。**不配也能用**，只是受未认证限流（60 次/小时/IP）。
+    /// 配了则能提高限流上限、并访问私有仓库；用 [`Secret`] 包装以免进日志。
+    pub token: Option<Secret>,
+    /// 结果缓存秒数。市场每次刷新会打若干次 GitHub API，缓存用于避免触发限流。
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for FrontendMarketConfig {
+    fn default() -> Self {
+        Self {
+            owner: "FloatCTF".to_string(),
+            name_prefix: "floatctf-frontend-".to_string(),
+            token: None,
+            cache_ttl_secs: 300,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -313,6 +344,7 @@ struct TomlConfig {
     proxy: ProxyToml,
     #[serde(default)]
     oidc: OidcToml,
+    frontend_market: FrontendMarketToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -973,6 +1005,22 @@ fn parse_oidc_config(file: OidcToml, config_dir: &Path) -> anyhow::Result<OidcCo
     Ok(config)
 }
 
+/// `[frontend_market]` 段：前端市场的发现范围与可选凭据。
+///
+/// 整段可省略 —— 省略时用 [`FrontendMarketConfig::default`]（FloatCTF 组织 +
+/// `floatctf-frontend-` 前缀 + 无 token）。
+#[derive(Debug, Deserialize, Default)]
+struct FrontendMarketToml {
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    name_prefix: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    cache_ttl_secs: Option<u64>,
+}
+
 impl AppConfig {
     /// Load and validate configuration from a TOML file.
     pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -1005,6 +1053,24 @@ impl AppConfig {
         let proxy_url = parse_optional_proxy_url("proxy.url", file.proxy.url)?;
         let config_dir = path.parent().unwrap_or_else(|| Path::new("."));
         let oidc = parse_oidc_config(file.oidc, config_dir)?;
+        // 前端市场：整段可省略；给了 token 就包成 Secret（避免进日志/进 Debug 输出）。
+        let market_defaults = FrontendMarketConfig::default();
+        let frontend_market = FrontendMarketConfig {
+            owner: file.frontend_market.owner.unwrap_or(market_defaults.owner),
+            name_prefix: file
+                .frontend_market
+                .name_prefix
+                .unwrap_or(market_defaults.name_prefix),
+            token: file
+                .frontend_market
+                .token
+                .filter(|t| !t.is_empty())
+                .map(Secret::new),
+            cache_ttl_secs: file
+                .frontend_market
+                .cache_ttl_secs
+                .unwrap_or(market_defaults.cache_ttl_secs),
+        };
 
         Ok(Self {
             server: ServerConfig {
@@ -1084,6 +1150,7 @@ impl AppConfig {
             main_url: file.application.main_url,
             proxy: ProxyConfig { url: proxy_url },
             oidc,
+            frontend_market,
         })
     }
 

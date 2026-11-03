@@ -4,6 +4,8 @@ use sea_orm::{Condition, TransactionTrait};
 
 use crate::modules::event::common::api::EventTeamMembersDto;
 use crate::modules::event::common::api::EventTeamsDto;
+// 响应里的账号信息**必须**用 DTO（无 password），不能用生成实体。
+use crate::modules::identity::user::dto::UsersDto;
 use crate::{
     api::{
         FilterMapping, apply_filters, dto::DeleteItemsRequest, extractor::auth::RequirePermission,
@@ -239,13 +241,28 @@ pub async fn get_teams(
     UniResponse::ok_meta(result.into(), query_params.into()).into()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// `GET /api/admin/events/{event_id}/teams/{team_id}/members` 的响应。
+///
+/// `members` 是 `UsersDto` 而**不是** `Vec<users::Model>`。
+/// 后者是生成的 DB 列镜像（含 `password`），把它放进响应结构体会把
+/// argon2id 哈希回传给客户端 —— 这正是安全不变量 #1 禁止的形态
+/// （见 `modules/identity/user/dto.rs` 的文件头）。
+///
+/// 这个端点是**只读**的，且全仓没有调用方（SDK 与 Default 前端都未覆盖），
+/// 因此改动的风险面仅在将来接入它的客户端。
+// 只派生 `Serialize`：这是响应类型，无人反序列化它；
+// 且 `UsersDto` 本身只派生 `Serialize`（输入走 `UserWriteRequest`）。
+#[derive(Debug, Serialize)]
 pub struct GetTeamMembersResult {
     pub team: event_teams::Model,
-    pub members: Vec<users::Model>,
+    pub members: Vec<UsersDto>,
 }
 
-/// GET /api/admin/events/{event_id}/teams/{team_id}/members
+/// GET /api/admin/events/{event_id}/teams/{team_id}
+///
+/// 注意路径**没有** `/members` 后缀 —— 早前的注释写成了 `.../{team_id}/members`，
+/// 与实际 attribute 不符，照着注释调会 404。（SDK 与两个前端都未覆盖此端点，
+/// 因此这个不一致一直没有暴露。）
 #[get("/{team_id}")]
 pub async fn get_team_members(
     _: RequirePermission<EventsReadGuard>,
@@ -271,9 +288,11 @@ pub async fn get_team_members(
         let items: Vec<(event_team_members::Model, Option<users::Model>)> =
             paginator.fetch_page(page.saturating_sub(1)).await?;
         query_params.total = Some(paginator.num_items().await? as usize);
-        let items: Vec<users::Model> = items
+        // 显式转换到 DTO —— 这一步就是"不含 password"的保证本身。
+        let items: Vec<UsersDto> = items
             .into_iter()
             .filter_map(|(_team_member, user_opt)| user_opt)
+            .map(UsersDto::from)
             .collect();
         let result = GetTeamMembersResult {
             team: event_team,
@@ -282,9 +301,10 @@ pub async fn get_team_members(
         UniResponse::ok_meta(result.into(), query_params.into()).into()
     } else {
         let items = stmt.all(ctx.db.get_ref()).await?;
-        let items: Vec<users::Model> = items
+        let items: Vec<UsersDto> = items
             .into_iter()
             .filter_map(|(_team_member, user_opt)| user_opt)
+            .map(UsersDto::from)
             .collect();
         query_params.total = Some(items.len());
         let result = GetTeamMembersResult {

@@ -97,3 +97,19 @@ channel = "floatctf:realtime"
 # kid = "dev-key-1"
 # private_key_file = "../../../app/secrets/oidc/dev-key-1.pem"   # 相对本文件所在目录
 # active = true
+
+# ── 前端市场（GET /api/admin/frontend-market）─────────────────────────────────
+# 只做**发现**：列出 GitHub 上候选前端仓库及其 release 里的预构建制品元数据。
+# 安装不在这里 —— 安装由宿主的 `frontend.sh install <制品.tar.gz>` 负责，
+# 因为生产里 API 容器是 read_only + cap_drop=ALL，根本没有挂载前端目录。
+#
+# 整段可以省略，省略时用下面的默认值。
+[frontend_market]
+owner = "FloatCTF"
+name_prefix = "floatctf-frontend-"
+# 可选。不配也能用，但未认证的 GitHub API 限流是 60 次/小时/IP，
+# 而刷新一次市场要打 1 + N(+N) 次请求（N = 候选仓库数）。配了能显著抬高上限，
+# 并能看到私有仓库。它是密钥，用 Secret 包装，不会进日志。
+# token = "ghp_xxx"
+# 发现结果的缓存秒数；TTL 内重复查询零请求。
+cache_ttl_secs = 300

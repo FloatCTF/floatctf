@@ -124,6 +124,28 @@ impl From<DbErr> for AppError {
     }
 }
 
+/// 把 application 层的 `anyhow::Error` 收成 `AppError`，**保留**其中已经明确的类型。
+///
+/// # 为什么需要它
+///
+/// application 层用 `anyhow` 抛错，API 层过去一律写
+/// `.map_err(|e| AppError::BadRequest(e.to_string()))` —— 这把**授权失败**
+/// （「你尚未加入本赛事」，应当是 403）和**状态失败**（「赛事尚未开始」，400 是对的）
+/// 压成了同一个 400。客户端因此无法区分「我没权限」与「请求有误」，
+/// 前端的 `onForbidden` 分支也永远收不到这条 403。
+///
+/// 这里 downcast 取回 application 层包进去的 `AppError`（如 `Forbidden`）；
+/// 取不到就退回原来的 400 —— 即**只放行明确标注过的错误**，
+/// 不会因为某处随手 `anyhow!` 就意外变成 5xx。
+pub fn app_err(ctx: &str, e: anyhow::Error) -> AppError {
+    match e.downcast::<AppError>() {
+        Ok(app) => app,
+        // 保留原有的调试前缀（调用方传进来的那一句），只是不再把它套在 AppError 上
+        Err(other) if ctx.is_empty() => AppError::BadRequest(other.to_string()),
+        Err(other) => AppError::BadRequest(format!("{ctx}: {other}")),
+    }
+}
+
 impl From<AwdError> for AppError {
     fn from(value: AwdError) -> Self {
         match value {

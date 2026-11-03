@@ -32,7 +32,7 @@ pub async fn get_my_gameboxes(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你尚未加入本赛事的队伍".into()))?;
 
     let instances =
         gamebox_repo::find_instances_by_team(ctx.db.get_ref(), event_id, membership.team_id)
@@ -122,7 +122,7 @@ pub async fn reset_my_gamebox(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你尚未加入本赛事的队伍".into()))?;
 
     // P5-10 限流：reset（每队伍每小时）
     awd.rate_limiter
@@ -189,7 +189,7 @@ pub async fn submit_flag(
     let membership = repo::find_user_team_membership(ctx.db.get_ref(), event_id, user.id)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你尚未加入本赛事的队伍".into()))?;
 
     let attacker_team_id = membership.team_id;
 
@@ -299,7 +299,7 @@ pub async fn get_ssh_config(
         .one(ctx.db.get_ref())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("你尚未加入本赛事的队伍".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你尚未加入本赛事的队伍".into()))?;
 
     use crate::entity::awd_team_networks;
     let team_net = awd_team_networks::Entity::find()
@@ -432,7 +432,7 @@ pub async fn get_wireguard_config(
         .one(ctx.db.get_ref())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("你尚未加入队伍".into()))?;
+        .ok_or_else(|| AppError::Forbidden("你尚未加入队伍".into()))?;
 
     let (peer, peer_privkey) =
         crate::modules::event::awd::service::wireguard_service::ensure_peer_for_user(

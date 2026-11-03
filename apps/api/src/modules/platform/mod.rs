@@ -40,6 +40,10 @@ pub fn configure_admin_routes(cfg: &mut ServiceConfig) {
 
     cfg.service(scope("/database").service(operations::database::exec_sql));
 
+    // 前端市场：只做「发现 GitHub 上的候选前端 + 读它们的 release 制品元数据」。
+    // 安装不在这里 —— 那是宿主 frontend.sh 的职责（见 frontend/market.rs 的边界说明）。
+    cfg.service(scope("/frontend-market").service(frontend::api::get_frontend_market));
+
     cfg.service(
         scope("/announcements")
             .service(announcements::get_announcements)

@@ -7,8 +7,15 @@
 //! 它**不知道**路由、页面、布局、登录页、侧栏——UI 结构完全由前端自己拥有。
 //! 前端安装/版本解析由文件系统注册表 + `scripts/frontend.sh` 负责，与本模块无关。
 
+//! ## 前端市场（`market`）
+//!
+//! 与上面这段边界**不冲突**：市场只做「发现 GitHub 上的前端仓库 + 读它们 release 里的
+//! 制品元数据」，**不做安装**。它因此没有任何特权操作，也不需要 API 容器能写前端目录。
+
 pub mod api;
 pub mod domain;
 pub mod dto;
+pub mod market;
 
 pub use dto::FrontendBootstrapDto;
+pub use market::{FrontendMarket, FrontendMarketDto};

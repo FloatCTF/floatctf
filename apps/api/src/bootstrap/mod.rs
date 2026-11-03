@@ -240,6 +240,9 @@ pub async fn run() -> Result<(), BootstrapError> {
     .await
     .expect("init startup handlers failed!");
 
+    // 前端市场句柄：只持有 GitHub 发现结果的短时缓存（没有任何特权操作）。
+    let frontend_market = crate::modules::platform::frontend::FrontendMarket::new();
+
     let task_scheduler_arc = std::sync::Arc::new(task_scheduler);
     if !scheduler_disabled {
         task_scheduler_arc
@@ -416,6 +419,8 @@ pub async fn run() -> Result<(), BootstrapError> {
             .app_data(web::Data::new(task_scheduler_arc.clone()))
             // 平台出网客户端（唯一走代理的出网入口；内网请求不要用它）
             .app_data(web::Data::new(outbound_http.clone()))
+            // 前端市场（只读外部元数据；安装仍由宿主 frontend.sh 负责）
+            .app_data(web::Data::new(frontend_market.clone()))
             // All routes registered centrally
             .configure(configure_all_routes)
     })

@@ -184,6 +184,70 @@ importers:
         specifier: ^4.2.4
         version: 4.2.4
 
+  frontends/floatctf-frontend-animal-island:
+    dependencies:
+      '@floatctf/frontend-runtime':
+        specifier: workspace:*
+        version: link:../../packages/frontend-runtime
+      '@floatctf/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@floatctf/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@tanstack/react-query':
+        specifier: ^5.66.5
+        version: 5.100.10(react@19.2.6)
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+      animal-island-ui:
+        specifier: 2.2.1
+        version: 2.2.1(@types/react@19.2.14)(classnames@2.5.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      classnames:
+        specifier: ^2.5.1
+        version: 2.5.1
+      naive-icons:
+        specifier: ^1.6.0
+        version: 1.6.0(@types/react@19.2.14)(react@19.2.6)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
+      react-router:
+        specifier: ^7.1.5
+        version: 7.18.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      zustand:
+        specifier: ^5.0.8
+        version: 5.0.13(@types/react@19.2.14)(immer@10.1.3)(react@19.2.6)(use-sync-external-store@1.6.0(react@19.2.6))
+    devDependencies:
+      '@types/classnames':
+        specifier: ^2.3.4
+        version: 2.3.4
+      '@types/node':
+        specifier: ^24.5.0
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.1.7(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0))
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.2
+      vite:
+        specifier: ^6.3.5
+        version: 6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)
+
   frontends/floatctf-frontend-shadcn:
     dependencies:
       '@floatctf/frontend-runtime':
@@ -2107,6 +2171,10 @@ packages:
   '@types/chai@5.2.2':
     resolution: {integrity: sha512-8kB30R7Hwqf40JPiKhVzodJs2Qc1ZJ5zuT3uzw5Hq/dhNCl3G3l83jfpdI1e20BP348+fV7VIL/+FxaXkqBmWg==}
 
+  '@types/classnames@2.3.4':
+    resolution: {integrity: sha512-dwmfrMMQb9ujX1uYGvB5ERDlOzBNywnZAZBtOe107/hORWP05ESgU4QyaanZMWYYfd2BzrG78y13/Bju8IQcMQ==}
+    deprecated: This is a stub types definition. classnames provides its own type definitions, so you do not need this installed.
+
   '@types/d3-array@3.2.1':
     resolution: {integrity: sha512-Y2Jn2idRrLzUfAKV2LyRImR+y4oa2AntrgID95SHJxuMUrkNXmanDSed71sRNZysveJVt1hLLemQZIady0FpEg==}
 
@@ -2347,6 +2415,14 @@ packages:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
+  animal-island-ui@2.2.1:
+    resolution: {integrity: sha512-SolLF14U8qMM7E3x+iPW3ftihDsJ7SaG8x1RwhUi42yTdzgVzdspki5wGrPWwA8dgj9Z9RntK6vyeGqnN+kNdw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      classnames: ^2.5.1
+      react: '>=17.0.0'
+      react-dom: '>=17.0.0'
+
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
     engines: {node: '>=8'}
@@ -2460,6 +2536,9 @@ packages:
 
   class-variance-authority@0.7.1:
     resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
+
+  classnames@2.5.1:
+    resolution: {integrity: sha512-saHYOzhIQs6wy2sVxTM6bUDsQO4F50V9RQ22qBpEdCW+I+/Wmke2HOl6lS6dTpdxVhb88/I6+Hs+438c3lfUow==}
 
   clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
@@ -3370,6 +3449,16 @@ packages:
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
+
+  naive-icons@1.6.0:
+    resolution: {integrity: sha512-wKWV2K2s8OFdaZJ6rQdxbBZnQpS5cW5yHw+UPcoooHzG/dAvrYGm9mfMHXGqVBhyBWBCqQaGcbZMQpK2SrJZJQ==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      '@types/react': ^18.0.0 || ^19.0.0
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   nanoid@3.3.11:
     resolution: {integrity: sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==}
@@ -5750,6 +5839,10 @@ snapshots:
     dependencies:
       '@types/deep-eql': 4.0.2
 
+  '@types/classnames@2.3.4':
+    dependencies:
+      classnames: 2.5.1
+
   '@types/d3-array@3.2.1': {}
 
   '@types/d3-axis@3.0.6':
@@ -6051,6 +6144,15 @@ snapshots:
       screenfull: 5.2.0
       tslib: 2.8.1
 
+  animal-island-ui@2.2.1(@types/react@19.2.14)(classnames@2.5.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
+    dependencies:
+      classnames: 2.5.1
+      naive-icons: 1.6.0(@types/react@19.2.14)(react@19.2.6)
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+    transitivePeerDependencies:
+      - '@types/react'
+
   ansi-regex@5.0.1: {}
 
   ansi-styles@5.2.0: {}
@@ -6168,6 +6270,8 @@ snapshots:
   class-variance-authority@0.7.1:
     dependencies:
       clsx: 2.1.1
+
+  classnames@2.5.1: {}
 
   clsx@2.1.1: {}
 
@@ -6547,10 +6651,6 @@ snapshots:
   exsolve@1.0.7: {}
 
   extend@3.0.2: {}
-
-  fdir@6.5.0(picomatch@4.0.3):
-    optionalDependencies:
-      picomatch: 4.0.3
 
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
@@ -7361,6 +7461,12 @@ snapshots:
 
   ms@2.1.3: {}
 
+  naive-icons@1.6.0(@types/react@19.2.14)(react@19.2.6):
+    dependencies:
+      react: 19.2.6
+    optionalDependencies:
+      '@types/react': 19.2.14
+
   nanoid@3.3.11: {}
 
   node-releases@2.0.44: {}
@@ -7933,8 +8039,8 @@ snapshots:
 
   tinyglobby@0.2.14:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
 
   tinyglobby@0.2.16:
     dependencies:
@@ -8132,11 +8238,11 @@ snapshots:
   vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0):
     dependencies:
       esbuild: 0.25.9
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
       postcss: 8.5.6
       rollup: 4.46.4
-      tinyglobby: 0.2.14
+      tinyglobby: 0.2.16
     optionalDependencies:
       '@types/node': 24.12.4
       fsevents: 2.3.3

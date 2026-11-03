@@ -1,3 +1,4 @@
+use crate::api::app_err;
 use crate::api::prelude::*;
 
 use crate::{
@@ -79,7 +80,7 @@ pub async fn submit_flag(
         },
     )
     .await
-    .map_err(|e| AppError::BadRequest(format!("提交失败：{}", e)))?;
+    .map_err(|e| app_err("提交失败", e))?;
 
     if let Some(_event_id) = sfr.event_id {
         ctx.log

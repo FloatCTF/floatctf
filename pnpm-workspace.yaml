@@ -3,6 +3,10 @@ packages:
   - "packages/*"
   - "frontends/*"
 
+# 子模块 shadcn 的 @floatctf/* 声明为 ^1.0.0（为独立 checkout），
+# monorepo 内需要显式链接到本地 packages/*，否则会去 npm registry 找不存在的包。
+linkWorkspacePackages: true
+
 allowBuilds:
   "@biomejs/biome": true
   esbuild: true

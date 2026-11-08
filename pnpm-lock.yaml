@@ -187,13 +187,13 @@ importers:
   frontends/floatctf-frontend-shadcn:
     dependencies:
       '@floatctf/frontend-runtime':
-        specifier: workspace:*
+        specifier: ^1.0.0
         version: link:../../packages/frontend-runtime
       '@floatctf/react':
-        specifier: workspace:*
+        specifier: ^1.0.0
         version: link:../../packages/react
       '@floatctf/sdk':
-        specifier: workspace:*
+        specifier: ^1.0.0
         version: link:../../packages/sdk
       '@fontsource-variable/geist':
         specifier: ^5.3.0

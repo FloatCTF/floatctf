@@ -1,10 +1,12 @@
-# 前端问题台账（shadcn 控制台 + 开发 mock）
+# 前端问题台账（shadcn 控制台 + 开发 mock + 工具链）
 
-> **适用范围**：可插拔前端 `shadcn`（`frontends/floatctf-frontend-shadcn`，monorepo submodule）
-> 与仅供开发预览的 `scripts/mock-api.mjs`。不涉及 `frontends/default`。
+> **适用范围**：可插拔前端 `shadcn`（`frontends/floatctf-frontend-shadcn`，monorepo submodule）、
+> 仅供开发预览的 `scripts/mock-api.mjs`，以及本轮目标执行期间实际踩到的**开发过程/工具链**问题。
+> 不涉及 `frontends/default`。
 >
 > **这份文档解决什么问题**：把 50 轮走查（2026-11-07/08）中发现的“不合理 / 逻辑不对 / 细节缺失”
 > 固化成可检索的条目——每条都写清**现象、根因、当时怎么修、以后怎么提前规避与检测**。
+> 产品/代码缺陷见 §1–§8，开发过程与工具链坑见 §11（含两次数据丢失事故复盘）。
 > 新功能开发、代码评审、联调、写测试时，先按 §0 和 §9 的清单过一遍，再动手。
 >
 > **相关文档**
@@ -452,7 +454,7 @@
 
 | 项 | 内容 |
 |---|---|
-| **现象** | DELETE 移除 0 条；上传 404；SSE 不触发刷新。 |
+| **现象** | DELETE 移除 0 条；上传 404；SSE 不触发刷新；mock 返回的枚举值与契约不符（`round completed` vs `completed`、`patched` vs `fixed`），页面状态判断全部失灵。 |
 | **根因** | DELETE body 键名（SDK `id_list` vs mock `user_id_list`）；multipart 字段（`weapon` / `image_file` / `patch_file` / `writeup_pdf`）；WS 升级未实现。 |
 | **解决** | 以 SDK 源码为准实现 mock；上传接口读取 multipart（或至少消费 body 并改状态）；WS 缺失时页面必须显示可见错误与重试。 |
 | **规避·检测** | 写接口逐一用 `curl -X DELETE -H 'content-type: application/json' -d ...` 复测；上传用 `-F` 复测。 |
@@ -578,6 +580,141 @@ rg 'disabled=\{' src                                  # 禁用是否有原因
 
 ---
 
+## 11. 开发过程与工具链（目标执行期间实际踩坑）
+
+> 这一节不是产品缺陷，而是“做这 50 轮时把自己坑住”的问题。它们会直接拖慢下一次联调/回归，
+> 有些还会造成**代码或 mock 数据丢失**。
+
+### I1. 子模块拉取失败
+
+| 项 | 内容 |
+|---|---|
+| **现象** | `git submodule update` 报 GnuTLS/网络错误，前端目录为空。 |
+| **解决** | 重试；必要时 `git submodule sync` 后单独 clone；不要改业务代码。 |
+| **规避·检测** | 先确认网络与远端可达；失败信息里区分 TLS 与认证错误。 |
+
+### I2. 前端制品契约版本被拒
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 安装/激活时平台拒绝：`apiContract` 填 `"1"`。 |
+| **解决** | 制品 `floatctf.frontend.json` 用 `frontendRuntime: "1"`、`apiContract: "2"`；随平台契约升级同步。 |
+| **规避·检测** | `scripts/frontend.sh verify`；对照 `docs/frontend/ARTIFACT.md`。详见 H2。 |
+
+### I3. i18n 资源结构不对
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 页面显示原始 key（如 `events.list.title`）。 |
+| **解决** | 资源按 `{ translation: { ... } }` 注册（`i18n.addResourceBundle(lng, "translation", resources[lng])`）。 |
+| **规避·检测** | 构建后切中英各看一页；`i18n:check`；详见 E4/H2。 |
+
+### I4. 用 `pkill -f` 停服务，把自己的 shell 也杀了
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 执行 `pkill -f node`（或类似宽匹配）后命令会话直接断开，后续命令全失败。 |
+| **解决** | 按端口找 PID：`ss -ltnp \| grep ':7780'`，再 `kill -9 <pid>`；或 `fuser -k 7780/tcp`。 |
+| **规避·检测** | 禁止宽匹配 `pkill -f`；停服务前先打印 PID 并确认命令行。 |
+
+### I5. 批量字符串替换把 mock 路由改没了（事故）
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 一次分块替换后 `node --check` 通过，但页面大量 404/空白；对比发现 **24 条选手端路由消失**。 |
+| **根因** | 分块替换的起止边界算错，把相邻路由一起吞掉；单次改动过大。 |
+| **解决** | 用 `git show <commit>:scripts/mock-api.mjs` 恢复被删段落；补 `mock:check` 路由快照 + 关键端点覆盖，之后同类问题能被 CI 拦住。 |
+| **规避·检测** | ① 每次只改一小块，改完立刻 `node --check`；② 跑 `pnpm mock:check`（路由数 + 关键端点）；③ `git diff` 人工看被删行；④ 大改前先提交/备份。 |
+
+### I6. `git checkout --` 覆盖未提交工作（事故）
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 改 mock 出现语法错误后执行 `git checkout -- scripts/mock-api.mjs`，把**未提交的 18 条管理端 AWD 路由**一起回滚；14 轮后才发现。 |
+| **根因** | 用整文件 checkout 处理局部语法错误，且当时那批改动没有提交。 |
+| **解决** | 按功能重新补齐（teams/scores/prechecks/network/gameboxes/instances/lifecycle/tokens/ban 等）。 |
+| **规避·检测** | 出现语法错误时：先 `node --check` 定位、局部编辑；必须回滚时用 `git diff` 备份或 `git stash`；**禁止**对含未提交改动的文件做整文件 checkout。 |
+
+### I7. 重复路由：先匹配者生效
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 新写的 mock 路由不生效，接口一直返回旧值/`null`（出现过两次：`/challenges/:id/instance`、`/instances/...` 组）。 |
+| **根因** | 同一 method+path 定义了两次，数组顺序靠前的那条把后一条挡住。 |
+| **解决** | 删除/合并重复定义；新增前按路径 `rg` 一次；`mock:check` 不查重复，需人工。 |
+| **规避·检测** | 改完用 `curl` 直接打接口，而不是只看页面；`rg` 同名路径。详见 F3。 |
+
+### I8. 忘记更新 mock 路由快照
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 加了路由后 `mock:check` 报“新增 N 条”，CI 红；或提交后发现 `mock-routes.snapshot.json` 没进 commit。 |
+| **解决** | `pnpm mock:check -- --update`，把 `scripts/mock-routes.snapshot.json` 一并提交。 |
+| **规避·检测** | 加/删 mock 路由后立刻 update；提交前再跑一次 `mock:check`。 |
+
+### I9. Playwright/浏览器自动化陷阱
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 等待 `networkidle` 永不结束；单次脚本路由太多报 30s 超时；传文件报 `ENOENT`；页面里 `Buffer is not defined`；隐藏的重复按钮点不到；Radix 下拉选不中；确认框按钮一直 disabled；用 `isEnabled()` 判断状态时超时；弹层挡住了后续点击。 |
+| **根因** | SSE 长连接让 networkidle 不成立；MCP 有单次执行时限；Playwright 服务与页面不同主机，拿不到本地 `/tmp`；页面上下文没有 Node `Buffer`；桌面表格与移动卡片是**两套 DOM**；Radix 选项不是原生 option；确认词未输入时按钮 disabled；上一轮弹层未关闭。 |
+| **解决** | 用 `domcontentloaded` + 显式 `waitForTimeout`/条件等待；把长扫描拆成 ≤20 路由/批；文件用页面内 `DataTransfer` + `File`（或 canvas 生成 PNG）注入，接口层用 `curl -F` 复测；选择器加 `:visible`；下拉用 `[role="option"]`；确认框先填 `#confirm-phrase`；先按 `Escape` 关闭残留弹层；判断按钮状态用 `count()`/`getAttribute("disabled")`，不要直接 `isEnabled()`。 |
+| **规避·检测** | 固化测试脚本模板；页面断言区分“正常 404 / 筛选空态 / 错误边界”，避免把 404 文案当崩溃。 |
+
+### I10. 测试状态与 token 丢失
+
+| 项 | 内容 |
+|---|---|
+| **现象** | mock 重启后成员/头像/设置/写操作全部回默认；浏览器重启后页面 401；SSE 仍连着旧进程。 |
+| **根因** | mock 状态在内存；token 存在 `localStorage`；SSE 长连接。 |
+| **解决** | 测试前重建数据；`localStorage.setItem('shadcn.user.token', ...)`（管理端另有 `shadcn.admin.token`）；必要时 `POST /api/__sse/close` 后重连。 |
+| **规避·检测** | 写操作验证必须“刷新后仍生效”；mock 重启视为环境重置。 |
+
+### I11. 编辑 locale 文件反复踩的坑
+
+| 项 | 内容 |
+|---|---|
+| **现象** | `TS1117` 同一对象重复键；新 key 插到了错误层级；动态 key 漏翻译但 `i18n-check` 不报。 |
+| **根因** | locale 对象里有同名短键（`filter` 字符串 vs `filters` 对象）；按缩进做字符串插入不稳定；`t(\`ns.${value}\`)` 是运行期拼接，静态检查覆盖不到。 |
+| **解决** | 插入前 `rg '^\t+key:'` 查重；用唯一锚点（完整一行）替换；动态 key 的每个取值手工补齐 zh/en。 |
+| **规避·检测** | 每次改完 `tsc --noEmit` + `pnpm i18n:check`；两种语言各点一遍相关页面。 |
+
+### I12. 父仓库未提交状态
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 交付时父仓库仍有 submodule 指针、`pnpm-lock.yaml`、未跟踪的 `docs/theme.md`。 |
+| **解决** | 交付说明里列清楚哪些是“有意未提交”，或按需分批提交；不要误 `git add -A`。 |
+| **规避·检测** | 提交前 `git status --short`；只 `git add` 目标文件。 |
+
+### I13. 文档/README 与代码漂移
+
+| 项 | 内容 |
+|---|---|
+| **现象** | README 的“契约缺口”仍写着 `weapons.fetch` 忽略参数且无 meta，实际后端已支持 `filter` 与分页 meta。 |
+| **解决** | 以源码为准更正 README；交付前对照 `packages/sdk` 与后端 handler 再写契约说明。 |
+| **规避·检测** | 改动公共契约时同步更新 README/文档；评审时用 `rg` 对照。 |
+
+### I14. 全站扫描的断言误报
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 路由扫描把 `/scoreboard`（该前端本就没有此路由）的 404 页面当成“崩溃”；把筛选空态当成“加载失败”。 |
+| **根因** | 断言用词过宽（`页面不存在`、`加载失败` 同时出现在正常态与错误态）。 |
+| **解决** | 断言区分：正常 404（壳内）、筛选空态（有清除动作）、错误边界（有重试）；只对目标页面断言“错误提示”。 |
+| **规避·检测** | 扫描脚本维护“预期 404”清单；失败时先看截图/文本再判定。 |
+
+### I15. 开发服务器、代理与环境变量
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 改了 `vite.config.ts` 的代理但页面仍 404；设置了 `MOCK_*` 但行为没变；端口被旧进程占用，新代码不生效。 |
+| **根因** | Vite 配置变更需要重启（或等待自动重启完成）；环境变量必须在启动命令前设置；旧的 mock 进程没被杀掉。 |
+| **解决** | 改配置后重启 Vite；`MOCK_TEAM_BANNED=1 setsid node scripts/mock-api.mjs ...`；启动前 `ss -ltnp` 确认端口归属，必要时按 PID 杀掉旧进程。 |
+| **规避·检测** | 用 `curl` 直连 mock 验证新行为；看启动日志里的监听地址；代理前缀变化时同时更新 Vite 与线上 Caddy 语义。 |
+
+---
+
 ## 附 A：与 50 轮台账的对应关系
 
 > 逐轮流水见 [`frontends/floatctf-frontend-shadcn/docs/qa/AUDIT-50.md`](../frontends/floatctf-frontend-shadcn/docs/qa/AUDIT-50.md)。
@@ -631,3 +768,11 @@ rg 'disabled=\{' src                                  # 禁用是否有原因
 | 末页切换每页条数出现空白页 | B6 |
 | 工作区拥挤 / 品牌占位 | G2 |
 | 安装被拒 / 界面全是 i18n key | H2 |
+| 改了 mock 后大量路由消失 | I5 |
+| 语法错误回滚后功能没了 | I6 |
+| mock 路由怎么都不生效 | I7 |
+| mock:check 报路由数变化 | I8 |
+| Playwright 等待/点击/上传异常 | I9 |
+| 重启后数据与登录状态丢失 | I10 |
+| locale 构建报 TS1117 | I11 |
+| 代理/环境变量改了不生效、端口被占 | I15 |

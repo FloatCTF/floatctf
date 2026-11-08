@@ -1,13 +1,17 @@
-# 前端问题台账（shadcn 控制台 + 开发 mock + 工具链）
+# 前端问题台账（shadcn 控制台 + 真实 API + 开发 mock + 工具链）
 
 > **适用范围**：可插拔前端 `shadcn`（`frontends/floatctf-frontend-shadcn`，monorepo submodule）、
-> 仅供开发预览的 `scripts/mock-api.mjs`，以及本轮目标执行期间实际踩到的**开发过程/工具链**问题。
+> 仅供开发预览的 `scripts/mock-api.mjs`，以及本轮目标执行期间实际踩到的
+> **真实 dev API 验收 / 开发过程 / 工具链**问题。
 > 不涉及 `frontends/default`。
 >
-> **这份文档解决什么问题**：把 50 轮走查（2026-11-07/08）中发现的“不合理 / 逻辑不对 / 细节缺失”
-> 固化成可检索的条目——每条都写清**现象、根因、当时怎么修、以后怎么提前规避与检测**。
-> 产品/代码缺陷见 §1–§8，开发过程与工具链坑见 §11（含两次数据丢失事故复盘）。
-> 新功能开发、代码评审、联调、写测试时，先按 §0 和 §9 的清单过一遍，再动手。
+> **这份文档解决什么问题**：把 50 轮走查（2026-11-07/08，前后两阶段：开发 mock + 真实 dev API）
+> 中发现的“不合理 / 逻辑不对 / 细节缺失”固化成可检索的条目——每条都写清
+> **现象、根因、当时怎么修、以后怎么提前规避与检测**。
+> mock 阶段的产品/代码缺陷见 §1–§8；真实 API 阶段新增的问题、文件校验、敏感值、
+> 生命周期闸门与后端契约边界见 §8A；开发过程与工具链坑见 §11
+> （含两次数据丢失事故复盘）。新功能开发、代码评审、联调、写测试时，先按 §0 和 §9
+> 的清单过一遍，再动手。
 >
 > **相关文档**
 > - 逐轮台账：[`frontends/floatctf-frontend-shadcn/docs/qa/AUDIT-50.md`](../frontends/floatctf-frontend-shadcn/docs/qa/AUDIT-50.md)
@@ -17,7 +21,7 @@
 
 ---
 
-## 0. 先记住这 12 条（最高频雷区）
+## 0. 先记住这 18 条（最高频雷区）
 
 | # | 雷区 | 一句话规避 |
 |---|------|-----------|
@@ -33,6 +37,12 @@
 | 10 | mock 状态重启即重置 | 演示前重启 mock 会丢数据；写操作要“能刷新后仍在”才算验证通过 |
 | 11 | 移动端表格溢出 | 390px 必测；列用 `hideBelow`，卡片用移动端专用结构 |
 | 12 | i18n 动态 key 漏翻译 | 动态拼接的 key（namespace + 枚举值）每个取值都要在 zh/en 同时存在 |
+| 13 | 把 SDK 返回类型当成运行时保证 | 真实 API 可能 `data:null`；写操作统一 `callVoid`，可空读用 `callMaybe`，用返回体前先看后端 handler |
+| 14 | 只校验 MIME / 后缀，不校验内容 | 图片做真实解码；PDF 精确匹配前 5 字节 `%PDF-`；ZIP 查 `PK`；补丁查 gzip `1f 8b` |
+| 15 | 敏感值只在列表遮蔽 | 编辑输入也要默认 password + 显隐按钮；解析值、关联展示同样用 `SecretValue` |
+| 16 | 直接按 `is_configurable` 开放按钮 | 以后端真实状态机为准；失败后刷新状态，给恢复路径，不用前端猜 |
+| 17 | 把赛事 `upcoming` 当成赛制未运行 | 选手端/赛事页先探测 AWD status、AWDP `started_at`；提前开赛要锁报名并显示徽章 |
+| 18 | 只把 404 当资源不存在 | 非法 UUID 后端返回 400「路径参数格式错误」；每个 shell 都要有 not-found 分支 |
 
 ---
 
@@ -531,6 +541,152 @@
 
 ---
 
+## 8A. 真实 API 验收新增问题（第 30–50 轮）
+
+> 这一节是切到真实 dev API 后新增的坑：mock 阶段要么返回了“好看”的数据，
+> 要么后端根本不会做这些校验。**mock 绿 ≠ 真实 API 绿**。
+> 下面仍按“现象 → 根因 → 解决 → 规避/检测”记录。
+
+### R1. SDK 返回类型比运行时乐观：`data:null` 被 `call` 当成违约
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 新建题集后数据库里已经有行，页面却 toast「创建题集没有返回数据」，列表不刷新、也不跳详情。 |
+| **根因** | SDK 把 `create` 标成 `UniResponse<ChallengeSets>`，真实 API 返回 `{code:0,data:null}`；`call()` 见到 `undefined` 按契约违约抛错。 |
+| **解决** | 题集 create / patch 改 `callVoid`；创建成功后用 `filter: name:<name>` 回查（按更新时间倒序取最新）再 `navigate('/admin/challenge-sets/:id')`；仍保留失败 toast。 |
+| **注意点** | SDK 类型只是编译期声明，不是运行时保证；写操作不需要返回体就不要 `call<T>`；需要返回体时先看后端 handler 是否真的 `ok(Some(...))`。 |
+| **规避·检测** | `rg 'call<null>' src` 必须为空；新 mutation 先看 SDK 签名 + 后端 handler；用真实 API 建一条再刷新；浏览器 Network 看 `data` 是否为 `null`。 |
+
+**相关文件**：`src/features/admin/core/challenge-sets-page.tsx`
+
+### R2. 文件“类型/后缀对了”不等于文件有效
+
+真实 API 对部分上传只做很浅的校验（头像甚至只存字节），前端只看 MIME / 后缀会制造“成功但坏文件”。
+
+| 入口 | 原问题 | 现在的前端校验 | 关键点 |
+|---|---|---|---|
+| 头像 `profile/pages.tsx` | 8 字节坏 PNG 通过 MIME/大小校验，后端提示「头像已更新」，浏览器却只能显示占位符 | MIME + ≤50MB + `new Image()` 真实解码；失败 toast、撤销 object URL、不进入待上传 | 解码失败不能只靠 `img.onerror` 静默；要清掉已选文件 |
+| Markdown 插图 `components/app/markdown.tsx` | `accept=image/*`，坏图上传成功，正文留下永久裂图 | `file.type.startsWith("image/")` + `new Image()` 解码；失败不插入 Markdown | 讨论区、Writeup 等所有 MarkdownEditor 共用 |
+| 赛事 Writeup PDF `events/components.tsx` | 文本改名 `fake.pdf` 能选中，提交后才收到后端英文错误 | 先看 MIME/后缀，再读前 5 字节，**精确等于** `%PDF-`；失败中文 toast、不进入待提交 | 不能写 `head.includes("%PDF-")`；后端只认开头 5 字节 |
+| 题目包 / GameBox 包 `admin/core/challenges-page.tsx`、`gameboxes-page.tsx` | 文本改名 `.zip` 能进入待导入 | 前 4 字节要求 `PK` + `03/05/07`；失败不设置待导入文件 | ZIP 空归档/分卷分别是 `PK\x05\x06` / `PK\x07\x08` |
+| AWDP 补丁 `training/components.tsx`、`awdp/components.tsx` | 文本改名 `.tar.gz` 能选中，后端才报格式错 | 后缀 `.tar.gz/.tgz` + 前 2 字节 `1f 8b`；失败不发起上传 | gzip 头通过不代表里面一定是 tar；后端仍是最终权威 |
+
+**共同注意点**：
+
+- 客户端校验是**提前反馈**，不是安全边界；后端仍必须校验。
+- 魔数要按后端真实契约做**精确**比较，不能“包含”或只看扩展名。
+- 空文件、超短文件、大小写后缀都要覆盖。
+- 校验失败要 `event.target.value = ""`，否则同一个坏文件第二次选不上。
+- 解码/预览创建的 object URL 失败时要 `URL.revokeObjectURL`。
+- 测试用页面内 `DataTransfer` 注入文件，避免 Playwright 服务与页面不同主机拿不到 `/tmp`。
+
+**检测命令/手法**：
+
+```bash
+rg 'accept=|type="file"' src
+rg 'new Image\(|%PDF-|0x1f|0x50|accept=' src
+# 手工：坏 PNG、文本 .pdf、文本 .zip、文本 .tar.gz 各选一次
+```
+
+### R3. 敏感值：列表遮蔽了，编辑区和“解析值”仍是明文
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 设置列表里 `SMTP_URI` 显示 `••••••••`，点编辑后 Textarea 直接显示完整 SMTP 串；底部「当前解析值」还用 `CopyText` 明文展示。题目静态 flag 列表用 `SecretValue`，编辑 Sheet 却是普通 text input。 |
+| **根因** | 遮蔽只做在列表单元格，没有覆盖编辑表单、解析值、详情展示。 |
+| **解决** | 设置编辑：敏感键默认 `type=password`，眼睛按钮切换；解析值敏感时用 `SecretValue`。题目静态 flag 编辑同样 password + 眼睛。敏感键判定统一用 `SENSITIVE_KEY_PATTERN`（SECRET/PASSWORD/PASSWD/TOKEN/PRIVATE_KEY/API_KEY/PROXY/SMTP_URI/DATABASE_URL/REDIS_URL）。 |
+| **注意点** | 默认隐藏、显式显示；不要用 CSS 模糊（DOM 里仍是明文）；复制也要走显式动作；密码输入加 `autoComplete="off"`、`spellCheck={false}`。 |
+| **规避·检测** | 打开每个敏感编辑 Sheet，检查 DOM 里是否有明文；`rg 'isSensitiveKey|SecretValue|type="password"' src`；列表与编辑用同一判定。 |
+
+**相关文件**：`admin/platform/settings.tsx`、`admin/core/challenges-page.tsx`、`components/app/page.tsx`
+
+### R4. AWD/AWDP 生命周期：前端按钮必须跟后端状态机，不跟“配置状态”猜
+
+| 项 | 内容 |
+|---|---|
+| **现象** | AWD 部署失败后状态仍显示旧值、部署按钮仍可点；手动提前开赛时选手端仍按「赛事未开始」拦住竞技场；赛事页仍显示「未开始」并允许加入/换战队。 |
+| **根因** | ① 部署 mutation 失败后只 toast，没有刷新 status；② 前端用 `is_configurable()` 推断可部署，但真实迁移只允许 `Configuring → Deploying`；③ 选手端只看赛事时间窗，没有探测 AWD status / AWDP `started_at`。 |
+| **解决** | ① 生命周期 mutation `onError` 调 `refreshAll()`，失败后显示 `deploy_failed`；② 部署只开放 `Configuring`；预检开放 `Configuring/Deployed/Prechecking/Verified/StartBlocked/VerificationFailed`；`DeployFailed/VerificationFailed` 不再显示部署按钮并给恢复说明；③ 选手端先探测 AWD status（`running/paused/network_error` 算 live）和 AWDP overview（`started_at != null` 算 live），覆盖赛事 `upcoming`；④ 提前开赛显示「已提前开赛」并锁 JoinLeaveControl / TeamPanel。 |
+| **注意点** | `is_configurable()` ≠ 当前状态可迁移；不要前端自造生命周期；失败路径也要更新 UI；提前开赛不是“赛事状态变成 ongoing”，不能改赛事时间窗来迁就。 |
+| **规避·检测** | 造“部署失败”路径看状态是否变；手动 start 后看选手 `/arena/:id`、`/lab/:id`、赛事页是否可进；提前开赛看报名/换队是否锁；`rg 'DEPLOYABLE_STATUSES|PRECHECKABLE_STATUSES|liveBeforeWindow|earlyStart' src`。 |
+
+**相关文件**：`admin/awd-ops/shared.tsx`、`admin/awd-ops/pages.tsx`、`awd/pages.tsx`、`awdp/pages.tsx`、`events/pages.tsx`、`events/components.tsx`
+
+### R5. AWDP 补丁格式：后端只收 `patch.tar.gz`（根目录 `patch.sh`）
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 页面接受 `.sh` / 任意文件，提交后后端拒绝；或选 `.tar.gz` 但里面不是 tar，直到上传后才报错。 |
+| **根因** | UI 的 `accept` 与文案按“脚本文件”设计，和真实契约不一致；只校验后缀。 |
+| **解决** | 训练场与赛事 AWDP 统一 `accept=".tar.gz,.tgz,application/gzip"`；扩展名校验 + gzip 魔数；文案明确「patch.tar.gz / 根目录 patch.sh」。 |
+| **注意点** | 不要在前端解包/假装校验 tar 内容；gzip 头只挡明显错误文件；最终仍由后端判定。 |
+| **规避·检测** | 用文本 `.tar.gz`、真实 tar.gz 各测一次；`rg 'patchFormat|patchGzip|accept=' src/features/{training,awdp}`。 |
+
+### R6. 练习赛没有官方数据大屏：不要对 `purpose=practice` 调正式积分接口
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 打开练习赛的「数据」标签，后端 400 `UnsupportedForPurpose: practice has no official event scoreboard`。 |
+| **根因** | 前端只按 `family=Jeopardy` 显示数据标签，没有按 `purpose` 裁剪；正式赛/练习赛能力不同。 |
+| **解决** | 数据标签只在 `purpose == competition` 时出现；练习赛回退到配置/总览，不请求正式积分端点。 |
+| **注意点** | 能力判定要同时看 family + purpose + participant mode；空数据不是错误，不能把 400 当“暂无数据”。 |
+| **规避·检测** | `rg 'purpose.*practice|UnsupportedForPurpose|dataTab' src`；用练习赛和正式赛各打开一次工作区。 |
+
+### R7. 中文题名不能手工创建：后端要求 ASCII `safe_name`
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 手工新建「中文题名」提交后后端返回 `CHALLENGE_SAFE_NAME_REQUIRED`。 |
+| **根因** | 手工 create 只接受能派生 ASCII `safe_name` 的名称；中文名必须走题目包并在 `meta.toml` 显式给 `safe_name`。 |
+| **解决** | 前端校验名称至少含 ASCII 字母/数字；提示中文名请导入题目包并设置 `safe_name`；错误就地展示。 |
+| **注意点** | 不要在前端“音译/随机生成” safe_name；不要让用户提交后才看到后端错误。 |
+| **规避·检测** | 手工建中文名看是否被前端拦住；导入包含中文名 + 显式 safe_name 的包看是否成功。 |
+
+### R8. 单点趋势图重复 key 与 epoch 0 时间
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 只有一个时间点时控制台报 duplicate key；缺失时间显示 `1970/01/01`。 |
+| **根因** | 图表 x 轴把 min/max 相同的时间生成两次 tick；`AbsoluteTime` 把 `0` 当合法 epoch。 |
+| **解决** | `xTickValues = maxX === minX ? [minX] : [...]`；`AbsoluteTime` 对 `0/null` 显示 `—`，并抑制 1970 title tooltip。 |
+| **注意点** | 图表空/单点/多点都要造；时间戳 `0` 往往表示“未设置”，不是 Unix epoch。 |
+| **规避·检测** | 造单点趋势；看控制台 key warning；`rg 'xTickValues|epoch|1970' src`。 |
+
+### R9. 非法 UUID 深链接：后端 400，不是 404
+
+| 项 | 内容 |
+|---|---|
+| **现象** | `/admin/events/does-not-exist`、`/arena/does-not-exist` 显示「路径参数格式错误」+ 重试，而不是资源不存在；AWD 运维页甚至没有 not-found 分支。 |
+| **根因** | 路由参数不是合法 UUID，后端返回 400「路径参数格式错误」；前端只把 404 当 not-found。 |
+| **解决** | `isNotFound` 对 HTTP 400 且 platformMessage 含「路径参数 / path parameter」也返回 true；AWD 运维补 NotFoundBlock + 返回入口；赛事/选手/AWDP/训练等复用统一判定。 |
+| **注意点** | 不要把所有 400 都当 not-found，只匹配路径参数错误；非法 ID 不应触发重试（重试也不会成功）；每个 shell 都要有壳内 404。 |
+| **规避·检测** | 手测 `/admin/events/x`、`/admin/events/x/awd`、`/events/x`、`/arena/x`、`/lab/x`、`/training/runs/x`；`rg 'isNotFound' src`。 |
+
+### R10. 后端契约问题：前端如实展示，不要用 UI 掩盖
+
+这些是在真实 API 验收中发现、但**根因不在前端**的问题；已记录，未擅自改后端。
+
+| 问题 | 现象/证据 | 处理建议 |
+|---|---|---|
+| SQL 控制台 INT2/INT4 变 NULL | `select 1::int4` 返回 `{"i4":null}`；INT8/FLOAT8/BOOL 正常 | 后端 `rows_to_json` 按 INT2→i16、INT4→i32、INT8→i64 解码；前端不要伪造值 |
+| `DeployFailed` 可配置但不能直接重部署 | 状态机只允许 `DeployFailed → Configuring`，前端若直接给“部署”会失败 | 前端只给“重新配置”路径；需要后端明确恢复动作 |
+| 部署后新建战队可能绕过 GameBox/网络预检 | 预检通过但新队无资源，running 后不能重部署 | 后端在预检/部署时校验全部战队；前端不假装已就绪 |
+| 删除赛事后可能留下定时任务 | 管理端任务列表出现已删赛事的 `awd.event.hardening_end` 失败任务 | 后端清理/标记；前端不要把它当当前赛事状态 |
+
+**原则**：前端可以展示后端错误、禁用不可行动作、给恢复引导，但不能把 null 改成 0、把失败改成成功、把未知状态猜成成功。
+
+### R11. 真实 dev 验收操作要点
+
+- 真实栈：API `:9090`、Caddy `:7780`、Default Vite `:13000`、shadcn Vite `:13400`；浏览器访问 `http://10.66.66.2:13400`，不要用 `127.0.0.1`（Playwright 与服务不同主机）。
+- 用普通 `pnpm`，不要依赖 `mise exec -- pnpm`（工具缺失时会失败）。
+- 等页面用 `domcontentloaded`，不要等 `networkidle`（SSE 长连接永远不 idle）。
+- 文件上传用页面内 `DataTransfer` + `File` 注入；接口层再用 `curl -F` 复核。
+- 写操作验收标准：toast + 列表/详情变化 + **刷新后仍生效**；失败路径有可见错误。
+- 测试数据清理：用户/角色/赛事/题目/题集/讨论/武器用 UI 删除或 SQL 清理；`test-g` GameBox 与训练 run fixture 保留。
+- 前端门禁：`tsc --noEmit`、`vite build`、`node scripts/i18n-check.mjs`、`node scripts/theme-audit.mjs`、`node scripts/mock-check.mjs`。
+
+---
+
 ## 9. 提交前检查清单（可直接照做）
 
 ### 9.1 命令门禁
@@ -551,6 +707,10 @@ rg 'call<null>' src                                  # 必须为空
 rg 'alert\(|confirm\(' src                          # 必须为空（用 useConfirm）
 rg '\{row\.(status|level|phase|type)\}' src           # 直接渲染枚举
 rg 'type="file"' src                                  # 是否有配套隐藏/校验
+rg 'new Image\(|%PDF-|0x1f|0x50' src                # 图片解码 / 文件魔数校验
+rg 'isSensitiveKey|type="password"|SecretValue' src    # 敏感值是否全链路遮蔽
+rg 'isNotFound|NotFoundBlock' src                     # 404 / 非法 UUID 是否有壳内兜底
+rg 'DEPLOYABLE_STATUSES|liveBeforeWindow|earlyStart' src # 状态机 / 提前开赛
 rg 'solved_percent|formatPercent' src                 # 百分比口径
 rg 'info\.id\b|EventInfo' src                         # 是否误用顶层 id
 rg 'filter:' src                                      # 筛选是否真的传给后端
@@ -568,15 +728,39 @@ rg 'disabled=\{' src                                  # 禁用是否有原因
 5. 弹层：Esc 关闭后焦点回到触发元素；Tab 能到达“跳到主内容”。
 6. SSE 页面：用 `domcontentloaded` 等待；断线后应自动重连/降级轮询且提示可见。
 
+### 9.4 真实 API 联调清单（切 mock 后必做）
+
+1. 先确认栈：API `:9090`、Caddy `:7780`、shadcn Vite `:13400`；浏览器用
+   `http://10.66.66.2:13400`，Playwright 不要用 `127.0.0.1`。
+2. 写操作看 Network：`data:null` 用 `callVoid`；列表刷新后仍在才算成功。
+3. 文件上传先造坏文件：坏 PNG、文本 `.pdf`、文本 `.zip`、文本 `.tar.gz`；
+   前端应在选择阶段拦截，而不是提交后才报后端英文错误。
+4. 敏感编辑：打开设置 `SMTP_URI`、题目静态 flag 编辑，检查 DOM 中默认没有明文；
+   解析值 / 关联展示同样遮蔽。
+5. 生命周期 / 提前开赛：部署失败后状态要变；手动 start 后选手 `/arena`、`/lab`、
+   赛事页要能正确进入/锁定。
+6. 非法 UUID：`/admin/events/x`、`/arena/x`、`/training/runs/x` 应显示壳内 not-found，
+   不是“路径参数格式错误 + 重试”。
+7. 清理测试数据；保留 `test-g` / 训练 fixture 时在交付说明中写清楚。
+
 ---
 
 ## 10. 已知边界（本轮未闭环，不要误以为已验证）
 
 1. **WebSocket 终端**：mock 无 WS，端到端 shell 未验证；已验证“确认词 → 票据 → 失败可见 → 重试”的失败路径。
 2. **AWD/AWDP 管理端 PATCH 的乐观锁/冲突提示**：未系统验证（接口存在，冲突分支未造数据）。
-3. **真实 API 回归**：本轮全部在 mock 环境完成；上真实 dev 栈时需按 `frontends/floatctf-frontend-shadcn/docs/E2E-ACCEPTANCE.md` 重跑关键路径。
-4. **移动端全量回归**：抽样覆盖主要页面；表格行操作、命令面板、超长文本的极端组合未逐一跑。
-5. **mock 数据**：仅开发预览，重启即重置；`MOCK_AWD_ADMIN_STATUS`、`MOCK_AWDP_ADMIN_PHASE`、`MOCK_TEAM_BANNED`、`MOCK_RUN_STATE` 等开关用于构造边界状态。
+3. **真实 API 回归**：后半程已切到真实 dev 栈（API `:9090` / Caddy `:7780` / shadcn Vite `:13400`），
+   覆盖题集创建、用户/角色/公告、事件、题目包导入、AWD/AWDP 生命周期、训练、讨论、
+   武器、资料、设置、非法路由与移动端。完整逐轮证据见
+   `frontends/floatctf-frontend-shadcn/docs/qa/AUDIT-50.md`。
+4. **移动端全量回归**：已对主要路由做 320×568 / 390×844 两档扫描（无横向溢出、无 console error）；
+   表格行操作、命令面板、超长文本的极端组合仍未逐一穷举。
+5. **mock 数据**：仅开发预览，重启即重置；`MOCK_AWD_ADMIN_STATUS`、`MOCK_AWDP_ADMIN_PHASE`、
+   `MOCK_TEAM_BANNED`、`MOCK_RUN_STATE` 等开关用于构造边界状态。
+6. **SQL 控制台 INT2/INT4**：后端 `rows_to_json` 当前返回 NULL（INT8/FLOAT8/BOOL 正常）；
+   已在 §8A.R10 记录，未擅自改后端。
+7. **AWD 攻击正确 flag 的跨队计分**：单队 fixture 下未完整覆盖；真实跨队攻防仍需多队环境。
+8. **测试 fixture**：`test-g` GameBox 与训练 run 保留；测试用户/角色/赛事/题目/题集/讨论/武器已清理。
 
 ---
 
@@ -737,6 +921,8 @@ rg 'disabled=\{' src                                  # 禁用是否有原因
 | 44–49 | 用户 / 题库 / GameBox / 角色 / 设置 / Docker / SQL / 终端 | A1、C3、C4、C5、F4、F5、H2 |
 | 50 | 404 / 空态 / i18n / 主题 / 构建 | B1、B3、E4、H1 |
 
+> 上表是早期 mock 阶段的主题归并；后半程切真实 API 后新增的 R1–R11 见 §8A。
+
 ---
 
 ## 附：问题 → 章节索引
@@ -765,6 +951,13 @@ rg 'disabled=\{' src                                  # 禁用是否有原因
 | 主题切换 / 快捷键 / 图表交互异常 | D8 |
 | 列表行操作作用到错行 / React key 警告 | A13 |
 | 实时数据不刷新 / 输入被清空 | A14 |
+| 写操作已落库却提示“没有返回数据” | R1、A1 |
+| 坏图片/假 PDF/假 ZIP 能选中并“成功” | R2、C2 |
+| 敏感设置/静态 flag 编辑区明文 | R3、D3 |
+| 部署失败状态不刷新 / 提前开赛被拦住 | R4 |
+| 练习赛数据标签 400 / 中文题名创建失败 | R6、R7 |
+| `/admin/events/x` 显示“路径参数格式错误” | R9 |
+| SQL 控制台 INT4 显示 NULL | R10 |
 | 末页切换每页条数出现空白页 | B6 |
 | 工作区拥挤 / 品牌占位 | G2 |
 | 安装被拒 / 界面全是 i18n key | H2 |

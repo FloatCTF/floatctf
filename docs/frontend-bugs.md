@@ -685,6 +685,15 @@ rg 'new Image\(|%PDF-|0x1f|0x50|accept=' src
 - 测试数据清理：用户/角色/赛事/题目/题集/讨论/武器用 UI 删除或 SQL 清理；`test-g` GameBox 与训练 run fixture 保留。
 - 前端门禁：`tsc --noEmit`、`vite build`、`node scripts/i18n-check.mjs`、`node scripts/theme-audit.mjs`、`node scripts/mock-check.mjs`。
 
+### R12. 题目详情：外层 5:7 分栏把工作台描述压成竖排
+
+| 项 | 内容 |
+|---|---|
+| **现象** | 宽屏题目详情中，左侧「题目描述」被压成极窄一列，中文逐字竖排；右侧出现大块空白，页面看起来像坏掉。 |
+| **根因** | 题目详情外层使用了 Default 的 `5fr : 7fr`（左题目、右我的题解）；`ChallengeWorkbench` 内部又使用 `minmax(0,1fr) + 360px`（左描述、右环境/Flag）。左栏实际只剩 ~450px，360px 侧栏抢走后描述仅 ~90px。 |
+| **修复** | 工作台改为单列：描述 → 解题环境 → 提交 Flag → 可选 Writeup 区块纵向排列；去掉内部固定 360px 侧栏。外层仍保留 Default 的 5:7（左题目、右常驻题解）。 |
+| **规避·检测** | 宽屏（≥1920）和 1280 各打开一次题目详情；检查描述区宽度 ≥ 400px，不能出现逐字竖排；同时扫描 `grid-cols-[...360px]`，避免再把固定侧栏塞进窄容器。 |
+
 ---
 
 ## 9. 提交前检查清单（可直接照做）
